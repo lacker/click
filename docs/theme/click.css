@@ -1,0 +1,6 @@
+/* Keep mdBook's narrow-screen table-of-contents control keyboard-visible. */
+#sidebar-toggle:focus-visible {
+    border-radius: 0.2rem;
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+}

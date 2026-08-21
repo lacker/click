@@ -4,6 +4,7 @@ C pointer parameters may alias by default. Click follows that model.
 
 If a function takes two pointers:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```c
 int32 copy_one(int32 dst[], int32 src[]) {
     dst[0] = src[0];
@@ -14,6 +15,7 @@ int32 copy_one(int32 dst[], int32 src[]) {
 Click does not assume `dst` and `src` are different. If a proof depends on
 non-overlap, state it:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 requires separate(memory(dst[0..1]), memory(src[0..1]));
 ```
@@ -35,6 +37,7 @@ That fact can come from:
 
 Frame clauses describe what memory a function preserves or may mutate:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 immutable src[0..n] by frame;
 mutable dst[0..n] by frame;
@@ -55,12 +58,14 @@ footprint.
 
 You can also state preservation directly:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 ensures src[0] == old(src[0]) by auto;
 ```
 
 For larger regions, use quantified or range-shaped facts:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 ensures forall (k: int32) {
     0 <= k and k < n implies src[k] == old(src[k])
@@ -74,6 +79,7 @@ copying every old value into a separate variable.
 
 Loops need their own frame reasoning. A loop can have a whole-loop effect:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 loop {
     mutable p[0..n] by frame;
@@ -82,6 +88,7 @@ loop {
 
 or a step-relative effect:
 
+<!-- verified-example: mdtests/copy3_array_demo.md -->
 ```click
 loop {
     step {

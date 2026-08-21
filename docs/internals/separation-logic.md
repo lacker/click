@@ -42,12 +42,14 @@ wrapper normally contains both allocation authority and `object(base)`.
 Abstract declarations use the token representation. Ordinary resource
 declarations require a body and use the composite representation:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 abstract resource open_fd(fd: int32);
 ```
 
 For example, a composite resource is declared as:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource owner_buffer(owner: struct owner*) {
     owns owner[0..1];
@@ -80,6 +82,7 @@ resource facts.
 
 At the Click surface, a contract writes separate resource clauses:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 consumes p[0..1];
 views q[0..1];
@@ -333,6 +336,7 @@ The more general idea is valid composition of resource facts:
 valid(compose(own(memory(range1)), own(memory(range2))))
 ```
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 separate(memory(range1), memory(range2))
 ```
@@ -343,6 +347,7 @@ overlap between the memory ranges.
 
 Click also exposes resource inclusion/decomposition as:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 contains(parent, child)
 ```

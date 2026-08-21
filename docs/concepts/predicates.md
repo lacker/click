@@ -4,6 +4,7 @@ A predicate gives a name to a proposition.
 
 For example:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 predicate sorted_pair(p: int32[]) {
     p[0] <= p[1]
@@ -12,6 +13,7 @@ predicate sorted_pair(p: int32[]) {
 
 Then a contract can use:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 ensures sorted_pair(p) by {
     execute();
@@ -26,6 +28,7 @@ Predicate calls are not unfolded automatically. Click can reuse an exact
 predicate fact, but it does not normally look inside a predicate unless the
 proof says:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 unfold(sorted_pair);
 ```
@@ -37,6 +40,7 @@ instead of being expanded everywhere.
 
 Predicates can package preconditions:
 
+<!-- verified-example: mdtests/sorted_predicate.md -->
 ```click
 predicate has_zero(p: int32[], n: int32) {
     (0..n).any(|k| { p[k] == 0 })

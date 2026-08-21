@@ -85,6 +85,7 @@ scaling and the type of value produced by indexing the array ref.
 In a postcondition, a bare array parameter used as an array argument means the
 post-state array:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 p
 ```
@@ -99,6 +100,7 @@ For a `uint8 p[]` parameter, the same shape uses `element_type: uint8`.
 
 An old array argument means the entry-state array at the same pointer value:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 old(p)
 ```
@@ -111,6 +113,7 @@ ClickArrayRef { memory: pre_memory, pointer: p, element_type: int32 }
 
 Inside a pure Click function or predicate, indexing an array-ref parameter:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 p[k]
 ```
@@ -123,6 +126,7 @@ load(p.memory, p.pointer + k * sizeof(p.element_type))
 
 So:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 permutation(p, old(p), 0, 2)
 ```
@@ -174,7 +178,7 @@ fragments, pure `if`, `let`, `.fold`, and explicit fixed-memory loads. This is
 why an invariant can unfold `permutation` and then evaluate the `.fold` inside
 stdlib `count` without pretending that the fold is executable C.
 
-## Source spelling today
+## Source spelling
 
 There is no public `ref<int32>` syntax yet. For now, parameters written as
 `int32 p[]`, `int32* p`, `uint8 p[]`, or `uint8* p` in pure Click `function`
@@ -182,6 +186,7 @@ and `predicate` definitions are treated as Click array-ref parameters.
 
 This is intentionally source-compatible with existing C-like signatures:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 { ... }
 

@@ -72,7 +72,7 @@ small but working path toward that goal.
 
 ## The main pieces
 
-You will see these terms throughout the book:
+You will see these terms throughout the documentation:
 
 - **C0 source**: the C-like implementation being verified.
 - **Click sidecar**: a `.click` file containing contracts and proofs for C0

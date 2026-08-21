@@ -19,6 +19,7 @@ Click also has two single-purpose proof sugars:
 Neither one executes C. For a whole-function proof, use `by auto;` or make the
 sequence explicit:
 
+<!-- verified-example: mdtests/pure_theorem.md -->
 ```click
 ensures result == x by {
     execute();
@@ -26,6 +27,7 @@ ensures result == x by {
 }
 ```
 
+<!-- verified-example: mdtests/pure_theorem.md -->
 ```click
 mutable p[0..n] by {
     execute();
@@ -42,6 +44,7 @@ Smart tactics may inspect context or search. The most common are bare
 Simple tactics perform one explicit rule. Paired operations use `using` to
 mark that boundary:
 
+<!-- verified-example: mdtests/pure_theorem.md -->
 ```click
 step() using {
     x < 2147483647;

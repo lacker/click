@@ -30,6 +30,7 @@ enclosing function region.
 For contracts with several claims, a trailing `by { ... }` block is one
 grouped execution proof of the function contract:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 int32 set_first(int32 p[], int32 value) {
     owns p[0..1];
@@ -66,6 +67,7 @@ contract certificate is packaged from that same finalized specification.
 
 Currently accepted tactics:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 by auto;
 by simp;
@@ -73,7 +75,7 @@ by frame;
 ```
 
 Omitting a proof clause uses `auto`. `by simp;` means the same operation as
-`by simp;`, and `by frame;` means the same operation as
+`by { simp(); }`, and `by frame;` means the same operation as
 `by { frame(); }`. All four forms act at the current proof frontier; neither
 `simp` nor `frame` implicitly executes C. See the
 [proof tactics reference](../reference/tactics/index.md).
@@ -100,6 +102,7 @@ The exhaustive simple/smart classification is in the
 
 Explicit proof scripts use function-call-shaped tactics:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 by {
     execute();
@@ -218,6 +221,7 @@ contract.
 
 When the execution frontier is a C `if`, use `branch`:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 branch {
     then {
@@ -242,6 +246,7 @@ function outcomes; later tactics do not execute in them.
 Add `ensuring` when branch-local execution should establish a common interface
 before the rest of the function proof:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 branch {
     ensuring {
@@ -281,6 +286,7 @@ concrete allocations.
 
 For example, pure case analysis needs no C execution:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 theorem int32_sign_split(x: int32) {
     ensures x <= 0 or x > 0 by {
@@ -329,6 +335,7 @@ contained views. Owned composite resources still require an explicit
 Existential tactics are deterministic replay steps, not search tactics. A
 typical existential-introduction proof names a witness:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 ensures found: (0..n).any(|k| { k == result }) by {
     execute();
@@ -343,6 +350,7 @@ current source forms are intentionally narrow: `requirement name` means a
 `requires` clause. The selected source must lower to an existential
 proposition, either directly or after an explicit `unfold(predicate);` step.
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 requires has_k: exists (k: int32) { k == x };
 ensures again: exists (j: int32) { j == x } by {
@@ -356,6 +364,7 @@ ensures again: exists (j: int32) { j == x } by {
 For a predicate requirement that hides an existential, unfold the predicate
 first:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 requires has_x: bytes_contains(p, 0, n, 'x');
 ensures again: bytes_contains(p, 0, n, 'x') by {
@@ -372,6 +381,7 @@ ensures again: bytes_contains(p, 0, n, 'x') by {
 Use `have` to prove an intermediate proposition at the current execution
 frontier. Loop proofs likewise operate where the frontier encounters a loop:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 by {
     step();
@@ -399,6 +409,7 @@ and adds the resulting fact to the following context.
 `statement(N)` selects the Nth source statement code region in structural
 order for execution targets and snapshots:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 execute_until(statement(4));
 have y >= 0 by {
@@ -421,6 +432,7 @@ are useful semantic language, but they are not currently Click syntax.
 
 Snapshot expressions use visit selectors:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 at(function.entry, x)
 at(loop_name.entry, x)
@@ -433,6 +445,7 @@ at(statement(0).entry, loadable(p[0..n]))
 When a proof needs to remember the state it has already reached, prefer a
 semantic proof-local name over repeating a numeric statement coordinate:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 mark before_write;
 step();
@@ -464,6 +477,7 @@ loop-level `initialize` proof establishes the complete invariant set before the
 first iteration. The `preserve` proof assumes that set and the loop condition,
 executes one body iteration, and reestablishes the set:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 loop {
     invariant 0 <= i and i <= n;
@@ -512,6 +526,7 @@ summary tactic and no detached traversal from function entry.
 
 Whole-loop effects:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 loop {
     mutable p[0..n] by frame;
@@ -520,6 +535,7 @@ loop {
 
 Step-relative effects:
 
+<!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click
 loop {
     step {

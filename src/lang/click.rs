@@ -231,6 +231,71 @@ pub const SURFACE_CLICK_WORDS: &[&str] = &[
     "write",
 ];
 
+/// Stable identifiers for the documented Surface Click declaration,
+/// contract, proposition, expression, and operator families. Individual word
+/// spellings are tracked separately in [`SURFACE_CLICK_WORDS`].
+pub const SURFACE_CLICK_FORMS: &[&str] = &[
+    "all",
+    "and",
+    "any",
+    "at",
+    "at-expression",
+    "auto",
+    "by",
+    "c-fragment",
+    "contains",
+    "contains-proposition",
+    "decreases",
+    "defined",
+    "effect",
+    "ensures",
+    "exists",
+    "fold",
+    "forall",
+    "function",
+    "if-expression",
+    "immutable",
+    "implies",
+    "let-where",
+    "loadable",
+    "modifies",
+    "mutable",
+    "not",
+    "old",
+    "operator-bit-and",
+    "operator-bit-not",
+    "operator-bit-or",
+    "operator-bit-xor",
+    "operator-divide",
+    "operator-eq",
+    "operator-field",
+    "operator-ge",
+    "operator-gt",
+    "operator-index",
+    "operator-le",
+    "operator-lt",
+    "operator-minus",
+    "operator-multiply",
+    "operator-ne",
+    "operator-plus",
+    "operator-range",
+    "operator-remainder",
+    "operator-shift-left",
+    "operator-shift-right",
+    "or",
+    "predicate",
+    "predicate-call",
+    "preserves",
+    "read",
+    "requires",
+    "resource",
+    "resource-clause",
+    "separate",
+    "theorem",
+    "verifying",
+    "write",
+];
+
 const CLICK_STANDARD_LIBRARY: &str = include_str!("../../stdlib/prelude.click");
 
 /// Emits one non-overlapping verifier phase on every exit path, including an
@@ -1841,6 +1906,214 @@ pub enum TacticClass {
     Smart(SmartTacticKind),
     ControlFlow(ControlFlowTactic),
 }
+
+/// One user-selectable proof-tactic form exposed by the Surface Click parser.
+/// Internal planner-only variants don't appear in this registry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicTacticForm {
+    pub id: &'static str,
+    pub syntax: &'static str,
+    pub class: &'static str,
+}
+
+/// Canonical public tactic forms used by the reference coverage test.
+pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
+    PublicTacticForm {
+        id: "mark",
+        syntax: "mark name;",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "step",
+        syntax: "step()",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "step-using",
+        syntax: "step() using",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "execute",
+        syntax: "execute()",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "execute-until",
+        syntax: "execute_until",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "frame",
+        syntax: "frame()",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "frame-using",
+        syntax: "frame() using",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "unfold-predicate",
+        syntax: "unfold(name)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "unfold-resource",
+        syntax: "unfold(name)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "fold-resource",
+        syntax: "fold(resource)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "induct",
+        syntax: "induct(n) as ih",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "apply-induction",
+        syntax: "apply(ih(m))",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "apply-theorem",
+        syntax: "apply(theorem(args))",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "apply-theorem-using",
+        syntax: "apply(theorem(args)) using",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "have",
+        syntax: "have P by",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "open",
+        syntax: "open(resource)",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "if",
+        syntax: "if P",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "cases",
+        syntax: "cases (A or B)",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "branch",
+        syntax: "branch",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "loop",
+        syntax: "loop",
+        class: "control",
+    },
+    PublicTacticForm {
+        id: "observe-resource",
+        syntax: "observe(resource)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "witness",
+        syntax: "witness(name = value)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "choose",
+        syntax: "choose(name from requirement(label))",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "assumption",
+        syntax: "assumption()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "extract",
+        syntax: "extract(P)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "normalize",
+        syntax: "normalize()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "intro",
+        syntax: "intro()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "split",
+        syntax: "split()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "left",
+        syntax: "left()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "right",
+        syntax: "right()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "enumerate",
+        syntax: "enumerate()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "contradiction",
+        syntax: "contradiction(P)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "close-invariants",
+        syntax: "close_invariants()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "rewrite",
+        syntax: "rewrite(P)",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "transport",
+        syntax: "transport(P, Q)",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "transport-using",
+        syntax: "transport(P, Q) using",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "instantiate-using",
+        syntax: "instantiate(F, value) using",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "simp",
+        syntax: "simp()",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "simp-using",
+        syntax: "simp() using",
+        class: "smart",
+    },
+];
 
 /// A structured proof containing only surface-expressible simple tactics.
 ///

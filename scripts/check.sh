@@ -18,6 +18,7 @@ cargo fmt --check
 # inventories in the same deterministic gate as the verifier.
 cargo test --test documentation
 scripts/mdbook-build.sh
+scripts/docs-lint.sh
 
 if command -v cargo-nextest >/dev/null 2>&1; then
     # Applies the per-test time budgets in `.config/nextest.toml`: prover

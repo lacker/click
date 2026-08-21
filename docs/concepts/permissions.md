@@ -7,6 +7,7 @@ permissions must not be copied freely.
 
 Click currently has two first-layer memory permissions:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 views p[0..1];
 consumes p[0..1];
@@ -70,6 +71,7 @@ that range. It is about permission.
 
 For an external read, `views` is normally enough:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 first(int32 p[]) {
     views p[0..1];
@@ -93,6 +95,7 @@ When the same loadability fact must appear as a proposition, use
 same cell occurs in the current execution, repeated reads of that cell are
 stable: they produce the same symbolic value.
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 peek(int32 p[]) {
     views p[0..1];
@@ -118,6 +121,7 @@ An owned memory resource permits both loads and stores and entails its viewed
 core. Stores update the symbolic memory state; later reads of the same cell see
 the written value unless a later write changes it again.
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 set_one(int32 p[]) {
     owns p[0..1] by auto;
@@ -135,6 +139,7 @@ Ordinary facts can be used repeatedly. An owned resource can be transferred.
 
 Function calls use the callee's verified contract as an opaque summary:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 helper(int32 p[]) {
     owns p[0..1] by auto;
@@ -200,12 +205,14 @@ ordering error.
 
 You can declare an exact-match abstract resource:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 abstract resource open_fd(fd: int32);
 ```
 
 Then a contract can require and return instances of that resource:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 borrow_fd(int32 fd) {
     owns open_fd(fd) by auto;
@@ -233,6 +240,7 @@ satisfy that requirement with one unit.
 Every declared resource can have several independently consumable units with
 the same arguments:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 abstract resource object_ref(object: struct object*);
 ```
@@ -261,6 +269,7 @@ Inside `count(...)`, `_` is a wildcard over one resource argument. For example,
 
 A function spec may exist only to consume a resource:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 abstract resource can_complete(cb: int32);
 
@@ -279,6 +288,7 @@ Declarations with a body define composite resources. The body is a one-layer
 definition: it names contained resource facts and pure facts that justify the
 abstract resource fact.
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource nonnegative_fd(fd: int32) {
     fact fd >= 0;
@@ -293,6 +303,7 @@ A function that holds `live_fd(fd)` owns the folded abstract resource. It does
 not automatically get every nested fact. `observe(resource)` takes one
 non-consuming view step:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 return_fd(int32 fd) {
     owns live_fd(fd) by auto;
@@ -327,6 +338,7 @@ so the traversal may consume and deallocate nodes after descending.
 When code needs the contained owned resources, use `unfold(resource)`. When
 the proof has rebuilt the body, use `fold(resource)`:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource uncalled(flag: int32*) {
     owns flag[0..1];
@@ -367,6 +379,7 @@ invoke `simp`. The end of the `by { ... }` block checks the overall claim.
 `fold` also builds a composite resource from lower-level resources at a
 function boundary:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 init_once(int32 flag[]) {
     consumes flag[0..1];
@@ -394,6 +407,7 @@ instead of relying on `auto` to search through every possible nested body.
 
 A composite resource may put its entire body under one load-free `if`:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource list(node: struct node*) {
     if node != 0 {
@@ -424,6 +438,7 @@ If a fact reads mutable memory, the composite body must contain write
 permission covering that memory. This is what makes the fact stable while
 the resource is folded:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource uncalled(flag: int32*) {
     owns flag[0..1];
@@ -433,6 +448,7 @@ resource uncalled(flag: int32*) {
 
 The coverage check can use scalar facts from the fact itself:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 resource indexed_zero(p: int32*, k: int32, n: int32) {
     owns p[0..n];
@@ -504,6 +520,7 @@ See `examples/ring-buffer/` for encapsulated storage and
 
 A caller can pass a subrange of a larger owned memory resource:
 
+<!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
 int32 helper(int32 p[]) {
     owns p[0..1] by auto;
@@ -530,9 +547,9 @@ For `int32 p[]`, `p[1..2]` covers one four-byte `int32` cell.
 For `uint8 p[]`, `p[1..2]` covers one byte. Permission for `p[0..1]` does not
 cover `p[1]`.
 
-## What exists today
+## Supported permission behavior
 
-Implemented today:
+Click implements:
 
 - mandatory permission checks for external loads and stores,
 - viewed and owned elements over memory ranges,

@@ -17,6 +17,7 @@ invariant even though it has no exit state.
 When termination itself matters, the loop tactic may additionally declare a
 single-variable ranking proof:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 loop {
     decreases remaining;
@@ -31,7 +32,7 @@ separate termination evidence; it does not change what an invariant or a
 postcondition means. Loops without `decreases` remain valid partial-correctness
 proofs.
 
-The [`perpetual-service`](../../examples/perpetual-service/README.md) example
+The [`perpetual-service`](https://github.com/lacker/click/tree/master/examples/perpetual-service) example
 combines this partial-correctness boundary with an opaque verified call and a
 composite resource transferred through every iteration.
 
@@ -48,6 +49,7 @@ iteration.
 
 A labeled loop can also expose its entry visit to the invariant:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 loop as drain {
     invariant at(drain.entry, n) >= 0;
@@ -58,6 +60,7 @@ This means the value of `n` at the visit just before the loop region starts.
 
 For a simple counter loop:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```c
 int32 count_to(int32 n) {
     int32 i = 0;
@@ -71,6 +74,7 @@ int32 count_to(int32 n) {
 the proof first advances through the statements before the loop, then declares
 the bounds on `i` at the frontier:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 by {
     step();
@@ -85,6 +89,7 @@ by {
 
 The full induction syntax names its two obligations explicitly:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 loop {
     invariant i >= 0;
@@ -126,6 +131,7 @@ one.
 
 Pointer-writing loops often need both arithmetic invariants and memory facts:
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 loop {
     invariant i >= 0;
@@ -156,6 +162,7 @@ accepted only inside `preserve by { ... }` — elsewhere it fails with
 `` `close_invariants` is only available in a loop-region proof `` — and at most
 once on a path.
 
+<!-- verified-example: mdtests/count_to_n_loop_invariant.md -->
 ```click
 preserve by {
     step();
@@ -178,5 +185,5 @@ be derived automatically. Explicit phase and effect tactics keep their own
 source locations for profiling and expansion. Omitted phase and effect
 automation is attributed to the `loop` keyword.
 
-Most beginner code avoids these details. Intermediate Click needs them whenever
+Most simple proofs avoid these details. Larger proofs need them whenever
 the loop summary is the central part of the proof.

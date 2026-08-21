@@ -31,7 +31,13 @@ times out, emits an unreplayable certificate, or requires unnatural proof
 bookkeeping, follow the tooling-stability policy in `AGENTS.md`.
 
 Normative examples must be backed by an mdtest, an example project, or a checked
-source include. Use a negative fixture for a normative failure diagnostic.
+source include. Immediately precede each normative `click` or `c` fence with a
+`verified-example` comment naming that fixture. The standard-library reference
+is the one exception: its exact declaration blocks are synchronized directly
+with `stdlib/prelude.click`, and every symbol has a checked use in the library
+mdtest. The tactic fixture catalog maps every selectable tactic form to the
+source text that exercises it. Use a negative fixture for a normative failure
+diagnostic.
 
 ## Voice and structure
 
@@ -42,10 +48,18 @@ source include. Use a negative fixture for a normative failure diagnostic.
 - Use one H1 per page and do not skip heading levels.
 - Keep a page focused on one lookup family, mental model, or subsystem.
 - Use descriptive link text instead of "here" or a bare URL.
+- Use relative `.md` links within `docs/`. Use an absolute repository URL when
+  a source link intentionally leaves the published documentation tree.
 - Put filenames, commands, syntax, symbols, and code terms in code font.
 - Tag every fenced code block with its language or with `text`.
+- Put copyable commands in `console` fences. Put noncopyable command syntax in
+  `text` fences, and describe it as a synopsis or usage form.
+- Introduce command output before its fence and label abbreviated output with
+  an ellipsis or an explicit note.
 - Use uppercase descriptive placeholders such as `PATH` and `CLAIM` in command
   syntax; explain placeholders in appearance order.
+- Use notes sparingly. Begin a freestanding note with `> **Note:**` and keep
+  warnings focused on an action and its consequence.
 - Label unsupported, experimental, compatibility-only, deprecated, and
   internal behavior explicitly. Parser acceptance alone is not a stability
   promise.

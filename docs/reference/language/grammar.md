@@ -147,6 +147,7 @@ statements, and operators that Click accepts is in [Supported C0](c0.md).
 `lo..hi` denotes the half-open integer range whose elements satisfy `lo <= k <
 hi`. A range can introduce a binder through `.all`, `.any`, or `.fold`:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 (lo..hi).all(|k| { p[k] == 0 })
 (lo..hi).any(|k| { p[k] == needle })
@@ -155,6 +156,7 @@ hi`. A range can introduce a binder through `.all`, `.any`, or `.fold`:
 
 Quantifiers use an explicitly typed binder:
 
+<!-- verified-example: mdtests/click_proposition_logic.md -->
 ```click
 forall (x: int32) { x == x }
 exists (x: int32) { x == value }

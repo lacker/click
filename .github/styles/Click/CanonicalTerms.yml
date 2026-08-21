@@ -1,0 +1,11 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: false
+swap:
+  surface Click: Surface Click
+  kernel Click: Kernel Click
+  mdTest: mdtest
+  MDTest: mdtest
+  side-car: sidecar
+  proof-object: proof object

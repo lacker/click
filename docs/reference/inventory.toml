@@ -1096,6 +1096,124 @@ id = "tactic.vacuous"
 path = "reference/tactics/index.md#compatibility"
 
 [[item]]
+id = "tactic-form.mark"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.step"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.step-using"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.execute"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.execute-until"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.frame"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.frame-using"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.unfold-predicate"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.unfold-resource"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.fold-resource"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.induct"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.apply-induction"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.apply-theorem"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.apply-theorem-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.have"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.open"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.if"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.cases"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.branch"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.loop"
+path = "reference/tactics/index.md#execution"
+[[item]]
+id = "tactic-form.observe-resource"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.witness"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.choose"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.assumption"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.extract"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.normalize"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.intro"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.split"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.left"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.right"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.enumerate"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.contradiction"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.close-invariants"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.rewrite"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.transport"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.transport-using"
+path = "reference/tactics/index.md#effects-resources-and-snapshots"
+[[item]]
+id = "tactic-form.instantiate-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.simp"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.simp-using"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
 id = "cli.verify.command"
 path = "reference/cli/verify.md#click-verify-command"
 
@@ -1262,6 +1380,246 @@ path = "reference/cli/audit.md#options-and-defaults"
 [[item]]
 id = "cli.audit.--"
 path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.env.CLICK_TIMINGS"
+path = "reference/cli/environment.md#click_timings"
+
+[[item]]
+id = "cli.env.CLICK_TIMING_STARTS"
+path = "reference/cli/environment.md#click_timing_starts"
+
+[[item]]
+id = "cli.env.CLICK_FULL_DIAGNOSTICS"
+path = "reference/cli/environment.md#click_full_diagnostics"
+
+[[item]]
+id = "cli.env.MDTEST_FILTER"
+path = "reference/cli/environment.md#mdtest_filter"
+
+[[item]]
+id = "cli.env.CLICK_EXAMPLE"
+path = "reference/cli/environment.md#click_example"
+
+[[item]]
+id = "cli.env.CLICK_RUN_QUARANTINED"
+path = "reference/cli/environment.md#click_run_quarantined"
+
+[[item]]
+id = "cli.env.CLICK_DISABLE_TACTIC_BUDGETS"
+path = "reference/cli/environment.md#click_disable_tactic_budgets"
+
+[[item]]
+id = "cli.env.CLICK_DISABLE_DECIDE_MEMO"
+path = "reference/cli/environment.md#click_disable_decide_memo"
+
+[[item]]
+id = "cli.env.CLICK_DISABLE_CERT_ARMS"
+path = "reference/cli/environment.md#click_disable_cert_arms"
+
+[[item]]
+id = "cli.env.CLICK_DISABLE_MEMORY_DAG"
+path = "reference/cli/environment.md#click_disable_memory_dag"
+
+[[item]]
+id = "cli.env.CLICK_DISABLE_CLOSER_REUSE"
+path = "reference/cli/environment.md#click_disable_closer_reuse"
+
+[[item]]
+id = "cli.behavior.shared.duration-syntax"
+path = "reference/cli/index.md#duration-syntax"
+
+[[item]]
+id = "cli.behavior.shared.exit-status"
+path = "reference/cli/index.md#command-line-interface"
+
+[[item]]
+id = "cli.behavior.verify.target.sidecar"
+path = "reference/cli/verify.md#target-selection"
+
+[[item]]
+id = "cli.behavior.verify.target.location"
+path = "reference/cli/verify.md#target-selection"
+
+[[item]]
+id = "cli.behavior.verify.target.project"
+path = "reference/cli/verify.md#target-selection"
+
+[[item]]
+id = "cli.behavior.verify.target.collection"
+path = "reference/cli/verify.md#target-selection"
+
+[[item]]
+id = "cli.behavior.verify.selection.incremental"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.behavior.verify.default.time-limit"
+path = "reference/cli/verify.md#options"
+
+[[item]]
+id = "cli.behavior.verify.output"
+path = "reference/cli/verify.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.profile.target.sidecar"
+path = "reference/cli/profile.md#target-selection"
+
+[[item]]
+id = "cli.behavior.profile.target.project"
+path = "reference/cli/profile.md#target-selection"
+
+[[item]]
+id = "cli.behavior.profile.target.collection"
+path = "reference/cli/profile.md#target-selection"
+
+[[item]]
+id = "cli.behavior.profile.target.mdtest"
+path = "reference/cli/profile.md#target-selection"
+
+[[item]]
+id = "cli.behavior.profile.target.mdtests-directory"
+path = "reference/cli/profile.md#target-selection"
+
+[[item]]
+id = "cli.behavior.profile.default.smart-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.profile.default.simple-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.profile.default.control-threshold"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.profile.default.time-limit"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.profile.default.top"
+path = "reference/cli/profile.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.profile.output.report"
+path = "reference/cli/profile.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.profile.output.partial"
+path = "reference/cli/profile.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.expand.target.sidecar"
+path = "reference/cli/expand.md#selection"
+
+[[item]]
+id = "cli.behavior.expand.target.mdtest"
+path = "reference/cli/expand.md#selection"
+
+[[item]]
+id = "cli.behavior.expand.selection.location"
+path = "reference/cli/expand.md#selection"
+
+[[item]]
+id = "cli.behavior.expand.selection.claim"
+path = "reference/cli/expand.md#selection"
+
+[[item]]
+id = "cli.behavior.expand.default.time-limit"
+path = "reference/cli/expand.md#options"
+
+[[item]]
+id = "cli.behavior.expand.output.stdout"
+path = "reference/cli/expand.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.expand.output.path"
+path = "reference/cli/expand.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.expand.output.in-place"
+path = "reference/cli/expand.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.expand.exit.atomic-failure"
+path = "reference/cli/expand.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.audit.target.sidecar"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.target.project"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.target.collection"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.target.mdtest"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.target.mdtests-directory"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.target.repository"
+path = "reference/cli/audit.md#target-selection"
+
+[[item]]
+id = "cli.behavior.audit.selection.claim"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.selection.changed-since"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.selection.start-at"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.default.session-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.default.expansion-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.default.verification-time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.default.performance-slack"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.default.time-limit"
+path = "reference/cli/audit.md#options-and-defaults"
+
+[[item]]
+id = "cli.behavior.audit.output.progress"
+path = "reference/cli/audit.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.audit.output.resume"
+path = "reference/cli/audit.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.audit.output.summary"
+path = "reference/cli/audit.md#output-and-exit-behavior"
+
+[[item]]
+id = "cli.behavior.audit.check.fixed-point"
+path = "reference/cli/audit.md#checks"
+
+[[item]]
+id = "cli.behavior.audit.check.performance"
+path = "reference/cli/audit.md#checks"
 
 [[item]]
 id = "stdlib.theorem.int32_increment_upper_bound"
@@ -1461,240 +1819,240 @@ path = "reference/library/index.md#cstr_len_has_terminator"
 
 [[item]]
 id = "glossary.alias"
-path = "reference/glossary.md#a"
+path = "reference/glossary.md#alias"
 
 [[item]]
 id = "glossary.assumption"
-path = "reference/glossary.md#a"
+path = "reference/glossary.md#assumption"
 
 [[item]]
 id = "glossary.audit"
-path = "reference/glossary.md#a"
+path = "reference/glossary.md#audit"
 
 [[item]]
 id = "glossary.binder"
-path = "reference/glossary.md#b"
+path = "reference/glossary.md#binder"
 
 [[item]]
 id = "glossary.bounded-search"
-path = "reference/glossary.md#b"
+path = "reference/glossary.md#bounded-search"
 
 [[item]]
 id = "glossary.branch"
-path = "reference/glossary.md#b"
+path = "reference/glossary.md#branch"
 
 [[item]]
 id = "glossary.c-fragment"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#c-fragment"
 
 [[item]]
 id = "glossary.c0"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#c0"
 
 [[item]]
 id = "glossary.certificate"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#certificate"
 
 [[item]]
 id = "glossary.completeness"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#completeness"
 
 [[item]]
 id = "glossary.contract"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#contract"
 
 [[item]]
 id = "glossary.control-flow-tactic"
-path = "reference/glossary.md#c"
+path = "reference/glossary.md#control-flow-tactic"
 
 [[item]]
 id = "glossary.definedness"
-path = "reference/glossary.md#d"
+path = "reference/glossary.md#definedness"
 
 [[item]]
 id = "glossary.effect"
-path = "reference/glossary.md#e"
+path = "reference/glossary.md#effect"
 
 [[item]]
 id = "glossary.elaboration"
-path = "reference/glossary.md#e"
+path = "reference/glossary.md#elaboration"
 
 [[item]]
 id = "glossary.execution-path"
-path = "reference/glossary.md#e"
+path = "reference/glossary.md#execution-path"
 
 [[item]]
 id = "glossary.expansion"
-path = "reference/glossary.md#e"
+path = "reference/glossary.md#expansion"
 
 [[item]]
 id = "glossary.fact"
-path = "reference/glossary.md#f"
+path = "reference/glossary.md#fact"
 
 [[item]]
 id = "glossary.frame"
-path = "reference/glossary.md#f"
+path = "reference/glossary.md#frame"
 
 [[item]]
 id = "glossary.frontier"
-path = "reference/glossary.md#f"
+path = "reference/glossary.md#frontier"
 
 [[item]]
 id = "glossary.goal"
-path = "reference/glossary.md#g"
+path = "reference/glossary.md#goal"
 
 [[item]]
 id = "glossary.induction"
-path = "reference/glossary.md#i"
+path = "reference/glossary.md#induction"
 
 [[item]]
 id = "glossary.instantiation"
-path = "reference/glossary.md#i"
+path = "reference/glossary.md#instantiation"
 
 [[item]]
 id = "glossary.invariant"
-path = "reference/glossary.md#i"
+path = "reference/glossary.md#invariant"
 
 [[item]]
 id = "glossary.join"
-path = "reference/glossary.md#j"
+path = "reference/glossary.md#join"
 
 [[item]]
 id = "glossary.kernel"
-path = "reference/glossary.md#k"
+path = "reference/glossary.md#kernel"
 
 [[item]]
 id = "glossary.kernel-click"
-path = "reference/glossary.md#k"
+path = "reference/glossary.md#kernel-click"
 
 [[item]]
 id = "glossary.loadability"
-path = "reference/glossary.md#l"
+path = "reference/glossary.md#loadability"
 
 [[item]]
 id = "glossary.lowering"
-path = "reference/glossary.md#l"
+path = "reference/glossary.md#lowering"
 
 [[item]]
 id = "glossary.mdtest"
-path = "reference/glossary.md#m"
+path = "reference/glossary.md#mdtest"
 
 [[item]]
 id = "glossary.old"
-path = "reference/glossary.md#o"
+path = "reference/glossary.md#old"
 
 [[item]]
 id = "glossary.ownership"
-path = "reference/glossary.md#o"
+path = "reference/glossary.md#ownership"
 
 [[item]]
 id = "glossary.permission"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#permission"
 
 [[item]]
 id = "glossary.postcondition"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#postcondition"
 
 [[item]]
 id = "glossary.precondition"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#precondition"
 
 [[item]]
 id = "glossary.premise"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#premise"
 
 [[item]]
 id = "glossary.profiling"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#profiling"
 
 [[item]]
 id = "glossary.proof"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proof"
 
 [[item]]
 id = "glossary.proof-mark"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proof-mark"
 
 [[item]]
 id = "glossary.proof-object"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proof-object"
 
 [[item]]
 id = "glossary.proof-state"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proof-state"
 
 [[item]]
 id = "glossary.proof-unit"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proof-unit"
 
 [[item]]
 id = "glossary.proposition"
-path = "reference/glossary.md#p"
+path = "reference/glossary.md#proposition"
 
 [[item]]
 id = "glossary.quantifier"
-path = "reference/glossary.md#q"
+path = "reference/glossary.md#quantifier"
 
 [[item]]
 id = "glossary.replay"
-path = "reference/glossary.md#r"
+path = "reference/glossary.md#replay"
 
 [[item]]
 id = "glossary.resource"
-path = "reference/glossary.md#r"
+path = "reference/glossary.md#resource"
 
 [[item]]
 id = "glossary.sidecar"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#sidecar"
 
 [[item]]
 id = "glossary.simple-tactic"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#simple-tactic"
 
 [[item]]
 id = "glossary.smart-tactic"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#smart-tactic"
 
 [[item]]
 id = "glossary.snapshot"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#snapshot"
 
 [[item]]
 id = "glossary.soundness"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#soundness"
 
 [[item]]
 id = "glossary.surface-click"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#surface-click"
 
 [[item]]
 id = "glossary.symbolic-execution"
-path = "reference/glossary.md#s"
+path = "reference/glossary.md#symbolic-execution"
 
 [[item]]
 id = "glossary.tactic"
-path = "reference/glossary.md#t"
+path = "reference/glossary.md#tactic"
 
 [[item]]
 id = "glossary.theorem"
-path = "reference/glossary.md#t"
+path = "reference/glossary.md#theorem"
 
 [[item]]
 id = "glossary.trusted-computing-base"
-path = "reference/glossary.md#t"
+path = "reference/glossary.md#trusted-computing-base"
 
 [[item]]
 id = "glossary.undefined-behavior"
-path = "reference/glossary.md#u"
+path = "reference/glossary.md#undefined-behavior"
 
 [[item]]
 id = "glossary.view"
-path = "reference/glossary.md#v"
+path = "reference/glossary.md#view"
 
 [[item]]
 id = "glossary.witness"
-path = "reference/glossary.md#w"
+path = "reference/glossary.md#witness"
 
 [[item]]
 id = "glossary.at"
-path = "reference/glossary.md#special-forms"
+path = "reference/glossary.md#at"

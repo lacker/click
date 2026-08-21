@@ -30,6 +30,7 @@ int32 example(int32* p) {
 }
 ```text
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "example.c";
 
@@ -54,12 +55,14 @@ so keep examples deterministic and reasonably small.
 
 ## Minimal proof example
 
+<!-- verified-example: mdtests/scalar.md -->
 ```c
 int32 increment(int32 x) {
     return x + 1;
 }
 ```
 
+<!-- verified-example: mdtests/scalar.md -->
 ```click
 verifying "increment.c";
 

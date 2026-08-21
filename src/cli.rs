@@ -13,6 +13,77 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
+/// Environment variables that are part of Click's documented command and
+/// repository-tooling surface. Debug-only probes are intentionally excluded.
+pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
+    "CLICK_TIMINGS",
+    "CLICK_TIMING_STARTS",
+    "CLICK_FULL_DIAGNOSTICS",
+    "MDTEST_FILTER",
+    "CLICK_EXAMPLE",
+    "CLICK_RUN_QUARANTINED",
+    "CLICK_DISABLE_TACTIC_BUDGETS",
+    "CLICK_DISABLE_DECIDE_MEMO",
+    "CLICK_DISABLE_CERT_ARMS",
+    "CLICK_DISABLE_MEMORY_DAG",
+    "CLICK_DISABLE_CLOSER_REUSE",
+];
+
+/// Stable identifiers for documented command targets, selection rules,
+/// defaults, output modes, and exit boundaries. Option spellings and
+/// environment variables have separate registries.
+pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
+    "shared.duration-syntax",
+    "shared.exit-status",
+    "verify.target.sidecar",
+    "verify.target.location",
+    "verify.target.project",
+    "verify.target.collection",
+    "verify.selection.incremental",
+    "verify.default.time-limit",
+    "verify.output",
+    "profile.target.sidecar",
+    "profile.target.project",
+    "profile.target.collection",
+    "profile.target.mdtest",
+    "profile.target.mdtests-directory",
+    "profile.default.smart-threshold",
+    "profile.default.simple-threshold",
+    "profile.default.control-threshold",
+    "profile.default.time-limit",
+    "profile.default.top",
+    "profile.output.report",
+    "profile.output.partial",
+    "expand.target.sidecar",
+    "expand.target.mdtest",
+    "expand.selection.location",
+    "expand.selection.claim",
+    "expand.default.time-limit",
+    "expand.output.stdout",
+    "expand.output.path",
+    "expand.output.in-place",
+    "expand.exit.atomic-failure",
+    "audit.target.sidecar",
+    "audit.target.project",
+    "audit.target.collection",
+    "audit.target.mdtest",
+    "audit.target.mdtests-directory",
+    "audit.target.repository",
+    "audit.selection.claim",
+    "audit.selection.changed-since",
+    "audit.selection.start-at",
+    "audit.default.session-time-limit",
+    "audit.default.expansion-time-limit",
+    "audit.default.verification-time-limit",
+    "audit.default.performance-slack",
+    "audit.default.time-limit",
+    "audit.output.progress",
+    "audit.output.resume",
+    "audit.output.summary",
+    "audit.check.fixed-point",
+    "audit.check.performance",
+];
+
 use crate::instrumentation::{TacticEvent, VerificationEvent};
 use crate::lang::click::verifying_source_paths;
 

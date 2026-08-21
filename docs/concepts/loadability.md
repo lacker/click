@@ -6,6 +6,7 @@ also needs permission to access the range; see [Permissions](permissions.md).
 
 For an array parameter:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```c
 int32 first(int32 p[]) {
     return p[0];
@@ -14,6 +15,7 @@ int32 first(int32 p[]) {
 
 the contract needs:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 int32 first(int32 p[]) {
     views p[0..1];
@@ -30,6 +32,7 @@ access resource provides.
 It is useful inside predicate-like positions, especially composite resource
 `fact` clauses:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 fact loadable(data[0..cap]);
 ```
@@ -38,6 +41,7 @@ fact loadable(data[0..cap]);
 
 `loadable` uses half-open ranges:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 requires loadable(p[0..n]);
 ```
@@ -47,6 +51,7 @@ four-byte access. For `uint8 p[]`, each element is a one-byte access.
 
 You can also write shifted ranges:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 requires loadable((p + 1)[0..n - 1]);
 ```
@@ -56,6 +61,7 @@ requires loadable((p + 1)[0..n - 1]);
 A loadable range is not enough by itself if the index is symbolic. Click also needs
 to know the index is inside the range:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 requires 0 <= k;
 requires k < n;
@@ -70,6 +76,7 @@ Loops usually need invariants to preserve these bounds at every iteration.
 
 `old(...)` reads from the function-entry state:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 ensures p[0] == old(p[0]) by auto;
 ```
@@ -82,6 +89,7 @@ loadability and permission requirements still matter.
 
 For struct fields, prefer field resources:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 views obj->ref_count;
 consumes obj->data;
@@ -90,6 +98,7 @@ consumes obj->data;
 Those resources imply loadability for the covered fields. Explicit ranges remain
 useful when a proof needs a broader footprint than one field:
 
+<!-- verified-example: mdtests/pointer_range.md -->
 ```click
 consumes obj[0..3];
 ```

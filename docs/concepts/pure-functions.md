@@ -4,6 +4,7 @@ Pure Click functions compute specification values. They do not run as C code.
 
 For example, the standard library defines `count`:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function count(p: int32[], lo: int32, hi: int32, x: int32) -> int32 {
     (lo..hi).fold(0, |acc, k| {
@@ -16,6 +17,7 @@ This function counts occurrences in a range of an array-ref parameter.
 
 Pure Click functions can use immutable `let` bindings:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function inc_with_let(x: int32) -> int32 {
     let next: int32 = x + 1;
@@ -25,6 +27,7 @@ function inc_with_let(x: int32) -> int32 {
 
 The annotation is optional when the value's type is already clear:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 let next = x + 1;
 ```
@@ -33,12 +36,14 @@ let next = x + 1;
 
 A pure Click function returns a value:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function count(...) -> int32 { ... }
 ```
 
 A predicate returns a proposition:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 predicate permutation(a: int32[], b: int32[], lo: int32, hi: int32) {
     forall (x: int32) {
@@ -60,6 +65,7 @@ specification-level array ref. It contains:
 
 That is why this postcondition works:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 ensures permutation(p, old(p), 0, n) by auto;
 ```
@@ -71,6 +77,7 @@ at the same pointer.
 
 Range folds express computations over ranges:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 (lo..hi).fold(init, |acc, k| {
     ...
@@ -85,6 +92,7 @@ engine for arbitrary folds.
 
 A pure function may recurse when it declares an integer measure:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 function countdown(n: int32) -> int32
     decreases n
@@ -119,6 +127,7 @@ an arbitrary depth budget.
 not prove every property of that value. Use explicit strong induction in a
 pure theorem when the proof needs the result at a smaller argument:
 
+<!-- verified-example: mdtests/pure_click_functions.md -->
 ```click
 theorem countdown_is_zero(n: int32) {
     requires n >= 0;
