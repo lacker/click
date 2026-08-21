@@ -18,7 +18,12 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 5
+## Other open issues: 6
+
+- [Two sorts of canonicalization](two-sorts-of-canonicalization.md):
+  memory-provenance normalization and proof-context equality normalization
+  can produce competing forms, leaving consumers to compose them in an
+  order-dependent way instead of receiving one producer-side normal form.
 
 - [Canonical pointer offsets need a production invariant](canonical-pointer-offset-invariant.md):
   loaded pointer values are canonicalized today, but no regression walks
