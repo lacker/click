@@ -1,4 +1,4 @@
-# Memory Loadability
+# Memory loadability
 
 Pointer proofs start with loadability. Before Click can prove what a memory access
 returns, it must know that the access is in bounds. For external memory, Click
@@ -51,7 +51,7 @@ You can also write shifted ranges:
 requires loadable((p + 1)[0..n - 1]);
 ```
 
-## Index Bounds
+## Index bounds
 
 A loadable range is not enough by itself if the index is symbolic. Click also needs
 to know the index is inside the range:
@@ -66,7 +66,7 @@ ensures result == p[k] by auto;
 
 Loops usually need invariants to preserve these bounds at every iteration.
 
-## Old Memory
+## Old memory
 
 `old(...)` reads from the function-entry state:
 
@@ -78,7 +78,7 @@ This is how postconditions talk about preservation or change. The expression
 inside `old(...)` still needs to be meaningful in the entry state, so memory
 loadability and permission requirements still matter.
 
-## Field Resources
+## Field resources
 
 For struct fields, prefer field resources:
 

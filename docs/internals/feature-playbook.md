@@ -1,8 +1,8 @@
-# Feature Playbook
+# Feature playbook
 
 Use this workflow when extending Click.
 
-## Default Process
+## Default process
 
 1. Freeze the C behavior that motivated the work. If it came from an existing
    project or example, keep that source unchanged as the integration
@@ -30,7 +30,7 @@ program's desired behavior, fixes actual C undefined behavior, or performs a
 documented semantics-preserving C0 desugaring. State which exception applies in
 the change description. Otherwise, preserve the C and fix the proof boundary.
 
-## Where A Feature Belongs
+## Where A feature belongs
 
 Prefer this order:
 
@@ -44,7 +44,7 @@ Do not put every useful standard function into the kernel. Kernel support should
 be for general reasoning, not names like `permutation` unless there is no better
 abstraction.
 
-## Adding Click Syntax
+## Adding Click syntax
 
 Checklist:
 
@@ -67,7 +67,7 @@ Search for all matches on:
 rg -n "ClickProposition|ContractExpression" src/lang/click.rs
 ```
 
-## Adding C0 Syntax
+## Adding C0 syntax
 
 Checklist:
 
@@ -78,7 +78,7 @@ Checklist:
 - Add C parser unit tests and mdtests.
 - Update [c0-subset.md](../reference/language/c0.md).
 
-## Adding Proof Power
+## Adding proof power
 
 Prefer deterministic, narrow rules. Good examples:
 
@@ -90,7 +90,7 @@ Prefer deterministic, narrow rules. Good examples:
 Avoid broad heuristic search unless it lives behind `auto` and successful cases
 can still produce replayable tactic certificates when possible.
 
-## Adding Standard Library Definitions
+## Adding standard library definitions
 
 Checklist:
 

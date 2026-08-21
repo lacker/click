@@ -1,4 +1,4 @@
-# Verification Efficiency
+# Verification efficiency
 
 Click is intended to verify existing programs at codebase scale. Fast examples
 are not enough: deterministic verification of an explicitly certificated

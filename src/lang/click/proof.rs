@@ -1338,7 +1338,6 @@ mod certificate_tests {
                     requires x >= 0;
                     ensures x >= 0 by {
                         apply(required(x)) using { x >= 0; }
-                        assumption();
                     }
                 }
 
@@ -1400,10 +1399,7 @@ mod certificate_tests {
         );
         assert!(matches!(
             verified[2].proof_tactics().as_deref(),
-            Some([
-                ProofTactic::ApplyTheoremUsing { .. },
-                ProofTactic::Assumption
-            ])
+            Some([ProofTactic::ApplyTheoremUsing { .. }])
         ));
         assert!(matches!(
             verified[3].proof_tactics().as_deref(),

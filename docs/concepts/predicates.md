@@ -20,7 +20,7 @@ ensures sorted_pair(p) by {
 }
 ```
 
-## Predicates Are Opaque
+## Predicates are opaque
 
 Predicate calls are not unfolded automatically. Click can reuse an exact
 predicate fact, but it does not normally look inside a predicate unless the
@@ -33,7 +33,7 @@ unfold(sorted_pair);
 This opacity is useful. It lets predicates act as stable abstraction boundaries
 instead of being expanded everywhere.
 
-## Predicates In Requirements
+## Predicates in requirements
 
 Predicates can package preconditions:
 
@@ -52,7 +52,7 @@ int32 find_zero(int32 p[], int32 n) {
 If a proof needs the body of `has_zero`, unfold it and then use the resulting
 facts. Existential bodies may need `choose`.
 
-## When To Define A Predicate
+## When to define A predicate
 
 Use a predicate when:
 

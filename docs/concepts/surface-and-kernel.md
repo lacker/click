@@ -1,9 +1,9 @@
-# Click Core Model
+# Click core model
 
 This page explains how Surface Click, C fragments, and Kernel Click meet. It
 is the mental model agents should use when changing lowering code.
 
-## Three Layers
+## Three layers
 
 Click has three layers:
 
@@ -26,7 +26,7 @@ the kernel data model directly. Consequently, output from expansion and
 diagnostics is part of the public Surface Click language and must parse again
 with the ordinary parser.
 
-## Surface Versus Core
+## Surface versus core
 
 Surface Click is context-sensitive. A term such as `p[k]` or `old(p)` is not
 itself the final proof object; it still depends on where the term appears.
@@ -58,7 +58,7 @@ function-entry memory and whose ordinary variables are rebound to entry values.
 This is what lets `old(count(p, 0, n, x))` lower through the ordinary stdlib
 `count` definition and keep its `.fold` as Kernel Click.
 
-## C Pointers Versus Click Array Refs
+## C pointers versus Click array refs
 
 A C pointer says where:
 
@@ -80,7 +80,7 @@ the memory snapshot they were built from.
 The `element_type` is currently `int32` or `uint8`. It decides both pointer
 scaling and the type of value produced by indexing the array ref.
 
-## Surface Elaboration
+## Surface elaboration
 
 In a postcondition, a bare array parameter used as an array argument means the
 post-state array:
@@ -141,7 +141,7 @@ permutation(
 This is why `permutation` can live in `stdlib/prelude.click`: it is an ordinary
 Click predicate over pure array refs, not a kernel-level permutation concept.
 
-## Loop Invariants
+## Loop invariants
 
 Loop invariants use the same surface-to-core idea, but they are state-parametric.
 The lowered invariant is evaluated at:
@@ -174,7 +174,7 @@ fragments, pure `if`, `let`, `.fold`, and explicit fixed-memory loads. This is
 why an invariant can unfold `permutation` and then evaluate the `.fold` inside
 stdlib `count` without pretending that the fold is executable C.
 
-## Source Spelling Today
+## Source spelling today
 
 There is no public `ref<int32>` syntax yet. For now, parameters written as
 `int32 p[]`, `int32* p`, `uint8 p[]`, or `uint8* p` in pure Click `function`
@@ -203,7 +203,7 @@ In C function signatures, the same spelling still means an ordinary C pointer.
 The array-ref interpretation only applies while lowering pure Click functions
 and predicates.
 
-## Implementation Notes
+## Implementation notes
 
 In `src/lang/click.rs`, `ClickArrayRef` is private lowering state. Opaque
 kernel predicate arguments encode an array ref as two terms:

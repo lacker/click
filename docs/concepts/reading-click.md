@@ -1,8 +1,8 @@
-# Reading A Basic Click File
+# Reading A basic Click file
 
 When you open a `.click` file, read it in this order.
 
-## 1. Source Files
+## 1. source files
 
 Start at the top:
 
@@ -12,7 +12,7 @@ verifying "file.c";
 
 This tells you which C source the sidecar is proving.
 
-## 2. Function Signature
+## 2. function signature
 
 Find the function block:
 
@@ -25,7 +25,7 @@ int32 max(int32 a, int32 b) {
 The signature should match the C function. At this point, ignore the contract
 body and read the C code if you do not know what the implementation does.
 
-## 3. Requirements
+## 3. requirements
 
 Read every `requires` clause:
 
@@ -37,7 +37,7 @@ requires loadable(p[0..n]);
 These are the assumptions for the proof. If the contract seems too strong, the
 requirements are the first place to look.
 
-## 4. Guarantees
+## 4. guarantees
 
 Read each `ensures` clause as a separate promised fact:
 
@@ -48,7 +48,7 @@ ensures result >= b by auto;
 
 The guarantee says what Click is proving. The `by` clause says how.
 
-## 5. Effects
+## 5. effects
 
 For pointer code, check frame clauses:
 
@@ -59,7 +59,7 @@ mutable dst[0..n] by frame;
 
 These describe which memory is preserved and which memory may change.
 
-## 6. Proof Details
+## 6. proof details
 
 Only after you understand the claim should you read the proof script:
 
@@ -75,7 +75,7 @@ Most simple proofs use `auto`. A script usually means the proof needs a named
 predicate unfolded, an existential witness, a loop VC, or explicit frame
 reasoning.
 
-## A Basic Reading Checklist
+## A basic reading checklist
 
 Ask:
 

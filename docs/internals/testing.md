@@ -60,7 +60,7 @@ Run the larger example-project verifier with:
 cargo test --test examples
 ```
 
-## Time-Bounded Runs
+## Time-Bounded runs
 
 Prover regressions usually manifest as hangs rather than failures, so the
 suite has a hard per-test time budget enforced by cargo-nextest. Install it
@@ -209,7 +209,7 @@ fail: expected diagnostic substring
 
 Use mdtests for focused language, lowering, proof, and diagnostic behavior.
 
-## Example Project Tests
+## Example project tests
 
 Example projects live under `examples/`. The integration test in
 `tests/examples.rs` verifies `.click` sidecars against C files in each immediate
@@ -548,13 +548,13 @@ is the semantic audit condition; requiring the automation and explicit
 certificate to visit byte-identical internal branch/path states would reject
 valid expansions and is intentionally not an audit invariant.
 
-## Unit Tests
+## Unit tests
 
 Rust unit tests are appropriate when the behavior is lower-level than a sidecar
 can express clearly, such as parser details, kernel term simplification, or
 specific reasoning helpers.
 
-## Test Selection
+## Test selection
 
 When adding a feature, prefer this order:
 

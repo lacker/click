@@ -1,4 +1,4 @@
-# Loops And Invariants
+# Loops and invariants
 
 Loops require summaries. Click cannot prove a symbolic loop by unrolling it
 forever.
@@ -107,7 +107,7 @@ executes one complete body iteration, and proves all invariants again. Either
 proof may be omitted; bounded automation owned by the `loop` keyword supplies
 an omitted phase. Expanding that keyword writes all omitted phases explicitly.
 
-## What Invariants Do
+## What invariants do
 
 An invariant is the bridge from the loop body to the postcondition. If the
 postcondition needs `i == n` after the loop, Click must know enough at loop exit
@@ -122,7 +122,7 @@ does not prove that such an iteration is eventually reached. Termination needs
 a separate well-founded argument; ordinary C verification does not require
 one.
 
-## Memory Loops
+## Memory loops
 
 Pointer-writing loops often need both arithmetic invariants and memory facts:
 
@@ -141,7 +141,7 @@ loop {
 The arithmetic invariants prove access bounds. The frame clauses summarize what
 memory the loop may write.
 
-## Loop Proof Tactics
+## Loop proof tactics
 
 An explicit preservation proof starts at an arbitrary loop-head visit and must
 traverse exactly one complete iteration. Straight-line bodies use one `step()`

@@ -16,7 +16,7 @@ mutable ...
 Beginner proofs mostly use `requires` and `ensures`. Memory proofs later add
 `immutable` and `mutable`.
 
-## Local Names
+## Local names
 
 A contract can define immutable local names:
 
@@ -126,7 +126,7 @@ introduced later, after pointer loadability and aliasing. Unlike a return
 postcondition, a write footprint constrains finite writes even on an execution
 that later runs forever.
 
-## Proof Clauses
+## Proof clauses
 
 The `by` clause says how a guarantee is proved:
 

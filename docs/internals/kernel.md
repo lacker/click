@@ -1,9 +1,9 @@
-# Kernel Implementation Map
+# Kernel implementation map
 
 This page is for agents modifying Rust implementation, not for users writing
 Click specs.
 
-## Core Files
+## Core files
 
 - `src/kernel/`: proof terms, C semantics, assumptions, symbolic execution,
   and theorem-producing functions.
@@ -32,7 +32,7 @@ Kernel files:
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 
-## Trusted Shape
+## Trusted shape
 
 `Theorem` is an abstract object. Callers can inspect its proposition but cannot
 construct arbitrary theorems directly. Public functions that return `Theorem`
@@ -158,7 +158,7 @@ evaluated; keeping both parent and children would create a false ownership
 overlap. The composite definition supplies the checked `contains` and
 `separate` relations used to compare the resulting child contexts.
 
-## Important Types
+## Important types
 
 In `src/kernel/`:
 
@@ -201,7 +201,7 @@ Stores and function returns use checked `int32`-to-`uint8` narrowing; the
 coercion adds proof obligations for `0 <= value <= 255` unless the current path
 already proves them.
 
-## C ABI And Memory Layout
+## C ABI and memory layout
 
 The C0 importer models one explicit ABI: LP64. In that ABI, `int32` has size
 and alignment 4, `uint8` has size and alignment 1, and every supported pointer
@@ -226,7 +226,7 @@ produces `CRuntimeError::IndeterminatePointeeType`. Importers should normally
 emit typed loads/stores and preserve enough pointer-type information to avoid
 that model error.
 
-## Symbolic Execution
+## Symbolic execution
 
 The symbolic executor produces execution paths. Each path includes:
 
@@ -368,7 +368,7 @@ Fresh return values may be related using kernel-certified replay facts, but
 never by ordinary untrusted facts; exact memory and ghost-resource changes are
 still rejected.
 
-## Assumption Reasoning
+## Assumption reasoning
 
 `PureFactContext::proves` is the main deterministic proposition checker. It handles
 trivial propositions, condition facts, conjunctions, disjunction cases,
@@ -405,7 +405,7 @@ large heuristic. Good rules usually belong near:
 - finite forall/range reasoning
 - frame/effect summary reasoning
 
-## Fold And Stdlib Reasoning
+## Fold and stdlib reasoning
 
 `Bitvector32Term::RangeFold` is the symbolic representation for pure Click
 folds with symbolic bounds. The constructor performs basic simplification:
@@ -417,7 +417,7 @@ folds with symbolic bounds. The constructor performs basic simplification:
 Additional equality logic recognizes count-shaped folds and sum commutativity
 for the standard-library `count`/`permutation` proofs.
 
-## Click Lowering
+## Click lowering
 
 `src/lang/click.rs` has several lowering/evaluation paths because contracts are
 evaluated in different contexts:
@@ -451,7 +451,7 @@ When adding a new Click expression or proposition form, search all existing enum
 matches for `ContractExpression` and `ClickProposition`. Missing one context
 usually causes either a compiler error or an unsupported-feature diagnostic.
 
-## Parser And Validation
+## Parser and validation
 
 The Click parser is hand-written in `src/lang/click.rs`. Validation checks:
 

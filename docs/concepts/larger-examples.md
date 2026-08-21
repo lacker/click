@@ -1,4 +1,4 @@
-# Larger Example Projects
+# Larger example projects
 
 Small proof patterns live in `mdtests/`. Larger verification examples live in
 `examples/`.
@@ -6,11 +6,11 @@ Small proof patterns live in `mdtests/`. Larger verification examples live in
 An example project should look like a tiny library verification effort: ordinary
 C files, sidecar specs, and local documentation explaining the proof boundary.
 
-## Current Examples
+## Current examples
 
 The current project fixtures are:
 
-### Heap Object
+### Heap object
 
 ```text
 examples/heap-object/
@@ -22,7 +22,7 @@ borrowing, modular ownership transfer, and destruction. It is the reference
 example for the distinction between complete memory access and exclusive
 allocation authority.
 
-### Input Cursor
+### Input cursor
 
 ```text
 examples/input-cursor/
@@ -34,7 +34,7 @@ nested input resource. Two cursor resources can therefore share one input and
 advance independently. The example exercises explicit observation through
 both composite layers and modular calls with precise metadata effects.
 
-### JSON-C Reference Count
+### JSON-C reference count
 
 ```text
 examples/jsonc-refcount/
@@ -57,7 +57,7 @@ This fixture's proof scope is intentionally narrow:
 This gives Click a realistic preallocated shape alongside the separate
 heap-object fixture.
 
-### Detachable Buffer
+### Detachable buffer
 
 ```text
 examples/detachable-buffer/
@@ -70,7 +70,7 @@ proof state rather than a runtime flag. The example exercises ownership moving
 out of and back into a field-dependent composite resource through opaque call
 summaries, without requiring allocation or deallocation.
 
-### Borrowed Slice
+### Borrowed slice
 
 ```text
 examples/borrowed-slice/
@@ -84,7 +84,7 @@ buffer resource.
 The explicit backing pointer and length arguments preserve the allocation's
 identity while its ownership is divided across opaque calls.
 
-### Ring Buffer
+### Ring buffer
 
 ```text
 examples/ring-buffer/
@@ -98,7 +98,7 @@ API. The example covers construction, a linear-to-wrapped push, a viewed read
 through both composite layers, a wrapped-to-linear pop, and a modular round
 trip.
 
-### Preallocated Linked List
+### Preallocated linked list
 
 ```text
 examples/linked-list/
@@ -112,7 +112,7 @@ transfers, and a multi-call round trip. Each proof unfolds at most one node.
 Allocation, deallocation, traversal loops, shared tails, and cyclic lists
 remain outside the example.
 
-### Allocated Linked List
+### Allocated linked list
 
 ```text
 examples/allocated-linked-list/
@@ -128,7 +128,7 @@ though the witness is deallocated during the traversal. A modular pipeline
 combines two independent allocation attempts with borrow, drop, and complete
 cleanup.
 
-### Binary Tree
+### Binary tree
 
 ```text
 examples/binary-tree/
@@ -144,7 +144,7 @@ preserves the sibling resource and parent fields needed afterward. Allocation,
 deallocation, mutating traversal, balancing, sharing, and cycles remain outside
 the example.
 
-### Recursive Zero List
+### Recursive zero list
 
 ```text
 examples/recursive-zero-list/
@@ -158,7 +158,7 @@ second fuel-bounded traversal proves termination with a numeric measure. A
 small pipeline constructs two nodes from caller-owned fields, folds the list,
 and composes both traversal contracts.
 
-### Owned Vector
+### Owned vector
 
 ```text
 examples/owned-vector/
@@ -175,7 +175,7 @@ calls that consume and produce memory-backed composite resources. The project
 uses one grouped execution proof per function so effects, produced resources,
 and pure postconditions are checked from one chronological proof state.
 
-### Perpetual Service
+### Perpetual service
 
 ```text
 examples/perpetual-service/
@@ -189,7 +189,7 @@ every finite prefix without inventing a return frontier. Its README draws the
 boundary explicitly: Click proves neither scheduler fairness nor productive
 external I/O traces.
 
-### Owned String
+### Owned string
 
 ```text
 examples/owned-string/
@@ -206,7 +206,7 @@ The example covers initialization, indexed reads and writes, push, pop, clear,
 and a multi-call pipeline. It is the main larger fixture for the interaction
 between a folded composite resource and a content invariant over owned memory.
 
-### Owned Split Buffer
+### Owned split buffer
 
 ```text
 examples/owned-split-buffer/
@@ -220,7 +220,7 @@ folding must recombine and repartition ownership without changing backing
 memory. A modular pipeline then reads that transferred cell through the newly
 expanded left partition.
 
-### Owned Segmented Buffer
+### Owned segmented buffer
 
 ```text
 examples/owned-segmented-buffer/
@@ -233,7 +233,7 @@ mutation of one child while framing the other, and swapping the child-resource
 parameters by changing only the outer metadata. A modular pipeline composes
 initialization, both child mutations, and a nested first-child read.
 
-## How To Read An Example Project
+## How to read an example project
 
 Read it in this order:
 
@@ -246,7 +246,7 @@ Read it in this order:
 The point of an example project is not to be exhaustive. It should make the next
 missing feature obvious.
 
-## Relationship To Mdtests
+## Relationship to mdtests
 
 Mdtests are regression tests. They should stay small, self-contained, and easy
 to copy when adding a focused feature.

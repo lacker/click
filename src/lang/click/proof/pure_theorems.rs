@@ -1111,7 +1111,7 @@ fn pure_theorem_surface_certificate(
             .iter()
             .map(|(kernel, surface, _)| (kernel.clone(), surface.clone()))
             .collect::<Vec<_>>();
-        let explicit =
+        let mut explicit =
             plan_restricted_simp_expansion(&explicit_goal, None, &premise_pairs).map_err(
                 |error| {
                 ClickError::new(format!(
@@ -1119,6 +1119,7 @@ fn pure_theorem_surface_certificate(
                     error.message()
                 ))
             })?;
+        let _ = remove_trailing_theorem_assumption(&mut explicit);
         let mut tactics = unfolded_predicates
             .into_iter()
             .map(ProofTactic::UnfoldPredicate)
@@ -1165,8 +1166,9 @@ fn pure_theorem_surface_certificate(
         })
         .collect::<Vec<_>>();
     if premise_pairs.len() == context.requires.len()
-        && let Some(tactics) = plan_explicit_named_signed_rule(goal, &premise_pairs)
+        && let Some(mut tactics) = plan_explicit_named_signed_rule(goal, &premise_pairs)
     {
+        let _ = remove_trailing_theorem_assumption(&mut tactics);
         return ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
             ClickError::new(format!(
                 "smart proof for `{claim_label}` produced an invalid named-rule certificate: {error:?}"

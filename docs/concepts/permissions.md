@@ -19,7 +19,7 @@ memory accesses must be covered by the current resource context:
 - a store requires an owned memory resource,
 - local stack memory does not require a resource.
 
-## Resource Context And Families
+## Resource context and families
 
 Internally, Click represents resource facts as `CResourceFact` values. A
 resource is the bare object being described, such as `memory(p[0..n])`; a
@@ -57,7 +57,7 @@ This resource-family boundary is intentionally more general than memory
 ownership. Click also has exact-match user-defined resources, which can model
 API protocols without forcing those protocols to look like heap cells.
 
-## Loadability And Authority
+## Loadability and authority
 
 `loadable(...)` and permissions still answer different questions, but access
 permissions include the loadability needed for the covered access.
@@ -87,7 +87,7 @@ When the same loadability fact must appear as a proposition, use
 `loadable(segment)`. This is common in composite resource definitions, where
 `fact` clauses are pure propositions rather than structural requirements.
 
-## Viewed Memory
+## Viewed memory
 
 `views` permits loads. It does not permit stores. While no write to the
 same cell occurs in the current execution, repeated reads of that cell are
@@ -112,7 +112,7 @@ that may still refer to the retired allocation. A scoped call borrow has ended
 and therefore does not block `free`; a pre-existing persistent view does block
 it locally. A view proved separate from the freed allocation survives.
 
-## Owned Memory
+## Owned memory
 
 An owned memory resource permits both loads and stores and entails its viewed
 core. Stores update the symbolic memory state; later reads of the same cell see
@@ -131,7 +131,7 @@ it. The caller cannot use a consumed resource afterward.
 This is the main difference between a permission and an ordinary proposition.
 Ordinary facts can be used repeatedly. An owned resource can be transferred.
 
-## Function Calls
+## Function calls
 
 Function calls use the callee's verified contract as an opaque summary:
 
@@ -196,7 +196,7 @@ snapshot is not visible at an opaque call site. Calling such a function reports
 that its contract cannot be exposed opaquely rather than reporting a dependency
 ordering error.
 
-## Abstract Resources
+## Abstract resources
 
 You can declare an exact-match abstract resource:
 
@@ -228,7 +228,7 @@ Equal declared resources accumulate as an exact quantity. Duplicate clauses
 such as two `consumes open_fd(fd);` entries require two units, and a call cannot
 satisfy that requirement with one unit.
 
-## Resource Quantities
+## Resource quantities
 
 Every declared resource can have several independently consumable units with
 the same arguments:
@@ -273,7 +273,7 @@ That spec contributes a call summary. Calling `complete(cb)` consumes
 `can_complete(cb)`, so a second call on the same path fails unless some other
 contract returns the resource.
 
-## Composite Resources
+## Composite resources
 
 Declarations with a body define composite resources. The body is a one-layer
 definition: it names contained resource facts and pure facts that justify the
@@ -390,7 +390,7 @@ These steps are bounded by design. A proof that needs facts inside a nested
 composite resource should name the path with repeated `observe(...)` steps
 instead of relying on `auto` to search through every possible nested body.
 
-### Conditional And Recursive Bodies
+### Conditional and recursive bodies
 
 A composite resource may put its entire body under one load-free `if`:
 
@@ -473,7 +473,7 @@ stronger pre-state resource, such as `owned_buffer_with_room(owner)`, with
 facts like `owner->len < owner->cap`; after the mutation, the proof can fold
 back to the ordinary `owned_buffer(owner)` shape.
 
-### Choosing Resource Boundaries
+### Choosing resource boundaries
 
 Composite resources should describe ownership, not every logical role that
 owned memory happens to play.
@@ -500,7 +500,7 @@ As a rule of thumb:
 See `examples/ring-buffer/` for encapsulated storage and
 `examples/borrowed-slice/` for extracted storage.
 
-## Split And Rejoin
+## Split and rejoin
 
 A caller can pass a subrange of a larger owned memory resource:
 
@@ -521,7 +521,7 @@ normalized back into `p[0..2]`.
 The same mechanism works for symbolic one-cell subranges when current facts
 prove the subrange is covered.
 
-## Element Width
+## Element width
 
 Permission ranges use the element width of the pointer expression.
 
@@ -530,7 +530,7 @@ For `int32 p[]`, `p[1..2]` covers one four-byte `int32` cell.
 For `uint8 p[]`, `p[1..2]` covers one byte. Permission for `p[0..1]` does not
 cover `p[1]`.
 
-## What Exists Today
+## What exists today
 
 Implemented today:
 

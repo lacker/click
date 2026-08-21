@@ -1,4 +1,4 @@
-# Separation Logic Internals
+# Separation logic internals
 
 This page describes Click's internal resource architecture. The algebraic
 notation is explanatory; function contracts use the resource verbs described
@@ -9,7 +9,7 @@ containing `CResourceFact` values and a `ResourceFamilyAlgebra` interface that
 defines validity, entailment, consumption, normalization, core, and observable
 facts for each built-in family.
 
-## Current Resource Cases
+## Current resource cases
 
 The Click surface has memory resources and declared resources:
 
@@ -72,7 +72,7 @@ Surface verbs lower to these resource facts:
 The access modes are `own` and `view`. The composite body is consulted by
 proof-layer `fold`, `unfold`, and `observe` operations.
 
-## Resource State
+## Resource state
 
 The algebraic carrier is `M`: the type of resource states. A value of type `M`
 is not the whole C memory state. It is the proof-side state formed by composing
@@ -96,7 +96,7 @@ own(memory(p[0..1])) * view(memory(q[0..1])) * own(owner_buffer(owner))
 The implementation represents this as a normalized list of concrete resource
 facts. Algebraically, the whole list is one resource state in `M`.
 
-## Algebraic Operations
+## Algebraic operations
 
 The minimal algebraic interface is:
 
@@ -137,7 +137,7 @@ In the current code, `CResourceFact::core()` returns
 viewed core. The full resource-state `core` is the composition of the viewed
 cores of the held resource facts.
 
-## Total Compose Vs Try Compose
+## Total compose vs try compose
 
 The design model separates `compose` from `valid` because those are different
 questions:
@@ -180,7 +180,7 @@ resources. The function does not receive a bag of unrelated facts. It receives
 a coherent resource state whose pieces can be transferred, consumed, observed,
 or repackaged according to their algebraic rules.
 
-## Proof Script State
+## Proof script state
 
 The internal proof-script model is a state transformer over:
 
@@ -283,7 +283,7 @@ owned composite.
 `execute_rest()` and `symbolic_execute()` spellings are rejected with a
 migration message.
 
-## Observable Facts
+## Observable facts
 
 Click also needs a deterministic way to turn held resource facts into
 observable proof facts. This is the role currently played by composite-resource
@@ -322,7 +322,7 @@ Composite-resource `fact` clauses join the same observable-pure-facts projection
 path. Their lowering lives in the Click proof layer because it depends on
 resource definitions, substitution, and memory materialization.
 
-## Memory Separation
+## Memory separation
 
 Click does not expose a separate memory-specific non-overlap predicate. Memory
 non-overlap is stated through the general resource-separation proposition:
@@ -358,7 +358,7 @@ sibling resources. Deeper facts come from deterministic theorem steps:
 `contains` is transitive, `separate` projects through contained children, and
 memory `separate` implies memory non-overlap for frame reasoning.
 
-## Memory Resource Rules
+## Memory resource rules
 
 The memory family implements these rules:
 
@@ -381,7 +381,7 @@ Read stability is a memory-model promise, not a permission to mutate. A viewed
 memory resource allows code to rely on the current cell value across ordinary
 repeated loads, but it does not allow stores.
 
-## Declared Resource And Population Rules
+## Declared resource and population rules
 
 Abstract resources are exact-match owned capabilities:
 
@@ -411,7 +411,7 @@ kind. It is a declared resource whose facts have laws connecting its population
 to one body made from other resource facts and pure facts. Its core is the
 viewed resource fact.
 
-## Implementation Boundary
+## Implementation boundary
 
 The code maps onto this model as follows:
 

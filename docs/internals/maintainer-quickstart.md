@@ -2,7 +2,7 @@
 
 This page is for agents that need to make progress immediately.
 
-## Run The Project
+## Run the project
 
 From the repository root:
 
@@ -18,7 +18,7 @@ markdown tests are the best examples of end-to-end Click behavior:
 cargo test --test mdtests
 ```
 
-## Mdtest Format
+## Mdtest format
 
 Each `mdtests/*.md` file can contain prose, one or more C source blocks, one
 Click block, and one expected-result block:
@@ -52,7 +52,7 @@ fail: expected diagnostic substring
 The harness is `tests/mdtests.rs`. It runs every markdown file in `mdtests/`,
 so keep examples deterministic and reasonably small.
 
-## Minimal Proof Example
+## Minimal proof example
 
 ```c
 int32 increment(int32 x) {
@@ -73,7 +73,7 @@ The `requires` clause is needed because signed overflow is undefined behavior.
 Click proves C0 code only when the requirements rule out undefined behavior and
 the postcondition follows on every execution path.
 
-## Common Workflow
+## Common workflow
 
 1. Find a nearby mdtest.
 2. Copy the smallest relevant pattern.
@@ -83,7 +83,7 @@ the postcondition follows on every execution path.
 6. Run `cargo test`.
 7. Update the relevant `docs/*.md` file.
 
-## Where To Look In Source
+## Where to look in source
 
 - `src/lang/c/syntax.rs`: C0 parser and lowering.
 - `src/lang/click.rs`: `.click` parser, validation, lowering, tactics, mdtest

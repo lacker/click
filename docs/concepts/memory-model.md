@@ -1,9 +1,9 @@
-# Memory Model
+# Memory model
 
 The memory model is central to Click. Many proof failures are aliasing or frame
 failures, not arithmetic failures.
 
-## Blocks And Pointers
+## Blocks and pointers
 
 Kernel memory is a map of named byte-sized blocks plus known cells. A
 pointer is a semantic object:
@@ -21,7 +21,7 @@ pointer-valued return, initialization, assignment, argument, and comparison
 contexts. This narrow conversion does not identify pointers with integers:
 nonzero integers still cannot be used as pointers.
 
-## Heap Blocks And Lifetimes
+## Heap blocks and lifetimes
 
 The supported `malloc` forms have a null outcome and a successful outcome.
 Success creates a fresh block identity at offset zero, with either the exact
@@ -64,7 +64,7 @@ lifetime authority in its contract or free it. Registering allocation authority
 for already-owned storage immediately before a direct `free` is likewise
 bookkeeping, while the actual retirement remains an explicit lifetime effect.
 
-## Argument Memory And Aliasing
+## Argument memory and aliasing
 
 Function pointer parameters are modeled as symbolic offsets into one shared
 external argument-memory block. The identity of that external block is not
@@ -81,7 +81,7 @@ requires separate(memory(dst[0..n]), memory(src[0..n]));
 This is intentionally C-like. C functions can be called with aliased pointers
 unless their contract rules that out.
 
-## Loadable Ranges
+## Loadable ranges
 
 Use `loadable` to prove memory safety:
 
@@ -133,7 +133,7 @@ Writing `loadable(at(statement(0).entry, p)[0..n])` is not equivalent: that
 would snapshot the pointer expression but still ask whether it is loadable in
 the current memory.
 
-## Old Memory
+## Old memory
 
 `old(expression)` evaluates in the function-entry state:
 
@@ -172,7 +172,7 @@ inside `old(...)` remains a historical entry-state value when the entry
 permissions and bounds justified that load; the corresponding current-state
 load is still rejected as use-after-free.
 
-## Effects And Frames
+## Effects and frames
 
 Function-level effects:
 
@@ -191,7 +191,7 @@ retirement must still satisfy their separate lifetime/resource obligations.
 Loop-level effects describe dynamic writes inside a loop. Step effects describe
 one loop body iteration and may use iteration locals.
 
-## Local Stack Memory
+## Local stack memory
 
 Local scalar address-of and local arrays allocate stack memory blocks named like
 `local:x`. Local stack bookkeeping is not externally visible for function-level
@@ -216,7 +216,7 @@ int32 local_array_roundtrip() {
 The local array block is ordinary memory for load/store semantics, but it does
 not count as an external mutation.
 
-## Click Array Refs
+## Click array refs
 
 A pure Click function or predicate parameter written as an array or pointer:
 
