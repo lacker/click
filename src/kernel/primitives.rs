@@ -1804,11 +1804,15 @@ pub(super) enum AtomicPropositionDerivationEvidence {
 #[derive(Clone, Debug, Default)]
 pub struct PureFactContext {
     pub(super) condition_facts: crate::persistent::PersistentMap<ConditionTerm, bool>,
-    /// Exact signed-order bounds keyed by either endpoint. Counts preserve
-    /// synonymous condition spellings when one source fact is replaced.
+    /// Exact signed-order bounds keyed by either endpoint — under its fact
+    /// spelling and, when different, its canonical form as an alias. Each
+    /// entry carries the fact's own endpoint spelling first, so evidence
+    /// found through the canonical alias can still cite the exact fact.
+    /// Counts preserve synonymous condition spellings when one source fact
+    /// is replaced.
     pub(super) signed_order_bounds: crate::persistent::PersistentMap<
         Bitvector32Term,
-        crate::persistent::PersistentMap<(Bitvector32Term, bool, bool), usize>,
+        crate::persistent::PersistentMap<(Bitvector32Term, Bitvector32Term, bool, bool), usize>,
     >,
     /// Condition facts containing a memory-load atom, indexed by the loaded
     /// pointer's snapshot-blind structural fingerprint. This is derived from

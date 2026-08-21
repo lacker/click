@@ -88,19 +88,39 @@ canonical alias, and the increment/decrement overflow helpers match their
 base by canonical form. With those, mutable-footprint containment under
 index minting proves.
 
-The remaining minting blocker is now certificate provenance: a smart
-frame candidate whose containment goals were decided through
-canonical-form joins fails contextual-certificate lowering with "surface
-premises do not replay the atomic derivation of signed less-than is true"
-(empty unexpressed-premise list), because the derivation's recorded
-premises do not reconstruct the canonically-joined decision on replay.
-Index minting is implemented behind `CLICK_OFFSET_INDEX_MINTING=1`
-(`canonicalized_offset_index_term`) and stays off until derivation
-evidence for canonically-decided steps replays; the loaded-array-index
-structural regression lands when the switch defaults on. A fact-recording
-companion (also asserting each load-spelled fact's canonical form at
-`assume_condition` time) was tried and rejected: it changes fact-set
-content globally and broke eight expansion fixtures with minting off.
+Certificate provenance for canonically-decided arithmetic now follows the
+implicit-join design: canonical-form equality is definitional, so typed
+evidence cites its premise in the premise's exact fact spelling while the
+tie between the premise and the goal's differently spelled base is a
+canonical comparison, which is deterministic and replays. The
+signed-order-bounds index carries each fact's own endpoint spelling so
+evidence reached through the canonical alias still cites the exact fact
+(`signed_order_bound_entries`), and `Int32IncrementStrictlyIncreases`
+construction and replay tie canonically. Remaining typed evidence kinds
+get the same treatment as minting failures surface them.
+
+Index minting stays behind `CLICK_OFFSET_INDEX_MINTING=1` with two
+remaining fronts, measured 2026-08-21:
+
+- **Unmemoized explicit-range distinctness burn.** `fold` in
+  `push.contract` (and the expanded `owned_string_pop` replay) exhausts
+  its 500k-unit budget in `general distinctness: explicit range` at ~19k
+  units per query across ~48 queries. The units are structural snapshot
+  interning (`record_c_memory_structural_lookup_work`), and
+  `resolution_query_memo_id` returns `None` inside fuel scopes, so
+  repeated queries recompute. This profile predates the consumer keying
+  (it appeared in the very first minting run) and needs the
+  `click profile` workflow: either memoize under fuel scopes or stop the
+  per-query re-interning.
+- **Cross-call value tracking.** `box_pipeline`'s `result == value`:
+  the caller's read of `owner->data[owner->value]` after `box_set` does
+  not resolve against the callee's store when both indices are named at
+  different derivation epochs.
+
+A fact-recording companion (also asserting each load-spelled fact's
+canonical form at `assume_condition` time) was tried and rejected: it
+changes fact-set content globally and broke eight expansion fixtures with
+minting off.
 
 ### Canonical facts without a simple certificate
 

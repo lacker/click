@@ -1231,18 +1231,16 @@ impl PureFactContext {
                     let Bitvector32Term::Constant(goal_bits) = goal_upper.as_ref() else {
                         return None;
                     };
-                    self.signed_order_bounds
-                        .get(&base)
-                        .into_iter()
-                        .flat_map(|bounds| bounds.iter())
-                        .find_map(|((candidate, strict, forward), _)| {
-                            let Bitvector32Term::Constant(candidate_bits) = candidate else {
+                    self.signed_order_bound_entries(&base).find_map(
+                        |(spelled, candidate, strict, forward)| {
+                            let Bitvector32Term::Constant(candidate_bits) = &candidate else {
                                 return None;
                             };
-                            (!*strict && *forward && (*candidate_bits as i32) < (*goal_bits as i32))
-                                .then(|| self.exact_direct_order_step(&base, candidate, false))
+                            (!strict && forward && (*candidate_bits as i32) < (*goal_bits as i32))
+                                .then(|| self.exact_direct_order_step(&spelled, &candidate, false))
                                 .flatten()
-                        })
+                        },
+                    )
                 })
                 .map(AtomicPropositionDerivationEvidence::Int32IncrementConstantUpperBound),
             _ => None,
@@ -1251,9 +1249,20 @@ impl PureFactContext {
             Proposition::ConditionIs(
                 ConditionTerm::Bitvector32SignedLessThan(base, incremented),
                 true,
-            ) if incremented.add_const_base(1).as_ref() == Some(base.as_ref()) => self
-                .exact_direct_strict_upper_bound_step(base)
-                .map(AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases),
+                // The goal's base and the increment's base may spell one
+                // value differently (a raw load and its canonical name);
+                // the tie is canonical, while the selected premise cites
+                // its exact fact spelling.
+            ) if incremented
+                .add_const_base(1)
+                .as_ref()
+                .is_some_and(|increment_base| {
+                    crate::kernel::eval::terms_match_modulo_canonical_names(increment_base, base)
+                }) =>
+            {
+                self.exact_direct_strict_upper_bound_step(base)
+                    .map(AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases)
+            }
             _ => None,
         };
         let one_plus_strictly_increases_evidence = match proposition {
@@ -1442,16 +1451,13 @@ impl PureFactContext {
                 true,
             ) => match goal_lower.as_ref() {
                 Bitvector32Term::Constant(goal_bits) => self
-                    .signed_order_bounds
-                    .get(value.as_ref())
-                    .into_iter()
-                    .flat_map(|bounds| bounds.iter())
-                    .find_map(|((candidate, strict, forward), _)| {
-                        let Bitvector32Term::Constant(candidate_bits) = candidate else {
+                    .signed_order_bound_entries(value.as_ref())
+                    .find_map(|(spelled, candidate, strict, forward)| {
+                        let Bitvector32Term::Constant(candidate_bits) = &candidate else {
                             return None;
                         };
-                        (!*strict && !*forward && (*goal_bits as i32) < (*candidate_bits as i32))
-                            .then(|| self.exact_direct_order_step(candidate, value, false))
+                        (!strict && !forward && (*goal_bits as i32) < (*candidate_bits as i32))
+                            .then(|| self.exact_direct_order_step(&candidate, &spelled, false))
                             .flatten()
                     })
                     .map(AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening),
@@ -1829,8 +1835,16 @@ impl PureFactContext {
             else {
                 return false;
             };
-            return incremented.add_const_base(1).as_ref() == Some(base.as_ref())
-                && step.lower == **base
+            // The premise cites its exact fact spelling; its tie to the
+            // goal's base is canonical, which is deterministic and so
+            // replays identically.
+            return incremented
+                .add_const_base(1)
+                .as_ref()
+                .is_some_and(|increment_base| {
+                    crate::kernel::eval::terms_match_modulo_canonical_names(increment_base, base)
+                })
+                && crate::kernel::eval::terms_match_modulo_canonical_names(&step.lower, base)
                 && step.strict
                 && matches!(
                     &step.premise,
@@ -2294,16 +2308,39 @@ impl PureFactContext {
         self.proves_atomic_for_derivation(proposition, for_simp)
     }
 
+    /// The signed-order bound entries for a term, looked up under its own
+    /// spelling and, when different, its canonical alias. Each entry yields
+    /// the fact's endpoint spelling first, so callers can cite the exact
+    /// fact even when the query reached it through the alias.
+    fn signed_order_bound_entries(
+        &self,
+        term: &Bitvector32Term,
+    ) -> impl Iterator<Item = (Bitvector32Term, Bitvector32Term, bool, bool)> + '_ {
+        let direct = self.signed_order_bounds.get(term);
+        let alias = {
+            let canonical = crate::kernel::eval::canonical_term(term);
+            if &canonical == term {
+                None
+            } else {
+                self.signed_order_bounds.get(&canonical)
+            }
+        };
+        direct
+            .into_iter()
+            .chain(alias)
+            .flat_map(|bounds| bounds.keys())
+            .map(|(spelled, other, strict, forward)| {
+                (spelled.clone(), other.clone(), *strict, *forward)
+            })
+    }
+
     fn exact_direct_strict_upper_bound_step(
         &self,
         base: &Bitvector32Term,
     ) -> Option<SignedOrderDerivationStep> {
-        self.signed_order_bounds
-            .get(base)
-            .into_iter()
-            .flat_map(|bounds| bounds.iter())
-            .filter(|((_, strict, forward), _)| *strict && *forward)
-            .find_map(|((upper, _, _), _)| self.exact_direct_order_step(base, upper, true))
+        self.signed_order_bound_entries(base)
+            .filter(|(_, _, strict, forward)| *strict && *forward)
+            .find_map(|(spelled, upper, _, _)| self.exact_direct_order_step(&spelled, &upper, true))
     }
 
     fn exact_direct_order_step(

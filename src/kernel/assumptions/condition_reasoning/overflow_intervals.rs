@@ -30,7 +30,7 @@ impl PureFactContext {
         self.signed_order_bounds.get(&term).map(|bounds| {
             bounds
                 .keys()
-                .map(|(other, strict, upper)| SignedOrderBound {
+                .map(|(_, other, strict, upper)| SignedOrderBound {
                     other: other.clone(),
                     strict: *strict,
                     upper: *upper,

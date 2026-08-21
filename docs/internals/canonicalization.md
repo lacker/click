@@ -116,8 +116,16 @@ canonical alias, and the overflow helpers match bases canonically — all
 deterministic, so decisions replay. With those, footprint containment
 under index minting proves.
 
-The open blocker, recorded in `issues/canonicalization.md`, is
-certificate provenance: derivations decided through canonical-form joins
-do not yet record premises that reconstruct the decision on replay, so
-contextual frame certificates fail to lower. Until derivation evidence
-for canonically-decided steps replays, minting stays off by default.
+Certificate evidence for canonically-decided arithmetic follows the
+implicit-join design: a typed derivation cites its premise in the
+premise's exact fact spelling, while the tie between that premise and a
+differently spelled goal base is a canonical comparison — definitional,
+deterministic, and therefore replay-identical. The signed-order-bounds
+index carries each fact's own endpoint spelling so evidence reached
+through the canonical alias still cites the exact fact.
+
+The open blockers, recorded in `issues/canonicalization.md`, are an
+unmemoized structural-interning cost in explicit-range distinctness
+queries under minted offsets, and cross-call load resolution when a
+store's index and a later read's index are named at different derivation
+epochs. Until those close, minting stays off by default.

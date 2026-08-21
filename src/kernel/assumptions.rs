@@ -1188,20 +1188,20 @@ impl PureFactContext {
         // Each endpoint is indexed under its fact spelling and, when it
         // differs, under its canonical form as an alias: a bound recorded
         // through one spelling answers a lookup through any spelling of the
-        // same value, while evidence paths that need the exact fact
-        // spelling keep their raw-key hits. Bound terms keep their fact
-        // spellings.
+        // same value. Every entry carries the fact's own endpoint spelling
+        // first, so evidence found through the alias still cites the exact
+        // fact.
         let left_alias = crate::kernel::eval::canonical_term(&left);
         let right_alias = crate::kernel::eval::canonical_term(&right);
         let mut entries = vec![
-            (left.clone(), (right.clone(), strict, true)),
-            (right.clone(), (left.clone(), strict, false)),
+            (left.clone(), (left.clone(), right.clone(), strict, true)),
+            (right.clone(), (right.clone(), left.clone(), strict, false)),
         ];
         if left_alias != left {
-            entries.push((left_alias, (right.clone(), strict, true)));
+            entries.push((left_alias, (left.clone(), right.clone(), strict, true)));
         }
         if right_alias != right {
-            entries.push((right_alias, (left, strict, false)));
+            entries.push((right_alias, (right, left, strict, false)));
         }
         for (endpoint, bound) in entries {
             let mut bounds = self
