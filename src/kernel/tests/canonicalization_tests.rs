@@ -350,3 +350,43 @@ fn substitution_reaches_through_a_load_variable_naming_a_bound_index() {
         indexed_name
     );
 }
+
+#[test]
+fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
+    // `p[j]` and `p[2]` are one cell when `j <= 2` and `not (j < 2)`: no
+    // recorded equality names the index, so the comparison must view the
+    // names as the loads they name and decide the addresses from bounds.
+    let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("p", 12));
+    let j = Bitvector32Term::Variable(Variable(7));
+    let cell = |offset: PointerOffsetTerm| {
+        crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
+            memory.clone(),
+            Box::new(Pointer {
+                block: "p".into(),
+                offset,
+            }),
+        ))
+    };
+    let indexed = cell(PointerOffsetTerm::Int32Scaled {
+        value: Box::new(j.clone()),
+        byte_width: 4,
+    });
+    let third = cell(PointerOffsetTerm::Constant(8));
+    assert_ne!(indexed, third);
+    // The index is a free variable of the name's denotation.
+    let mut variables = BTreeSet::new();
+    crate::kernel::reasoning::collect_bitvector_variables(&indexed, &mut variables);
+    assert!(variables.contains(&Variable(7)));
+
+    let pinned = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_less_equal(j.clone(), Bitvector32Term::Constant(2)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(2)),
+            false,
+        );
+    assert!(pinned.bitvector_terms_proven_equal(&indexed, &third));
+    assert!(!PureFactContext::new().bitvector_terms_proven_equal(&indexed, &third));
+}

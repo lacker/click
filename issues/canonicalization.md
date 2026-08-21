@@ -226,6 +226,28 @@ assumes a load term. Characterized so far:
   they name. Names stay context-free. Regression:
   `substitution_reaches_through_a_load_variable_naming_a_bound_index`.
   11 fixtures remain under the switch, six of them expected-text.
+- **Names in assumption-dependent reasoning (done).** Three kernel
+  entry points keyed on the `MemoryLoad` shape and so ignored a name:
+  `resolve_memory_load_term` (cell resolution under this context's
+  facts), `memory_loads_proven_equal` (address equality decided by
+  bounds, `p[j]` is `p[2]` under `j <= 2`, `not (j < 2)`), and
+  `collect_bitvector_variables` (a bound index sealed in a name is free
+  in the term, which the upper-bound case split keys on). Each now views
+  a load variable as the load it names. With these the `bound_universal`
+  fixtures prove in the kernel; what remains for them is surface
+  synthesis of the proof object (below). Regression:
+  `load_variables_compare_as_loads_under_bounds_pinned_indices`.
+- **Surface synthesis of proof objects (5 fixtures).** `bound_universal`
+  ×2, `outcome_simp_instantiates_an_unfolded_byte_predicate`,
+  `resource_example_pipelines`, `source_expander_derives_separation`,
+  `selected_pure_case_split`: the kernel proves the claim, but the
+  proof-object closers (`try_simp_closure` and the
+  `surface_certificates` planners) plan simple steps from the kernel
+  derivation by term shape and miss or mis-plan when a load is a name:
+  "checked outcome `simp` search did not retain a complete proof",
+  missing `instantiate(`/`rewrite(` steps in expansion text, and "a
+  path-independent tactic expansion conflicts with a leaf's existing
+  expansion".
 - **Cross-epoch load resolution.** Across a call whose footprint may write
   a cell, the read before and the read after receive different load
   variables (the DAG walk cannot cross the call havoc). Their equality is

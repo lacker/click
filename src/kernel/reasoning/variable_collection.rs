@@ -826,6 +826,15 @@ pub(in crate::kernel) fn collect_bitvector_variables(
         Bitvector32Term::Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
             variables.insert(*variable);
+            // A load variable denotes the load it names, so the variables
+            // of that load's address (a bound index, a loop counter) are
+            // free in the term: a case split or substitution keyed on the
+            // term's variables must see them.
+            if crate::kernel::is_canonical_load_variable(variable)
+                && let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+            {
+                collect_pointer_offset_bitvector_variables(&pointer.offset, variables);
+            }
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)

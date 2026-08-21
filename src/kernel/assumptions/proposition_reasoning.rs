@@ -3895,6 +3895,14 @@ impl PureFactContext {
                     }
                     equality_graph_term_key(term)
                 }
+                Bitvector32Term::Variable(variable)
+                    if crate::kernel::is_canonical_load_variable(variable) =>
+                {
+                    if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
+                        return canonical_order_endpoint(assumptions, &resolved, depth - 1);
+                    }
+                    term.clone()
+                }
                 Bitvector32Term::Add(_, _) => {
                     let mut raw = Vec::new();
                     let mut constant = 0u32;

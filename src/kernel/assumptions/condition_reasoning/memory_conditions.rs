@@ -50,10 +50,16 @@ impl PureFactContext {
             return self.bitvector_terms_proven_equal(left, &right);
         }
 
+        // Load variables are compared as the loads they name: two names
+        // over one epoch whose addresses this context proves equal (an
+        // index pinned by bounds rather than by a recorded equality) are
+        // one cell.
+        let left_view = crate::kernel::eval::viewed_as_memory_load(left);
+        let right_view = crate::kernel::eval::viewed_as_memory_load(right);
         let (
-            Bitvector32Term::MemoryLoad(left_memory, left_pointer),
-            Bitvector32Term::MemoryLoad(right_memory, right_pointer),
-        ) = (left, right)
+            Some(Bitvector32Term::MemoryLoad(left_memory, left_pointer)),
+            Some(Bitvector32Term::MemoryLoad(right_memory, right_pointer)),
+        ) = (&left_view, &right_view)
         else {
             return false;
         };
@@ -182,13 +188,24 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Option<Bitvector32Term> {
-        let Bitvector32Term::MemoryLoad(memory, pointer) = term else {
+        // A load variable resolves as the load it names: the cell it reads
+        // may be decided by this context's facts (a bound index proven
+        // distinct from every stored cell) even though the name was
+        // created without them. The result is canonical so a resolution
+        // to an earlier snapshot's load compares by name.
+        let viewed = crate::kernel::eval::viewed_as_memory_load(term)?;
+        let Bitvector32Term::MemoryLoad(memory, pointer) = &viewed else {
             return None;
         };
         let CValue::Int32(value) = self.resolve_memory_load_value(memory, pointer)? else {
             return None;
         };
-        (&value != term).then_some(value)
+        let value = if viewed == *term {
+            value
+        } else {
+            crate::kernel::eval::canonical_term(&value)
+        };
+        (&value != term && value != viewed).then_some(value)
     }
 
     pub(in crate::kernel) fn resolve_memory_load_value(
