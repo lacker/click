@@ -229,6 +229,34 @@ fn equality_is_vacuous(equality: &Proposition) -> bool {
     }
 }
 
+/// `rewrite` looks through a load variable: the rewritten term may occur
+/// inside the address of the load the variable stands for. Rewriting that
+/// address and taking the canonical form of the rewritten load gives the
+/// load variable (or recorded value) for the rewritten read — equality
+/// substitution is congruent through a load whether the load is written as a
+/// term or named by its variable. Deterministic: the registry view and the
+/// canonical form are the same on replay.
+fn rewrite_through_load_variable(
+    term: &Bitvector32Term,
+    rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
+) -> Option<Bitvector32Term> {
+    let Bitvector32Term::Variable(variable) = term else {
+        return None;
+    };
+    if !crate::kernel::is_canonical_load_variable(variable) {
+        return None;
+    }
+    let (memory, pointer) = crate::kernel::registered_canonical_load(variable)?;
+    let rewritten = rewrite_pointer(&pointer);
+    if rewritten == pointer {
+        return None;
+    }
+    Some(crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
+        memory,
+        Box::new(rewritten),
+    )))
+}
+
 fn rewrite_atomic_proposition_by_exact_equality(
     goal: &Proposition,
     equality: &Proposition,
@@ -368,10 +396,13 @@ fn rewrite_atomic_proposition_by_exact_equality(
                 Bitvector32Term::MemoryLoad(memory, pointer) => {
                     Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewrite_pointer(pointer)))
                 }
+                Bitvector32Term::Variable(_) => {
+                    rewrite_through_load_variable(term, &rewrite_pointer)
+                        .unwrap_or_else(|| term.clone())
+                }
                 Bitvector32Term::If { .. }
                 | Bitvector32Term::RangeFold { .. }
-                | Bitvector32Term::Constant(_)
-                | Bitvector32Term::Variable(_) => term.clone(),
+                | Bitvector32Term::Constant(_) => term.clone(),
             }
         }
         fn rewrite_resource_offset(
@@ -526,6 +557,10 @@ fn rewrite_atomic_proposition_by_exact_equality(
             match term {
                 Bitvector32Term::MemoryLoad(memory, pointer) => {
                     Bitvector32Term::MemoryLoad(memory.clone(), Box::new(rewrite_pointer(pointer)))
+                }
+                Bitvector32Term::Variable(_) => {
+                    rewrite_through_load_variable(term, rewrite_pointer)
+                        .unwrap_or_else(|| term.clone())
                 }
                 Bitvector32Term::Add(left_term, right_term) => {
                     let (left, right) = binary(left_term, right_term);
@@ -738,10 +773,16 @@ fn rewrite_atomic_proposition_by_exact_equality(
                     offset: rewrite_offset(&pointer.offset, from, to),
                 }),
             ),
+            Bitvector32Term::Variable(_) => {
+                rewrite_through_load_variable(term, &|pointer| Pointer {
+                    block: pointer.block.clone(),
+                    offset: rewrite_offset(&pointer.offset, from, to),
+                })
+                .unwrap_or_else(|| term.clone())
+            }
             Bitvector32Term::If { .. }
             | Bitvector32Term::RangeFold { .. }
-            | Bitvector32Term::Constant(_)
-            | Bitvector32Term::Variable(_) => term.clone(),
+            | Bitvector32Term::Constant(_) => term.clone(),
         }
     }
 

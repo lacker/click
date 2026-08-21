@@ -193,17 +193,16 @@ assumes a load term. Characterized so far:
   the registry when the cell holds a load variable. `plan_explicit_nonstrict_transitive`
   supplies the two-step `<=` chain certificate. Three fixtures cleared;
   17 remain under the switch.
-- **Load-variable congruence.** With load terms, simp rewrote a pointer
-  inside a load (`load(m, data + v_old)` to `load(m, data + 0)` from
-  `v_old == 0`) by structural substitution. A load variable is opaque to
-  that rewrite, so two reads of one cell through pointers that are equal
-  only by a proved fact get two variables with no connecting edge. The
-  model's answer is a congruence rule: from `p == q` (proved) derive
-  `load_var(m, p) == load_var(m, q)`, recorded as a fact with the pointer
-  equality as its premise and a typed evidence kind, so certificates can
-  cite it. Reproductions: `restricted_simp_rewrites_pointer_aliases_inside_memory_loads`,
-  `box_pipeline`'s `data[0] == value` from `data[old(value)] == value` and
-  `old(value) == 0`.
+- **`rewrite` looks through load variables.** Done. With load terms,
+  simp and `rewrite` substituted inside a load's address structurally
+  (`load(m, data + v_old)` to `load(m, data + 0)` from `v_old == 0`). A
+  load variable is opaque to that, so `rewrite_through_load_variable`
+  rewrites the address of the load the variable stands for (registry
+  view) and takes the canonical form of the rewritten load — equality
+  substitution is congruent through a load whether it is written as a
+  term or named by its variable, and no new certificate vocabulary is
+  needed. All three rewrite walkers use it. Two fixtures cleared; 15
+  remain under the switch.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call
