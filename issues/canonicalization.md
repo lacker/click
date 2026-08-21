@@ -157,16 +157,17 @@ fail, and the examples harness stops at `bounded-pool` (an
 expansion/replay disagreement). Every failure is a consumer that still
 assumes a load term. Characterized so far:
 
-- **Certificate synthesis must spell a load variable at the program point
-  it was read.** `push.contract`'s generated certificate applies
-  `int32_increment_strictly_increases` with `value` spelled `owner->len`,
-  which at the post-store apply point lowers to `len + 1`, so the
-  requirement `len + 1 < cap` is unavailable while `len < cap` is. Before
-  the switch the premise's load term synthesized through a program-point
-  form; a load variable must synthesize the same way (registry snapshot
-  to program point), and the strictly-replayable check must reject a
-  spelling that lowers differently at the apply point. Also behind the
-  three `required exact fact for theorem` failures.
+- **Surface synthesis must render a load variable through the program
+  point it was read from.** `push.contract`'s generated certificate
+  applies `int32_increment_strictly_increases` with `value` synthesized
+  as `owner->len`, which at the post-store apply point lowers to
+  `len + 1`, so the requirement `len + 1 < cap` is unavailable while
+  `len < cap` is. Before the switch the premise's load term synthesized
+  through a program-point form such as `at(statement(k).entry,
+  owner->len)`; a load variable must synthesize the same way (registry
+  snapshot to program point), and the round-trip check must reject a
+  synthesized form that lowers differently at the apply point. Also
+  behind the three `required exact fact for theorem` failures.
 - **Cross-epoch load resolution (required feature, not a gap).** Across a
   call whose footprint may write a cell, the read before and the read after
   receive different load variables (the DAG walk cannot cross the call
@@ -185,8 +186,8 @@ assumes a load term. Characterized so far:
   scope-safe memoization.
 - **Loop invariant bundle preservation replay** (`bubble_pass3_max_suffix`,
   `bubble_sort3_two_pass_sorted`, `bound_universal_*`): "could not replay
-  invariant closer" — the invariant-lowering paths compare or spell terms
-  by load shape.
+  invariant closer" — the invariant-lowering paths compare or synthesize
+  terms by load shape.
 - **Smart `simp` goals left unproved** (`byte_slice_*`, predicate
   unfolding, quantified cells): planners that select facts or instantiate
   predicates by load shape.

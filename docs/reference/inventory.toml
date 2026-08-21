@@ -2034,6 +2034,10 @@ id = "glossary.surface-click"
 path = "reference/glossary.md#surface-click"
 
 [[item]]
+id = "glossary.surface-synthesis"
+path = "reference/glossary.md#surface-synthesis"
+
+[[item]]
 id = "glossary.symbolic-execution"
 path = "reference/glossary.md#symbolic-execution"
 

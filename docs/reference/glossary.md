@@ -318,6 +318,13 @@ The property that Click accepts only claims justified by its modeled
 
 The user-facing language parsed from `.click` files.
 
+### Surface synthesis
+
+Producing Surface Click syntax for a kernel proposition or term, so that a
+  certificate can cite it. The inverse of lowering: a synthesized form must
+  lower back to the same kernel proposition at the point where the
+  certificate uses it, which is checked rather than assumed.
+
 ### Symbolic execution
 
 Evaluation of C over symbolic values and path conditions so one proof can
