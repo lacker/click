@@ -325,13 +325,18 @@ assumes a load term. Characterized so far:
     (`execute_until_expands_vector_storage_call_postconditions`,
     "fact transport has no recorded or synthesized Click comparison
     form"), so it waits for surface synthesis of name-form transports.
-  - `owned-segmented-buffer` (`owned_segmented_buffer_pipeline`):
-    `have 0 < owner->second_len by { assumption(); }` after the step
-    over `set_first` passed only by structural snapshot matching; under names the step's
-    `using` transport must rewrite the fact to the post-call name, which
-    needs the `set_first` range (owned through the composite) proved
-    disjoint from `owner->second_len` — the same composition evidence,
-    through the step's direct transport.
+  - `owned-segmented-buffer` (done, under the step rule): the step's
+    direct frame check now sees a composite's footprint. A single owned
+    composite emits a `CResourceComposition` fact; the frame check expands
+    it over the snapshot the fact holds at (memoized per composition and
+    snapshot), so its members carry the live load variables; and range
+    containment for the frame variant decides the endpoints from indexed
+    bounds (`[0..1]` inside `[0..first_len]` under `1 <= first_len`). Two
+    quadratic paths found on the way: the name-transport arm scanned the
+    facts for a defining equation (now the registry origin), and
+    `signed_constant_after_equality_normalization` tried every equality
+    fact as a deep candidate for a load variable (now gated by address,
+    as for a load term). 1.5 s under the switch against 1.3 s default.
   - `owned-vector` (`vector_grow`, else branch): lowering `have forall
     (k) … owner->data[k] == old(owner->data[k])` fails with
     `loadable(heap@k*4, 4)` unproved; the old mode proved it from the

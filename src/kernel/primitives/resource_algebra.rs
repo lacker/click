@@ -594,6 +594,25 @@ impl ResourceContext {
         pointer: &Pointer,
         contains_pointer: impl Fn(&Pointer, &CMemoryRange) -> bool,
     ) -> bool {
+        self.proves_owned_range_separate_from_pointer_with(
+            range,
+            pointer,
+            crate::kernel::assumptions::memory_range_shallowly_contained,
+            contains_pointer,
+        )
+    }
+
+    /// As [`Self::proves_owned_range_separate_from_pointer_shallow`], with
+    /// the caller's bounded relation deciding when `range` lies inside an
+    /// owned member (a frame check may decide the endpoints from indexed
+    /// bounds rather than by constant difference alone).
+    pub(in crate::kernel) fn proves_owned_range_separate_from_pointer_with(
+        &self,
+        range: &CMemoryRange,
+        pointer: &Pointer,
+        range_contained: impl Fn(&CMemoryRange, &CMemoryRange) -> bool,
+        contains_pointer: impl Fn(&Pointer, &CMemoryRange) -> bool,
+    ) -> bool {
         if range.base().block != pointer.block {
             return false;
         }
@@ -603,9 +622,7 @@ impl ResourceContext {
         let range_position = positions.iter().copied().find(|entry| {
             self.fact(*entry)
                 .memory_own_range()
-                .is_some_and(|available| {
-                    crate::kernel::assumptions::memory_range_shallowly_contained(range, available)
-                })
+                .is_some_and(|available| range_contained(range, available))
         });
         let Some(range_position) = range_position else {
             return false;
@@ -915,7 +932,14 @@ impl ResourceContext {
             .filter(|fact| fact.family() == ResourceFamily::Memory)
             .collect::<Vec<_>>();
         propositions.extend(MEMORY_RESOURCE_ALGEBRA.observable_facts(&memory_facts, assumptions));
-        if self.iter().filter(|fact| fact.is_own()).count() >= 2 {
+        // Two owned members are pairwise separate, and one owned composite
+        // expands to several: either way the composition is what a frame
+        // check consults for ownership-derived disjointness.
+        let owned = self.iter().filter(|fact| fact.is_own());
+        let owned_composite = self
+            .iter()
+            .any(|fact| fact.is_own() && matches!(fact.resource(), CResource::Composite { .. }));
+        if owned.count() >= 2 || owned_composite {
             propositions.push(Proposition::CResourceComposition(self.clone()));
         }
         propositions

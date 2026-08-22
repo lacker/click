@@ -707,7 +707,11 @@ fn memory_derivations_reach(
                             ))
                 }
                 CMemoryDerivation::CallHavoc { mutable_ranges, .. } => assumptions
-                    .ranges_proven_disjoint_from_pointer_for_frame(mutable_ranges, pointer),
+                    .ranges_proven_disjoint_from_pointer_for_frame(
+                        mutable_ranges,
+                        pointer,
+                        current.memory(),
+                    ),
                 // Loop havoc may write anything the body can reach.
                 CMemoryDerivation::LoopHavoc { .. } => false,
             },
@@ -1535,9 +1539,11 @@ fn memory_dag_cell_source(
                     assumptions,
                 ) {
                     MemoryDagHopJustification::CallHavocRanges { ranges }
-                } else if assumptions
-                    .ranges_proven_disjoint_from_pointer_for_frame(mutable_ranges, pointer)
-                {
+                } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
+                    mutable_ranges,
+                    pointer,
+                    current.memory(),
+                ) {
                     MemoryDagHopJustification::AssumptionDependent(
                         MemoryDagAssumptionKind::CallHavocRangeSeparation,
                     )
@@ -2108,6 +2114,7 @@ fn c_memory_load_is_directly_unchanged(
                         || assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                             mutable_ranges,
                             pointer,
+                            before,
                         ));
                 before_matches && after_matches && disjoint
             }
@@ -3000,30 +3007,11 @@ fn transport_framed_atomic_bitvector(
             // whose live snapshot the frame checks can actually relate to
             // `after`; the registry's canonicalized form is the
             // fallback.
-            let named_load = assumptions
-                .and_then(|(assumptions, _)| {
-                    assumptions.prop_facts.iter().find_map(|fact| {
-                        let Proposition::ConditionIs(
-                            ConditionTerm::Bitvector32Equal(left, right),
-                            true,
-                        ) = fact
-                        else {
-                            return None;
-                        };
-                        match (left.as_ref(), right.as_ref()) {
-                            (
-                                Bitvector32Term::Variable(defined),
-                                load @ Bitvector32Term::MemoryLoad(_, _),
-                            ) if defined == variable => Some(load.clone()),
-                            _ => None,
-                        }
-                    })
-                })
-                .or_else(|| {
-                    crate::kernel::eval::registered_canonical_load_origin(variable).map(
-                        |(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
-                    )
-                });
+            // The registry's origin is the first live snapshot the variable
+            // was minted from: DAG-connected and cell-comparable to `after`,
+            // which is what the frame checks below relate.
+            let named_load = crate::kernel::eval::registered_canonical_load_origin(variable)
+                .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
             if let Some(load) = named_load {
                 let transported = transport_framed_atomic_bitvector(&load, after, assumptions)?;
                 if transported != load

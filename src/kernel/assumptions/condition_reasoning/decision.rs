@@ -894,15 +894,28 @@ impl PureFactContext {
         // except via another fact that mentions the load itself. Without the
         // gate the walk pays a bridging search against every fact at every
         // recursion level.
-        let plausibly_equal = |candidate: &Bitvector32Term| match (term, candidate) {
-            (
-                Bitvector32Term::MemoryLoad(_, term_pointer),
-                Bitvector32Term::MemoryLoad(_, candidate_pointer),
-            ) => pointers_equal_ignoring_memories(term_pointer, candidate_pointer),
-            (Bitvector32Term::MemoryLoad(_, _), _) | (_, Bitvector32Term::MemoryLoad(_, _)) => {
-                false
+        // A load variable is gated exactly as the load it names: without
+        // the gate every equality fact in the context is a deep-equality
+        // candidate for every name, which is quadratic in the facts.
+        let term_view = crate::kernel::eval::viewed_as_memory_load(term);
+        let plausibly_equal = |candidate: &Bitvector32Term| {
+            if candidate == term {
+                return true;
             }
-            _ => true,
+            let candidate_view = crate::kernel::eval::viewed_as_memory_load(candidate);
+            match (
+                term_view.as_ref().unwrap_or(term),
+                candidate_view.as_ref().unwrap_or(candidate),
+            ) {
+                (
+                    Bitvector32Term::MemoryLoad(_, term_pointer),
+                    Bitvector32Term::MemoryLoad(_, candidate_pointer),
+                ) => pointers_equal_ignoring_memories(term_pointer, candidate_pointer),
+                (Bitvector32Term::MemoryLoad(_, _), _) | (_, Bitvector32Term::MemoryLoad(_, _)) => {
+                    false
+                }
+                _ => true,
+            }
         };
         for (condition, value) in self.condition_facts.iter() {
             let (ConditionTerm::Bitvector32Equal(left, right), true) = (condition, value) else {

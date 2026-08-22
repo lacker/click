@@ -1665,19 +1665,24 @@ impl PureFactContext {
         &self,
         ranges: &[CMemoryRange],
         pointer: &Pointer,
+        memory: &CMemory,
     ) -> bool {
         if self.ranges_proven_disjoint_from_pointer(ranges, pointer) {
             return true;
         }
-        let expanded = self.frame_expanded_compositions();
+        let expanded = self.frame_expanded_compositions(memory);
         if expanded.is_empty() {
             return false;
         }
         ranges.iter().all(|range| {
             expanded.iter().any(|resources| {
-                resources.proves_owned_range_separate_from_pointer_shallow(
+                resources.proves_owned_range_separate_from_pointer_with(
                     range,
                     pointer,
+                    |range, available| {
+                        memory_range_shallowly_contained(range, available)
+                            || self.memory_range_contained_by_decided_endpoints(range, available)
+                    },
                     |pointer, available| {
                         self.pointer_in_range_by_shallow_fact_graph(
                             pointer,
@@ -1863,7 +1868,34 @@ impl PureFactContext {
     /// segments this answers for are the ones whose addresses do not depend
     /// on field values, and a body that needs a live snapshot simply does
     /// not expand here.
-    fn frame_expanded_compositions(&self) -> Vec<ResourceContext> {
+    /// `range` inside `available` by one bounded decision per endpoint: the
+    /// bases share an element index and the indexed bounds decide
+    /// `available.start <= range.start` and `range.end <= available.end`.
+    fn memory_range_contained_by_decided_endpoints(
+        &self,
+        range: &CMemoryRange,
+        available: &CMemoryRange,
+    ) -> bool {
+        let Some(base_index) = range.base().element_index_from_base(available.base()) else {
+            return false;
+        };
+        let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
+        let range_end = Bitvector32Term::add(base_index, range.end().clone());
+        self.decide(&ConditionTerm::signed_less_equal(
+            available.start().clone(),
+            range_start,
+        )) == Some(true)
+            && self.decide(&ConditionTerm::signed_less_equal(
+                range_end,
+                available.end().clone(),
+            )) == Some(true)
+    }
+
+    /// The compositions with their owned composites expanded over `memory`:
+    /// a composite's footprint is the regions its body denotes at the
+    /// snapshot the composition holds at, so the expansion names those
+    /// regions with the same load variables the live facts use.
+    fn frame_expanded_compositions(&self, memory: &CMemory) -> Vec<ResourceContext> {
         // Cheap gates first: this runs on the store cell-drop path, so a
         // composition with nothing composite to look through must cost a
         // scan of its own facts and no more.
@@ -1892,13 +1924,17 @@ impl PureFactContext {
         // a stale entry.
         thread_local! {
             static EXPANSION_MEMO: std::cell::RefCell<
-                std::collections::HashMap<usize, (ResourceContext, Option<ResourceContext>)>,
+                std::collections::HashMap<(usize, (u32, u32)), (ResourceContext, Option<ResourceContext>)>,
             > = std::cell::RefCell::new(std::collections::HashMap::new());
         }
         const EXPANSION_MEMO_LIMIT: usize = 10_000;
+        let memory_id = crate::kernel::intern_c_memory_ref(memory).arena_id();
         let mut expanded = Vec::new();
         for composition in self.resource_compositions.iter() {
-            let key = std::sync::Arc::as_ptr(&composition.storage) as usize;
+            let key = (
+                std::sync::Arc::as_ptr(&composition.storage) as usize,
+                memory_id,
+            );
             if let Some(hit) =
                 EXPANSION_MEMO.with(|memo| memo.borrow().get(&key).map(|(_, value)| value.clone()))
             {
@@ -1908,7 +1944,7 @@ impl PureFactContext {
             let computed = crate::kernel::functions::expand_all_composite_resource_facts(
                 composition,
                 &definitions,
-                &CMemory::new(),
+                memory,
                 &PureFactContext::new(),
             )
             .filter(|context| context != composition);
