@@ -140,10 +140,24 @@ and the reasoning that views a load variable as the load it names
 keyed on load shape — substitution, quantifier triggers, frame checks,
 loadability witnesses, the quantified replay index — see through a name.
 
-Two consequences are worth knowing when reading proofs. A load variable is
-identified by its cell and the last write to it, so the read before a call
-and the read after it are different variables unless a step's frame check
-or an explicit `transport` carries the fact across; facts never match
-across an effect structurally. And `old(x)` denotes the entry value: it is
-the entry-epoch load variable, equal to the current value only where that
-frame fact is established.
+A load variable is identified by its cell and the cell's *epoch*: the
+snapshot the naming walk (`cell_epoch_for_canonical_naming`) reaches from
+the load's snapshot by crossing only edges proven, without assumptions, not
+to write the cell — block declarations, cells forgotten, stores and call
+havocs at constant-disjoint offsets or in distinct blocks. The walk runs on
+the live snapshot before the canonical form restricts it, since the
+restricted snapshot is a fresh intern with no derivation. Two snapshots
+that reach one epoch name the cell identically, and the frame checks'
+endpoint matching (`memories_directly_match_for_pointer_load`) accepts
+that identity, so a fact carried unchanged through several steps still
+meets a later effect summary.
+
+Two consequences are worth knowing when reading proofs. Where crossing a
+write needs evidence (a havoc of `object(other)` against a pointer that is
+only separate by a `requires`), the read before the call and the read after
+it are different variables unless a step's frame check or an explicit
+`transport` carries the fact across; facts never match across such an
+effect structurally, and a step keeps the pre-step form of a carried fact
+beside the carried one, since both stay true. And `old(x)` denotes the
+entry value: it is the entry-epoch load variable, equal to the current
+value only where that frame fact is established.

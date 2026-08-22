@@ -389,18 +389,33 @@ identity first. `materialization_equivalent_available_fact` is now
 `exactly_available_fact`. Separation bridging stays (separations name
 regions through snapshot terms).
 
-**Still load-bearing:** `proposition_candidate_equals_modulo_proven_snapshots`
-(comparison modulo frame-proven snapshot equality). With it replaced by
-structural equality, `borrowed_slice_buffer_pipeline` fails a `step()
-using` premise `at(statement(5).exit, data[start]) == at(statement(5).exit,
-replacement)` as not exactly available: the premise lowered at the
-recorded exit state and the callee's recorded ensure give two canonical
-forms for one cell at one point (materialized-cell resolution versus the
-epoch name, to be confirmed). Under the step rule that premise check
-must be exact, so this is a remaining creation-time gap to fix, after
-which the comparator can go. The snapshot-restriction comparison in the
-frame legs (`canonical_memory_for_pointer_load`) is part of the canonical
-form's definition and the load-term frame reasoning and stays.
+**Naming walk before restriction (2026-08-22):** `canonicalize_atomic_loads`
+restricted the snapshot before the epoch walk, and the restricted intern has
+no derivation, so any memory with a local block named an unwritten cell by
+its own snapshot — one cell, one name per statement. The walk now runs on
+the live snapshot first. Consequences landed with it: effect-summary
+endpoints match by cell epoch (`memories_directly_match_for_pointer_load`),
+a carried fact keeps its pre-step form beside the carried one (both stay
+true; `at(statement(n).entry, …)` premises cite the former), and
+`examples/bounded-pool` lists `source != destination` and
+`destination->capacity == 1` in the checkout step under the step rule.
+
+**Removed:** `proposition_candidate_equals_modulo_proven_snapshots`
+(comparison modulo frame-proven snapshot equality). It was hiding a
+planning gap, not a creation-time one: `borrowed_slice_buffer_pipeline`'s
+expansion wrote the `return` call's `step() using` without the contract
+bounds its frame check had consumed (the check locates `data + start`
+inside the composite buffer's owned range by an exact order path through
+`start < end` and `end <= length`), so replay left `data[start] ==
+replacement` at its pre-call name and the comparator bridged the two names.
+A `CertifiedFactTransport` now records `frame_premises` — the provenance
+of the kernel's direct transport, with exact lookups and index-in-range
+bounds recorded as consumed premises — and the planner lists them; premise
+availability is structural equality. Regression:
+`expanded_step_lists_the_bounds_its_frame_check_consumed`. The
+snapshot-restriction comparison in the frame legs
+(`canonical_memory_for_pointer_load`) is part of the canonical form's
+definition and the load-term frame reasoning and stays.
 
 ## Constraints learned
 
@@ -431,9 +446,10 @@ form's definition and the load-term frame reasoning and stays.
 
 ### Creation-time invariant
 
-The stage-1 check, promoted to a test: run the fixture corpora with the
-invariant check enabled and assert no violation. This is the regression
-that keeps the invariant an invariant.
+The stage-1 check, promoted to a test: `*_creates_only_canonical_terms` in
+`src/lang/click/tests/project_tests.rs` counts violations
+(`count_canonical_at_creation_violations`) over seven example projects and
+requires zero. Landed 2026-08-22.
 
 ### Production representation
 
@@ -458,15 +474,23 @@ snapshots must fail.
 Prove the `owned_string_push` null-terminator fact with explicit simple
 steps: select the store effect, use the assignment and later field
 equalities, and transport it to `owner->data[owner->len] == 0`, with no
-smart tactic holding a premise the certificate cannot name.
+smart tactic holding a premise the certificate cannot name. Landed: the
+`owned_string_push` proof in `examples/owned-string/owned_string.click` is
+entirely simple tactics, closing the null-terminator fact by two `rewrite`s
+and `assumption`.
 
 ### Deterministic scaling
 
-Build the field-derived metadata-write transport at three input sizes,
-measure deterministic verifier work units for the selected `have`, and
-enforce a linear-up-to-indexing envelope. Keep
+`load_variable_naming_scales_near_linearly_with_statements` in
+`src/lang/click/tests/scaling_tests.rs` (landed 2026-08-22): straight
+lines of loads along three axes — a new cell per statement, one cell
+reloaded from an unchanged memory, one cell reloaded across a growing
+store DAG — at sizes 8–64, with DAG hops and name-cache misses counted as
+deterministic work. Keep
 `mdtests/field_derived_precise_effect_after_metadata_write.md` as a corpus
 canary within its ordinary budget; wall-clock time is diagnostic only.
+Known bound: the naming walk stops after `MEMORY_DAG_CELL_HOP_LIMIT` (64)
+hops, so a cell read more than 64 writes after its epoch takes a new name.
 
 ## Acceptance criteria
 

@@ -1762,6 +1762,10 @@ pub struct CertifiedFactTransport {
     pub(crate) target: Proposition,
     pub(crate) theorem: Theorem,
     pub(crate) statement_local: bool,
+    /// Exact facts the bounded frame check consumed to carry `source`
+    /// across the statement effect. A `step() using` certificate must list
+    /// them: replay frames the listed facts from the listed premises only.
+    pub(crate) frame_premises: Vec<Proposition>,
 }
 
 /// Private semantic evidence retained while a smart tactic constructs its

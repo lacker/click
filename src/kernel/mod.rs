@@ -18,9 +18,9 @@ mod termination;
 
 pub use api::*;
 pub(crate) use assumptions::{
-    PureFactContextIdScope, arm_frame_composite_definitions, collect_reasoning_provenance,
-    finite_forall_goal_instances, record_implicit_reasoning_provenance,
-    with_search_attempt_rollback,
+    PureFactContextIdScope, arm_frame_composite_definitions, capture_implicit_reasoning_provenance,
+    collect_reasoning_provenance, finite_forall_goal_instances,
+    record_implicit_reasoning_provenance, with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_condition_fact;
 pub(crate) use eval::canonical_load_term;
@@ -29,6 +29,9 @@ pub(crate) use eval::canonical_load_variable_for_term;
 pub(crate) use eval::canonical_load_variable_with_origin;
 pub(crate) use eval::canonical_term;
 pub(crate) use eval::canonicalized_offset_index_term;
+#[cfg(test)]
+#[cfg(test)]
+pub(crate) use eval::count_canonical_at_creation_violations;
 pub(crate) use eval::is_canonical_load_defining_fact;
 pub(crate) use eval::is_canonical_load_variable;
 pub(crate) use eval::offsets_match_modulo_canonical_names;

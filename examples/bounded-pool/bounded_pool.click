@@ -368,6 +368,7 @@ void pool_transfer_pipeline(
     unfold(valid_pool);
     mark pools_initialized;
     step() using {
+        source != destination;
         loadable(source->checked_out);
         loadable(source->capacity);
         0 <= source->checked_out;
@@ -375,6 +376,7 @@ void pool_transfer_pipeline(
         source->capacity ==
             source->checked_out + count(pool_slot(source));
         source->capacity == 1;
+        destination->capacity == 1;
     }
     transport(
         at(pools_initialized,

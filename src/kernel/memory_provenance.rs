@@ -1387,6 +1387,9 @@ fn memory_dag_cell_source(
     let mut current = memory.clone();
     let mut path = Vec::new();
     for _ in 0..MEMORY_DAG_CELL_HOP_LIMIT {
+        // Each hop is one unit of deterministic work, so a scaling
+        // regression sees a walk that grows with the proof.
+        crate::instrumentation::record_deterministic_work(1);
         let Some(derivation) = current.derivation() else {
             return MemoryDagCell::Unwritten {
                 node: current,
@@ -2164,6 +2167,23 @@ fn memories_directly_match_for_pointer_load(
     if memories_match_for_pointer_load(left, right, pointer) {
         return true;
     }
+    // Two snapshots that name the cell by one DAG epoch hold the same
+    // cell: every hop the naming walk crossed is a write proven (without
+    // assumptions) to miss the cell. This is how a fact carried unchanged
+    // through earlier steps, and so still named at its mint epoch, meets an
+    // effect summary whose `before` is the later live snapshot.
+    if !pointer.block.starts_with("local:")
+        && let (Some(left_epoch), Some(right_epoch)) = (
+            cell_epoch_for_canonical_naming(&crate::kernel::intern_c_memory(left.clone()), pointer),
+            cell_epoch_for_canonical_naming(
+                &crate::kernel::intern_c_memory(right.clone()),
+                pointer,
+            ),
+        )
+        && left_epoch == right_epoch
+    {
+        return true;
+    }
     if pointer.block.starts_with("local:")
         || !left
             .blocks
@@ -2519,13 +2539,23 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
                     {
                         canonicalize_atomic_loads_with_depth(&value, depth + 1)
                     }
-                    _ => Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(
-                            memory,
-                            &canonical_pointer,
-                        )),
-                        Box::new(canonical_pointer),
-                    ),
+                    _ => {
+                        // Name the cell by its DAG epoch before restricting
+                        // the snapshot: the restriction is a fresh intern
+                        // with no derivation, so an epoch walk over it
+                        // could not cross anything. Walking the original
+                        // snapshot lets two loads of one unwritten cell at
+                        // different points share one canonical form.
+                        let epoch = cell_epoch_for_canonical_naming(memory, &canonical_pointer);
+                        let epoch = epoch.as_ref().unwrap_or(memory);
+                        Bitvector32Term::MemoryLoad(
+                            crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(
+                                epoch,
+                                &canonical_pointer,
+                            )),
+                            Box::new(canonical_pointer),
+                        )
+                    }
                 },
             }
         }

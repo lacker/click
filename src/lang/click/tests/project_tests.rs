@@ -284,12 +284,10 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
 }
 
 /// A `simp() using` premise that equates one expression across two call
-/// transitions denotes an available fact only through the kernel's certified
-/// snapshot bridge — no single replay-time fact carries that exact form.
-/// The certificate cites the bridged premise form directly: canonical
-/// load variables are kernel-internal names, so `rewrite` replay closes over
-/// recorded equalities chained through them with a bounded, deterministic
-/// walk instead of demanding an explicit snapshot transport step.
+/// transitions (`owner->data == at(statement(2).entry, owner->data)`) names
+/// one unwritten cell twice: terms are canonical at creation, so both sides
+/// are the same load variable and the premise is reflexive. The expansion
+/// needs no snapshot transport and rewrites from the remaining premise.
 #[test]
 fn snapshot_bridged_simp_premise_expands_to_an_explicit_transport() {
     let init_c = r#"
@@ -407,9 +405,17 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the snapshot-bridged restricted simp should expand");
+    // `owner->data` is untouched by `box_touch` (`mutable owner->value`
+    // only), so its canonical name after the calls is the name at
+    // statement 2's entry: the snapshot premise is reflexive and the
+    // expansion rewrites straight from the remaining one.
     assert!(
-        expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
+        expanded.contains("rewrite(at(statement(2).entry, owner->data) == data);"),
         "the rewrite must cite the construction-time premise form:\n{expanded}"
+    );
+    assert!(
+        !expanded.contains("rewrite(owner->data == at(statement(2).entry, owner->data));"),
+        "a reflexive snapshot premise must not be rewritten:\n{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
         .expect("the explicit bridged-premise certificate should replay");
@@ -1172,4 +1178,73 @@ fn truncated_service_step_reports_the_budget_not_a_missing_fact() {
              (simple budget {simple_budget}): {message}"
         );
     }
+}
+
+/// Standing regression for the creation-time invariant of
+/// `issues/canonicalization.md`: every condition fact entering a
+/// `PureFactContext` is already canonical (memory loads are content-addressed
+/// load variables). The audit counts violations at fact creation while an
+/// example project verifies — symbolic execution, contract and spec lowering,
+/// resource projection, and call application all create terms there — and
+/// requires zero. One test per project keeps each under the per-test budget.
+fn example_project_creates_only_canonical_terms(project: &str, sidecar: &str) {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest.join("examples").join(project).join(sidecar);
+    let click_source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let sources = crate::cli::read_verifying_sources(&path, &click_source)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
+    let (verified, violations) = crate::kernel::count_canonical_at_creation_violations(|| {
+        verify_c0_sources(&click_source, &c_sources)
+    });
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    assert_eq!(
+        violations,
+        0,
+        "`{}` created {violations} non-canonical condition fact(s); run it with \
+         CLICK_CHECK_CANONICAL_AT_CREATION=1 to see each rewrite kind and creator",
+        path.display()
+    );
+}
+
+#[test]
+fn borrowed_slice_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms("borrowed-slice", "borrowed_slice.click");
+}
+
+#[test]
+fn input_cursor_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms("input-cursor", "input_cursor.click");
+}
+
+#[test]
+fn linked_list_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms("linked-list", "linked_list.click");
+}
+
+#[test]
+fn owned_segmented_buffer_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms(
+        "owned-segmented-buffer",
+        "owned_segmented_buffer.click",
+    );
+}
+
+#[test]
+fn owned_string_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms("owned-string", "owned_string.click");
+}
+
+#[test]
+fn recursive_zero_list_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms(
+        "recursive-zero-list",
+        "recursive_zero_list.click",
+    );
+}
+
+#[test]
+fn vector_push_creates_only_canonical_terms() {
+    example_project_creates_only_canonical_terms("vector-push", "vector_push.click");
 }

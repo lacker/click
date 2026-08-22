@@ -1538,6 +1538,13 @@ pub(super) fn execute_step_from_execution_point(
                     {
                         exact_premises.push(transport.source.clone());
                     }
+                    for premise in &transport.frame_premises {
+                        if exact_fact_is_available(premise, available_pure_facts)
+                            && !exact_premises.contains(premise)
+                        {
+                            exact_premises.push(premise.clone());
+                        }
+                    }
                 }
                 for obligation in &transition.obligations {
                     if exact_fact_is_available(obligation.proposition(), available_pure_facts)

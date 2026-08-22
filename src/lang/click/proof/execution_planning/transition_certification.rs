@@ -882,11 +882,12 @@ fn certified_transitions_from_execution(
                         }
                     }
                     for fact in normalization_sources {
-                        let Some(theorem) = prove_c_condition_fact_direct_transport(
+                        let (theorem, frame_premises) = direct_transport_with_frame_premises(
                             &fact,
                             post_state.memory(),
                             &transport_assumptions,
-                        ) else {
+                        );
+                        let Some(theorem) = theorem else {
                             continue;
                         };
                         let Proposition::Implies(_, conclusion) = theorem.proposition() else {
@@ -896,7 +897,12 @@ fn certified_transitions_from_execution(
                         if target == &fact {
                             continue;
                         }
-                        successor_facts.retain(|available| available != &fact);
+                        // A name-bearing source stays true after the step
+                        // (its cells are named by epoch); a later premise
+                        // may cite it at the statement entry. Keep it.
+                        if !crate::kernel::proposition_mentions_registered_canonical_load(&fact) {
+                            successor_facts.retain(|available| available != &fact);
+                        }
                         if !successor_facts.contains(target) {
                             successor_facts.push(target.clone());
                         }
@@ -911,6 +917,7 @@ fn certified_transitions_from_execution(
                             target: target.clone(),
                             theorem,
                             statement_local: true,
+                            frame_premises,
                         });
                     }
                 }
@@ -933,16 +940,10 @@ fn certified_transitions_from_execution(
                         }
                         let statement_local =
                             exact_fact_is_available(&fact, &statement_fact_sources);
-                        let theorem = match fact_transport_policy {
-                            StatementFactTransportPolicy::Selected => {
-                                prove_c_condition_fact_direct_transport(
-                                    &fact,
-                                    post_state.memory(),
-                                    &transport_assumptions,
-                                )
-                            }
-                            StatementFactTransportPolicy::Automatic => {
-                                prove_c_condition_fact_direct_transport(
+                        let (theorem, frame_premises) = match fact_transport_policy {
+                            StatementFactTransportPolicy::Selected
+                            | StatementFactTransportPolicy::Automatic => {
+                                direct_transport_with_frame_premises(
                                     &fact,
                                     post_state.memory(),
                                     &transport_assumptions,
@@ -961,16 +962,30 @@ fn certified_transitions_from_execution(
                             target: conclusion.as_ref().clone(),
                             theorem,
                             statement_local,
+                            frame_premises,
                         });
                     }
                 }
                 let mut transported_execution_facts = Vec::new();
                 for transport in &transported_facts {
-                    replace_fact_in_place(
-                        &mut successor_facts,
+                    // A carried fact names its cells by content-addressed
+                    // epoch, so the pre-step form stays true after the
+                    // step: a later premise may cite either the entry
+                    // form (`at(statement(n).entry, ...)`) or the carried
+                    // one. Keep both.
+                    if crate::kernel::proposition_mentions_registered_canonical_load(
                         &transport.source,
-                        &transport.target,
-                    );
+                    ) {
+                        if !successor_facts.contains(&transport.target) {
+                            successor_facts.push(transport.target.clone());
+                        }
+                    } else {
+                        replace_fact_in_place(
+                            &mut successor_facts,
+                            &transport.source,
+                            &transport.target,
+                        );
+                    }
                     for fact in &mut execution_facts {
                         if fact.proposition() == &transport.source {
                             if fact.is_certified() {
@@ -1024,6 +1039,7 @@ fn certified_transitions_from_execution(
                         target: execution_fact.proposition().clone(),
                         theorem: theorem.clone(),
                         statement_local: false,
+                        frame_premises: Vec::new(),
                     };
                     if !transported_facts.contains(&transport) {
                         transported_facts.push(transport);
@@ -1091,4 +1107,28 @@ fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, tar
     } else if !facts.contains(target) {
         facts.push(target.clone());
     }
+}
+
+/// Direct transport of one fact across the statement effect, together with
+/// the exact facts its bounded frame check consumed (the premises the
+/// `step() using` certificate has to list so replay frames the fact from
+/// the same evidence). The source fact itself is not a frame premise.
+fn direct_transport_with_frame_premises(
+    fact: &Proposition,
+    after: &crate::kernel::CMemory,
+    assumptions: &PureFactContext,
+) -> (Option<Theorem>, Vec<Proposition>) {
+    let (theorem, used) = crate::kernel::collect_reasoning_provenance(|| {
+        crate::kernel::capture_implicit_reasoning_provenance(|| {
+            prove_c_condition_fact_direct_transport(fact, after, assumptions)
+        })
+    });
+    if theorem.is_none() {
+        return (None, Vec::new());
+    }
+    let frame_premises = used
+        .into_iter()
+        .filter(|premise| premise != fact && assumptions.proves_exact(premise))
+        .collect();
+    (theorem, frame_premises)
 }

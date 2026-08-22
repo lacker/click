@@ -12023,17 +12023,14 @@ impl ProofFacts {
                 if !candidates.contains(candidate) {
                     candidates.push(candidate.clone());
                 }
-                if proposition_candidate_equals_modulo_proven_snapshots(
-                    candidate,
-                    required,
-                    &self.assumptions,
-                    framing,
-                ) || separation_bridged_fact_is_available(
-                    required,
-                    std::slice::from_ref(candidate),
-                    &self.assumptions,
-                    framing,
-                ) {
+                if candidate == required
+                    || separation_bridged_fact_is_available(
+                        required,
+                        std::slice::from_ref(candidate),
+                        &self.assumptions,
+                        framing,
+                    )
+                {
                     return Some(candidate.clone());
                 }
             }
@@ -12075,15 +12072,11 @@ impl ProofFacts {
             .filter_map(|key| self.implications_by_consequent.get(&key))
             .flat_map(PersistentSequence::iter)
             .any(|candidate| {
-                proposition_candidate_equals_modulo_proven_snapshots(
-                    &candidate.consequent,
-                    required,
-                    &self.assumptions,
-                    &[],
-                ) && candidate
-                    .antecedents
-                    .iter()
-                    .all(|antecedent| self.replay_available_across_effects(antecedent, &[]))
+                &candidate.consequent == required
+                    && candidate
+                        .antecedents
+                        .iter()
+                        .all(|antecedent| self.replay_available_across_effects(antecedent, &[]))
             })
     }
 
@@ -12115,14 +12108,6 @@ impl ProofFacts {
             return false;
         }
         separation_bridged_fact_is_available(required, &candidates, &self.assumptions, framing)
-            || candidates.iter().any(|candidate| {
-                proposition_candidate_equals_modulo_proven_snapshots(
-                    candidate,
-                    required,
-                    &self.assumptions,
-                    framing,
-                )
-            })
     }
 
     pub(super) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {

@@ -419,6 +419,11 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         if !transport.statement_local && !exact_premises.contains(&transport.source) {
             exact_premises.push(transport.source.clone());
         }
+        for premise in &transport.frame_premises {
+            if !exact_premises.contains(premise) {
+                exact_premises.push(premise.clone());
+            }
+        }
     }
     for obligation in &transition.obligations {
         if !exact_premises.contains(obligation.proposition()) {

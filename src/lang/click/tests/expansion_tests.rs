@@ -10527,3 +10527,59 @@ fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
         )
     });
 }
+
+/// A `step() using` certificate lists every fact its frame check consumed.
+/// `borrowed_slice_buffer_pipeline` carries `data[start] == replacement`
+/// across the `return` call's `object(owner)` effect: the frame check locates
+/// `data + start` inside the composite buffer's owned range through the
+/// contract bounds, so the emitted step has to list those bounds — without
+/// them, replay leaves the fact at its pre-call name and the next step's
+/// exact premise is unavailable.
+#[test]
+fn expanded_step_lists_the_bounds_its_frame_check_consumed() {
+    let click_source = include_str!("../../../../examples/borrowed-slice/borrowed_slice.click");
+    let c_sources = [
+        (
+            "buffer_init.c",
+            include_str!("../../../../examples/borrowed-slice/buffer_init.c"),
+        ),
+        (
+            "buffer_borrow.c",
+            include_str!("../../../../examples/borrowed-slice/buffer_borrow.c"),
+        ),
+        (
+            "slice_set.c",
+            include_str!("../../../../examples/borrowed-slice/slice_set.c"),
+        ),
+        (
+            "buffer_return.c",
+            include_str!("../../../../examples/borrowed-slice/buffer_return.c"),
+        ),
+        (
+            "buffer_get.c",
+            include_str!("../../../../examples/borrowed-slice/buffer_get.c"),
+        ),
+        (
+            "buffer_pipeline.c",
+            include_str!("../../../../examples/borrowed-slice/buffer_pipeline.c"),
+        ),
+    ];
+    let expanded = expand_c0_claim_source_by_label(
+        click_source,
+        &c_sources,
+        "borrowed_slice_buffer_pipeline.contract",
+    )
+    .expect("the pipeline proof should expand");
+    let return_step = expanded
+        .split("step() using {")
+        .find(|step| step.contains("at(statement(5).entry, data[start])"))
+        .expect("the return call's step should carry the slice fact: {expanded}");
+    for bound in ["0 <= start;", "start < end;", "end <= length;"] {
+        assert!(
+            return_step.contains(bound),
+            "the return step must list `{bound}`:\n{return_step}"
+        );
+    }
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded pipeline proof should replay with exact premises only");
+}

@@ -2755,6 +2755,23 @@ fn bitvector_index_in_range_shallow(
         || assumptions.should_defer_non_exact_condition_reasoning()
             && assumptions.has_order_path_for_memory_resolution(index, end, true);
     if lower_bound_is_exact && upper_bound_is_exact {
+        // The bounds were read off exact facts along some indexed path; a
+        // provenance collection wants the facts behind them, whichever arm
+        // found them.
+        record_implicit_reasoning_provenance(
+            assumptions,
+            &Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(start.clone(), index.clone()),
+                true,
+            ),
+        );
+        record_implicit_reasoning_provenance(
+            assumptions,
+            &Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(index.clone(), end.clone()),
+                true,
+            ),
+        );
         return true;
     }
 

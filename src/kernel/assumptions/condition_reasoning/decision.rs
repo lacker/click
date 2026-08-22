@@ -154,10 +154,24 @@ impl PureFactContext {
         }
     }
 
+    /// The exact recorded value of `condition` (or of its mirrored form),
+    /// recording the fact as consumed provenance when a collection is
+    /// active: an exact lookup is a premise like any other.
     pub(in crate::kernel) fn exact_condition_value(
         &self,
         condition: &ConditionTerm,
     ) -> Option<bool> {
+        let value = self.exact_condition_value_unrecorded(condition);
+        if let Some(value) = value {
+            record_implicit_reasoning_provenance(
+                self,
+                &Proposition::ConditionIs(condition.clone(), value),
+            );
+        }
+        value
+    }
+
+    fn exact_condition_value_unrecorded(&self, condition: &ConditionTerm) -> Option<bool> {
         self.condition_facts
             .get(condition)
             .copied()

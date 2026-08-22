@@ -779,7 +779,9 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
         static SEEN: std::cell::RefCell<std::collections::BTreeSet<(String, String)>> =
             std::cell::RefCell::new(std::collections::BTreeSet::new());
     }
-    if !ENABLED.with(|enabled| *enabled) {
+    if !ENABLED.with(|enabled| *enabled)
+        && !CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.get().is_some())
+    {
         return;
     }
     let proposition = Proposition::ConditionIs(condition.clone(), value);
@@ -788,6 +790,14 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
     }
     let canonical = canonical_condition(condition);
     if &canonical == condition {
+        return;
+    }
+    CANONICAL_AT_CREATION_VIOLATIONS.with(|count| {
+        if let Some(seen) = count.get() {
+            count.set(Some(seen + 1));
+        }
+    });
+    if !ENABLED.with(|enabled| *enabled) {
         return;
     }
     let kind = if !condition_mentions_a_memory_load(&canonical) {
@@ -848,6 +858,28 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
     let shown = format!("{condition:?}");
     let shown = &shown[..shown.len().min(width)];
     eprintln!("CANONICAL-AT-CREATION violation [{kind}] created in {creator}\n  example: {shown}");
+}
+
+thread_local! {
+    /// `Some(n)` while a creation-time invariant audit is counting
+    /// violations on this thread; `None` otherwise (the check is off).
+    static CANONICAL_AT_CREATION_VIOLATIONS: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `body` with the creation-time invariant check on, returning the
+/// body's result and the number of condition facts that entered a
+/// `PureFactContext` in a non-canonical form. The standing regression for
+/// `issues/canonicalization.md` asserts zero over fixture verification.
+#[cfg(test)]
+#[cfg(test)]
+pub(crate) fn count_canonical_at_creation_violations<T>(body: impl FnOnce() -> T) -> (T, usize) {
+    let previous = CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.replace(Some(0)));
+    let result = body();
+    let violations = CANONICAL_AT_CREATION_VIOLATIONS
+        .with(|count| count.replace(previous))
+        .unwrap_or(0);
+    (result, violations)
 }
 
 /// Whether a condition is a store fact `load(after, p) == v` where `after`
@@ -1317,6 +1349,7 @@ pub(crate) fn canonical_load_variable_for_term(
     if let Some(hit) = NAME_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
         return Some(hit);
     }
+    crate::instrumentation::record_deterministic_work(1);
     let computed = canonical_load_variable_for_term_uncached(bits)?;
     NAME_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
