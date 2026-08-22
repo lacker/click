@@ -325,17 +325,25 @@ assumes a load term. Characterized so far:
     `signed_constant_after_equality_normalization` tried every equality
     fact as a deep candidate for a load variable (now gated by address,
     as for a load term). 1.5 s under the switch against 1.3 s default.
-  - `owned-vector` (`vector_grow`, else branch): lowering `have forall
-    (k) … owner->data[k] == old(owner->data[k])` fails with
-    `loadable(heap@k*4, 4)` unproved; the old mode proved it from the
-    heap range loadability facts, which are present across the steps in
-    both modes but absent from this `have`'s context under names (53
-    facts versus 136) — the context selection for the `have` has not
-    been traced yet. Indexing names under their address in the
-    memory-load condition index and matching them in
-    `condition_contains_contract_load` did not help and broke
-    `execute_until_expands_vector_storage_call_postconditions`; not
-    landed.
+  - `owned-vector` (canonicalization part done; the example stays
+    quarantined for `issues/resource-tracking.md`). Two of `vector_grow`'s
+    proof steps relied on `old(owner->len)` matching the current value
+    structurally: `have owner->len == old(owner->len) by { normalize(); }`
+    and a `forall` `have` over `old(owner->len)`. Under the step rule the
+    equality is a frame fact across `free(old_data)`, so the script now
+    states it with the reflexive `transport(old(owner->len) ==
+    old(owner->len), owner->len == old(owner->len))` form the other
+    examples use, before the `forall` `have`, which closes by `simp`.
+    Two kernel gaps behind it: the naming walk stopped at declared-block
+    edges (crossed unconditionally now), and the quantified loadability
+    witnesses (`quantified_int32_fact_certifies_loadable_cell` and
+    `_range`) looked only for load terms in the universal's conclusion —
+    a name now counts when the target memory's own name for the cell is
+    that name. With these the else branch verifies up to the quarantined
+    `allocated_vector_push` stale-view failure, which is the same in both
+    modes and is the resource-scope problem that issue owns (its fix is a
+    proof scope, not automatic view retirement — a patch that retired
+    views of a freed allocation was tried and parked for that reason).
   Repro: flip `canonicalize_at_creation_enabled` to `true`, run
   `click verify` on the three sidecars. Acceptance: all examples verify
   under the flip with no weakened claims, the six assertion edits land,

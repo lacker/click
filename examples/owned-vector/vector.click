@@ -811,9 +811,12 @@ int32 vector_grow(struct vector* owner) {
         have separate(memory(object(owner)), memory(owner->data[0..owner->cap])) by {
             assumption();
         }
-        have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by {
+        have owner->len == old(owner->len) by {
+            transport(old(owner->len) == old(owner->len), owner->len == old(owner->len)) using {
+            }
             assumption();
         }
+        have forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) } by simp;
         have loadable(owner->data[0..owner->len]) by {
             transport(forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) }, loadable(owner->data[0..owner->len])) using {
                 forall (k: int32) { 0 <= k and k < old(owner->len) implies owner->data[k] == old(owner->data[k]) };

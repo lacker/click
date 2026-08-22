@@ -379,6 +379,13 @@ fn condition_fact_mentions_load_of(
     fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
         match term {
             Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
+            // A load variable mentions the load it names.
+            Bitvector32Term::Variable(variable) => {
+                if let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+                {
+                    pointers.push(pointer);
+                }
+            }
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
@@ -632,10 +639,25 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
         (premises, conclusion)
     }
 
-    fn collect_loads<'a>(term: &'a Bitvector32Term, loads: &mut Vec<(&'a CMemory, &'a Pointer)>) {
+    /// A load the conclusion reads: a load term, or a load variable with
+    /// the load it names.
+    enum ConclusionLoad {
+        Term(SharedCMemory, Pointer),
+        Name(Variable, Pointer),
+    }
+    fn collect_loads(term: &Bitvector32Term, loads: &mut Vec<ConclusionLoad>) {
         match term {
             Bitvector32Term::MemoryLoad(memory, pointer) => {
-                loads.push((memory, pointer));
+                loads.push(ConclusionLoad::Term(
+                    memory.clone(),
+                    pointer.as_ref().clone(),
+                ));
+            }
+            Bitvector32Term::Variable(variable) => {
+                if let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+                {
+                    loads.push(ConclusionLoad::Name(*variable, pointer));
+                }
             }
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
@@ -676,14 +698,11 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                     collect_loads(argument, loads);
                 }
             }
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
+            Bitvector32Term::Constant(_) => {}
         }
     }
 
-    fn condition_loads<'a>(
-        proposition: &'a Proposition,
-        loads: &mut Vec<(&'a CMemory, &'a Pointer)>,
-    ) {
+    fn condition_loads(proposition: &Proposition, loads: &mut Vec<ConclusionLoad>) {
         let Proposition::ConditionIs(condition, _) = proposition else {
             return;
         };
@@ -736,8 +755,22 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
         }
         let mut loads = Vec::new();
         condition_loads(conclusion, &mut loads);
-        loads.iter().any(|(load_memory, pointer)| {
-            *load_memory == memory
+        loads.iter().any(|load| {
+            let (pointer, at_this_memory) = match load {
+                ConclusionLoad::Term(load_memory, pointer) => {
+                    (pointer, load_memory.memory() == memory)
+                }
+                // The name denotes this memory's cell exactly when this
+                // memory's own name for the cell is that name.
+                ConclusionLoad::Name(variable, pointer) => (
+                    pointer,
+                    crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(memory.clone()),
+                        Box::new(pointer.clone()),
+                    )) == Bitvector32Term::Variable(*variable),
+                ),
+            };
+            at_this_memory
                 && pointer
                     .element_index_from_base(base)
                     .is_some_and(|load_index| load_index == index)
