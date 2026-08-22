@@ -19,8 +19,8 @@ mod termination;
 pub use api::*;
 pub(crate) use assumptions::{
     PureFactContextIdScope, arm_frame_composite_definitions, collect_reasoning_provenance,
-    conditions_equal_ignoring_memories, finite_forall_goal_instances,
-    record_implicit_reasoning_provenance, with_search_attempt_rollback,
+    finite_forall_goal_instances, record_implicit_reasoning_provenance,
+    with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_condition_fact;
 pub(crate) use eval::canonical_load_term;

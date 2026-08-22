@@ -12030,7 +12030,7 @@ impl ProofFacts {
                     required,
                     &self.assumptions,
                     framing,
-                ) || snapshot_bridged_fact_is_available_under(
+                ) || separation_bridged_fact_is_available(
                     required,
                     std::slice::from_ref(candidate),
                     &self.assumptions,
@@ -12040,7 +12040,7 @@ impl ProofFacts {
                 }
             }
         }
-        snapshot_bridged_fact_is_available_under(required, &candidates, &self.assumptions, framing)
+        separation_bridged_fact_is_available(required, &candidates, &self.assumptions, framing)
             .then(|| required.clone())
     }
 
@@ -12116,7 +12116,7 @@ impl ProofFacts {
         if candidates.is_empty() {
             return false;
         }
-        snapshot_bridged_fact_is_available_under(required, &candidates, &self.assumptions, framing)
+        separation_bridged_fact_is_available(required, &candidates, &self.assumptions, framing)
             || candidates.iter().any(|candidate| {
                 proposition_candidate_equals_modulo_proven_snapshots(
                     candidate,

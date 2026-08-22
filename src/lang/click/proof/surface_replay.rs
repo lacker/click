@@ -424,7 +424,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                 .is_some()
             || quantified_binder_equivalent(&lowered, &kernel)
             || (allow_snapshot_blind_candidates
-                && (snapshot_bridged_fact_is_available_under(
+                && (separation_bridged_fact_is_available(
                     &kernel,
                     std::slice::from_ref(&lowered),
                     assumptions,
@@ -2530,41 +2530,10 @@ pub(super) fn surface_simp_plan_proof(
     Ok(SourceProof::Script(tactics))
 }
 
-/// How a restricted-`simp` premise's certificate form relates to the
-/// replay-visible fact set. Certificates may cite `ExactlyAvailable`
-/// forms directly; a `SnapshotBridged` form denotes an available fact
-/// only through the kernel's certified snapshot bridge and must be
-/// materialized by an explicit transport step before simple replay can use it.
+/// A restricted-`simp` premise's certificate form is exactly available in
+/// the replay-visible fact set; certificates cite it directly.
 enum PremiseForm {
     ExactlyAvailable,
-    SnapshotBridged,
-}
-
-/// The snapshot-anchored reflexive form a transport re-anchors from when
-/// a listed premise equates one expression across two program points. For
-/// `x == at(P, x)` this is `at(P, x) == at(P, x)`: trivially derivable at the
-/// recorded point, with the certified bridge carrying one side to the current
-/// state.
-fn reflexive_snapshot_transport_source(surface: &ClickProposition) -> Option<ClickProposition> {
-    let ClickProposition::Comparison {
-        left,
-        operator: ComparisonOperator::Equal,
-        right,
-    } = surface
-    else {
-        return None;
-    };
-    let anchored = [right, left].into_iter().find(|side| {
-        matches!(
-            side,
-            ContractExpression::At { .. } | ContractExpression::Old(_)
-        )
-    })?;
-    Some(ClickProposition::Comparison {
-        left: anchored.clone(),
-        operator: ComparisonOperator::Equal,
-        right: anchored.clone(),
-    })
 }
 
 /// The single construction event for a smart `have`/`simp` at the current
@@ -2706,23 +2675,6 @@ pub(super) fn surface_smart_have_certificate(
                             return Ok((fact, PremiseForm::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
-                            && snapshot_bridged_fact_is_available(
-                                lowered,
-                                restricted_context_available,
-                                &[],
-                            )
-                        {
-                            // Retain the listed form after checking that
-                            // it is the same available fact across certified
-                            // snapshots. The restricted reasoning context is
-                            // still exactly the listed premise vector — but
-                            // the form itself is not an exact replay-time
-                            // fact, so the certificate must materialize it
-                            // with an explicit snapshot transport before any
-                            // simple step may cite it as evidence.
-                            return Ok((lowered.clone(), PremiseForm::SnapshotBridged));
-                        }
-                        if let Ok(lowered) = &freshly_lowered
                             && premise_bridged_by_canonical_name_chain(
                                 lowered,
                                 restricted_context_available,
@@ -2818,47 +2770,6 @@ pub(super) fn surface_smart_have_certificate(
                 })
                 .map(|(_, surface)| ProofTactic::Extract(surface.clone())),
         );
-        // A snapshot-bridged premise is certified evidence, but its listed
-        // form is not an exact replay-time fact. Simple `rewrite` never
-        // searches, so the certificate must first materialize the form
-        // with an explicit snapshot transport; the premise then reaches the
-        // rewrite as an exact available fact.
-        let resolved = restricted_resolved
-            .as_ref()
-            .expect("restricted premises were resolved above");
-        for ((_, surface), (_, form)) in pairs.iter().zip(resolved) {
-            if !matches!(form, PremiseForm::SnapshotBridged) {
-                continue;
-            }
-            // Only tactics that demand the premise as an exact replay-time
-            // fact need the form materialized. `extract` and
-            // `assumption` replay decide a bridged form with the same
-            // snapshot bridge that certified the premise, so a bridged
-            // premise consumed only by them needs no transport.
-            let consumed_exactly = explicit.iter().any(|tactic| match tactic {
-                ProofTactic::Rewrite(equality) => {
-                    equality == surface
-                        || reverse_surface_equality(surface)
-                            .is_some_and(|reverse| &reverse == equality)
-                }
-                ProofTactic::Contradiction(fact) => fact == surface,
-                _ => false,
-            });
-            if !consumed_exactly {
-                continue;
-            }
-            let Some(source) = reflexive_snapshot_transport_source(surface) else {
-                return Err(ClickError::new(format!(
-                    "`simp() using` premise `{}` holds only across certified snapshots and has no snapshot-anchored side to transport from",
-                    describe_click_proposition(surface)
-                )));
-            };
-            tactics.push(ProofTactic::TransportUsing {
-                source,
-                target: surface.clone(),
-                premises: Vec::new(),
-            });
-        }
         tactics.extend(explicit);
         SourceProof::Script(tactics)
     } else {

@@ -484,98 +484,9 @@ fn snapshot_blind_pointer_offset_key(offset: &PointerOffsetTerm) -> SnapshotBlin
 }
 
 pub(super) fn exact_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
-    exact_fact_is_available_across_effects(required, available, &[])
-}
-
-/// Availability where the required form may have been lowered at a later
-/// program point than the available one: `framing` supplies the recorded
-/// memory-effect facts that let the kernel see the two snapshots agree at the
-/// loaded pointers.
-///
-/// `framing` never contributes a fact of its own — candidates come only from
-/// `available` — so this cannot make an unestablished premise available.
-pub(super) fn exact_fact_is_available_across_effects(
-    required: &Proposition,
-    available: &[Proposition],
-    framing: &[ExecutionPureFact],
-) -> bool {
     available
         .iter()
         .any(|fact| exact_fact_contains_conjunct(fact, required))
-        || snapshot_bridged_fact_is_available(required, available, framing)
-}
-
-/// Second chance for a required condition that failed exact matching only
-/// because its load atoms carry different memory snapshots than the available
-/// form — the same fact reached through a different program point.
-///
-/// The cheap snapshot-blind structural filter picks candidates; the kernel's
-/// snapshot-bridging prover decides them under the available facts plus
-/// `framing`. Structure must match exactly, so a candidate that survives both
-/// is the same fact, not a weaker one. Kept off the hot path: exact matching
-/// runs first and assumptions are built only once a candidate exists.
-pub(super) fn snapshot_bridged_fact_is_available(
-    required: &Proposition,
-    available: &[Proposition],
-    framing: &[ExecutionPureFact],
-) -> bool {
-    let Some((required_forms, candidates)) = snapshot_blind_candidates(required, available) else {
-        // Compound propositions (an implication ensure, a conjunction) have
-        // no single condition to normalize, but their leaves can still be
-        // two forms of one fact across snapshots. A cheap snapshot-blind
-        // structural filter picks candidates first, so the assumption context
-        // and the kernel bridge are built only when a same-shape fact exists.
-        if matches!(required, Proposition::ConditionIs(_, _)) {
-            return false;
-        }
-        let candidates = available
-            .iter()
-            .filter(|fact| compound_propositions_match_ignoring_memories(fact, required))
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            return false;
-        }
-        let assumptions = framing.iter().fold(
-            assumptions_from_propositions(available),
-            |assumptions, fact| assumptions.assume_proposition(fact.proposition().clone()),
-        );
-        return candidates
-            .iter()
-            .any(|fact| propositions_equal_modulo_proven_snapshots(fact, required, &assumptions));
-    };
-    let assumptions = assumptions_from_propositions(available);
-    snapshot_bridge_proves(&required_forms, &candidates, assumptions, framing)
-}
-
-/// Snapshot-blind structural pre-filter for the compound bridge: identical
-/// connective skeletons whose condition leaves match ignoring memory
-/// operands. Decides nothing — it only gates the expensive proof.
-fn compound_propositions_match_ignoring_memories(left: &Proposition, right: &Proposition) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left, right) {
-        (
-            Proposition::ConditionIs(left_condition, left_value),
-            Proposition::ConditionIs(right_condition, right_value),
-        ) => {
-            left_value == right_value
-                && conditions_equal_ignoring_memories(
-                    &normalize_condition_modulo_memories(left_condition),
-                    &normalize_condition_modulo_memories(right_condition),
-                )
-        }
-        (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b))
-        | (Proposition::And(left_a, left_b), Proposition::And(right_a, right_b))
-        | (Proposition::Or(left_a, left_b), Proposition::Or(right_a, right_b)) => {
-            compound_propositions_match_ignoring_memories(left_a, right_a)
-                && compound_propositions_match_ignoring_memories(left_b, right_b)
-        }
-        (Proposition::Not(left_body), Proposition::Not(right_body)) => {
-            compound_propositions_match_ignoring_memories(left_body, right_body)
-        }
-        _ => false,
-    }
 }
 
 /// Structural proposition equality whose condition leaves are decided by the
@@ -772,75 +683,18 @@ fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTe
 /// Candidates still come only from `available`, so widening the assumptions
 /// cannot make an unlisted fact available — the wider context only decides
 /// whether two forms denote one fact.
-pub(super) fn snapshot_bridged_fact_is_available_under(
+/// A separation required at one snapshot is available when an available
+/// separation names the same regions modulo the certified frame. Condition
+/// facts need no such bridge: terms are canonical at creation, so one fact
+/// has one form.
+pub(super) fn separation_bridged_fact_is_available(
     required: &Proposition,
     available: &[Proposition],
     assumptions: &PureFactContext,
     framing: &[ExecutionPureFact],
 ) -> bool {
-    // Separations bridge part-wise through the modulo-snapshot relation;
-    // the condition-term candidate machinery below does not apply to them.
-    if matches!(required, Proposition::CResourceSeparate { .. }) {
-        return separation_bridged_available(required, available, assumptions, framing);
-    }
-    let Some((required_forms, candidates)) = snapshot_blind_candidates(required, available) else {
-        return false;
-    };
-    snapshot_bridge_proves(&required_forms, &candidates, assumptions.clone(), framing)
-}
-
-/// Normalises `required` and collects the available conjuncts that could be
-/// the same condition under a different memory snapshot. `None` when there is
-/// nothing to bridge, which keeps the caller off the expensive path.
-fn snapshot_blind_candidates(
-    required: &Proposition,
-    available: &[Proposition],
-) -> Option<(Vec<ConditionTerm>, Vec<ConditionTerm>)> {
-    let Proposition::ConditionIs(required_condition, required_value) = required.clone() else {
-        return None;
-    };
-    let required_forms = vec![required_condition];
-    let mut candidates = Vec::new();
-    for fact in available {
-        let mut conjuncts = Vec::new();
-        atomic_conjuncts(fact, &mut conjuncts);
-        for conjunct in conjuncts {
-            if !matches!(conjunct, Proposition::ConditionIs(_, value) if *value == required_value) {
-                continue;
-            }
-            let Proposition::ConditionIs(condition, _) = conjunct.clone() else {
-                continue;
-            };
-            if conditions_equal_ignoring_memories(&condition, &required_forms[0]) {
-                if let Proposition::ConditionIs(original_condition, _) = conjunct
-                    && original_condition != &condition
-                    && !candidates.contains(original_condition)
-                {
-                    candidates.push(original_condition.clone());
-                }
-                if !candidates.contains(&condition) {
-                    candidates.push(condition);
-                }
-            }
-        }
-    }
-    (!candidates.is_empty()).then_some((required_forms, candidates))
-}
-
-fn snapshot_bridge_proves(
-    required_forms: &[ConditionTerm],
-    candidates: &[ConditionTerm],
-    assumptions: PureFactContext,
-    framing: &[ExecutionPureFact],
-) -> bool {
-    let assumptions = framing.iter().fold(assumptions, |assumptions, fact| {
-        assumptions.assume_proposition(fact.proposition().clone())
-    });
-    candidates.iter().any(|candidate| {
-        required_forms.iter().any(|required| {
-            assumptions.conditions_equal_modulo_proven_snapshots(candidate, required)
-        })
-    })
+    matches!(required, Proposition::CResourceSeparate { .. })
+        && separation_bridged_available(required, available, assumptions, framing)
 }
 
 pub(super) fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> bool {

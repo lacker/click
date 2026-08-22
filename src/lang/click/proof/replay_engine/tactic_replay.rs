@@ -2273,11 +2273,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             .surface_propositions
                             .record_lowering(surface_premise, &premise)?;
                         if !deferred_ordered_exit
-                            && !exact_fact_is_available_across_effects(
-                                &premise,
-                                &all_pure_facts,
-                                &replay.effect_facts,
-                            )
+                            && !exact_fact_is_available(&premise, &all_pure_facts)
                             && materialization_equivalent_available_fact(&premise, &all_pure_facts)
                                 .is_none()
                         {

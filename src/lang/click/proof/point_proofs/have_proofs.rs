@@ -484,14 +484,6 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 })
                 .or_else(|| materialization_equivalent_available_fact(&lowered, &available))
                 .or_else(|| {
-                    // A listed `at(...)` fact can denote an available kernel
-                    // fact whose load atoms carry another certified snapshot.
-                    // Bridging establishes identity of that one premise; it
-                    // does not add the rest of `available` to simp's context.
-                    snapshot_bridged_fact_is_available(&lowered, &available, &[])
-                        .then_some(lowered.clone())
-                })
-                .or_else(|| {
                     // Canonical load variables are kernel-internal names;
                     // recorded equalities chained through one are the same
                     // user-level fact.
@@ -1089,7 +1081,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     // under the selected premises plus the recorded
                     // transitions, the same context the reachability walk
                     // gets below.
-                    && !snapshot_bridged_fact_is_available_under(
+                    && !separation_bridged_fact_is_available(
                         &target,
                         &available,
                         &transition_facts.iter().fold(
@@ -1627,12 +1619,6 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 &available,
                             )
                             .is_none()
-                            // The same fact reached through a different
-                            // program point writes its load atoms over a
-                            // different snapshot; decide the pair by the
-                            // snapshot bridge's framing proof rather than by
-                            // form coincidence.
-                            && !snapshot_bridged_fact_is_available(&unfolded_goal, &available, &[])
                             // Canonical load variables are kernel-internal
                             // names; recorded equalities chained through one,
                             // including the bounded origins bridge, are the

@@ -580,9 +580,6 @@ pub(super) fn check_atomic_premise_derivation_goal(
     if premises.is_empty() && !normalizes_context_free(target) {
         return Err("atomic derivation requires at least one explicit premise".to_string());
     }
-    if snapshot_bridged_fact_is_available(target, available, &[]) {
-        return Ok(());
-    }
     let premise_part_available = |part: &Proposition| {
         available.iter().any(|available| {
             let mut conjuncts = Vec::new();
@@ -596,7 +593,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
                             .derive_simp_proposition(part)
                             .is_some())
             })
-        }) || snapshot_bridged_fact_is_available(part, available, &[])
+        })
     };
     if let Some(missing) = premises.iter().find(|premise| {
         // A conjunction premise is available when each conjunct is; facts
@@ -789,15 +786,10 @@ pub(super) fn plan_restricted_simp_goal(
         available.iter().any(|available| {
             let mut conjuncts = Vec::new();
             atomic_conjuncts(available, &mut conjuncts);
-            conjuncts
-                .into_iter()
-                .any(|available| *available == *part || condition_polarity_equivalent(available, part))
+            conjuncts.into_iter().any(|available| {
+                *available == *part || condition_polarity_equivalent(available, part)
+            })
         })
-            // A premise written at a different program point carries other
-            // snapshots in its load atoms; the snapshot bridge decides the
-            // pair from the certified frame, with candidates drawn only from
-            // the available facts.
-            || snapshot_bridged_fact_is_available(part, available, &[])
     };
     if let Some(missing) = premises.iter().find(|premise| {
         let mut parts = Vec::new();

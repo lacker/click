@@ -271,7 +271,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
     // equivalent symbolic source used for frame transport.
     if !(result.is_some() && (available.contains(&source) || concrete_source_is_true))
         && !exact_fact_is_available(&source, &explicit_premises)
-        && !snapshot_bridged_fact_is_available_under(
+        && !separation_bridged_fact_is_available(
             &source,
             &explicit_premises,
             &selected_assumptions,

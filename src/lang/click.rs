@@ -37,7 +37,7 @@ use crate::kernel::{
     certify_c_function_execution_path_resource_representation,
     certify_int32_above_one_predecessor_is_at_least_one,
     certify_int32_move_one_from_right_to_left_preserves_sum,
-    checked_c_function_execution_with_entry_derivations, conditions_equal_ignoring_memories, int32,
+    checked_c_function_execution_with_entry_derivations, int32,
     prove_c_condition_fact_direct_transport, prove_c_condition_fact_transport,
     prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure_theorems,
     prove_c_function_satisfies_specification_from_symbolic_path,

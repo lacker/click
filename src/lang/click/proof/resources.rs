@@ -23,7 +23,7 @@ trait ResourcePureFacts {
     fn exact_available_across_effects(
         &self,
         required: &Proposition,
-        framing: &[ExecutionPureFact],
+        _framing: &[ExecutionPureFact],
     ) -> bool;
     fn directly_matches_separation(
         &self,
@@ -58,9 +58,9 @@ impl ResourcePureFacts for LegacyResourcePureFacts<'_> {
     fn exact_available_across_effects(
         &self,
         required: &Proposition,
-        framing: &[ExecutionPureFact],
+        _framing: &[ExecutionPureFact],
     ) -> bool {
-        exact_fact_is_available_across_effects(required, self.facts, framing)
+        exact_fact_is_available(required, self.facts)
     }
 
     fn directly_matches_separation(
