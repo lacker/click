@@ -267,7 +267,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
     let bridging_assumptions = std::cell::OnceCell::new();
     let is_available = |fact: &Proposition| {
         available.contains(fact)
-            || materialization_equivalent_available_fact(fact, available).is_some()
+            || exactly_available_fact(fact, available).is_some()
             // Canonical load variables are kernel-internal names. Recorded
             // equalities chained through one are the same user-level fact,
             // and two names framing shows to be one unchanged cell are the

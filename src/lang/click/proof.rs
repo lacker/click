@@ -48,9 +48,8 @@ pub(super) use execution_planning::{
 };
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{
-    SnapshotBlindPropositionKey, condition_polarity_equivalent,
-    materialization_equivalent_available_fact, search_condition_derivation,
-    snapshot_blind_proposition_key,
+    SnapshotBlindPropositionKey, condition_polarity_equivalent, exactly_available_fact,
+    search_condition_derivation, snapshot_blind_proposition_key,
 };
 use point_proofs::*;
 use proof_object::*;

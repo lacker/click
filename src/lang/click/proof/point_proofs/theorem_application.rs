@@ -501,13 +501,12 @@ fn select_explicit_theorem_application_premises_with_kernel(
         if matches!(normalize_proposition(&requirement), SimpProposition::True) {
             continue;
         }
-        let matched = materialization_equivalent_available_fact(&requirement, available)
-            .ok_or_else(|| {
-                ClickError::new(format!(
-                    "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
-                    application.name
-                ))
-            })?;
+        let matched = exactly_available_fact(&requirement, available).ok_or_else(|| {
+            ClickError::new(format!(
+                "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
+                application.name
+            ))
+        })?;
         let surface = checked_surface_comparison_fact_at_point(
             replay,
             &matched,
@@ -545,7 +544,7 @@ fn select_explicit_theorem_application_premises_with_kernel(
                 describe_click_proposition(&surface),
             ))
         })?;
-        if materialization_equivalent_available_fact(&lowered, available).is_none() {
+        if exactly_available_fact(&lowered, available).is_none() {
             return Err(ClickError::new(format!(
                 "theorem application `{}` synthesized a premise that is not exactly available\n  Click: {}\n  lowered: {lowered:?}\n  required: {requirement:?}",
                 application.name,
@@ -623,7 +622,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_theorem_application(
                 premise
             };
             if !exact_fact_is_available(&premise, available)
-                && materialization_equivalent_available_fact(&premise, available).is_none()
+                && exactly_available_fact(&premise, available).is_none()
             {
                 return Err(ClickError::new(format!(
                     "explicit premise `{}` did not lower to an available fact: {premise:?}",
@@ -705,11 +704,8 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             return condition_polarity_equivalent(lowered, kernel);
         }
         condition_polarity_equivalent(&lowered.clone(), &kernel.clone())
-            || materialization_equivalent_available_fact(
-                &kernel.clone(),
-                std::slice::from_ref(&lowered.clone()),
-            )
-            .is_some()
+            || exactly_available_fact(&kernel.clone(), std::slice::from_ref(&lowered.clone()))
+                .is_some()
             || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(lowered))
                 .is_some()
     };

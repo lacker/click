@@ -2660,11 +2660,8 @@ pub(super) fn finish_ordered_proof_replay(
                                                     fact,
                                                     &path_requirements,
                                                 )
-                                                && materialization_equivalent_available_fact(
-                                                    fact,
-                                                    &path_requirements,
-                                                )
-                                                .is_none()
+                                                && exactly_available_fact(fact, &path_requirements)
+                                                    .is_none()
                                             {
                                                 return Err(ClickError::new(format!(
                                                     "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}{}",

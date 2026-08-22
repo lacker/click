@@ -420,8 +420,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         let kernel = kernel.clone();
         condition_polarity_equivalent(&lowered, &kernel)
             || lowered == kernel
-            || materialization_equivalent_available_fact(&kernel, std::slice::from_ref(&lowered))
-                .is_some()
+            || exactly_available_fact(&kernel, std::slice::from_ref(&lowered)).is_some()
             || quantified_binder_equivalent(&lowered, &kernel)
             || (allow_snapshot_blind_candidates
                 && (separation_bridged_fact_is_available(
@@ -437,7 +436,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         indexed_available.map_or_else(
             || {
                 exact_fact_is_available(fact, available)
-                    || materialization_equivalent_available_fact(fact, available).is_some()
+                    || exactly_available_fact(fact, available).is_some()
             },
             |indexed| indexed.replay_available_across_effects(fact, &[]),
         )
@@ -1190,11 +1189,8 @@ pub(super) fn append_simple_proof_step_for_operation(
                         }) || exact_premises.iter().any(|required| {
                             required == fact
                                 || required.clone() == fact.clone()
-                                || materialization_equivalent_available_fact(
-                                    required,
-                                    std::slice::from_ref(fact),
-                                )
-                                .is_some()
+                                || exactly_available_fact(required, std::slice::from_ref(fact))
+                                    .is_some()
                         }) || unfolded_dependency_facts.contains(fact);
                     // A permission the resource projection reproduces is
                     // reconstructed by the replay for itself. One it does not
@@ -1311,11 +1307,8 @@ pub(super) fn append_simple_proof_step_for_operation(
                         );
                         if lowered.is_ok_and(|lowered| {
                             lowered.clone() == fact.clone()
-                                || materialization_equivalent_available_fact(
-                                    fact,
-                                    std::slice::from_ref(&lowered),
-                                )
-                                .is_some()
+                                || exactly_available_fact(fact, std::slice::from_ref(&lowered))
+                                    .is_some()
                         }) {
                             surface = indexed;
                         }
@@ -2667,7 +2660,7 @@ pub(super) fn surface_smart_have_certificate(
                         }
                         if let Ok(lowered) = &freshly_lowered
                             && let Some(fact) =
-                                materialization_equivalent_available_fact(
+                                exactly_available_fact(
                                     lowered,
                                     restricted_context_available,
                                 )

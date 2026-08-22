@@ -11997,9 +11997,7 @@ impl ProofFacts {
         // but search only the requirement's persistent shape bucket. The
         // chosen sibling snapshot can have a stable recorded `at(...)`
         // form even when the freshly lowered requirement is also present.
-        if let Some(candidate) =
-            materialization_equivalent_available_fact(required, &indexed_candidates)
-        {
+        if let Some(candidate) = exactly_available_fact(required, &indexed_candidates) {
             return Some(candidate.clone());
         }
         if self.exact.contains(required) {

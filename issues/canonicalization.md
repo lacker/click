@@ -380,13 +380,27 @@ deleted; the six expectation-text fixtures are updated (the three kernel
 expression tests expect the canonical form of the load; the branch
 certificate anchors at `statement(1).entry`; the separation expansion and
 the linked-list retained step are anchored `rewrite(at(...))` forms).
-Remaining in this stage: remove the bridging that existed only because
-terms were not canonical — the load-term arms beside every
-load-variable arm, `normalize_direct_atomic_memory_loads` and the
-snapshot-restriction comparison (`canonical_c_memory_for_pointer_load`)
-in availability checks, and the `concretize_pristine_loads` convention
-for loads over the empty entry memory — and land the deferred
-regressions below.
+Simplification (2026-08-22): `normalize_direct_atomic_memory_loads`
+and its variants, the `normalized_exact` index, the condition-fact
+snapshot bridge (`snapshot_bridged_fact_is_available` and the
+`SnapshotBridged` premise form), and `concretize_pristine_loads` are
+removed; each was shown dead by running the gate with it replaced by the
+identity first. `materialization_equivalent_available_fact` is now
+`exactly_available_fact`. Separation bridging stays (separations name
+regions through snapshot terms).
+
+**Still load-bearing:** `proposition_candidate_equals_modulo_proven_snapshots`
+(comparison modulo frame-proven snapshot equality). With it replaced by
+structural equality, `borrowed_slice_buffer_pipeline` fails a `step()
+using` premise `at(statement(5).exit, data[start]) == at(statement(5).exit,
+replacement)` as not exactly available: the premise lowered at the
+recorded exit state and the callee's recorded ensure give two canonical
+forms for one cell at one point (materialized-cell resolution versus the
+epoch name, to be confirmed). Under the step rule that premise check
+must be exact, so this is a remaining creation-time gap to fix, after
+which the comparator can go. The snapshot-restriction comparison in the
+frame legs (`canonical_memory_for_pointer_load`) is part of the canonical
+form's definition and the load-term frame reasoning and stays.
 
 ## Constraints learned
 

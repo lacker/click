@@ -482,7 +482,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                     exact_proper_conjunct_is_available(&lowered, &available)
                         .then_some(lowered.clone())
                 })
-                .or_else(|| materialization_equivalent_available_fact(&lowered, &available))
+                .or_else(|| exactly_available_fact(&lowered, &available))
                 .or_else(|| {
                     // Canonical load variables are kernel-internal names;
                     // recorded equalities chained through one are the same
@@ -1075,7 +1075,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 })?;
                 drop(target_timing);
                 if !exact_fact_is_available(&target, &available)
-                    && materialization_equivalent_available_fact(&target, &available).is_none()
+                    && exactly_available_fact(&target, &available).is_none()
                     // Canonical-name and snapshot rewritings of an
                     // available fact transport trivially. The bridge reasons
                     // under the selected premises plus the recorded
@@ -1612,7 +1612,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         // constant assignment); it needs no ambient fact.
                         if !available.contains(&unfolded_goal)
                             && !normalizes_context_free(&unfolded_goal)
-                            && materialization_equivalent_available_fact(&unfolded_goal, &available)
+                            && exactly_available_fact(&unfolded_goal, &available)
                                 .is_none()
                             && quantified_replay_equivalent_available_fact(
                                 &unfolded_goal,

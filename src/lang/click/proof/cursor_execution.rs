@@ -2035,11 +2035,8 @@ pub(super) fn execute_step_from_execution_point(
                     certificate_facts.retain(|fact| {
                         !sources.iter().any(|source| {
                             source == fact
-                                || materialization_equivalent_available_fact(
-                                    source,
-                                    std::slice::from_ref(fact),
-                                )
-                                .is_some()
+                                || exactly_available_fact(source, std::slice::from_ref(fact))
+                                    .is_some()
                         })
                     });
                 }

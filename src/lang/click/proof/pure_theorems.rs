@@ -1024,7 +1024,7 @@ fn pure_theorem_surface_certificate(
     }
 
     if context.requires.contains(goal)
-        || materialization_equivalent_available_fact(goal, &context.requires).is_some()
+        || exactly_available_fact(goal, &context.requires).is_some()
         || quantified_replay_equivalent_available_fact(goal, &context.requires).is_some()
     {
         return ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(
@@ -2200,7 +2200,7 @@ fn prove_pure_theorem_tactics(
             }
             ProofTactic::Assumption => {
                 if !available.contains(&goal)
-                    && materialization_equivalent_available_fact(&goal, &available).is_none()
+                    && exactly_available_fact(&goal, &available).is_none()
                     && quantified_replay_equivalent_available_fact(&goal, &available).is_none()
                 {
                     return Err(ClickError::new(format!(

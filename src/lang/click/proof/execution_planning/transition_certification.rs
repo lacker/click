@@ -618,7 +618,7 @@ fn certified_transitions_from_execution(
                         continue;
                     }
                     let already_certified = exact_fact_is_available(&premise, &theorem_context)
-                        || materialization_equivalent_available_fact(
+                        || exactly_available_fact(
                             &premise,
                             &theorem_context,
                         )
@@ -697,7 +697,7 @@ fn certified_transitions_from_execution(
                 let derivation = match prerequisite_policy {
                     StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Explicit => {
                         if exact_fact_is_available(proposition, pure_facts)
-                            || materialization_equivalent_available_fact(
+                            || exactly_available_fact(
                                 proposition,
                                 pure_facts,
                             )
@@ -871,7 +871,7 @@ fn certified_transitions_from_execution(
                                 || !is_internal_snapshot_frame_witness(
                                     execution_fact.proposition(),
                                 ))
-                            && materialization_equivalent_available_fact(
+                            && exactly_available_fact(
                                 execution_fact.proposition(),
                                 pure_facts,
                             )

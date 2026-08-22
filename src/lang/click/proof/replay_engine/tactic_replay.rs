@@ -2274,8 +2274,7 @@ fn replay_linear_tactics_without_frontier_loops(
                             .record_lowering(surface_premise, &premise)?;
                         if !deferred_ordered_exit
                             && !exact_fact_is_available(&premise, &all_pure_facts)
-                            && materialization_equivalent_available_fact(&premise, &all_pure_facts)
-                                .is_none()
+                            && exactly_available_fact(&premise, &all_pure_facts).is_none()
                         {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `frame using` requires an exact premise: {}",

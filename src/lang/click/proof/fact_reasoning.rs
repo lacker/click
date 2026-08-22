@@ -507,10 +507,8 @@ fn propositions_equal_modulo_proven_snapshots(
             Proposition::ConditionIs(right_condition, right_value),
         ) => {
             left_value == right_value
-                && assumptions.conditions_equal_modulo_proven_snapshots(
-                    &normalize_condition_modulo_memories(left_condition),
-                    &normalize_condition_modulo_memories(right_condition),
-                )
+                && assumptions
+                    .conditions_equal_modulo_proven_snapshots(left_condition, right_condition)
         }
         (Proposition::Implies(left_a, left_b), Proposition::Implies(right_a, right_b)) => {
             propositions_equal_modulo_proven_snapshots(left_a, right_a, assumptions)
@@ -668,13 +666,6 @@ pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
     let candidate = resolve_canonical_names_shallow(candidate);
     let required = resolve_canonical_names_shallow(required);
     propositions_equal_modulo_proven_snapshots(&candidate, &required, &assumptions)
-}
-
-fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTerm {
-    match (Proposition::ConditionIs(condition.clone(), true)).clone() {
-        Proposition::ConditionIs(normalized, _) => normalized,
-        _ => condition.clone(),
-    }
 }
 
 /// `snapshot_bridged_fact_is_available` where the caller already holds the
@@ -1260,7 +1251,7 @@ pub(super) fn pure_fact_is_replay_available(
     available: &[Proposition],
 ) -> bool {
     available.contains(required)
-        || materialization_equivalent_available_fact(required, available).is_some()
+        || exactly_available_fact(required, available).is_some()
         || available
             .iter()
             .any(|fact| quantified_binder_equivalent(required, fact))
@@ -1280,28 +1271,24 @@ pub(super) fn atomic_conjuncts<'a>(
     }
 }
 
-pub(in crate::lang::click) fn materialization_equivalent_available_fact(
+/// The available fact, or conjunct of one, exactly equal to `required`.
+pub(in crate::lang::click) fn exactly_available_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {
-    fn matching_conjunct(
-        fact: &Proposition,
-        required: &Proposition,
-        normalized_required: &Proposition,
-    ) -> Option<Proposition> {
-        if fact == required || fact.clone() == *normalized_required {
+    fn matching_conjunct(fact: &Proposition, required: &Proposition) -> Option<Proposition> {
+        if fact == required {
             return Some(fact.clone());
         }
         let Proposition::And(left, right) = fact else {
             return None;
         };
-        matching_conjunct(left, required, normalized_required)
-            .or_else(|| matching_conjunct(right, required, normalized_required))
+        matching_conjunct(left, required).or_else(|| matching_conjunct(right, required))
     }
 
     available
         .iter()
-        .find_map(|fact| matching_conjunct(fact, required, required))
+        .find_map(|fact| matching_conjunct(fact, required))
 }
 
 /// Cheap membership for explicit replay certificates with many premises.
