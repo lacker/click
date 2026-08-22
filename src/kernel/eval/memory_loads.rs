@@ -764,7 +764,7 @@ pub(crate) fn canonical_load_term(memory: SharedCMemory, pointer: Pointer) -> Bi
 }
 
 /// Debug-only check of the creation-time invariant (see
-/// `issues/canonicalization.md`, stage 1): with
+/// `docs/internals/canonicalization.md`): with
 /// `CLICK_CHECK_CANONICAL_AT_CREATION=1`, every condition fact entering a
 /// `PureFactContext` is compared with its canonical form. Each distinct
 /// (rewrite kind, creating module) pair is reported once on stderr with an
@@ -870,7 +870,7 @@ thread_local! {
 /// Runs `body` with the creation-time invariant check on, returning the
 /// body's result and the number of condition facts that entered a
 /// `PureFactContext` in a non-canonical form. The standing regression for
-/// `issues/canonicalization.md` asserts zero over fixture verification.
+/// `docs/internals/canonicalization.md` asserts zero over fixture verification.
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) fn count_canonical_at_creation_violations<T>(body: impl FnOnce() -> T) -> (T, usize) {

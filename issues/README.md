@@ -18,12 +18,8 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 4
+## Other open issues: 3
 
-- [Canonicalize every term at creation](canonicalization.md):
-  terms are canonical at creation only for loaded pointers today;
-  establishing the invariant at every creation point needs cross-call
-  load resolution, chained bounds, and the remaining evidence ties.
 - [Replay is a second proof engine](replay-smell.md): independent certificate
   checking still advances a large parallel mutable replay state instead of
   interpreting recorded operations through the audited proof-object model.

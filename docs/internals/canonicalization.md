@@ -3,10 +3,10 @@
 Click needs one logically grounded model for when two terms denote one
 value. This page is that model: which differences between terms are
 definitional, which need a proved equality, and how the kernel records its
-choice. The consolidated gap analysis and its acceptance criteria live in
-`issues/canonicalization.md`; this page documents the contract the
-implementation is converging on and the part of it that is already
-enforced. Vocabulary follows the [glossary](../reference/glossary.md):
+choice. The contract is enforced: terms are canonical at creation (the
+`*_creates_only_canonical_terms` tests count violations over the example
+projects and require zero). Vocabulary follows the
+[glossary](../reference/glossary.md):
 *term*, *kernel variable*, *load variable*, *snapshot*, *fact*.
 
 ## Why canonicalization exists

@@ -1181,7 +1181,7 @@ fn truncated_service_step_reports_the_budget_not_a_missing_fact() {
 }
 
 /// Standing regression for the creation-time invariant of
-/// `issues/canonicalization.md`: every condition fact entering a
+/// `docs/internals/canonicalization.md`: every condition fact entering a
 /// `PureFactContext` is already canonical (memory loads are content-addressed
 /// load variables). The audit counts violations at fact creation while an
 /// example project verifies — symbolic execution, contract and spec lowering,

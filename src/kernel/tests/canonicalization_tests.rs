@@ -1,7 +1,7 @@
 use super::*;
 
 // --- the canonicalization model's production invariants -------------------
-// See docs/internals/canonicalization.md and issues/canonicalization.md.
+// See docs/internals/canonicalization.md.
 // Production evaluation must never place a raw `MemoryLoad` inside
 // pointer-offset arithmetic: loaded pointers and indices take their
 // load variable first, and every load variable travels with its exact
