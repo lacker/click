@@ -810,6 +810,63 @@ fn glossary_inventory_is_bidirectional() {
 }
 
 #[test]
+fn canonical_documentation_terms_have_no_retired_aliases() {
+    let docs = root().join("docs");
+    let mut files = Vec::new();
+    markdown_files(&docs, &mut files);
+    files.sort();
+
+    let retired = [
+        "canonical load variable",
+        "canonical load variables",
+        "canonical name",
+        "canonical names",
+        "effect fact",
+        "effect facts",
+        "memory dag",
+        "proof frontier",
+        "raw load",
+        "raw loads",
+        "snapshot bridge",
+        "snapshot bridging",
+    ];
+    let mut failures = Vec::new();
+    for path in files {
+        if path.ends_with("style.md") || path.ends_with("reference/glossary.md") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read Markdown page");
+        let mut in_code_fence = false;
+        for (line, text) in source.lines().enumerate() {
+            if text.starts_with("```") {
+                in_code_fence = !in_code_fence;
+                continue;
+            }
+            if in_code_fence {
+                continue;
+            }
+            let lower = text.to_ascii_lowercase();
+            for alias in retired {
+                if lower.contains(alias) {
+                    failures.push(format!(
+                        "{}:{}: replace retired term `{alias}`",
+                        path.strip_prefix(&docs)
+                            .expect("docs-relative path")
+                            .display(),
+                        line + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "retired documentation terminology:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn cli_synopses_are_exact_help_includes() {
     for (command, file) in [
         ("verify", "src/bin/click-verify.rs"),

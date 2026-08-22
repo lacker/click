@@ -35,8 +35,8 @@ retain, nonfinal release, final release, and free across opaque calls.
 - `mdtests/simp_equality_order_transport.md`: deterministic equality rewriting,
   discrete integer-bound normalization, and equality-linked arithmetic.
 - `mdtests/tactic_execute.md`: explicit execution tactic `execute()`,
-  the clearer name for whole-function symbolic execution from the current proof
-  execution point.
+  the clearer name for whole-function symbolic execution from the current
+  execution frontier.
 
 ## Pure theorems
 
@@ -296,10 +296,10 @@ sequence:
 - `mdtests/composite_resource_owned_buffer_clear.md`: field mutation that
   restores the same owned composite resource after clearing `len`.
 - `mdtests/composite_resource_execute_until_direct_mutate.md`: first passing
-  execution-point proof, pausing before a direct mutation so the composite
+  execution proof, pausing before a direct mutation so the composite
   resource can be unfolded at the mutation point.
 - `mdtests/composite_resource_step_direct_mutate.md`: statement-level
-  execution-point proof, using `step()` to interleave execution with
+  execution proof, using `step()` to interleave execution with
   `observe`, `unfold`, and `fold`.
 - `mdtests/composite_resource_view_then_mutate.md`: caller observes an owned
   composite before a view-only helper call, then unfolds before a later owned

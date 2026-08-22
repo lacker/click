@@ -41,7 +41,7 @@ and known driver overhead. `INTERRUPTED` is unfinished time after a deadline;
 healthy miscellaneous bucket.
 
 Function and claim rankings are two views of the same work and must not be
-added together. A slow smart success may be expanded. A slow simple step is an
+added together. A slow smart success may be expanded. A slow simple tactic is an
 engine defect. A prompt bounded smart failure has no certificate to expand;
 decompose the proof unless the search missed its bound or produced a misleading
 diagnostic.

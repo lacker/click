@@ -154,7 +154,7 @@ traverse exactly one complete iteration. Straight-line bodies use one `step()`
 or `step()` per statement. In a proof-level `if`, `step()` enters a C
 branch from an exact condition fact; `step()`, `step()`,
 and `step()` provide contextual branch reasoning. Initialization
-is non-executing because its execution point is already the first loop entry.
+is non-executing because its program point is already the first loop entry.
 
 A `preserve` script ends by discharging the whole invariant bundle at the loop's
 back edge. `close_invariants()` is the surface tactic for that step. It is

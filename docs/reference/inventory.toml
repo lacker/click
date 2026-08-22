@@ -2072,3 +2072,347 @@ path = "reference/glossary.md#witness"
 [[item]]
 id = "glossary.at"
 path = "reference/glossary.md#at"
+
+[[item]]
+id = "glossary.abstract-resource"
+path = "reference/glossary.md#abstract-resource"
+
+[[item]]
+id = "glossary.ambient-fact"
+path = "reference/glossary.md#ambient-fact"
+
+[[item]]
+id = "glossary.arm"
+path = "reference/glossary.md#arm"
+
+[[item]]
+id = "glossary.axiom"
+path = "reference/glossary.md#axiom"
+
+[[item]]
+id = "glossary.canonical-form"
+path = "reference/glossary.md#canonical-form"
+
+[[item]]
+id = "glossary.canonicalization"
+path = "reference/glossary.md#canonicalization"
+
+[[item]]
+id = "glossary.certificate-step"
+path = "reference/glossary.md#certificate-step"
+
+[[item]]
+id = "glossary.claim"
+path = "reference/glossary.md#claim"
+
+[[item]]
+id = "glossary.composite-resource"
+path = "reference/glossary.md#composite-resource"
+
+[[item]]
+id = "glossary.condition-fact"
+path = "reference/glossary.md#condition-fact"
+
+[[item]]
+id = "glossary.continuation"
+path = "reference/glossary.md#continuation"
+
+[[item]]
+id = "glossary.definitional-equality"
+path = "reference/glossary.md#definitional-equality"
+
+[[item]]
+id = "glossary.derivation"
+path = "reference/glossary.md#derivation"
+
+[[item]]
+id = "glossary.execution-fact"
+path = "reference/glossary.md#execution-fact"
+
+[[item]]
+id = "glossary.execution-frontier"
+path = "reference/glossary.md#execution-frontier"
+
+[[item]]
+id = "glossary.execution-proof"
+path = "reference/glossary.md#execution-proof"
+
+[[item]]
+id = "glossary.fact-transport"
+path = "reference/glossary.md#fact-transport"
+
+[[item]]
+id = "glossary.focus"
+path = "reference/glossary.md#focus"
+
+[[item]]
+id = "glossary.footprint"
+path = "reference/glossary.md#footprint"
+
+[[item]]
+id = "glossary.frame-condition"
+path = "reference/glossary.md#frame-condition"
+
+[[item]]
+id = "glossary.kernel-derivation"
+path = "reference/glossary.md#kernel-derivation"
+
+[[item]]
+id = "glossary.load-term"
+path = "reference/glossary.md#load-term"
+
+[[item]]
+id = "glossary.memory-block"
+path = "reference/glossary.md#memory-block"
+
+[[item]]
+id = "glossary.memory-cell"
+path = "reference/glossary.md#memory-cell"
+
+[[item]]
+id = "glossary.memory-derivation-dag"
+path = "reference/glossary.md#memory-derivation-dag"
+
+[[item]]
+id = "glossary.memory-range"
+path = "reference/glossary.md#memory-range"
+
+[[item]]
+id = "glossary.memory-snapshot"
+path = "reference/glossary.md#memory-snapshot"
+
+[[item]]
+id = "glossary.obligation"
+path = "reference/glossary.md#obligation"
+
+[[item]]
+id = "glossary.outcome"
+path = "reference/glossary.md#outcome"
+
+[[item]]
+id = "glossary.path-condition"
+path = "reference/glossary.md#path-condition"
+
+[[item]]
+id = "glossary.point-proof"
+path = "reference/glossary.md#point-proof"
+
+[[item]]
+id = "glossary.predicate"
+path = "reference/glossary.md#predicate"
+
+[[item]]
+id = "glossary.program-point"
+path = "reference/glossary.md#program-point"
+
+[[item]]
+id = "glossary.proof-clause"
+path = "reference/glossary.md#proof-clause"
+
+[[item]]
+id = "glossary.proof-context"
+path = "reference/glossary.md#proof-context"
+
+[[item]]
+id = "glossary.proof-script"
+path = "reference/glossary.md#proof-script"
+
+[[item]]
+id = "glossary.proof-site"
+path = "reference/glossary.md#proof-site"
+
+[[item]]
+id = "glossary.proved-equality"
+path = "reference/glossary.md#proved-equality"
+
+[[item]]
+id = "glossary.pure-fact"
+path = "reference/glossary.md#pure-fact"
+
+[[item]]
+id = "glossary.pure-proof"
+path = "reference/glossary.md#pure-proof"
+
+[[item]]
+id = "glossary.resource-fact"
+path = "reference/glossary.md#resource-fact"
+
+[[item]]
+id = "glossary.result"
+path = "reference/glossary.md#result"
+
+[[item]]
+id = "glossary.selector"
+path = "reference/glossary.md#selector"
+
+[[item]]
+id = "glossary.source-occurrence"
+path = "reference/glossary.md#source-occurrence"
+
+[[item]]
+id = "glossary.surface-form"
+path = "reference/glossary.md#surface-form"
+
+[[item]]
+id = "glossary.symbolic-state"
+path = "reference/glossary.md#symbolic-state"
+
+[[item]]
+id = "glossary.verification-condition"
+path = "reference/glossary.md#verification-condition"
+
+[[item]]
+id = "glossary.authority"
+path = "reference/glossary.md#authority"
+
+[[item]]
+id = "glossary.bitvector"
+path = "reference/glossary.md#bitvector"
+
+[[item]]
+id = "glossary.borrow"
+path = "reference/glossary.md#borrow"
+
+[[item]]
+id = "glossary.cell-epoch"
+path = "reference/glossary.md#cell-epoch"
+
+[[item]]
+id = "glossary.consumption"
+path = "reference/glossary.md#consumption"
+
+[[item]]
+id = "glossary.contradiction"
+path = "reference/glossary.md#contradiction"
+
+[[item]]
+id = "glossary.entailment"
+path = "reference/glossary.md#entailment"
+
+[[item]]
+id = "glossary.fold"
+path = "reference/glossary.md#fold"
+
+[[item]]
+id = "glossary.ghost-state"
+path = "reference/glossary.md#ghost-state"
+
+[[item]]
+id = "glossary.havoc"
+path = "reference/glossary.md#havoc"
+
+[[item]]
+id = "glossary.inductive-resource"
+path = "reference/glossary.md#inductive-resource"
+
+[[item]]
+id = "glossary.linear-resource"
+path = "reference/glossary.md#linear-resource"
+
+[[item]]
+id = "glossary.normalization"
+path = "reference/glossary.md#normalization"
+
+[[item]]
+id = "glossary.opaque"
+path = "reference/glossary.md#opaque"
+
+[[item]]
+id = "glossary.partial-correctness"
+path = "reference/glossary.md#partial-correctness"
+
+[[item]]
+id = "glossary.population"
+path = "reference/glossary.md#population"
+
+[[item]]
+id = "glossary.resource-context"
+path = "reference/glossary.md#resource-context"
+
+[[item]]
+id = "glossary.resource-family"
+path = "reference/glossary.md#resource-family"
+
+[[item]]
+id = "glossary.separation"
+path = "reference/glossary.md#separation"
+
+[[item]]
+id = "glossary.separation-logic"
+path = "reference/glossary.md#separation-logic"
+
+[[item]]
+id = "glossary.substitution"
+path = "reference/glossary.md#substitution"
+
+[[item]]
+id = "glossary.symbolic-memory"
+path = "reference/glossary.md#symbolic-memory"
+
+[[item]]
+id = "glossary.symbolic-value"
+path = "reference/glossary.md#symbolic-value"
+
+[[item]]
+id = "glossary.termination"
+path = "reference/glossary.md#termination"
+
+[[item]]
+id = "glossary.theory-prover"
+path = "reference/glossary.md#theory-prover"
+
+[[item]]
+id = "glossary.unfold"
+path = "reference/glossary.md#unfold"
+
+[[item]]
+id = "glossary.validity"
+path = "reference/glossary.md#validity"
+
+[[item]]
+id = "glossary.antecedent"
+path = "reference/glossary.md#antecedent"
+
+[[item]]
+id = "glossary.conjunction"
+path = "reference/glossary.md#conjunction"
+
+[[item]]
+id = "glossary.consequent"
+path = "reference/glossary.md#consequent"
+
+[[item]]
+id = "glossary.disjunction"
+path = "reference/glossary.md#disjunction"
+
+[[item]]
+id = "glossary.implication"
+path = "reference/glossary.md#implication"
+
+[[item]]
+id = "glossary.modus-ponens"
+path = "reference/glossary.md#modus-ponens"
+
+[[item]]
+id = "glossary.negation"
+path = "reference/glossary.md#negation"
+
+[[item]]
+id = "glossary.satisfiable"
+path = "reference/glossary.md#satisfiable"
+
+[[item]]
+id = "glossary.sort"
+path = "reference/glossary.md#sort"
+
+[[item]]
+id = "glossary.availability"
+path = "reference/glossary.md#availability"
+
+[[item]]
+id = "glossary.certification"
+path = "reference/glossary.md#certification"
+
+[[item]]
+id = "glossary.materialization"
+path = "reference/glossary.md#materialization"

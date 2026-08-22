@@ -52,7 +52,7 @@ Function-level ranges are fixed at function entry. For a push operation,
 `mutable (owner->data + owner->len)[0..2]` denotes two cells at the old end even
 if the function later updates `owner->len`. Click transports unchanged field
 loads across certified writes when matching the executed stores to that
-footprint. Which facts a proof step carries across such a write, and what
+footprint. Which facts a statement step carries across such a write, and what
 must be proved explicitly instead, is the step rule in
 [Proof state and replay](proof-state-and-replay.md#what-a-step-carries).
 

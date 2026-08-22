@@ -11,10 +11,10 @@ name is a simple immutable abbreviation or extra proof/model state across
 program points.
 
 Click does not yet have general first-class mutable spec state. It does have a
-small resource context for viewed and owned memory resources,
-described in [Permissions](permissions.md). This page records the intended
-place of the broader feature so future permission and ownership work has a
-clean target.
+resource context for viewed and owned memory, allocation authority, and
+user-defined resources, described in [Permissions](permissions.md). This page
+explains the boundary between those implemented mechanisms and more general
+proof-only state.
 
 ## Why spec state matters
 
@@ -82,30 +82,33 @@ classical predicate facts.
 
 ## Relationship to permission logic
 
-The current implementation starts with a narrow resource context before general
-model variables. That lets Click pressure-test the permission machinery on the
-central memory problem without committing to arbitrary global model state.
+The implemented specification layer has three kinds of state:
 
-The intended layering is:
+1. immutable specification terms, predicates, labels, and snapshots;
+2. proof-local witnesses introduced by `choose` and supplied by `witness`; and
+3. a resource context containing viewed, owned, allocation, abstract, and
+   composite resource facts.
 
-1. a small resource context for memory resource facts,
-2. broader resource facts over memory locations, ranges, capabilities, and IO,
-3. first-class model variables if examples need arbitrary spec state,
-4. ownership predicates defined in libraries,
-5. refcount and allocation examples that pressure-test those abstractions.
+The resource context is stateful from the proof's perspective: calls and proof
+steps can transfer, consume, produce, unfold, and fold its facts. That is enough
+to model ownership protocols and the complete allocation, retain, release, and
+free lifecycle in the refcount example. It is still not a general mutable ghost
+store: users cannot declare an arbitrary spec variable and assign it at each
+program point.
 
-This keeps Click flexible. The kernel should not bake in json-c ownership as a
-primitive concept. It should provide enough general spec-state and permission
-support for libraries to define the ownership concepts they need.
+This boundary keeps the kernel independent of application-specific ownership
+models. Libraries define those models with predicates and resources; the
+kernel supplies their checked composition, transfer, and memory authority.
 
-## What not to assume yet
+## Current boundaries
 
-Do not assume:
+Keep these distinctions explicit:
 
-- that ownership is currently a built-in Click feature,
-- that `loadable` means ownership,
-- that `mutable` means permission to free,
-- or that refcounting can be proved cleanly before the spec-state layer exists.
-
-The current json-c refcount example intentionally stops before allocation,
-release, and ownership transfer.
+- `let` is an immutable abbreviation, not mutable spec state.
+- `loadable` proves memory safety and bounds; it does not grant access
+  authority.
+- `mutable` bounds a function's writes; it does not grant permission to access
+  or free the named memory.
+- A pure fact can be reused. An owned resource fact cannot be copied freely.
+- Ownership protocols are expressible through resources, but arbitrary mutable
+  ghost variables aren't supported.

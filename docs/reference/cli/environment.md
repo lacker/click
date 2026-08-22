@@ -60,7 +60,7 @@ contract-certification arm path.
 
 ### `CLICK_DISABLE_MEMORY_DAG`
 
-Set `CLICK_DISABLE_MEMORY_DAG=1` to disable memory-derivation DAG storage and
+Set `CLICK_DISABLE_MEMORY_DAG=1` to disable memory derivation DAG storage and
 use the fallback path.
 
 ### `CLICK_DISABLE_CLOSER_REUSE`

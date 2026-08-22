@@ -134,32 +134,32 @@ monotone for already-provable snapshot premises
 (`added_composition_carrier_keeps_snapshot_premise_work_bounded`).
 
 The pairs' accidental effectiveness came from restating each fact in every
-term vocabulary that ever existed, so lookup never proved cross-snapshot
-equality. The replacement attacks term identity directly:
+term form that ever existed, so lookup never proved cross-snapshot equality.
+The replacement gives terms one canonical identity and makes state changes
+explicit:
 
 - **Stratified derivation edges.** A snapshot's derivation is described in
   its parent's vocabulary; call-havoc footprints are canonicalized at
   recording so later frame queries match entry-vocabulary facts
   syntactically.
-- **Canonicalize at creation, bounded guards.** Terms adopt a ground-equality
-  representative only when it strictly lowers the term (fewer memory loads,
-  or a constant for a non-constant). Same-shape respellings are rejected —
-  consumers that structurally re-derive recorded ranges must keep seeing the
-  original vocabulary.
-- **Bridge at the availability boundary.** A fact and a premise that spell
-  one condition over different snapshots are decided by the snapshot bridge
-  (candidates only from available facts, both normalized and original
-  spellings tried), never by re-storing per-vocabulary copies.
-- **Write-set fingerprints.** Call-havoc markers carry a spelling-invariant
+- **Canonicalize at creation.** A memory load becomes the load variable for
+  its cell epoch where lowering or symbolic execution creates it. Condition-fact
+  availability is therefore exact canonical-form lookup; it never searches
+  ambient facts for a cross-snapshot match. Separation facts use a
+  snapshot-independent shape index only to select candidates, after which the
+  kernel must prove the range relationship from frame evidence. The full term
+  invariant is in [Canonicalization](canonicalization.md).
+- **Transport facts at statement boundaries.** A statement step carries only
+  the selected or automatically considered facts whose direct frame check
+  succeeds. More general cross-snapshot reasoning is an explicit `transport`
+  certificate step, not a comparator side effect.
+- **Write-set fingerprints.** Call-havoc markers carry a representation-invariant
   fingerprint of their write set in the marker block size, so
   alpha-colliding claims whose same-named havocs wrote different shapes stay
-  content-distinct in the interning arena; the residual same-shape collision
-  and the claim-scoped salt design are recorded in the issue tracker's
-  history.
-- **Explicit `rewrite` stays the completeness escape hatch**, and the
-  long-run trajectory for recurring snapshot-equality gaps is a forkable,
-  provenance-carrying e-graph fed by executor-discharged guard equalities —
-  never by guard search.
+  content-distinct in the interning arena.
+- **Explicit proof steps remain the completeness escape hatch.** `rewrite`
+  uses a proved equality, while `transport` uses checked frame evidence. The
+  canonical comparator itself uses neither.
 
 ## Indexed contradiction and premise search
 
@@ -178,21 +178,21 @@ The remaining deep comparisons are bucketed by rule requirements — loads with
 loads, sums under equal folded constants and addend counts, conditionals with
 conditionals, folds with fold splits — and every performed comparison uses the
 unchanged proof-aware equality. Pin regressions fix each preserved reach:
-additive commutativity, load resolution, cross-snapshot load bridging, and
-graph-equal addends inside the add rule. Same-bucket contexts are still
-compared pairwise; that width is bounded by rule-relevant facts, not by the
-ambient context.
+additive commutativity, load resolution, cross-snapshot canonical forms, and
+graph-equal addends inside the add rule. Same-bucket contexts are still compared
+pairwise; that width is bounded by rule-relevant facts, not by the ambient
+context.
 
 Condition premise search tries single candidates, then candidate pairs that
 some derivation could connect: two facts sharing a bitvector variable
-(collected through load pointers and memories, so snapshot spellings still
-connect) or two facts each sharing one with the goal. A pair sharing neither
-is jointly satisfiable whenever each fact is, and a fact unsatisfiable alone
-is found by the single-candidate pass, so the skipped pairs hold no
-derivation. Wider premise sets come from one derivation over the complete
-candidate set minimized to its actual dependencies. Quantified matching
-remains a per-query linear scan over quantified facts; its curve guards
-against that scan acquiring a superlinear axis.
+(collected through load pointers and memories, so snapshot forms still
+connect) or two facts each sharing one with the goal. A pair sharing neither is
+jointly satisfiable whenever each fact is, and a fact unsatisfiable alone is
+found by the single-candidate pass, so the skipped pairs hold no derivation.
+Wider premise sets come from one derivation over the complete candidate set
+minimized to its actual dependencies. Quantified matching remains a per-query
+linear scan over quantified facts; its curve guards against that scan acquiring
+a superlinear axis.
 
 The deterministic gates for these paths hold one fixed decision or derivation
 while growing unrelated context: exact contradiction, consistent order

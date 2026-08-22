@@ -833,7 +833,7 @@ and the unique post-loop state `at(loop_label.exit, expression)`. Branches still
 require explicit arm proofs and a checked join before a unique exit snapshot
 exists.
 
-`execute_until(statement(N))` starts at the current execution point, so it can
+`execute_until(statement(N))` starts at the current execution frontier, so it can
 follow earlier `step` or joined `branch` steps. The
 target must be forward and reachable on that selected path; it cannot be used
 to rewind execution or enter an unselected branch.

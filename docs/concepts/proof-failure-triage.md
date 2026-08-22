@@ -98,7 +98,7 @@ Use the narrowest description supported by the evidence:
 - **Ergonomic or automation problem:** an explicit supported proof works, but
   a smart tactic misses a general case it would be useful to handle.
 - **Missing functionality:** the true in-scope proof needs a fact, contract
-  form, semantic rule, or simple proof step that Click cannot express.
+  form, semantic rule, or simple tactic that Click cannot express.
 - **Correctness bug:** an existing supported rule, semantic model, or proof
   operation rejects a valid use or accepts an invalid one.
 - **Tooling reliability bug:** budgets, diagnostics, certificate replay, or

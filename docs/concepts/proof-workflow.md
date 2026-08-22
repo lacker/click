@@ -10,7 +10,7 @@ prompt failure from an incomplete smart tactic is not by itself an engine bug.
 
 ## Proof kinds
 
-A **pure proof** derives a proposition from facts at one execution point. It
+A **pure proof** derives a proposition from facts at one program point. It
 does not execute C, move between program points, or transform resource facts.
 Pure theorem proofs and the nested proof inside `have ... by { ... }` are pure
 proofs.
@@ -76,7 +76,7 @@ by frame;
 
 Omitting a proof clause uses `auto`. `by simp;` means the same operation as
 `by { simp(); }`, and `by frame;` means the same operation as
-`by { frame(); }`. All four forms act at the current proof frontier; neither
+`by { frame(); }`. All four forms act at the current execution frontier; neither
 `simp` nor `frame` implicitly executes C. See the
 [proof tactics reference](../reference/tactics/index.md).
 
@@ -116,23 +116,26 @@ authoritative inventory and classifies each spelling as simple, smart, or
 control flow.
 
 - `step() using { P; ... }`: advance one small C transition using exactly
-  the listed execution premises. It does not automatically transport memory-dependent facts to
-  the new snapshot; use `transport(source, target)` explicitly. At a C `if`, an
-  exact condition fact selects and enters one arm. At a loop head, it evaluates
-  the condition once and enters one iteration or advances past the loop.
-- `step();`: execute one small C transition from the current execution
-  point with contextual prerequisite reasoning and automatic supported fact
+  the listed execution premises and selected fact transports. A listed
+  memory-dependent fact crosses the statement only when the direct frame check
+  proves that the statement leaves its loaded cells unchanged. Use an explicit
+  `transport(source, target)` when establishing a different target form needs
+  more reasoning than that statement-local check. At a C `if`, an exact
+  condition fact selects and enters one arm. At a loop head, it evaluates the
+  condition once and enters one iteration or advances past the loop.
+- `step()`: execute one small C transition from the current execution frontier
+  with contextual prerequisite reasoning and automatic supported fact
   transport. It uses the same branch and loop-head transitions as
   `step() using`.
-- `execute();`: build symbolic verification paths from the current
-  execution point to function exit. From function entry, this executes the
+- `execute()`: build symbolic verification paths from the current execution
+  frontier to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
   Requirements of opaque calls may be routine consequences of current facts;
   smart execution retains a checked proposition derivation for each such
   premise, and expansion emits the corresponding exact source-level facts.
-  Equivalent field loads remain matchable when harmless materialization gives
-  them different memory-snapshot spellings.
-- `execute_until(statement(N));`: execute the current deterministic prefix up
+  Reads of an unchanged cell use the same load variable across snapshots, so
+  premise matching does not need hidden frame reasoning.
+- `execute_until(statement(N))`: execute the current deterministic prefix up
   to the entry of statement region `N`. It can cross verified loops, but an
   unresolved `if` still requires explicit branch entry. It composes with prior
   execution steps and joined branches. The target must be
@@ -142,10 +145,10 @@ control flow.
   to its checked abstract exit. Its nested `initialize`, `preserve`, invariant,
   and effect clauses construct the kernel rule; it never seeks to a numbered
   source loop.
-- `close_invariants();`: discharge a loop's whole invariant bundle at the back
+- `close_invariants()`: discharge a loop's whole invariant bundle at the back
   edge. It is accepted only inside `preserve by { ... }`, and at most once per
   path. Omitting it makes Click append the closer implicitly.
-- `frame();`: smart contextual frame reasoning for the current function or
+- `frame()`: smart contextual frame reasoning for the current function or
   active structural-effect goal.
 - `frame() using { P; ... }` and the region form: the simple exact-premise
   frame check. Expansion always emits this form.
@@ -308,8 +311,8 @@ expressions are interpreted separately for each completed path.
 Some successful `auto` proofs record replayable tactic certificates when the
 current tactic language can express the argument.
 
-An execution proof tracks an execution frontier: the current execution point
-together with its enclosing continuation stack. Proof scripts can start at
+An execution proof tracks an execution frontier: the current program point,
+symbolic state, and enclosing continuation stack. Proof scripts can start at
 function entry, advance by one statement with `step();`, unpack a C `if` at the
 current frontier with `branch`, replace scoped paths with an explicit abstract
 interface using `branch ensuring`, pause at a statement entry with

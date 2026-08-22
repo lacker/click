@@ -24,7 +24,7 @@ marks, focus, and structural context. A replayed step must resolve its
 selectors in this state and justify the requested transition through checked
 operations.
 
-Control-flow proof objects preserve structure rather than flattening every
+Control-flow certificates preserve structure rather than flattening every
 branch into an unrelated list. Branches carry path-local assumptions;
 continuations identify where common execution resumes; joins require compatible
 facts and resources. Loop certificates correspond to initialization,
@@ -42,13 +42,15 @@ certificate. Failure is attributed to the selected fact, program point,
 resource, or path when possible. Expansion uses only a successfully replayed
 certificate.
 
-## Kernel proof objects
+## Kernel derivations
 
 Kernel structures in `src/kernel/primitives/proof_objects.rs` represent
 primitive semantic evidence and obligations. They are separate from the
 surface certificate: surface proof steps encode user-reviewable operations,
-while kernel objects justify the underlying proposition, execution, memory, or
-resource transition.
+while kernel derivations justify the underlying proposition, execution,
+memory, or resource transition. `Theorem` is authority for an established
+proposition; `PropositionDerivation` retains the checked reasoning tree; other
+typed evidence records execution and memory transitions.
 
 Important invariants are:
 

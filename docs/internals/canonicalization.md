@@ -35,7 +35,7 @@ and replay accept equality of canonical forms directly.
 `index == old(owner->len)`, a store crossing justified by pointer
 distinctness, an arithmetic bound. These require a fact in the proof
 context or a certificate, and any use of one in a derivation must be
-expressible as a replayable simple step. No comparator, tactic, or search
+expressible as a replayable certificate step. No comparator, tactic, or search
 may silently consume a proved equality while answering a question that
 should be definitional.
 

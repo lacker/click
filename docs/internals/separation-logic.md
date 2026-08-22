@@ -253,7 +253,7 @@ the kernel does not prove either supplied premise again. An omitted phase uses
 automatic verification for that premise.
 
 `apply(...)` and `have ... by { ... }` perform pure proofs at the current
-execution point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
+program point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
 resource reasoning there. None advances execution. This lets deterministic
 tactics prepare facts and resources before the next C statement. At function exit, operations
 whose meaning depends on `result` or the post-state are checked separately for
@@ -282,7 +282,7 @@ therefore read dependent metadata needed to describe the owned backing range.
 This projection is one step and duplicable; it does not unfold or consume the
 owned composite.
 
-`execute()` advances the current execution point to function exit. The former
+`execute()` advances the current execution frontier to function exit. The former
 `execute_rest()` and `symbolic_execute()` spellings are rejected with a
 migration message.
 

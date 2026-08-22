@@ -474,10 +474,11 @@ thread stack, below libtest's 2 MiB default, and pins that representation
 budget. The replay needs between 1216 and 1280 KiB on rustc 1.92 / macOS and
 overflowed a 1.25 MiB budget on CI's Linux stable toolchain, so the budget
 carries about 40% headroom over the measured need; recalibrate on the CI
-platform before tightening it. The outlined proof-rule and replay adapters keep rule-local enum and
-proposition payloads out of their dispatchers' frames; they are stable stack
-budget boundaries, not substitutes for the depth guard. Changes to those
-boundaries must keep the small-stack canary green. The larger architectural
+platform before tightening it. The outlined proof-rule and replay adapters
+keep rule-local enum and proposition payloads out of their dispatchers'
+frames; they are stable stack budget boundaries, not substitutes for the
+depth guard. Changes to those boundaries must keep the small-stack canary
+green. The larger architectural
 question of replacing the parallel mutable replay model is tracked separately
 in `issues/replay-smell.md`.
 

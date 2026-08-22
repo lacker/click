@@ -143,7 +143,7 @@ theorem countdown_is_zero(n: int32) {
 }
 ```
 
-`induct(n) as ih` is a simple, explicit proof step. It requires the current
+`induct(n) as ih` is a simple tactic. It requires the current
 facts to prove `n >= 0`. Within the rest of that theorem proof, `ih(m)` states
 the same goal at any proved nonnegative `m < n`. The application also requires
 the theorem's declared requirements with `n` replaced by `m`; Click never
