@@ -848,16 +848,12 @@ impl SharedCMemory {
         if memory_dag_disabled() {
             return None;
         }
-        C_MEMORY_ARENA.with(|(token, arena)| {
-            if *token != self.arena {
+        C_MEMORY_ARENA.with(|arena| {
+            let arena = arena.borrow();
+            if arena.0 != self.arena {
                 return None;
             }
-            arena
-                .borrow()
-                .derivations
-                .get(self.id as usize)
-                .cloned()
-                .flatten()
+            arena.1.derivations.get(self.id as usize).cloned().flatten()
         })
     }
 
@@ -1078,11 +1074,25 @@ impl CMemoryShallowIdentity {
 }
 
 thread_local! {
-    static C_MEMORY_ARENA: (u32, std::cell::RefCell<CMemoryArena>) = (
+    static C_MEMORY_ARENA: std::cell::RefCell<(u32, CMemoryArena)> = std::cell::RefCell::new((
         NEXT_MEMORY_ARENA_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        std::cell::RefCell::new(CMemoryArena::default()),
-    );
+        CMemoryArena::default(),
+    ));
     static C_MEMORY_DERIVATION_GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Replaces this thread's memory arena with an empty one under a fresh
+/// token. Snapshots interned before keep comparing by content but lose
+/// their derivations, so nothing recorded for an earlier verification can
+/// answer a DAG walk in a later one. Called by [`super::VerificationSession`]
+/// at the outermost verification entry; see its documentation.
+pub(super) fn start_fresh_c_memory_arena() {
+    C_MEMORY_ARENA.with(|arena| {
+        *arena.borrow_mut() = (
+            NEXT_MEMORY_ARENA_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            CMemoryArena::default(),
+        );
+    });
 }
 
 /// Bumped every time a derivation slot is filled. Memo tables over DAG walks
@@ -1112,11 +1122,12 @@ pub(crate) fn record_c_memory_derivation(result: &CMemory, derivation: CMemoryDe
     }
     // Interning borrows the arena, so it has to finish before the write.
     let derived = intern_c_memory_ref(result);
-    C_MEMORY_ARENA.with(|(token, arena)| {
-        if *token != derived.arena || *token != derivation.base().arena {
+    C_MEMORY_ARENA.with(|arena| {
+        let mut arena = arena.borrow_mut();
+        if arena.0 != derived.arena || arena.0 != derivation.base().arena {
             return;
         }
-        let mut arena = arena.borrow_mut();
+        let arena = &mut arena.1;
         let Some(slot) = arena.derivations.get_mut(derived.id as usize) else {
             return;
         };
@@ -1151,8 +1162,9 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
 /// snapshots that cross threads still compare correctly through the content
 /// hash and structural fallback.
 pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
-    C_MEMORY_ARENA.with(|(token, arena)| {
+    C_MEMORY_ARENA.with(|arena| {
         let mut arena = arena.borrow_mut();
+        let (token, arena) = &mut *arena;
         let shallow_identity = CMemoryShallowIdentity::of(&memory);
         if let Some((id, content_hash)) = arena.shallow_identities.get(&shallow_identity).copied() {
             return SharedCMemory {
@@ -1193,8 +1205,9 @@ pub fn intern_c_memory(memory: CMemory) -> SharedCMemory {
 /// cloning it, so hot memoization lookups keyed by interned identity pay a
 /// hash and comparison but no allocation.
 pub fn intern_c_memory_ref(memory: &CMemory) -> SharedCMemory {
-    C_MEMORY_ARENA.with(|(token, arena)| {
+    C_MEMORY_ARENA.with(|arena| {
         let mut arena = arena.borrow_mut();
+        let (token, arena) = &mut *arena;
         let shallow_identity = CMemoryShallowIdentity::of(memory);
         if let Some((id, content_hash)) = arena.shallow_identities.get(&shallow_identity).copied() {
             return SharedCMemory {

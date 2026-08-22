@@ -4,6 +4,7 @@ use super::*;
 
 mod attempt;
 mod claim_proofs;
+pub(in crate::lang::click) use claim_proofs::clear_independent_execution_cache;
 mod cursor_execution;
 mod execution_planning;
 pub(in crate::lang::click) mod fact_reasoning;

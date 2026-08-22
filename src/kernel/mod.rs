@@ -79,3 +79,63 @@ mod prelude {
 
 #[cfg(test)]
 mod tests;
+
+thread_local! {
+    static VERIFICATION_SESSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One verification's worth of kernel thread-local state.
+///
+/// The kernel keeps per-thread tables that are correct only within one
+/// verification: the memory arena (snapshot ids and their DAG derivations;
+/// interning dedups by content, so a later verification's snapshot with the
+/// same content — a call havoc of a same-named callee, say — would inherit
+/// the first verification's derivation and its mutable ranges), the load
+/// registry (names are content-addressed, but their origins are live
+/// snapshots of the arena that minted them), and the memo tables keyed by
+/// arena ids or by fact-set content. Entering a session at the outermost
+/// verification boundary starts a fresh arena and empties every such table,
+/// so two verifications on one thread are as independent as two threads.
+/// Nested entries (a verification inside a verification) keep the session.
+/// `verifications_on_one_thread_are_independent` is the regression.
+pub struct VerificationSession {
+    fresh: bool,
+}
+
+impl VerificationSession {
+    pub fn enter() -> Self {
+        let outermost = VERIFICATION_SESSION_DEPTH.with(|depth| {
+            let current = depth.get();
+            depth.set(current + 1);
+            current == 0
+        });
+        if outermost {
+            primitives::start_fresh_c_memory_arena();
+            eval::clear_canonical_load_registry();
+            eval::clear_load_name_caches();
+            memory_provenance::clear_canonical_form_caches();
+            memory_provenance::clear_provenance_memos();
+            reasoning::memory_resolution::clear_canonical_memory_cache();
+            reasoning::memory_resolution::clear_memory_resolution_memos();
+            assumptions::clear_assumption_memos();
+            assumptions::clear_context_inconsistency_memos();
+            assumptions::clear_frame_expansion_memo();
+            api::clear_representation_certificate_cache();
+        }
+        Self { fresh: outermost }
+    }
+
+    /// Whether this entry started the session (and so cleared the kernel's
+    /// tables), as opposed to joining an enclosing one. Callers holding
+    /// their own per-verification caches of kernel snapshots clear them on
+    /// a fresh session.
+    pub fn is_fresh(&self) -> bool {
+        self.fresh
+    }
+}
+
+impl Drop for VerificationSession {
+    fn drop(&mut self) {
+        VERIFICATION_SESSION_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}

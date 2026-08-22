@@ -16,6 +16,18 @@ describes the edge from an already-interned parent to a child snapshot.
 Keeping provenance outside `CMemory` means that equality, hashing, and ordering
 continue to describe memory values rather than the route used to produce them.
 
+The arena is per thread and per verification. Interning dedups by content and
+keeps the first derivation recorded for an id, so two verifications sharing
+one arena would let the second inherit the first's edges for any snapshot
+with the same content — a call havoc of a same-named callee, for example,
+since havoc identities restart per verification. `VerificationSession`
+(`src/kernel/mod.rs`), entered at the outermost verification boundary,
+starts a fresh arena under a new token and empties every table keyed by
+arena ids or holding arena snapshots (the load registry, the canonical-form
+caches, the reasoning memos, and the per-verification execution caches).
+Snapshots from an earlier session still compare by content but answer no
+derivation query.
+
 The producers in `src/kernel/primitives/memory_state.rs` record these edge
 kinds:
 

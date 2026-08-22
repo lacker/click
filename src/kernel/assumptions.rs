@@ -11,8 +11,10 @@ use std::cell::{Cell, RefCell};
 mod condition_reasoning;
 mod memory_reasoning;
 pub(crate) use memory_reasoning::arm_frame_composite_definitions;
+pub(crate) use memory_reasoning::clear_frame_expansion_memo;
 mod proposition_reasoning;
 
+pub(crate) use proposition_reasoning::clear_context_inconsistency_memos;
 pub(crate) use proposition_reasoning::finite_forall_goal_instances;
 
 // Global equality resolution can re-enter itself through snapshot and alias
@@ -459,6 +461,18 @@ thread_local! {
             std::collections::HashMap<Proposition, Option<AtomicPropositionDerivationEvidence>>,
         >,
     > = RefCell::new(std::collections::HashMap::new());
+}
+
+/// Empties this module's memo tables at a verification boundary (ids keep
+/// counting, so a later entry cannot alias an old id).
+pub(crate) fn clear_assumption_memos() {
+    DECIDE_MEMO.with(|memo| memo.borrow_mut().clear());
+    ASSUMPTIONS_MEMO_IDS.with(|ids| ids.borrow_mut().clear());
+    EQUAL_FROM_FACTS_MEMO.with(|memo| memo.borrow_mut().clear());
+    TRANSPORT_EQUAL_MEMO.with(|memo| memo.borrow_mut().clear());
+    CONSTANT_NORMALIZATION_MEMO.with(|memo| memo.borrow_mut().clear());
+    SIGNED_INTERVAL_MEMO.with(|memo| memo.borrow_mut().clear());
+    ATOMIC_DERIVATION_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
 // The memo tables are bounded so a long verification cannot grow them without

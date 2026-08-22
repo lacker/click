@@ -18,15 +18,11 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 3
+## Other open issues: 2
 
 - [Replay is a second proof engine](replay-smell.md): independent certificate
   checking still advances a large parallel mutable replay state instead of
   interpreting recorded operations through the audited proof-object model.
-- [Thread-local state leaks between verifications](thread-local-state-leaks-between-verifications.md):
-  verifying `borrowed-slice` then `linked-list` on one thread fails the
-  second; a thread-local memo answers across projects and a smart search
-  misses its budget.
 - [Resource tracking across execution transitions](resource-tracking.md):
   owned-vector retains persistent `observe` projections across a consuming
   reallocation; audit the existing scoped resource mechanism and ensure

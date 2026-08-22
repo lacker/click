@@ -8,6 +8,11 @@ thread_local! {
 
 const CONTEXT_INCONSISTENCY_MEMO_LIMIT: usize = 200_000;
 
+pub(crate) fn clear_context_inconsistency_memos() {
+    CONTEXT_INCONSISTENCY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    CONTEXT_INCONSISTENCY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+}
+
 fn exact_predecessor_base(term: &Bitvector32Term) -> Option<Bitvector32Term> {
     let Bitvector32Term::Subtract(value, amount) = term else {
         return None;

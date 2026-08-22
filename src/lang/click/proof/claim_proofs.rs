@@ -653,6 +653,12 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Empties the independent-execution cache at a verification boundary: its
+/// entries embed snapshots of the arena being retired.
+pub(in crate::lang::click) fn clear_independent_execution_cache() {
+    INDEPENDENT_EXECUTION_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cached_independent_execution(
     pre_state: &CState,

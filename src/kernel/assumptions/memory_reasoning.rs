@@ -48,6 +48,20 @@ pub fn arm_frame_composite_definitions(
     FrameCompositeDefinitionsGuard { _private: () }
 }
 
+thread_local! {
+    /// Composite expansions keyed by composition storage address and
+    /// interned memory id; see `frame_expanded_compositions`.
+    static EXPANSION_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(usize, (u32, u32)), (ResourceContext, Option<ResourceContext>)>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Empties the frame-expansion memo at a verification boundary: its keys
+/// carry arena ids, which a fresh arena reuses.
+pub(crate) fn clear_frame_expansion_memo() {
+    EXPANSION_MEMO.with(|memo| memo.borrow_mut().clear());
+}
+
 fn frame_composite_definitions() -> Option<std::sync::Arc<Vec<CCompositeResourceDefinition>>> {
     FRAME_COMPOSITE_DEFINITIONS.with(|definitions| definitions.borrow().last().cloned())
 }
@@ -1922,11 +1936,6 @@ impl PureFactContext {
         // this runs on the store cell-drop path. Retaining the keyed context
         // keeps its allocation alive, so an address cannot be recycled under
         // a stale entry.
-        thread_local! {
-            static EXPANSION_MEMO: std::cell::RefCell<
-                std::collections::HashMap<(usize, (u32, u32)), (ResourceContext, Option<ResourceContext>)>,
-            > = std::cell::RefCell::new(std::collections::HashMap::new());
-        }
         const EXPANSION_MEMO_LIMIT: usize = 10_000;
         let memory_id = crate::kernel::intern_c_memory_ref(memory).arena_id();
         let mut expanded = Vec::new();

@@ -628,6 +628,21 @@ thread_local! {
     static CANONICAL_LOAD_REGISTRY: std::cell::RefCell<
         std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static NAME_CACHE: std::cell::RefCell<
+        std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static TERM_CACHE: std::cell::RefCell<
+        std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(crate) fn clear_load_name_caches() {
+    NAME_CACHE.with(|cache| cache.borrow_mut().clear());
+    TERM_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
+pub(crate) fn clear_canonical_load_registry() {
+    CANONICAL_LOAD_REGISTRY.with(|registry| registry.borrow_mut().clear());
 }
 
 /// The load identity a canonical load variable names, when this thread
@@ -697,17 +712,12 @@ pub(crate) fn proposition_mentions_registered_canonical_load(proposition: &Propo
 ///
 /// [`canonicalize_atomic_loads`]: crate::kernel::memory_provenance::canonicalize_atomic_loads
 pub(crate) fn canonical_term(term: &Bitvector32Term) -> Bitvector32Term {
-    thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
-    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(term).cloned()) {
+    if let Some(hit) = TERM_CACHE.with(|cache| cache.borrow().get(term).cloned()) {
         return hit;
     }
     let structural = crate::kernel::memory_provenance::canonicalize_atomic_loads(term);
     let result = substitute_canonical_load_names(&structural, &mut None);
-    CACHE.with(|cache| {
+    TERM_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 100_000 {
             cache.clear();
@@ -1341,11 +1351,6 @@ pub(crate) fn canonical_load_variable_for_term(
     // comparison; the epoch walk and canonicalization behind a cold call
     // are not free, so cache by term. Term hashing is cheap: embedded
     // snapshots hash by interned identity.
-    thread_local! {
-        static NAME_CACHE: std::cell::RefCell<
-            std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
     if let Some(hit) = NAME_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
         return Some(hit);
     }

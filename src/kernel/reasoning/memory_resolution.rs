@@ -49,6 +49,21 @@ thread_local! {
 
 const RESOLUTION_QUERY_MEMO_LIMIT: usize = 200_000;
 
+thread_local! {
+    static CANONICAL_MEMORY_CACHE: std::cell::RefCell<
+        std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(crate) fn clear_memory_resolution_memos() {
+    RESOLUTION_QUERY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    RESOLUTION_QUERY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+}
+
+pub(crate) fn clear_canonical_memory_cache() {
+    CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
 /// The memo identity for one top-level resolution query, or `None` when the
 /// query must run unmemoized. Unmemoized cases are the ones whose answers
 /// are ambient-state-dependent: a nested arm shares the caller's fuel, a
@@ -1104,15 +1119,10 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
     memory: &CMemory,
     pointer: &Pointer,
 ) -> CMemory {
-    thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<(super::SharedCMemory, Pointer), CMemory>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
     // Canonicalization is assumption-free and deterministic, so memoize by
     // interned snapshot identity; the intern also dedups the key storage.
     let key = (super::intern_c_memory_ref(memory), pointer.clone());
-    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+    if let Some(hit) = CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }
     let result = crate::instrumentation::measure_operation(
@@ -1121,7 +1131,7 @@ pub(in crate::kernel) fn canonical_memory_for_pointer_load(
         "canonical memory for load: miss",
         || canonical_memory_for_pointer_load_with_depth(memory, pointer, 0),
     );
-    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
+    CANONICAL_MEMORY_CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
     result
 }
 

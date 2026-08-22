@@ -549,6 +549,19 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
     mut expansion_capture: Option<&mut ExpansionCapture>,
 ) -> Result<(Vec<VerifiedCTheorem>, CExecutionEnvironment), ClickError> {
     check_verification_deadline()?;
+    // A verification that continues from an earlier one's environment shares
+    // that environment's snapshots and keeps its kernel session; every other
+    // verification starts its own, so thread-local kernel state cannot carry
+    // over from whatever verified before it on this thread.
+    let session = initial_function_environment
+        .is_none()
+        .then(crate::kernel::VerificationSession::enter);
+    if session
+        .as_ref()
+        .is_some_and(crate::kernel::VerificationSession::is_fresh)
+    {
+        proof::clear_independent_execution_cache();
+    }
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();

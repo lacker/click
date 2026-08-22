@@ -1248,3 +1248,26 @@ fn recursive_zero_list_creates_only_canonical_terms() {
 fn vector_push_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("vector-push", "vector_push.click");
 }
+
+/// Verifying a project is a pure function of its sources: two projects
+/// back to back on one thread get the verdicts they get alone. Before
+/// `VerificationSession`, `borrowed-slice` then `linked-list` failed the
+/// second — the content-deduplicated memory arena handed the second
+/// project the first one's DAG derivation for a same-content call-havoc
+/// snapshot, and the load registry its origins.
+#[test]
+fn verifications_on_one_thread_are_independent() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (project, sidecar) in [
+        ("borrowed-slice", "borrowed_slice.click"),
+        ("linked-list", "linked_list.click"),
+        ("input-cursor", "input_cursor.click"),
+        ("borrowed-slice", "borrowed_slice.click"),
+    ] {
+        let path = manifest.join("examples").join(project).join(sidecar);
+        let click_source = std::fs::read_to_string(&path).unwrap();
+        let sources = crate::cli::read_verifying_sources(&path, &click_source).unwrap();
+        verify_c0_sources(&click_source, &crate::cli::source_refs(&sources))
+            .unwrap_or_else(|error| panic!("`{project}` failed: {error:?}"));
+    }
+}

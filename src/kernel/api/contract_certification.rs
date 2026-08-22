@@ -1,6 +1,7 @@
 use super::*;
 
 mod contract_claims;
+pub(crate) use contract_claims::clear_representation_certificate_cache;
 pub use contract_claims::*;
 
 /// Returns an exhaustive set of proof-only cases for undecided guards on

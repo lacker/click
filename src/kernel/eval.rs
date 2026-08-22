@@ -25,6 +25,7 @@ pub(crate) use memory_loads::registered_canonical_load_origin;
 pub(crate) use memory_loads::terms_match_modulo_canonical_names;
 pub(crate) use memory_loads::viewed_as_memory_load;
 pub(super) use memory_loads::*;
+pub(crate) use memory_loads::{clear_canonical_load_registry, clear_load_name_caches};
 pub(super) use operators::*;
 pub(crate) use statements::resolve_pending_heap_allocations;
 pub(super) use statements::*;

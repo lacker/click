@@ -260,18 +260,13 @@ fn pointers_match_for_resource_replay(
 /// produced at different execution points compare equal when their
 /// difference is representational.
 pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
-    thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<crate::kernel::SharedCMemory, CMemory>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
     // Assumption-free and deterministic; keyed by interned snapshot identity.
     let key = crate::kernel::intern_c_memory_ref(memory);
-    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
+    if let Some(hit) = DEEP_MEMORY_CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return hit;
     }
     let result = canonical_c_memory_deep_uncached(memory);
-    CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
+    DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().insert(key, result.clone()));
     result
 }
 
@@ -2483,14 +2478,9 @@ pub(crate) fn rewrite_condition_through_certified_stores(
 /// cells resolve to their values and remaining loads use the canonical
 /// memory for their pointer.
 pub(crate) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Term {
-    thread_local! {
-        static CACHE: std::cell::RefCell<
-            std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
-        > = std::cell::RefCell::new(std::collections::HashMap::new());
-    }
     // Assumption-free and deterministic; term hashing is cheap now that
     // embedded snapshots hash by interned identity.
-    if let Some(hit) = CACHE.with(|cache| cache.borrow().get(term).cloned()) {
+    if let Some(hit) = ATOMIC_LOADS_CACHE.with(|cache| cache.borrow().get(term).cloned()) {
         return hit;
     }
     let result = crate::instrumentation::measure_operation(
@@ -2499,8 +2489,29 @@ pub(crate) fn canonicalize_atomic_loads(term: &Bitvector32Term) -> Bitvector32Te
         "canonicalize atomic loads: miss",
         || canonicalize_atomic_loads_with_depth(term, 0),
     );
-    CACHE.with(|cache| cache.borrow_mut().insert(term.clone(), result.clone()));
+    ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().insert(term.clone(), result.clone()));
     result
+}
+
+thread_local! {
+    static DEEP_MEMORY_CACHE: std::cell::RefCell<
+        std::collections::HashMap<crate::kernel::SharedCMemory, CMemory>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static ATOMIC_LOADS_CACHE: std::cell::RefCell<
+        std::collections::HashMap<Bitvector32Term, Bitvector32Term>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(crate) fn clear_provenance_memos() {
+    UNCHANGED_LOAD_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    UNCHANGED_LOAD_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    DAG_LOAD_EQUALITY_POSITIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+    DAG_LOAD_EQUALITY_NEGATIVE_MEMO.with(|memo| memo.borrow_mut().clear());
+}
+
+pub(crate) fn clear_canonical_form_caches() {
+    DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
+    ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
 const CANONICAL_LOAD_DEPTH_LIMIT: usize = 24;

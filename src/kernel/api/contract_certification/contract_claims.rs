@@ -470,6 +470,25 @@ fn materialized_load_is_unchanged(
         && c_memory_load_is_unchanged(&load.0, symbolic_memory, pointer, assumptions)
 }
 
+#[derive(Clone)]
+struct CachedRepresentationCertificate {
+    path: SymbolicCExecutionPath,
+    desired_outcome: CFunctionOutcome,
+    desired_facts: Vec<ExecutionPureFact>,
+    certified: SymbolicCExecutionPath,
+}
+
+thread_local! {
+    static REPRESENTATION_CACHE: std::cell::RefCell<Vec<CachedRepresentationCertificate>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Empties the representation-certificate cache at a verification
+/// boundary: entries embed snapshots of the arena being retired.
+pub(crate) fn clear_representation_certificate_cache() {
+    REPRESENTATION_CACHE.with(|cache| cache.borrow_mut().clear());
+}
+
 /// Changes only the bounded symbolic representation of a certified return path.
 ///
 /// Program values and memory must be definitionally equal using the path's
@@ -481,18 +500,7 @@ pub fn certify_c_function_execution_path_resource_representation(
     desired_outcome: CFunctionOutcome,
     desired_facts: &[ExecutionPureFact],
 ) -> Option<SymbolicCExecutionPath> {
-    #[derive(Clone)]
-    struct CachedRepresentationCertificate {
-        path: SymbolicCExecutionPath,
-        desired_outcome: CFunctionOutcome,
-        desired_facts: Vec<ExecutionPureFact>,
-        certified: SymbolicCExecutionPath,
-    }
-    thread_local! {
-        static CACHE: std::cell::RefCell<Vec<CachedRepresentationCertificate>> =
-            const { std::cell::RefCell::new(Vec::new()) };
-    }
-    if let Some(certified) = CACHE.with(|cache| {
+    if let Some(certified) = REPRESENTATION_CACHE.with(|cache| {
         cache
             .borrow()
             .iter()
@@ -514,7 +522,7 @@ pub fn certify_c_function_execution_path_resource_representation(
         desired_outcome,
         desired_facts,
     )?;
-    CACHE.with(|cache| {
+    REPRESENTATION_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 64 {
             cache.remove(0);
