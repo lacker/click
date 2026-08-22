@@ -129,13 +129,60 @@ fn assert_names_have_defining_facts(names: &BTreeSet<Variable>, facts: &[Executi
     }
 }
 
-// The loaded-array-index analogue of the test below (a raw `p + *len_ptr`
-// index taking its load variable at the pointer-addition birth site) is
-// still an open gap: introducing load variables at one offset-birth site
-// while the lang-side segment and endpoint evaluators still emit load terms
-// splits one load identity into two terms and breaks frame matching. See
-// issues/canonicalization.md — production adoption must land atomically
-// across every producer.
+/// The loaded-array-index half of the representation invariant: the index
+/// `*len_ptr` of `data + *len_ptr` is a load variable in the resulting
+/// offset (never a raw load), and the registry names the opaque cell for
+/// it. The defining equation is a tautology of the canonical model, so the
+/// operand merge drops it from the path facts; the registry, not the fact
+/// stream, is what ties a name to its cell.
+#[test]
+fn index_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
+    let len_cell = Pointer {
+        block: "len".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new().with_block("len", 4).with_block("data", 64);
+    let state = CState::new()
+        .with_local("len_ptr", CValue::Pointer(len_cell.clone()))
+        .with_local("data", CValue::Pointer(data))
+        .with_memory(memory)
+        .with_resource_context(read_context(len_cell.clone(), 0, 1));
+    let statement = c_return(c_add(
+        c_variable("data"),
+        c_typed_load(c_variable("len_ptr"), CType::Int32),
+    ));
+    let execution = prove_symbolic_c_execution_paths(state, statement, PureFactContext::new());
+
+    assert!(!execution.paths().is_empty());
+    let mut saw_a_canonical_offset = false;
+    for path in execution.paths() {
+        let Proposition::CStatementExecutes { outcome, .. } = path.theorem().proposition() else {
+            panic!("execution should prove a statement judgment");
+        };
+        let CStatementOutcome::Return { value, .. } = outcome else {
+            continue;
+        };
+        let mut names = BTreeSet::new();
+        collect_offset_names_from_value(value, &mut names);
+        for name in &names {
+            let (_, pointer) = crate::kernel::registered_canonical_load(name)
+                .expect("the index's load variable should be registered");
+            assert_eq!(
+                pointer, len_cell,
+                "the name should denote the loaded index cell"
+            );
+        }
+        saw_a_canonical_offset |= !names.is_empty();
+    }
+    assert!(
+        saw_a_canonical_offset,
+        "the loaded index's offset should carry a load variable"
+    );
+}
 
 #[test]
 fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {

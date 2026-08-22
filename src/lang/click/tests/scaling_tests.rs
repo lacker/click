@@ -142,6 +142,62 @@ fn straight_line_project(statement_count: usize, snapshot_claim: bool) -> (Strin
     (c_source, click_source)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum LoadAxis {
+    /// Each statement loads a new cell: one load variable each.
+    DistinctCells,
+    /// Every statement reloads `data[0]` from an unchanged memory.
+    OneCell,
+    /// Every statement reloads `data[0]` and stores `data[1]`: the reload
+    /// finds its name again through a store DAG that grows with the proof.
+    OneCellAcrossStores,
+}
+
+/// A straight line of loads from one array along one [`LoadAxis`].
+/// Each statement is an explicit `step()`, so the certificate names each
+/// load and the final claim compares the last local against the array cell
+/// named at the function exit.
+fn load_variable_project(statement_count: usize, axis: LoadAxis) -> (String, String) {
+    let mut c_source =
+        String::from("int32 load_line(int32 data[], int32 length) {\n    int32 x;\n");
+    for index in 0..statement_count {
+        match axis {
+            LoadAxis::DistinctCells => c_source.push_str(&format!("    x = data[{index}];\n")),
+            LoadAxis::OneCell => c_source.push_str("    x = data[0];\n"),
+            LoadAxis::OneCellAcrossStores => {
+                c_source.push_str("    x = data[0];\n    data[1] = x;\n");
+            }
+        }
+    }
+    c_source.push_str("    return x;\n}\n");
+    let last = match axis {
+        LoadAxis::DistinctCells => statement_count - 1,
+        LoadAxis::OneCell | LoadAxis::OneCellAcrossStores => 0,
+    };
+    let (permission, statements) = match axis {
+        LoadAxis::DistinctCells | LoadAxis::OneCell => ("views data[0..length];", statement_count),
+        LoadAxis::OneCellAcrossStores => (
+            "consumes data[0..length];\n    mutable data[1..2];\n    produces data[0..length];",
+            2 * statement_count,
+        ),
+    };
+    let mut click_source = format!(
+        "verifying \"load_line.c\";\n\nint32 load_line(int32 data[], int32 length) {{\n    requires {statement_count} <= length;\n    requires 2 <= length;\n    {permission}\n    ensures result == data[{last}];\n}} by {{\n"
+    );
+    let statement_count = statements;
+    for _ in 0..=statement_count + 1 {
+        click_source.push_str("    step();\n");
+    }
+    click_source.push_str("    normalize();\n");
+    if matches!(axis, LoadAxis::OneCellAcrossStores) {
+        // `frame()` closes the effect claim; the `produces` claim has no
+        // simple closer and takes the one smart tactic in this fixture.
+        click_source.push_str("    frame();\n    simp();\n");
+    }
+    click_source.push_str("}\n");
+    (c_source, click_source)
+}
+
 fn theorem_with_unrelated_exact_facts(fact_count: usize) -> String {
     let mut parameters = String::from("target: int32");
     let mut requirements = String::from("    requires target == 7;\n");
@@ -368,6 +424,37 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
             })
             .collect::<Vec<_>>();
         assert_near_linear_scaling("straight-line simple steps", &samples);
+    }
+}
+
+/// Load variables are content-addressed names: minting one, and finding the
+/// same name again for an unwritten cell at a later point, must cost work
+/// proportional to the load and the steps it crosses, not to the number of
+/// names or facts already in the proof.
+#[test]
+fn load_variable_naming_scales_near_linearly_with_statements() {
+    for axis in [
+        LoadAxis::DistinctCells,
+        LoadAxis::OneCell,
+        LoadAxis::OneCellAcrossStores,
+    ] {
+        let samples = [8, 16, 32, 64]
+            .into_iter()
+            .map(|size| {
+                let (c_source, click_source) = load_variable_project(size, axis);
+                let (verified, sample) = scaling_sample(size, || {
+                    verify_c0_sources(&click_source, &[("load_line.c", c_source.as_str())])
+                });
+                verified.unwrap_or_else(|error| {
+                    panic!(
+                        "size {size} load-line fixture ({axis:?}) failed: {}",
+                        error.message()
+                    )
+                });
+                sample
+            })
+            .collect::<Vec<_>>();
+        assert_near_linear_scaling(&format!("load variable naming ({axis:?})"), &samples);
     }
 }
 
