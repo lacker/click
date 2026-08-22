@@ -628,7 +628,7 @@ fn bitvector_terms_equal_for_memory_resolution(
     let canonical_view = |term: &Bitvector32Term| {
         if let Bitvector32Term::Variable(variable) = term {
             if let Some((memory, pointer)) =
-                crate::kernel::eval::registered_canonical_load(variable)
+                crate::kernel::eval::registered_canonical_load_origin(variable)
             {
                 return Some(Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
             }

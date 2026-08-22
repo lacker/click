@@ -1321,7 +1321,13 @@ int32 compare_swap2(int32 p[2]) {
     )
     .expect("post-execution simp should expand");
 
-    assert!(expanded.contains("if at(function.entry, p[1])"));
+    // The branch anchors at the statement that branched; statement 0 is
+    // the `tmp` declaration, so this is the same state as function entry
+    // written at the point the certificate actually read it.
+    assert!(
+        expanded.contains("if at(statement(1).entry, p[1]) < at(statement(1).entry, p[0])"),
+        "{expanded}"
+    );
     verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
         .expect("branch certificate should replay against the state where it branched");
 }

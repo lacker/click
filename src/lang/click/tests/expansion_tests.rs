@@ -8691,7 +8691,7 @@ fn resource_example_pipelines_have_no_outcome_fallbacks() {
             "linked-list",
             "linked_list.click",
             "list_roundtrip",
-            "have observed == node->value by {",
+            "rewrite(at(statement(5).entry, observed) == at(statement(5).entry, node->value));",
         ),
         (
             "input-cursor",
@@ -9913,10 +9913,22 @@ fn source_expander_derives_separation_from_call_postconditions() {
 
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
-    assert!(expanded.contains("left->len == length"), "{expanded}");
-    assert!(expanded.contains("left->data == data"), "{expanded}");
+    // The call postconditions are written at the point they were read:
+    // anchored rewrites, not unanchored equalities that would re-read the
+    // fields at the proof's current point.
+    assert!(
+        expanded.contains(
+            "rewrite(at(statement(2).entry, left->len) == at(statement(2).entry, length));"
+        ),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains(
+            "rewrite(at(statement(2).entry, left->data) == at(statement(2).entry, data));"
+        ),
+        "{expanded}"
+    );
     assert!(!expanded.contains("load_int32_pointer"), "{expanded}");
-    assert!(expanded.contains("rewrite("), "{expanded}");
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)

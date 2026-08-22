@@ -2428,7 +2428,8 @@ pub(super) fn certification_proves_proposition(
             })
         }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) => {
-            bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+            names_of_one_cell_framed(left, right, assumptions)
+                || bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
                 || assumptions
                     .has_anchored_bitvector_equality_fact_for_memory_resolution(left, right)
                 || assumptions.proves_order_condition_for_memory_resolution(
@@ -2469,6 +2470,30 @@ pub(super) fn certification_proves_proposition(
         }
         _ => assumptions.proves(proposition),
     }
+}
+
+/// Two load variables for one address are equal when the cell is framed
+/// across the effects between the snapshots they were read from: the
+/// bounded, memoized unchanged-load check over recorded derivations and
+/// effect facts, consulting no resolution fuel.
+fn names_of_one_cell_framed(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    let (Bitvector32Term::Variable(left_variable), Bitvector32Term::Variable(right_variable)) =
+        (left, right)
+    else {
+        return false;
+    };
+    let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
+        crate::kernel::eval::registered_canonical_load_origin(left_variable),
+        crate::kernel::eval::registered_canonical_load_origin(right_variable),
+    ) else {
+        return false;
+    };
+    left_pointer == right_pointer
+        && c_memory_load_is_unchanged(&left_memory, &right_memory, &left_pointer, assumptions)
 }
 
 fn has_exact_strict_increment_max_bound(

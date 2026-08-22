@@ -696,10 +696,12 @@ fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
             state: state.clone(),
             statement,
             outcome: CStatementOutcome::Return {
-                value: int32(Bitvector32Term::MemoryLoad(
+                // The symbolic read is canonical at creation: its load
+                // variable, which names this load.
+                value: int32(crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
                     crate::kernel::intern_c_memory(CMemory::new()),
                     Box::new(pointer),
-                )),
+                ))),
                 state,
             },
         }
@@ -767,10 +769,10 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
             state: state.clone(),
             statement,
             outcome: CStatementOutcome::Return {
-                value: int32(Bitvector32Term::MemoryLoad(
+                value: int32(crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
                     crate::kernel::intern_c_memory(memory),
                     Box::new(pointer)
-                )),
+                ))),
                 state,
             },
         }
@@ -853,10 +855,10 @@ fn read_element_permits_pointer_addition_load_beyond_memory_block() {
             state: state.clone(),
             statement,
             outcome: CStatementOutcome::Return {
-                value: int32(Bitvector32Term::MemoryLoad(
+                value: int32(crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
                     crate::kernel::intern_c_memory(memory),
                     Box::new(derived),
-                )),
+                ))),
                 state,
             },
         }

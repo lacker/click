@@ -559,31 +559,21 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
     let value = symbolic_load_value(memory, pointer, value_type)?;
-    // Canonicalizing at creation: an int or byte load evaluates to its load
-    // variable, with the defining fact beside it, so every fact, offset, and
-    // range built from the value is canonical.
-    if canonicalize_at_creation_enabled() {
-        match &value {
-            CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-                let fresh = mint_canonical_load_variable(
-                    bits,
-                    next_verification_variable,
-                    facts,
-                    assumptions,
-                )?;
-                return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
-            }
-            CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-                let fresh = mint_canonical_load_variable(
-                    bits,
-                    next_verification_variable,
-                    facts,
-                    assumptions,
-                )?;
-                return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
-            }
-            _ => {}
+    // Terms are canonical at creation: an int or byte load evaluates to its
+    // load variable, with the defining fact beside it, so every fact,
+    // offset, and range built from the value is canonical.
+    match &value {
+        CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh =
+                mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+            return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
         }
+        CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
+            let fresh =
+                mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+            return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
+        }
+        _ => {}
     }
     let CValue::Pointer(Pointer {
         block,
@@ -754,37 +744,19 @@ pub(crate) fn canonicalized_offset_index_term(
     bits: Bitvector32Term,
     facts: &mut Vec<ExecutionPureFact>,
 ) -> Bitvector32Term {
-    if !canonicalize_at_creation_enabled() || !term_mentions_a_memory_load(&bits) {
+    if !term_mentions_a_memory_load(&bits) {
         return bits;
     }
     substitute_canonical_load_names(&bits, &mut Some(facts))
 }
 
-/// Whether terms are canonicalized at creation (stage 2 of
-/// `issues/canonicalization.md`): memory loads evaluate to their load
-/// variable where they are born — resource materialization, symbolic
-/// execution, and contract evaluation — so every fact, offset, and range
-/// built from them is canonical. Off by default until the consumers it
-/// exposes are repaired; comparison-time canonicalization does not depend
-/// on it. `CLICK_CANONICALIZE_AT_CREATION=1` enables it.
-pub(crate) fn canonicalize_at_creation_enabled() -> bool {
-    thread_local! {
-        static ENABLED: bool =
-            std::env::var("CLICK_CANONICALIZE_AT_CREATION").is_ok_and(|v| v == "1");
-    }
-    ENABLED.with(|enabled| *enabled)
-}
-
 /// The term for reading `pointer` from `memory` at a creation point with no
 /// fact stream (resource materialization, contract evaluation): the load
-/// variable when canonicalizing at creation, else the load term. Load
-/// variables are content-addressed, so this agrees with every other
-/// creation point; the defining fact is available through the registry.
+/// variable. Load variables are content-addressed, so this agrees with
+/// every other creation point; the defining fact is available through the
+/// registry.
 pub(crate) fn canonical_load_term(memory: SharedCMemory, pointer: Pointer) -> Bitvector32Term {
     let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
-    if !canonicalize_at_creation_enabled() {
-        return load;
-    }
     match canonical_load_variable_for_term(&load) {
         Some((variable, _)) => Bitvector32Term::Variable(variable),
         None => load,

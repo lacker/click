@@ -77,7 +77,7 @@ Landed on master (commits `335868c4` through `abdf4180`, 2026-08-20/21):
 - Creation-time canonicalization for loaded **indices** entering pointer
   offsets is implemented at the three birth sites (`apply_c_add`,
   `evaluate_spec_pointer_offset_paths`, contract `offset_pointer_by_elements`)
-  behind `CLICK_CANONICALIZE_AT_CREATION=1`, off by default; three
+  behind a switch (since removed; stage 4); three
   fixtures fail with it on (below).
 
 ## Plan
@@ -117,7 +117,7 @@ with an example. Run over both fixture gates:
 
 ### Stage 2: canonicalize at every creation point, behind one switch (implemented 2026-08-21)
 
-`CLICK_CANONICALIZE_AT_CREATION=1` (`canonicalize_at_creation_enabled`)
+the creation-time switch (removed at the flip)
 makes memory loads evaluate to their load variable where they are born,
 so every fact, offset, and range built from them is canonical without
 touching the sites that build facts:
@@ -373,14 +373,20 @@ assumes a load term. Characterized so far:
   term gets the canonical tie already given to
   `Int32IncrementStrictlyIncreases`, as failures surface them.
 
-### Stage 4: flip the default and simplify
+### Stage 4: flip the default and simplify (flipped 2026-08-22)
 
-With the suite green under the switch: make creation-time canonicalization
-the default, delete the switch, and then remove the bridging that existed
-only because terms were not canonical — load-variable resolution in
-comparison positions, dual-term candidate lists, and the context-dependent
-`assumption` availability relations. Land the deferred regressions below in
-the same change.
+Creation-time canonicalization is unconditional and the switch is
+deleted; the six expectation-text fixtures are updated (the three kernel
+expression tests expect the canonical form of the load; the branch
+certificate anchors at `statement(1).entry`; the separation expansion and
+the linked-list retained step are anchored `rewrite(at(...))` forms).
+Remaining in this stage: remove the bridging that existed only because
+terms were not canonical — the load-term arms beside every
+load-variable arm, `normalize_direct_atomic_memory_loads` and the
+snapshot-restriction comparison (`canonical_c_memory_for_pointer_load`)
+in availability checks, and the `concretize_pristine_loads` convention
+for loads over the empty entry memory — and land the deferred
+regressions below.
 
 ## Constraints learned
 

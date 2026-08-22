@@ -127,21 +127,23 @@ or `old(x)`, and diagnostics print one by looking up the load it stands for.
   is the printer's job, distinct from the forbidden comparison-side
   expansion.
 
-## Direction: canonical at creation
+## Canonical at creation
 
-The target invariant, planned in `issues/canonicalization.md`, is that
-every term is canonical when it is created — by symbolic execution, by
-lowering, and by contract evaluation — so no consumer depends on bridging
-between canonical and non-canonical terms, and changing what
-canonicalization does later changes one function. Comparison-time
-canonicalization stays as a safety net.
+Every term is canonical when it is created — by symbolic execution, by
+lowering, and by contract evaluation: a memory load evaluates to its load
+variable where it is born, with its defining fact beside it, so every
+fact, offset, and range built from it is canonical and no consumer depends
+on bridging between canonical and non-canonical terms. Comparison-time
+canonicalization (`canonical_term`) remains as the definition of the form,
+and the reasoning that views a load variable as the load it names
+(`viewed_as_memory_load`, `registered_canonical_load`) is how consumers
+keyed on load shape — substitution, quantifier triggers, frame checks,
+loadability witnesses, the quantified replay index — see through a name.
 
-Today the invariant holds at one creation point: loaded pointers.
-Creation-time canonicalization for loaded indices entering pointer offsets
-is implemented behind `CLICK_CANONICALIZE_AT_CREATION=1`, off by default
-until the consumers it exposes are repaired: cross-call load resolution
-through proved equalities between two load variables for one cell, and
-range checks needing a two-fact bound chain. The plan establishes the
-invariant at all creation points together behind one switch, never one
-position at a time — partial canonicalization splits one value into two
-terms wherever a consumer still assumes the old one.
+Two consequences are worth knowing when reading proofs. A load variable is
+identified by its cell and the last write to it, so the read before a call
+and the read after it are different variables unless a step's frame check
+or an explicit `transport` carries the fact across; facts never match
+across an effect structurally. And `old(x)` denotes the entry value: it is
+the entry-epoch load variable, equal to the current value only where that
+frame fact is established.

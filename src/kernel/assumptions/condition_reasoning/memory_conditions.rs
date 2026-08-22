@@ -50,12 +50,22 @@ impl PureFactContext {
             return self.bitvector_terms_proven_equal(left, &right);
         }
 
-        // Load variables are compared as the loads they name: two names
-        // over one epoch whose addresses this context proves equal (an
-        // index pinned by bounds rather than by a recorded equality) are
-        // one cell.
-        let left_view = crate::kernel::eval::viewed_as_memory_load(left);
-        let right_view = crate::kernel::eval::viewed_as_memory_load(right);
+        // Load variables are compared as the loads they name, viewed at the
+        // live snapshot each was first read from: the canonical epoch has
+        // no derivation history, while the origin is DAG-connected, so the
+        // frame legs below can relate two names for one cell across an
+        // effect the facts frame it through; two names over one epoch
+        // whose addresses this context proves equal are one cell.
+        let view_at_origin = |term: &Bitvector32Term| match term {
+            Bitvector32Term::Variable(variable) => {
+                crate::kernel::eval::registered_canonical_load_origin(variable)
+                    .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)))
+            }
+            Bitvector32Term::MemoryLoad(_, _) => Some(term.clone()),
+            _ => None,
+        };
+        let left_view = view_at_origin(left);
+        let right_view = view_at_origin(right);
         let (
             Some(Bitvector32Term::MemoryLoad(left_memory, left_pointer)),
             Some(Bitvector32Term::MemoryLoad(right_memory, right_pointer)),

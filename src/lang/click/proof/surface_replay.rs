@@ -164,14 +164,11 @@ fn checked_surface_fact_at_point_with_assumptions(
     let round_trip_matches =
         |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
     // A fact that mentions a load variable is anchored to the snapshot its
-    // cell was read from; when canonicalizing at creation, synthesize it
-    // through the program point recorded for that snapshot, so the form
-    // stays correct at every later proof point where the certificate is
-    // replayed, rather than a plain form that is correct only until the
-    // cell changes.
-    if crate::kernel::canonicalize_at_creation_enabled()
-        && crate::kernel::proposition_mentions_registered_canonical_load(kernel)
-    {
+    // cell was read from; synthesize it through the program point recorded
+    // for that snapshot, so the form stays correct at every later proof
+    // point where the certificate is replayed, rather than a plain form
+    // that is correct only until the cell changes.
+    if crate::kernel::proposition_mentions_registered_canonical_load(kernel) {
         let (exact_points, compatible_points) =
             snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
         for (point, point_state) in exact_points.iter().chain(&compatible_points) {
@@ -537,10 +534,9 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     // A fact that mentions a load variable is anchored to the snapshot the
     // cell was read from, so its program-point-anchored surface forms stay
     // correct at every later proof point, while a plain current-state form
-    // is correct only until the cell changes. When canonicalizing at
-    // creation, anchored forms are tried first and plain forms last.
-    let prefer_anchored = crate::kernel::canonicalize_at_creation_enabled()
-        && crate::kernel::proposition_mentions_registered_canonical_load(kernel);
+    // is correct only until the cell changes: anchored forms are tried first
+    // and plain forms last.
+    let prefer_anchored = crate::kernel::proposition_mentions_registered_canonical_load(kernel);
     if !prefer_anchored
         && let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
             replay,
