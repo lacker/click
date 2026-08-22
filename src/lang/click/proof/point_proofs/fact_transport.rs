@@ -647,7 +647,7 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches_through(
         return false;
     }
 
-    normalize_direct_atomic_memory_loads(&rewritten) == normalize_direct_atomic_memory_loads(target)
+    rewritten.clone() == target.clone()
         || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
             &rewritten,
             target,
@@ -795,5 +795,5 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
     let Proposition::Implies(_, conclusion) = theorem.proposition() else {
         unreachable!("condition transport must produce an implication")
     };
-    normalize_direct_atomic_memory_loads(conclusion) == normalize_direct_atomic_memory_loads(target)
+    conclusion.as_ref() == target
 }

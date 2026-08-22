@@ -760,7 +760,7 @@ pub(super) fn proposition_candidate_equals_modulo_proven_snapshots(
 }
 
 fn normalize_condition_modulo_memories(condition: &ConditionTerm) -> ConditionTerm {
-    match normalize_direct_atomic_memory_loads(&Proposition::ConditionIs(condition.clone(), true)) {
+    match (Proposition::ConditionIs(condition.clone(), true)).clone() {
         Proposition::ConditionIs(normalized, _) => normalized,
         _ => condition.clone(),
     }
@@ -796,19 +796,10 @@ fn snapshot_blind_candidates(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<(Vec<ConditionTerm>, Vec<ConditionTerm>)> {
-    let normalized_required = normalize_direct_atomic_memory_loads(required);
-    let Proposition::ConditionIs(required_condition, required_value) = normalized_required else {
+    let Proposition::ConditionIs(required_condition, required_value) = required.clone() else {
         return None;
     };
-    // Normalization resolves direct load atoms through materialized cells,
-    // which can rewrite a form the kernel comparator's certified-store
-    // reasoning needed; keep both required forms and try each.
-    let mut required_forms = vec![required_condition];
-    if let Proposition::ConditionIs(original_condition, _) = required
-        && !required_forms.contains(original_condition)
-    {
-        required_forms.push(original_condition.clone());
-    }
+    let required_forms = vec![required_condition];
     let mut candidates = Vec::new();
     for fact in available {
         let mut conjuncts = Vec::new();
@@ -817,9 +808,7 @@ fn snapshot_blind_candidates(
             if !matches!(conjunct, Proposition::ConditionIs(_, value) if *value == required_value) {
                 continue;
             }
-            let Proposition::ConditionIs(condition, _) =
-                normalize_direct_atomic_memory_loads(conjunct)
-            else {
+            let Proposition::ConditionIs(condition, _) = conjunct.clone() else {
                 continue;
             };
             if conditions_equal_ignoring_memories(&condition, &required_forms[0]) {
@@ -852,82 +841,6 @@ fn snapshot_bridge_proves(
             assumptions.conditions_equal_modulo_proven_snapshots(candidate, required)
         })
     })
-}
-
-/// Rewrites every spec-pristine load atom (a `MemoryLoad` whose memory has
-/// no blocks and no cells — the abstract "current value" form premise
-/// lowering produces) over the given concrete memory. The result denotes the
-/// same value at the point whose memory this is, but in live vocabulary, so
-/// availability bridging can decide it against live-written facts by framing
-/// across recorded effects instead of by form coincidence.
-pub(super) fn concretize_pristine_loads(
-    proposition: &Proposition,
-    memory: &crate::kernel::CMemory,
-) -> Proposition {
-    fn map_bitvector(term: &Bitvector32Term, memory: &crate::kernel::CMemory) -> Bitvector32Term {
-        let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
-            (
-                Box::new(map_bitvector(left, memory)),
-                Box::new(map_bitvector(right, memory)),
-            )
-        };
-        match term {
-            Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
-            Bitvector32Term::MemoryLoad(load_memory, pointer) => {
-                if load_memory.as_ref() == &crate::kernel::CMemory::new() {
-                    Bitvector32Term::MemoryLoad(
-                        crate::kernel::intern_c_memory(memory.clone()),
-                        pointer.clone(),
-                    )
-                } else {
-                    term.clone()
-                }
-            }
-            Bitvector32Term::Add(left, right) => {
-                let (left, right) = binary(left, right);
-                Bitvector32Term::Add(left, right)
-            }
-            Bitvector32Term::Subtract(left, right) => {
-                let (left, right) = binary(left, right);
-                Bitvector32Term::Subtract(left, right)
-            }
-            Bitvector32Term::Multiply(left, right) => {
-                let (left, right) = binary(left, right);
-                Bitvector32Term::Multiply(left, right)
-            }
-            _ => term.clone(),
-        }
-    }
-    let Proposition::ConditionIs(condition, value) = proposition else {
-        return proposition.clone();
-    };
-    let binary = |constructor: fn(Box<Bitvector32Term>, Box<Bitvector32Term>) -> ConditionTerm,
-                  left: &Bitvector32Term,
-                  right: &Bitvector32Term| {
-        constructor(
-            Box::new(map_bitvector(left, memory)),
-            Box::new(map_bitvector(right, memory)),
-        )
-    };
-    let condition = match condition {
-        ConditionTerm::Bitvector32Equal(left, right) => {
-            binary(ConditionTerm::Bitvector32Equal, left, right)
-        }
-        ConditionTerm::Bitvector32SignedLessThan(left, right) => {
-            binary(ConditionTerm::Bitvector32SignedLessThan, left, right)
-        }
-        ConditionTerm::Bitvector32SignedLessEqual(left, right) => {
-            binary(ConditionTerm::Bitvector32SignedLessEqual, left, right)
-        }
-        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => {
-            binary(ConditionTerm::Bitvector32SignedGreaterThan, left, right)
-        }
-        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => {
-            binary(ConditionTerm::Bitvector32SignedGreaterEqual, left, right)
-        }
-        _ => return proposition.clone(),
-    };
-    Proposition::ConditionIs(condition, *value)
 }
 
 pub(super) fn exact_fact_contains_conjunct(fact: &Proposition, required: &Proposition) -> bool {
@@ -1099,12 +1012,12 @@ pub(super) fn quantified_replay_equivalent_available_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {
-    let required = normalize_direct_atomic_memory_loads(required);
+    let required = required.clone();
     if !matches!(required, Proposition::ForAll { .. }) {
         return None;
     }
     available.iter().find_map(|fact| {
-        let fact = normalize_direct_atomic_memory_loads(fact);
+        let fact = fact.clone();
         if !matches!(fact, Proposition::ForAll { .. }) {
             return None;
         }
@@ -1162,52 +1075,6 @@ pub(super) fn quantified_binder_equivalent(left: &Proposition, right: &Propositi
                 ) == **right_body
         }
         _ => false,
-    }
-}
-
-/// `quantified_binder_equivalent` sees through ONE binder renaming; a nested
-/// quantifier needs the rename applied at every level.
-///
-/// Certificate generation compares a form it lowers itself against a fact
-/// the drain lowered separately, and the two lowerings mint different binder
-/// variables, so a nested `forall` fact is only recognizable up to renaming.
-/// This is a generation-side recognizer: it decides which surface form to
-/// WRITE, never whether a proof is accepted. The written form still has to
-/// satisfy `derivation.replay` and then the replay judgment itself, both of
-/// which instantiate quantifiers rather than compare them structurally.
-/// Applies `normalize_direct_atomic_memory_loads` below the propositional
-/// connectives and quantifier binders it does not itself descend through, so
-/// two lowerings of one fact whose load memories differ only by
-/// load-irrelevant blocks or cells (the canonical-load-memory relation)
-/// compare equal. Deterministic and assumption-free, like the leaf
-/// normalization it delegates to.
-fn normalize_quantified_memory_loads(proposition: &Proposition, depth: usize) -> Proposition {
-    if depth == 0 {
-        return proposition.clone();
-    }
-    let recurse = |body: &Proposition| Box::new(normalize_quantified_memory_loads(body, depth - 1));
-    match proposition {
-        Proposition::And(left, right) => Proposition::And(recurse(left), recurse(right)),
-        Proposition::Or(left, right) => Proposition::Or(recurse(left), recurse(right)),
-        Proposition::Implies(left, right) => Proposition::Implies(recurse(left), recurse(right)),
-        Proposition::Not(body) => Proposition::Not(recurse(body)),
-        Proposition::ForAll { var, sort, body } => Proposition::ForAll {
-            var: *var,
-            sort: sort.clone(),
-            body: recurse(body),
-        },
-        Proposition::Exists {
-            name,
-            var,
-            sort,
-            body,
-        } => Proposition::Exists {
-            name: name.clone(),
-            var: *var,
-            sort: sort.clone(),
-            body: recurse(body),
-        },
-        other => normalize_direct_atomic_memory_loads(other),
     }
 }
 
@@ -1484,35 +1351,15 @@ pub(super) fn quantified_replay_index_key(
     alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedReplayKey)
 }
 
-/// Generation-side equality up to assumption-free canonical load term.
-/// A selected form still has to replay from its own lowered proposition,
-/// so this can broaden candidate recognition without broadening acceptance.
-pub(super) fn propositions_match_up_to_canonical_loads(
-    left: &Proposition,
-    right: &Proposition,
-) -> bool {
-    left == right
-        || normalize_quantified_memory_loads(left, 64)
-            == normalize_quantified_memory_loads(right, 64)
-}
-
-/// See the doc comment below: a generation-side recognizer only. Besides the
-/// per-level binder renaming, bodies are also compared after canonical-load
-/// normalization, because the drain records facts with canonicalized load
-/// snapshots while a fresh lowering of the same form reads through the
-/// retained program-point state, whose memory still carries load-irrelevant
-/// local cells.
+/// See the doc comment below: a generation-side recognizer only, comparing
+/// bodies up to per-level binder renaming. Terms are canonical at creation,
+/// so two lowerings of one fact are structurally equal.
 pub(super) fn nested_quantified_binder_equivalent(
     left: &Proposition,
     right: &Proposition,
     depth: usize,
 ) -> bool {
     nested_quantified_binder_equivalent_exact(left, right, depth)
-        || nested_quantified_binder_equivalent_exact(
-            &normalize_quantified_memory_loads(left, 64),
-            &normalize_quantified_memory_loads(right, 64),
-            depth,
-        )
 }
 
 fn nested_quantified_binder_equivalent_exact(
@@ -1588,7 +1435,7 @@ pub(in crate::lang::click) fn materialization_equivalent_available_fact(
         required: &Proposition,
         normalized_required: &Proposition,
     ) -> Option<Proposition> {
-        if fact == required || normalize_direct_atomic_memory_loads(fact) == *normalized_required {
+        if fact == required || fact.clone() == *normalized_required {
             return Some(fact.clone());
         }
         let Proposition::And(left, right) = fact else {
@@ -1598,10 +1445,9 @@ pub(in crate::lang::click) fn materialization_equivalent_available_fact(
             .or_else(|| matching_conjunct(right, required, normalized_required))
     }
 
-    let normalized_required = normalize_direct_atomic_memory_loads(required);
     available
         .iter()
-        .find_map(|fact| matching_conjunct(fact, required, &normalized_required))
+        .find_map(|fact| matching_conjunct(fact, required, required))
 }
 
 /// Cheap membership for explicit replay certificates with many premises.
@@ -1636,13 +1482,8 @@ impl ExactReplayFactIndex {
         self.contains_exact(required)
             || self
                 .materialized
-                .get_or_init(|| {
-                    self.exact
-                        .iter()
-                        .map(normalize_direct_atomic_memory_loads)
-                        .collect()
-                })
-                .contains(&normalize_direct_atomic_memory_loads(required))
+                .get_or_init(|| self.exact.iter().cloned().collect())
+                .contains(&required.clone())
     }
 
     pub(super) fn contains_exact(&self, required: &Proposition) -> bool {
@@ -1921,8 +1762,8 @@ pub(in crate::lang::click) fn search_condition_derivation(
 }
 
 pub(super) fn exact_facts_directly_conflict(left: &Proposition, right: &Proposition) -> bool {
-    let left = normalize_direct_atomic_memory_loads(left);
-    let right = normalize_direct_atomic_memory_loads(right);
+    let left = left.clone();
+    let right = right.clone();
     normalized_exact_facts_directly_conflict(&left, &right)
 }
 

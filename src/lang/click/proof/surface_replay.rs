@@ -414,11 +414,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
 ) -> Result<ClickProposition, ClickError> {
     let matches_kernel = |lowered: &Proposition| {
         if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
-            return normalize_direct_atomic_memory_loads(lowered)
-                == normalize_direct_atomic_memory_loads(kernel);
+            return lowered.clone() == kernel.clone();
         }
-        let lowered = normalize_direct_atomic_memory_loads(lowered);
-        let kernel = normalize_direct_atomic_memory_loads(kernel);
+        let lowered = lowered.clone();
+        let kernel = kernel.clone();
         condition_polarity_equivalent(&lowered, &kernel)
             || lowered == kernel
             || materialization_equivalent_available_fact(&kernel, std::slice::from_ref(&lowered))
@@ -1185,20 +1184,18 @@ pub(super) fn append_simple_proof_step_for_operation(
                     .collect::<Vec<_>>();
                 for fact in &available_conjuncts {
                     let fact = *fact;
-                    let selected_by_derivation = derivation_context.iter().any(|required| {
-                        (*required).eq(fact)
-                            || normalize_direct_atomic_memory_loads(required)
-                                == normalize_direct_atomic_memory_loads(fact)
-                    }) || exact_premises.iter().any(|required| {
-                        required == fact
-                            || normalize_direct_atomic_memory_loads(required)
-                                == normalize_direct_atomic_memory_loads(fact)
-                            || materialization_equivalent_available_fact(
-                                required,
-                                std::slice::from_ref(fact),
-                            )
-                            .is_some()
-                    }) || unfolded_dependency_facts.contains(fact);
+                    let selected_by_derivation =
+                        derivation_context.iter().any(|required| {
+                            (*required).eq(fact) || required.clone() == fact.clone()
+                        }) || exact_premises.iter().any(|required| {
+                            required == fact
+                                || required.clone() == fact.clone()
+                                || materialization_equivalent_available_fact(
+                                    required,
+                                    std::slice::from_ref(fact),
+                                )
+                                .is_some()
+                        }) || unfolded_dependency_facts.contains(fact);
                     // A permission the resource projection reproduces is
                     // reconstructed by the replay for itself. One it does not
                     // reproduce is only available because the ambient context
@@ -1313,8 +1310,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             click_function_environment,
                         );
                         if lowered.is_ok_and(|lowered| {
-                            normalize_direct_atomic_memory_loads(&lowered)
-                                == normalize_direct_atomic_memory_loads(fact)
+                            lowered.clone() == fact.clone()
                                 || materialization_equivalent_available_fact(
                                     fact,
                                     std::slice::from_ref(&lowered),
@@ -1662,13 +1658,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
                 let normalized_needed = needed
                     .iter()
-                    .map(|fact| {
-                        (
-                            fact,
-                            normalize_proposition(fact),
-                            normalize_direct_atomic_memory_loads(fact),
-                        )
-                    })
+                    .map(|fact| (fact, normalize_proposition(fact), fact.clone()))
                     .collect::<Vec<_>>();
                 let mut premises = Vec::new();
                 for (fact, normalized, materialized) in normalized_needed {
@@ -1695,7 +1685,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .filter(|available| {
                             *available == fact
                                 || normalize_proposition(available) == normalized
-                                || normalize_direct_atomic_memory_loads(available) == materialized
+                                || **available == materialized
                         })
                         .find_map(&check_candidate)
                         .or_else(|| {
@@ -1765,9 +1755,8 @@ pub(super) fn append_simple_proof_step_for_operation(
                 {
                     base_surfaces.push(surface);
                 }
-                let normalized = normalize_direct_atomic_memory_loads(proposition);
                 for recorded in replay.surface_propositions.kernel_facts() {
-                    let matches = normalize_direct_atomic_memory_loads(recorded) == normalized
+                    let matches = recorded == proposition
                         || (memory_erased_comparison(recorded).is_some()
                             && memory_erased_comparison(recorded)
                                 == memory_erased_comparison(proposition)
@@ -1833,7 +1822,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                 if crate::instrumentation::deadline_exceeded() {
                     return None;
                 }
-                let normalized_expected = normalize_direct_atomic_memory_loads(expected);
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
                         replay,
@@ -1852,7 +1840,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         return None;
                     }
                     let actual = lower(candidate)?;
-                    if normalize_direct_atomic_memory_loads(&actual) == normalized_expected {
+                    if &actual == expected {
                         return Some((candidate.clone(), actual));
                     }
                     // The certified pair may sit at a snapshot no recorded
@@ -1907,10 +1895,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 )
                                 .ok()
                             })
-                            .is_some_and(|lowered| {
-                                normalize_direct_atomic_memory_loads(&lowered)
-                                    == normalize_direct_atomic_memory_loads(source)
-                            });
+                            .is_some_and(|lowered| lowered.clone() == source.clone());
                         (recorded || entry_form_matches).then_some(premise.clone())
                     })
                 });

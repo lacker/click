@@ -417,8 +417,7 @@ fn bitvector_contains_contract_load(
         Bitvector32Term::MemoryLoad(load_memory, load_pointer) => {
             (load_memory.has_same_snapshot_markers(memory)
                 && load_pointer.block == pointer.block
-                && normalize_direct_atomic_pointer_offset_loads(&load_pointer.offset)
-                    == normalize_direct_atomic_pointer_offset_loads(&pointer.offset))
+                && load_pointer.offset.clone() == pointer.offset.clone())
                 || (crate::kernel::c_memories_connected_by_effects(
                     load_memory,
                     memory,

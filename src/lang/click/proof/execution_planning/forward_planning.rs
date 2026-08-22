@@ -664,8 +664,8 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
                             .find(|available| {
                                 **available == unfolded_kernel
                                     || quantified_binder_equivalent(
-                                        &normalize_direct_atomic_memory_loads(&unfolded_kernel),
-                                        &normalize_direct_atomic_memory_loads(available),
+                                        &unfolded_kernel.clone(),
+                                        &available.clone(),
                                     )
                             })?
                             .clone();

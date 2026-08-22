@@ -187,24 +187,6 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                 // (a shared post-branch step's premise after a
                 // constant assignment); it demands no evidence.
                 || PureFactContext::new().proves(&premise)
-                // A premise whose load atoms carry the abstract
-                // spec form ("the current value") cannot be
-                // related to live-written facts by history — the
-                // pristine memory is not a snapshot. Rewrite
-                // those atoms over the current point's memory
-                // and decide the live pair by framing across
-                // the recorded effects.
-                || {
-                    let concretized = concretize_pristine_loads(
-                        &premise,
-                        state.memory(),
-                    );
-                    concretized != premise
-                        && requirement_pure_facts.replay_available_across_effects(
-                            &concretized,
-                            &replay.effect_facts,
-                        )
-                }
                 // Canonical load variables are kernel-internal names; two
                 // recorded equalities chained through one are the same
                 // user-level fact, so availability closes over them rather

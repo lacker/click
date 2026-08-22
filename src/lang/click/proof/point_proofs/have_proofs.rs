@@ -535,10 +535,9 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
         return Ok((fact, SimpEvidence::Assumption));
     }
-    let normalized_fact = normalize_direct_atomic_memory_loads(&goal);
     if let Some(equivalent) = reasoning_available
         .iter()
-        .find(|available| normalize_direct_atomic_memory_loads(available) == normalized_fact)
+        .find(|available| **available == goal)
         && let Some(derivation) =
             minimal_proposition_derivation(&goal, std::slice::from_ref(equivalent))?
     {

@@ -515,8 +515,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         .filter(|transport| {
             !transport.statement_local
                 && !is_evaluator_guard(&transport.source)
-                && normalize_direct_atomic_memory_loads(&transport.source)
-                    != normalize_direct_atomic_memory_loads(&transport.target)
+                && transport.source.clone() != transport.target.clone()
         })
         .collect::<Vec<_>>();
     let mut deferred_operations = external_transports

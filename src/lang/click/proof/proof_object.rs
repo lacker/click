@@ -1209,7 +1209,6 @@ pub(super) struct ProofFacts {
     /// Atomic exact facts after the same direct-load normalization used by
     /// condition replay. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
-    normalized_exact: PersistentSet<Proposition>,
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
     /// Exact true int32 equalities keyed by constant, variable, or interned
     /// memory-load operands. Keys have bounded comparison cost; a goal-local
@@ -8111,10 +8110,7 @@ impl<'a> Proof<'a> {
                             Err(_) => continue,
                         };
                     let conclusion = current.clone();
-                    if &conclusion == goal
-                        || normalize_direct_atomic_memory_loads(&conclusion)
-                            == normalize_direct_atomic_memory_loads(goal)
-                    {
+                    if &conclusion == goal || conclusion.clone() == goal.clone() {
                         if let Ok(closed) =
                             instantiated_proof.apply_step(SimpleProofStep::Assumption)
                         {
@@ -9952,8 +9948,8 @@ impl<'a> Proof<'a> {
                 .rev()
                 .find(|candidate| {
                     let matches_requirement = |lowered: &Proposition| {
-                        (normalize_direct_atomic_memory_loads(lowered)
-                            == normalize_direct_atomic_memory_loads(&requirement)
+                        (lowered.clone()
+                            == requirement.clone()
                             || condition_polarity_equivalent(lowered, &requirement))
                             && self                                .facts()                                .replay_available_across_effects(lowered, &[])
                     };
@@ -10054,10 +10050,7 @@ impl<'a> Proof<'a> {
             let surface = substitute_click_proposition(source_surface, &substitutions)
                 .map_err(|message| self.step_error(message))?;
             let lowered = self.lower_surface_proposition(&surface, "selected theorem premise")?;
-            if normalize_direct_atomic_memory_loads(&lowered)
-                != normalize_direct_atomic_memory_loads(&requirement)
-                || !self.facts().contains(&lowered)
-            {
+            if lowered.clone() != requirement.clone() || !self.facts().contains(&lowered) {
                 return Err(self.step_error(format!(
                     "required exact fact for theorem `{}` is unavailable: {requirement:?}",
                     application.name
@@ -11762,7 +11755,6 @@ impl ProofFacts {
         let mut top_level_exact = PersistentSet::default();
         let mut exact = PersistentSet::default();
         let mut proper_conjuncts = PersistentSet::default();
-        let mut normalized_exact = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut by_quantified_replay = PersistentMap::default();
@@ -11788,16 +11780,7 @@ impl ProofFacts {
                     by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
                     bitvector_equalities_by_atom =
                         index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
-                    let normalized = normalize_direct_atomic_memory_loads(&conjunct);
-                    if normalized != conjunct {
-                        normalized_exact = normalized_exact.with_value(normalized);
-                    }
                     exact = exact.with_value(conjunct);
-                }
-            } else {
-                let normalized = normalize_direct_atomic_memory_loads(fact);
-                if normalized != *fact {
-                    normalized_exact = normalized_exact.with_value(normalized);
                 }
             }
             by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, fact);
@@ -11814,7 +11797,6 @@ impl ProofFacts {
             top_level_exact,
             exact,
             proper_conjuncts,
-            normalized_exact,
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_replay,
@@ -11853,7 +11835,6 @@ impl ProofFacts {
         }
         let mut exact = self.exact.clone();
         let mut proper_conjuncts = self.proper_conjuncts.clone();
-        let mut normalized_exact = self.normalized_exact.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let by_quantified_replay =
@@ -11868,16 +11849,7 @@ impl ProofFacts {
                 by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &conjunct);
                 bitvector_equalities_by_atom =
                     index_bitvector_equality_fact(bitvector_equalities_by_atom, &conjunct);
-                let normalized = normalize_direct_atomic_memory_loads(&conjunct);
-                if normalized != conjunct {
-                    normalized_exact = normalized_exact.with_value(normalized);
-                }
                 exact = exact.with_value(conjunct);
-            }
-        } else {
-            let normalized = normalize_direct_atomic_memory_loads(&fact);
-            if normalized != fact {
-                normalized_exact = normalized_exact.with_value(normalized);
             }
         }
         by_snapshot_blind = index_snapshot_fact(by_snapshot_blind, &fact);
@@ -11894,7 +11866,6 @@ impl ProofFacts {
             top_level_exact: self.top_level_exact.with_value(fact.clone()),
             exact,
             proper_conjuncts,
-            normalized_exact,
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_replay,
@@ -11954,11 +11925,7 @@ impl ProofFacts {
     /// the deterministic rewrite rule. Unlike snapshot replay, this does not
     /// admit polarity changes or a semantic bridge beyond normalization.
     pub(super) fn materialization_available(&self, required: &Proposition) -> bool {
-        if self.exact.contains(required) {
-            return true;
-        }
-        let normalized = normalize_direct_atomic_memory_loads(required);
-        self.exact.contains(&normalized) || self.normalized_exact.contains(&normalized)
+        self.exact.contains(required)
     }
 
     /// Availability of a proposition to the explicit pure `assumption`
@@ -12003,10 +11970,7 @@ impl ProofFacts {
             return true;
         }
 
-        let normalized = normalize_direct_atomic_memory_loads(required);
-        self.exact.contains(&normalized)
-            || self.normalized_exact.contains(&normalized)
-            || self.quantified_replay_available(required)
+        self.quantified_replay_available(required)
     }
 
     /// Returns one actual available fact accepted by explicit replay. Smart
@@ -12018,11 +11982,7 @@ impl ProofFacts {
         required: &Proposition,
         framing: &[ExecutionPureFact],
     ) -> Option<Proposition> {
-        let normalized = normalize_direct_atomic_memory_loads(required);
-        let keys = [
-            snapshot_blind_proposition_key(required),
-            snapshot_blind_proposition_key(&normalized),
-        ];
+        let keys = [snapshot_blind_proposition_key(required)];
         let mut indexed_candidates = Vec::new();
         for key in &keys {
             if let Some(bucket) = self.by_snapshot_blind.get(key) {
@@ -12052,12 +12012,6 @@ impl ProofFacts {
             return Some(form);
         }
 
-        if self.exact.contains(&normalized) {
-            return Some(normalized);
-        }
-        if self.normalized_exact.contains(&normalized) {
-            return Some(normalized);
-        }
         if let Some(quantified) = self.matching_quantified_replay_fact(required) {
             return Some(quantified);
         }
@@ -12118,12 +12072,7 @@ impl ProofFacts {
     }
 
     fn contains_discharged_implication_consequent(&self, required: &Proposition) -> bool {
-        let normalized = normalize_direct_atomic_memory_loads(required);
-        let mut keys = vec![snapshot_blind_proposition_key(required)];
-        let normalized_key = snapshot_blind_proposition_key(&normalized);
-        if !keys.contains(&normalized_key) {
-            keys.push(normalized_key);
-        }
+        let keys = vec![snapshot_blind_proposition_key(required)];
         keys.into_iter()
             .filter_map(|key| self.implications_by_consequent.get(&key))
             .flat_map(PersistentSequence::iter)
@@ -12153,11 +12102,7 @@ impl ProofFacts {
             return true;
         }
 
-        let normalized = normalize_direct_atomic_memory_loads(required);
-        let keys = [
-            snapshot_blind_proposition_key(required),
-            snapshot_blind_proposition_key(&normalized),
-        ];
+        let keys = [snapshot_blind_proposition_key(required)];
         let mut candidates = Vec::new();
         for key in keys {
             if let Some(bucket) = self.by_snapshot_blind.get(&key) {
@@ -12183,9 +12128,7 @@ impl ProofFacts {
     }
 
     pub(super) fn directly_conflicts_with(&self, fact: &Proposition) -> bool {
-        let normalized = normalize_direct_atomic_memory_loads(fact);
-        directly_conflicts_with_normalized_index(&self.exact, &normalized)
-            || directly_conflicts_with_normalized_index(&self.normalized_exact, &normalized)
+        directly_conflicts_with_normalized_index(&self.exact, fact)
     }
 
     /// Returns exact equality facts attached to terms occurring in this
@@ -12282,11 +12225,7 @@ fn index_snapshot_fact(
     >,
     fact: &Proposition,
 ) -> PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>> {
-    let normalized = normalize_direct_atomic_memory_loads(fact);
-    for key in [
-        snapshot_blind_proposition_key(fact),
-        snapshot_blind_proposition_key(&normalized),
-    ] {
+    for key in [snapshot_blind_proposition_key(fact)] {
         if !key.forgets_a_snapshot() {
             continue;
         }
@@ -12477,7 +12416,7 @@ fn index_implication_consequents(
             antecedents: antecedents.clone(),
             consequent: consequent.as_ref().clone(),
         };
-        let normalized = normalize_direct_atomic_memory_loads(consequent);
+        let normalized = consequent.clone();
         let mut keys = vec![snapshot_blind_proposition_key(consequent)];
         let normalized_key = snapshot_blind_proposition_key(&normalized);
         if !keys.contains(&normalized_key) {

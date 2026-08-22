@@ -444,7 +444,7 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements_with
                 &lowered,
                 assumptions,
             )
-            .map(|lowered| normalize_direct_atomic_memory_loads(&lowered))
+            .map(|lowered| lowered.clone())
         })
         .collect()
 }
@@ -704,14 +704,12 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         if matches!(match_kind, SurfaceFactMatch::CanonicalExact) {
             return condition_polarity_equivalent(lowered, kernel);
         }
-        condition_polarity_equivalent(
-            &normalize_direct_atomic_memory_loads(lowered),
-            &normalize_direct_atomic_memory_loads(kernel),
-        ) || materialization_equivalent_available_fact(
-            &normalize_direct_atomic_memory_loads(kernel),
-            std::slice::from_ref(&normalize_direct_atomic_memory_loads(lowered)),
-        )
-        .is_some()
+        condition_polarity_equivalent(&lowered.clone(), &kernel.clone())
+            || materialization_equivalent_available_fact(
+                &kernel.clone(),
+                std::slice::from_ref(&lowered.clone()),
+            )
+            .is_some()
             || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(lowered))
                 .is_some()
     };

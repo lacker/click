@@ -218,9 +218,9 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         .map_err(|message| {
             theorem_application_error(claim_label, path_index, tactic_index, message)
         })?;
-        lowered = normalize_direct_atomic_memory_loads(&lowered);
+        lowered = lowered.clone();
         if !available.iter().any(|fact| {
-            let fact = normalize_direct_atomic_memory_loads(fact);
+            let fact = fact.clone();
             fact == lowered || condition_polarity_equivalent(&fact, &lowered)
         }) && !matches!(normalize_proposition(&lowered), SimpProposition::True)
         {
@@ -264,7 +264,7 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                     ),
                 )
             })?;
-        conclusions.push(normalize_direct_atomic_memory_loads(&conclusion));
+        conclusions.push(conclusion.clone());
     }
     Ok(conclusions)
 }

@@ -584,21 +584,19 @@ pub(super) fn check_atomic_premise_derivation_goal(
         return Ok(());
     }
     let premise_part_available = |part: &Proposition| {
-        let normalized = normalize_direct_atomic_memory_loads(part);
         available.iter().any(|available| {
             let mut conjuncts = Vec::new();
             atomic_conjuncts(available, &mut conjuncts);
             conjuncts.into_iter().any(|available| {
-                let available = normalize_direct_atomic_memory_loads(available);
-                available == normalized
-                    || condition_polarity_equivalent(&available, &normalized)
+                *available == *part
+                    || condition_polarity_equivalent(available, part)
                     || (matches!(available, Proposition::ForAll { .. })
-                        && matches!(normalized, Proposition::ForAll { .. })
-                        && assumptions_from_propositions(&[available])
-                            .derive_simp_proposition(&normalized)
+                        && matches!(part, Proposition::ForAll { .. })
+                        && assumptions_from_propositions(&[available.clone()])
+                            .derive_simp_proposition(part)
                             .is_some())
             })
-        }) || snapshot_bridged_fact_is_available(&normalized, available, &[])
+        }) || snapshot_bridged_fact_is_available(part, available, &[])
     };
     if let Some(missing) = premises.iter().find(|premise| {
         // A conjunction premise is available when each conjunct is; facts
@@ -613,15 +611,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
             describe_pure_fact(missing, &[], &[]),
         ));
     }
-    let normalized_premises = premises
-        .iter()
-        .map(normalize_direct_atomic_memory_loads)
-        .collect::<Vec<_>>();
-    let normalized_target = normalize_direct_atomic_memory_loads(target);
-    if matches!(
-        normalize_proposition(&normalized_target),
-        SimpProposition::True
-    ) {
+    if matches!(normalize_proposition(target), SimpProposition::True) {
         return Ok(());
     }
     let premise_assumptions = assumptions_from_propositions(&premises);
@@ -735,29 +725,18 @@ pub(super) fn check_atomic_premise_derivation_goal(
             .or_else(|| assumptions.derive_simp_atomic_proposition(target))
             .or_else(|| assumptions.derive_simp_proposition(target))
     };
-    // Try the premises as written before normalizing: snapshot-bridging
-    // derivations can depend on the recorded load terms that
-    // normalization rewrites.
     let derivation = derive_from(&premises, target)
-        .or_else(|| derive_from(&with_effect_context(&premises), target))
-        .or_else(|| derive_from(&normalized_premises, &normalized_target))
-        .or_else(|| {
-            derive_from(
-                &with_effect_context(&normalized_premises),
-                &normalized_target,
-            )
-        });
+        .or_else(|| derive_from(&with_effect_context(&premises), target));
     // Premises recorded at different program points can write the same load
     // through different snapshots; retry with canonical loads so the chain
     // unifies.
     let derivation = derivation.or_else(|| {
-        let canonical_premises = normalized_premises
+        let canonical_premises = premises
             .iter()
             .map(crate::kernel::c_condition_fact_with_canonical_loads)
             .collect::<Vec<_>>();
-        let canonical_target =
-            crate::kernel::c_condition_fact_with_canonical_loads(&normalized_target);
-        if canonical_premises == normalized_premises && canonical_target == normalized_target {
+        let canonical_target = crate::kernel::c_condition_fact_with_canonical_loads(target);
+        if canonical_premises == premises && &canonical_target == target {
             return None;
         }
         derive_from(&canonical_premises, &canonical_target)
@@ -770,8 +749,8 @@ pub(super) fn check_atomic_premise_derivation_goal(
         ));
     }
     if derivation.is_none()
-        && (pointer_offset_equality_by_frame(&normalized_target, available)
-            || equal_by_premise_chain(&normalized_premises, &normalized_target, available))
+        && (pointer_offset_equality_by_frame(target, available)
+            || equal_by_premise_chain(&premises, target, available))
     {
         return Ok(());
     }
@@ -779,7 +758,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
         return Err(format!(
             "atomic derivation could not check the target from exactly the listed premises: {}\n  premises: {}",
             describe_pure_fact(target, &[], &[]),
-            describe_pure_facts(&normalized_premises),
+            describe_pure_facts(&premises),
         ));
     }
     Ok(())
@@ -807,14 +786,12 @@ pub(super) fn plan_restricted_simp_goal(
         ));
     }
     let premise_part_available = |part: &Proposition| {
-        let normalized = normalize_direct_atomic_memory_loads(part);
         available.iter().any(|available| {
             let mut conjuncts = Vec::new();
             atomic_conjuncts(available, &mut conjuncts);
-            conjuncts.into_iter().any(|available| {
-                let available = normalize_direct_atomic_memory_loads(available);
-                available == normalized || condition_polarity_equivalent(&available, &normalized)
-            })
+            conjuncts
+                .into_iter()
+                .any(|available| *available == *part || condition_polarity_equivalent(available, part))
         })
             // A premise written at a different program point carries other
             // snapshots in its load atoms; the snapshot bridge decides the

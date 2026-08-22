@@ -1059,7 +1059,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     click_function_environment,
                 )
             })
-            .is_ok_and(|lowered| propositions_match_up_to_canonical_loads(&lowered, kernel))
+            .is_ok_and(|lowered| &lowered == kernel)
     };
     let rewrite_pairs = premise_pairs
         .iter()
@@ -1169,7 +1169,7 @@ pub(super) fn lower_surface_atomic_derivation(
         let Ok(source) = source else {
             continue;
         };
-        if !(propositions_match_up_to_canonical_loads(&source, &lowered_conclusion)
+        if !(source == lowered_conclusion
             || condition_polarity_equivalent(&source, &lowered_conclusion)
             || crate::kernel::c_condition_facts_equivalent_for_memory_resolution(
                 &source,
@@ -1282,18 +1282,8 @@ fn plan_explicit_increment_lower_bound_transport(
     ) {
         return None;
     }
-    let normalized_goal = normalize_direct_atomic_memory_loads(goal);
-    let (goal_lower, _) = signed_nonstrict_parts(&normalized_goal)?;
-    let normalized_pairs = premise_pairs
-        .iter()
-        .map(|(kernel, surface)| {
-            (
-                normalize_direct_atomic_memory_loads(kernel),
-                surface.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    for (lower_kernel, lower_surface) in &normalized_pairs {
+    let (goal_lower, _) = signed_nonstrict_parts(goal)?;
+    for (lower_kernel, lower_surface) in premise_pairs {
         let Some((lower, base)) = signed_nonstrict_parts(lower_kernel) else {
             continue;
         };
@@ -1303,7 +1293,7 @@ fn plan_explicit_increment_lower_bound_transport(
         let Some((surface_lower, surface_base)) = surface_nonstrict_parts(lower_surface) else {
             continue;
         };
-        for (upper_kernel, upper_surface) in &normalized_pairs {
+        for (upper_kernel, upper_surface) in premise_pairs {
             let Some((upper_base, _)) = signed_strict_parts(upper_kernel) else {
                 continue;
             };
@@ -1446,7 +1436,6 @@ pub(super) fn plan_explicit_forall_instantiation(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
 ) -> Option<Vec<ProofTactic>> {
-    let normalized_goal = normalize_direct_atomic_memory_loads(goal);
     for (index, (kernel, surface)) in premise_pairs.iter().enumerate() {
         let Proposition::ForAll { var, sort, body } = kernel else {
             continue;
@@ -1477,9 +1466,7 @@ pub(super) fn plan_explicit_forall_instantiation(
             };
             // The closer is `assumption`, so the instantiated conclusion must
             // match the goal by exactly the equivalence assumption replays.
-            if conclusion != *goal
-                && normalize_direct_atomic_memory_loads(&conclusion) != normalized_goal
-            {
+            if conclusion != *goal {
                 continue;
             }
             let tactics = vec![
@@ -1525,9 +1512,8 @@ fn plan_explicit_universal_conclusion_discharge(
     let instantiated =
         substitute_int32_variable_in_proposition(premise_body, *premise_var, argument_term);
     let (_, conclusion) = discharge_instantiated_guards(instantiated, discharge_kernels).ok()?;
-    let closes_by_assumption = conclusion == *goal_conclusion
-        || normalize_direct_atomic_memory_loads(&conclusion)
-            == normalize_direct_atomic_memory_loads(goal_conclusion);
+    let closes_by_assumption =
+        conclusion == *goal_conclusion || conclusion.clone() == goal_conclusion.clone();
     // Constant-argument instances offer several instantiation candidates, so
     // the caller may insist the instantiated conclusion provably reaches the
     // goal before accepting a transport that replay would reject.
