@@ -341,7 +341,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(4).entry, 0) <= at(statement(4).entry, length);
         at(statement(4).entry, ignored) == at(statement(4).entry, 0);
         at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
-        old(left->len) == at(statement(4).entry, length);
         ignored == 0;
         right->pos == 0;
         right->len == length;
@@ -411,7 +410,6 @@ int32 input_cursor_shared_pipeline(
         at(statement(5).entry, 0) <= at(statement(5).entry, length);
         at(statement(4).entry, ignored) == at(statement(4).entry, 0);
         at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
-        old(left->len) == at(statement(5).entry, length);
         at(statement(5).entry, ignored) == at(statement(5).entry, 0);
         at(statement(5).entry, left->pos) == at(statement(5).entry, 0);
         at(statement(5).entry, left->len) == at(statement(5).entry, length);

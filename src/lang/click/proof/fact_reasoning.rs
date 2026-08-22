@@ -2169,13 +2169,17 @@ mod tests {
                 after: after.clone(),
                 pointers: vec![written],
             });
+        // The canonical memories are the cells' epochs. Snapshots that
+        // differ only by a declared block or a write to another cell share
+        // an epoch, so a synthetic marker block would not separate these
+        // names; a write to the queried cell does (the second pair).
         let left = canonical_load_variable_with_origin(
-            &intern_c_memory(CMemory::new().with_block("canonical:left", 0)),
+            &intern_c_memory(before.clone()),
             &preserved,
             &intern_c_memory(before.clone()),
         );
         let right = canonical_load_variable_with_origin(
-            &intern_c_memory(CMemory::new().with_block("canonical:right", 0)),
+            &intern_c_memory(after.clone()),
             &preserved,
             &intern_c_memory(after.clone()),
         );
@@ -2197,14 +2201,18 @@ mod tests {
             .clone()
             .store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(2)));
         let changed_left = canonical_load_variable_with_origin(
-            &intern_c_memory(CMemory::new().with_block("canonical:changed-left", 0)),
+            &intern_c_memory(changed_before.clone()),
             &loaded,
             &intern_c_memory(changed_before),
         );
         let changed_right = canonical_load_variable_with_origin(
-            &intern_c_memory(CMemory::new().with_block("canonical:changed-right", 0)),
+            &intern_c_memory(changed_after.clone()),
             &loaded,
             &intern_c_memory(changed_after),
+        );
+        assert_ne!(
+            changed_left, changed_right,
+            "a write to the cell separates its names"
         );
         let (changed_unchanged, events) = crate::instrumentation::collect(|| {
             OriginsUnchanged::new(&PureFactContext::new()).decide(changed_left, changed_right)

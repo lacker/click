@@ -301,30 +301,18 @@ assumes a load term. Characterized so far:
   Names are epoch-keyed and never match across an effect structurally, so these proofs fail under
   the switch and must be repaired — each needs a real frame proof, not
   a weaker example:
-  - `input-cursor` (`input_cursor_shared_pipeline`): two `step() using`
-    premises `old(left->len) == at(statement(N).entry, length)` claim the
-    pre-`init` value of `left->len`, which nothing establishes; the old
-    mode accepted them as the current value. Delete both premises. The
-    later `transport(at(statement(5).entry, right->pos) == 0,
-    right->pos == 0)` crosses `take(left)`'s havoc and needs `left` and
-    `right` disjoint, which only the resource compositions know (two
-    owned objects). Landed toward this: the DAG havoc hop and the direct
-    effect-summary check consult the expanded compositions
-    (`ranges_proven_disjoint_from_pointer_for_frame`), and a function's
-    `local:` blocks are distinct from `ExternalArgument` memory
-    (`blocks_proven_distinct`). With those the transport succeeds; the
-    final `result == data[0]` then needs the names of `right->data` and
-    `right->pos` on either side of `take` related — a **framed-epoch
-    congruence edge** in the equality walk (name at the earliest epoch
-    the facts frame the cell to, via `memory_dag_cell_source` under the
-    context's facts, memoized by `memo_fingerprint`, run as a second
-    pass only when recorded and congruence edges do not meet). That
-    edge makes the example verify in 2.3 s (baseline 2.5 s) but lets
-    smart search select derivations whose name-to-name transport the
-    certificate vocabulary cannot write yet
-    (`execute_until_expands_vector_storage_call_postconditions`,
-    "fact transport has no recorded or synthesized Click comparison
-    form"), so it waits for surface synthesis of name-form transports.
+  - `input-cursor` (done, under the step rule). The two `step() using`
+    premises `old(left->len) == at(statement(N).entry, length)` claimed
+    the pre-`init` value of `left->len`, which nothing establishes; the
+    old mode accepted them as the current value. Deleted. The
+    `transport` across `take(left)` now succeeds through the composition
+    evidence in the frame check (no comparison-time edge). The final
+    `result == data[0]` is closed by the kernel's exact certification,
+    which frames each certified call fact to the post-state and now
+    proves from the whole transported set at once rather than one fact
+    at a time (`certification_proves_post_proposition`): the claim needs
+    `right->pos == 0`, `right->data == data`, and `peek`'s ensure
+    together. Verifies in 1.4 s under the switch.
   - `owned-segmented-buffer` (done, under the step rule): the step's
     direct frame check now sees a composite's footprint. A single owned
     composite emits a `CResourceComposition` fact; the frame check expands

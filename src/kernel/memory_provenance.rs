@@ -1366,9 +1366,14 @@ pub(crate) fn cell_epoch_for_canonical_naming(
     }
     crate::instrumentation::measure_operation("kernel", "canonical form", "cell epoch walk", || {
         with_cell_lookup_depth(|| {
-            memory_dag_cell_source(memory, pointer, &PureFactContext::new())
-                .node()
-                .clone()
+            // Declaring a block, forgetting cached cells, or allocating
+            // another block writes nothing; a name must not change across
+            // them, so the naming walk crosses those edges unconditionally.
+            with_extended_dag_bridging(|| {
+                memory_dag_cell_source(memory, pointer, &PureFactContext::new())
+                    .node()
+                    .clone()
+            })
         })
     })
 }

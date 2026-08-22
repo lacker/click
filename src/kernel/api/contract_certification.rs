@@ -2843,7 +2843,7 @@ fn certification_proves_post_proposition(
             _ => None,
         })
         .collect::<Vec<_>>();
-    explicit_facts
+    let candidates = explicit_facts
         .iter()
         .filter(|fact| {
             matches!(
@@ -2854,7 +2854,30 @@ fn certification_proves_post_proposition(
                 ) | (Proposition::Equal(_, _), Proposition::Equal(_, _))
             )
         })
-        .any(transported_fact_proves)
+        .collect::<Vec<_>>();
+    if candidates.iter().any(|fact| transported_fact_proves(fact)) {
+        return true;
+    }
+    // A claim can need several call facts at the post-state at once (a
+    // callee's `result == owner->data[owner->pos]` with `owner->pos == 0`
+    // and `owner->data == data` each framed across a later call). Frame
+    // every candidate once and prove from the whole transported set; this
+    // is the same per-fact frame work, followed by one proof.
+    let transported_targets = candidates
+        .iter()
+        .filter_map(|fact| {
+            let theorem = prove_c_condition_fact_transport(fact, post_memory, assumptions)?;
+            let Proposition::Implies(source, target) = theorem.proposition() else {
+                return None;
+            };
+            (source.as_ref() == *fact).then(|| target.as_ref().clone())
+        })
+        .collect::<Vec<_>>();
+    !transported_targets.is_empty()
+        && certification_proves_proposition(
+            &assumptions_with_propositions(assumptions, &transported_targets),
+            proposition,
+        )
 }
 
 pub(super) fn resources_certify_loadability(
