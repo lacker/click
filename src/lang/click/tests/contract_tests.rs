@@ -348,6 +348,85 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 }
 
 #[test]
+fn grouped_predicate_contracts_stay_on_one_proof() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            predicate nonnegative(x: int32) {
+                x >= 0
+            }
+
+            predicate same(x: int32, y: int32) {
+                x == y
+            }
+
+            int32 identity(int32 x) {
+                requires nonnegative(x);
+                ensures preserved: nonnegative(result);
+                ensures exact: same(result, x);
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+    let sources = &[("identity.c", c_source)];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("the grouped predicate contract should verify");
+    assert_eq!(verified.len(), 2, "both predicate claims should be proved");
+    assert_eq!(
+        flat_units, 1,
+        "the predicate claims should stay on one Proof"
+    );
+    assert_eq!(
+        replay_executions, 0,
+        "predicate verification must not replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the predicate Proof must not export replay state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(click_source, sources, "identity", CProofClaim::Grouped)
+        .expect("the retained predicate Proof should expand");
+    assert!(
+        expanded.contains("have nonnegative(result) by {"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("unfold(same);"), "{expanded}");
+    assert!(!expanded.contains("execute();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten predicate proof should verify normally");
+
+    let corrupted = expanded.replacen("unfold(same);", "unfold(nonnegative);", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose the predicate unfold"
+    );
+    verify_c0_sources(&corrupted, sources)
+        .expect_err("tampering with the extracted predicate operation must fail");
+}
+
+#[test]
 fn flat_function_expansion_rewrites_and_rejects_tampering() {
     let c_source = r#"
             int32 identity(int32 x) {

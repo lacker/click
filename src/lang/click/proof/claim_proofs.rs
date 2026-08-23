@@ -40,12 +40,46 @@ fn requirement_contains_declared_resource(requirement: &Requirement) -> bool {
     }
 }
 
-fn grouped_flat_proof_supported(function_block: &FunctionBlock, tactics: &[ProofTactic]) -> bool {
-    // The direct grouped slice owns one execution frontier with plain contract
-    // claims, including checked calls and all feasible successor paths.
-    // Predicate folding, declared composite contract resources, leading point
-    // scopes, and grouped choice scopes still need compatibility planning to
-    // preserve their exact prerequisites and cursor locations.
+fn value_predicate_definition_supported(
+    name: &str,
+    predicate_environment: &PredicateEnvironment,
+    visiting: &mut BTreeSet<String>,
+) -> bool {
+    if !visiting.insert(name.to_string()) {
+        return false;
+    }
+    let supported = predicate_environment.get(name).is_some_and(|definition| {
+        if definition
+            .parameters()
+            .iter()
+            .any(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
+            || crate::lang::click::validation::proposition_contains_resource_count(
+                definition.body(),
+            )
+        {
+            return false;
+        }
+        let mut nested = BTreeSet::new();
+        collect_called_predicates(definition.body(), &mut nested);
+        nested.into_iter().all(|nested| {
+            value_predicate_definition_supported(&nested, predicate_environment, visiting)
+        })
+    });
+    visiting.remove(name);
+    supported
+}
+
+fn grouped_flat_proof_supported(
+    function_block: &FunctionBlock,
+    tactics: &[ProofTactic],
+    predicate_environment: &PredicateEnvironment,
+) -> bool {
+    // The direct grouped slice owns one execution frontier with proposition
+    // claims, including value predicates, checked calls, and all feasible
+    // successor paths. Heap/resource-observing predicate bodies still depend
+    // on outcome compatibility planning. Declared composite contract
+    // resources, leading point scopes, and grouped choice scopes likewise
+    // preserve their compatibility prerequisites and cursor locations.
     let leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -78,7 +112,24 @@ fn grouped_flat_proof_supported(function_block: &FunctionBlock, tactics: &[Proof
         });
     let owns_one_execution_frontier =
         !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
-    let plain_contract = function_block
+    let no_declared_contract_resources = function_block
+        .requires()
+        .iter()
+        .all(|requirement| !requirement_contains_declared_resource(requirement))
+        && function_block.ensures().iter().all(|clause| {
+            !matches!(
+                clause.ensure(),
+                Ensure::Resource(resource) if resource_clause_contains_declared(resource)
+            )
+        });
+    let pointer_parameters = function_block
+        .signature()
+        .parameters()
+        .iter()
+        .filter(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
+        .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    let value_predicate_contract = function_block
         .requires()
         .iter()
         .filter_map(Requirement::proposition)
@@ -91,19 +142,21 @@ fn grouped_flat_proof_supported(function_block: &FunctionBlock, tactics: &[Proof
         .all(|proposition| {
             let mut predicates = BTreeSet::new();
             collect_called_predicates(proposition, &mut predicates);
-            predicates.is_empty()
-        })
-        && function_block
-            .requires()
-            .iter()
-            .all(|requirement| !requirement_contains_declared_resource(requirement))
-        && function_block.ensures().iter().all(|clause| {
-            !matches!(
-                clause.ensure(),
-                Ensure::Resource(resource) if resource_clause_contains_declared(resource)
-            )
+            if predicates.is_empty() {
+                return true;
+            }
+            let mut referenced = BTreeSet::new();
+            collect_click_proposition_referenced_names(proposition, &mut referenced);
+            referenced.is_disjoint(&pointer_parameters)
+                && predicates.into_iter().all(|name| {
+                    value_predicate_definition_supported(
+                        &name,
+                        predicate_environment,
+                        &mut BTreeSet::new(),
+                    )
+                })
         });
-    owns_one_execution_frontier && plain_contract
+    owns_one_execution_frontier && no_declared_contract_resources && value_predicate_contract
 }
 
 fn apply_checked_contract_resource_transition(
@@ -393,7 +446,9 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let direct_proof = if !grouped_flat_proof_supported(function_block, tactics) {
+    let grouped_direct_supported =
+        grouped_flat_proof_supported(function_block, tactics, predicate_environment);
+    let direct_proof = if !grouped_direct_supported {
         None
     } else {
         try_check_flat_function_proof(
