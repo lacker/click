@@ -22,6 +22,42 @@ pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) proof_owned: bool,
 }
 
+fn grouped_flat_proof_supported(
+    function_block: &FunctionBlock,
+    function: &CFunction,
+    tactics: &[ProofTactic],
+) -> bool {
+    // This first direct grouped slice owns one single-successor, call-free
+    // execution frontier with plain contract claims. N-way successors,
+    // opaque calls, predicate folding, and top-level point scopes still need
+    // compatibility planning to preserve their exact paths, prerequisites,
+    // and cursor locations.
+    let owns_one_execution_frontier = !statement_contains_call(function.body())
+        && !statement_may_have_multiple_successors(function.body())
+        && tactics.iter().all(|tactic| {
+            !matches!(
+                tactic,
+                ProofTactic::Have(_) | ProofTactic::Choose(_) | ProofTactic::Witness(_)
+            )
+        });
+    let plain_contract = function_block
+        .requires()
+        .iter()
+        .filter_map(Requirement::proposition)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Proposition(proposition) = clause.ensure() else {
+                return None;
+            };
+            Some(proposition)
+        }))
+        .all(|proposition| {
+            let mut predicates = BTreeSet::new();
+            collect_called_predicates(proposition, &mut predicates);
+            predicates.is_empty()
+        });
+    owns_one_execution_frontier && plain_contract
+}
+
 fn apply_checked_contract_resource_transition(
     outcome: &mut CFunctionOutcome,
     pre_state: &CState,
@@ -233,7 +269,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
     tactic_source: ProofTacticSource,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+) -> Result<ClaimProofResult, ClickError> {
     let proof_label = format!("{}.contract", function_block.signature().name());
     if claims.is_empty() {
         return Err(ClickError::new(format!(
@@ -246,6 +282,10 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         )));
     }
     let program = build_internal_proof_with_source(tactics, &proof_label, tactic_source)?;
+    let generated_by_source_index = match tactic_source {
+        ProofTacticSource::SourceSyntax => None,
+        ProofTacticSource::GeneratedBy { source_index } => Some(source_index),
+    };
     let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
@@ -299,6 +339,57 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         0,
         "proof entry",
     )?;
+    let initial = ProofReplayContext {
+        state,
+        pure_facts,
+        replay: Box::new(replay),
+        branch_path: PersistentSequence::default(),
+    };
+    let direct_proof = if !grouped_flat_proof_supported(function_block, &function, tactics) {
+        None
+    } else {
+        try_check_flat_function_proof(
+            &initial,
+            &program,
+            generated_by_source_index,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            &proof_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+        )?
+    };
+    if let Some(proof) = direct_proof {
+        #[cfg(test)]
+        FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
+        let theorems = finish_ordered_proof_units(
+            expansion_capture,
+            vec![OrderedProofUnit::Checked(proof)],
+            source_path,
+            function_block,
+            parsed_function,
+            claims,
+            true,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function_environment,
+            &function,
+            &arguments,
+            tactics,
+        )?;
+        return Ok(ClaimProofResult {
+            theorems,
+            proof_owned: true,
+        });
+    }
     let contexts = crate::instrumentation::measure_operation(
         function_block.signature().name(),
         &proof_label,
@@ -306,12 +397,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         || {
             execute_internal_proof(
                 &program,
-                ProofReplayContext {
-                    state,
-                    pure_facts,
-                    replay: Box::new(replay),
-                    branch_path: PersistentSequence::default(),
-                },
+                initial,
                 expansion_capture.as_deref_mut(),
                 function_block,
                 parsed_function,
@@ -328,7 +414,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         },
     )?;
 
-    crate::instrumentation::measure_operation(
+    let theorems = crate::instrumentation::measure_operation(
         function_block.signature().name(),
         &proof_label,
         "grouped proof finishing",
@@ -351,7 +437,11 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
                 tactics,
             )
         },
-    )
+    )?;
+    Ok(ClaimProofResult {
+        theorems,
+        proof_owned: false,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -421,12 +511,12 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         "auto",
         &tactics,
     )?;
-    Ok(verified)
+    Ok(verified.theorems)
 }
 
-/// An explicit grouped proof script, followed by the whole-contract
-/// certificate gate: the script's stitched certificate must exist and replay
-/// completely before the grouped claims are accepted.
+/// An explicit grouped proof script. A completed flat `Proof` is accepted
+/// directly; only the compatibility path still enters the whole-contract
+/// certificate gate below.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn prove_claims_by_grouped_script(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -470,15 +560,14 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_script(
         "explicit proof script",
         tactics,
     )?;
-    Ok(verified)
+    Ok(verified.theorems)
 }
 
-/// The grouped form of the whole-claim certificate gate (see
-/// `certify_claim_result`): the stitched contract-level certificate must
-/// exist, replay completely, and reproduce the verified theorem count. When
-/// the replayed tactics are themselves a simple proof, that proof is the
-/// certificate by definition and the replay that just succeeded was the
-/// certificate replay.
+/// The grouped compatibility form of the whole-claim certificate gate (see
+/// `certify_claim_result`). A terminal `Proof` has already checked every
+/// semantic transition and skips this legacy replay. Context-backed results
+/// still require a stitched contract-level certificate that replays every
+/// verified claim.
 #[allow(clippy::too_many_arguments)]
 fn certify_grouped_claims_result(
     mut expansion_capture: Option<&mut ExpansionCapture>,
@@ -491,10 +580,14 @@ fn certify_grouped_claims_result(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    verified: &mut [VerifiedCTheorem],
+    verified: &mut ClaimProofResult,
     proof_description: &str,
     replayed_tactics: &[ProofTactic],
 ) -> Result<(), ClickError> {
+    if verified.proof_owned {
+        return Ok(());
+    }
+    let verified = &mut verified.theorems;
     if let Ok(script) = ProofCertificate::from_proof_tactics(replayed_tactics) {
         for theorem in verified.iter_mut() {
             theorem.expanded_proof = Some(script.clone());
@@ -566,6 +659,7 @@ fn certify_grouped_claims_result(
     // must be proved again by the certificate replay.
     for theorem in verified.iter() {
         if !replayed
+            .theorems
             .iter()
             .any(|replayed| replayed.claim == theorem.claim)
         {

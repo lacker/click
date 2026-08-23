@@ -1862,7 +1862,7 @@ impl<'a> Proof<'a> {
             Some(ProofSite::FunctionClaim {
                 claim: CProofClaim::Grouped,
                 ..
-            }) => EffectGoalSelection::All,
+            }) if !function_block.effects().is_empty() => EffectGoalSelection::All,
             Some(ProofSite::FunctionClaim {
                 claim: CProofClaim::Effect(index),
                 ..

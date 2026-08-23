@@ -473,7 +473,7 @@ pub(in crate::lang::click::proof) fn certified_loop_exit_transitions_with_proven
     )
 }
 
-fn statement_contains_call(statement: &CStatement) -> bool {
+pub(in crate::lang::click::proof) fn statement_contains_call(statement: &CStatement) -> bool {
     match statement {
         CStatement::CallAssign { .. } | CStatement::Call { .. } => true,
         CStatement::Seq(first, second) => {
@@ -493,6 +493,74 @@ fn statement_contains_call(statement: &CStatement) -> bool {
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. } => false,
         CStatement::HeapAllocate { .. } | CStatement::HeapFree { .. } => false,
+    }
+}
+
+/// Whether a statement contains a construct whose checked execution can
+/// produce more than one semantic successor. The flat grouped bridge admits
+/// only the complementary single-successor syntax until `Proof` finalization
+/// certifies N-way outcomes without reconstructing them through replay.
+pub(in crate::lang::click::proof) fn statement_may_have_multiple_successors(
+    statement: &CStatement,
+) -> bool {
+    fn expression_may_have_multiple_outcomes(expression: &CExpression) -> bool {
+        match expression {
+            CExpression::LessThan(_, _)
+            | CExpression::LessEqual(_, _)
+            | CExpression::GreaterThan(_, _)
+            | CExpression::GreaterEqual(_, _)
+            | CExpression::Equal(_, _)
+            | CExpression::NotEqual(_, _)
+            | CExpression::Not(_)
+            | CExpression::And(_, _)
+            | CExpression::Or(_, _) => true,
+            CExpression::Value(_) | CExpression::Variable(_) => false,
+            CExpression::AddressOf(inner)
+            | CExpression::BitwiseNot(inner)
+            | CExpression::Load(inner) => expression_may_have_multiple_outcomes(inner),
+            CExpression::PointerOffsetBytes { pointer, .. } => {
+                expression_may_have_multiple_outcomes(pointer)
+            }
+            CExpression::Add(left, right)
+            | CExpression::Subtract(left, right)
+            | CExpression::Multiply(left, right)
+            | CExpression::Divide(left, right)
+            | CExpression::Remainder(left, right)
+            | CExpression::ShiftLeft(left, right)
+            | CExpression::ShiftRight(left, right)
+            | CExpression::BitwiseAnd(left, right)
+            | CExpression::BitwiseOr(left, right)
+            | CExpression::BitwiseXor(left, right)
+            | CExpression::Index(left, right) => {
+                expression_may_have_multiple_outcomes(left)
+                    || expression_may_have_multiple_outcomes(right)
+            }
+            CExpression::TypedLoad { pointer, .. } => {
+                expression_may_have_multiple_outcomes(pointer)
+            }
+        }
+    }
+
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => false,
+        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
+            expression_may_have_multiple_outcomes(expression)
+        }
+        CStatement::Seq(first, second) => {
+            statement_may_have_multiple_successors(first)
+                || statement_may_have_multiple_successors(second)
+        }
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            expression_may_have_multiple_outcomes(pointer)
+                || expression_may_have_multiple_outcomes(value)
+        }
+        CStatement::CallAssign { .. }
+        | CStatement::Call { .. }
+        | CStatement::HeapAllocate { .. }
+        | CStatement::HeapFree { .. }
+        | CStatement::Assert { .. }
+        | CStatement::If { .. }
+        | CStatement::While { .. } => true,
     }
 }
 

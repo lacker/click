@@ -5678,8 +5678,8 @@ fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
                     if claim == "write_in_bounds.contract" && name == "frame exact effect check"
             ))
             .count(),
-        1,
-        "only the whole-certificate gate may recheck the retained frame: {events:#?}"
+        0,
+        "the accepted Proof must not recheck its retained frame through the whole-certificate gate: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
