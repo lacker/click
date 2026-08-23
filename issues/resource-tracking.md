@@ -139,16 +139,20 @@ successor siblings; no new surface tactic was added. The generated identity
 condition is snapshot-qualified, and whole-function replay lowers it separately
 for each concrete outcome instead of reusing one branch's fresh kernel variables.
 
-Applying the same scoped proof repair to `owned-vector` exposes the next
-failure: the stale temporary `views` error disappears, but the retiring path
-rejects an `owns` range derived from the returned composite. That range has a
-dynamic base and length (`owner->data[0..owner->cap]`); its folded public
-successor context contains only `owns allocated_vector(owner)`, but lifetime
-checking still associates the returned range with the retired input allocation.
-The next experiment should reduce that returned dynamic-range association. It
-must not drop the range, weaken ownership, or restore the persistent `observe`
-workaround. If it is independent of support retirement and identity splitting,
-move it to its own focused issue before closing this one.
+The returned dynamic-range association is now reduced and covered separately.
+Opaque lifetime checking first classifies returned allocation continuity by
+base and size, then checks only the preserved caller frame for resources that
+would survive retirement. Projections of the returned composite describe the
+successor allocation and are never mistaken for persistent caller views. The
+focused regression uses a returned allocation and owned range whose size is a
+mutable field; it fails on the old kernel with the same stale returned `owns`
+diagnostic and passes with the corrected transition.
+
+Applying the scoped proof repair to `owned-vector` now advances beyond that
+runtime error and exposes an independent verifier-core scaling problem while
+lowering the later `vector_push` ensures. That tooling failure is tracked in
+`owned-vector-provisional-ensure-scaling.md`; the incomplete owned-vector proof
+edit remains out of this green resource-kernel checkpoint.
 
 ## Intended regressions
 

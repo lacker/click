@@ -18,7 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 2
+## Other open issues: 3
 
 - [Retire the parallel replay proof engine](replay-smell.md): ordinary source
   verification and expansion still advance a large mutable semantic state in
@@ -27,3 +27,6 @@ when evidence exposes one.
   owned-vector retains persistent `observe` projections across a consuming
   reallocation; audit the existing scoped resource mechanism and ensure
   direct and opaque frontier steps apply one documented lifetime law.
+- [Owned-vector provisional ensure scaling](owned-vector-provisional-ensure-scaling.md):
+  after the resource transition advances, dynamic range membership repeatedly
+  scans the proof context while lowering a later verified call's ensures.

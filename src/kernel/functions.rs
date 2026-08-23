@@ -21,13 +21,16 @@ struct PendingVerifiedCallLifetimePath {
 #[derive(Clone, Debug)]
 enum VerifiedAllocationLifetimeError {
     Runtime(CRuntimeError),
-    UndecidedAllocationIdentity(ConditionTerm),
+    UndecidedAllocationContinuity(ConditionTerm),
+    InconsistentReturnedAllocation,
 }
 
-enum OutputAllocationBacking {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AllocationContinuity {
+    Same,
     Distinct,
     Undecided(ConditionTerm),
-    None,
+    Inconsistent,
 }
 
 fn canonical_memory_range(range: CMemoryRange, assumptions: &PureFactContext) -> CMemoryRange {
@@ -993,11 +996,12 @@ fn execute_verified_function_rule(
             match apply_verified_allocation_lifetime_effects(
                 post_state.memory.clone(),
                 &transfer.callee_resources,
+                &caller_resources_after_requirements,
                 &return_resources,
                 function,
                 &branch_assumptions,
             ) {
-                Err(VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(condition)) => {
+                Err(VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(condition)) => {
                     for value in [true, false] {
                         let proposition = Proposition::ConditionIs(condition.clone(), value);
                         let mut provisional_facts = pending.provisional_facts.clone();
@@ -1028,6 +1032,7 @@ fn execute_verified_function_rule(
                         });
                     }
                 }
+                Err(VerifiedAllocationLifetimeError::InconsistentReturnedAllocation) => {}
                 result => lifetime_paths.push(VerifiedCallLifetimePath {
                     facts: pending.facts,
                     result,
@@ -1047,8 +1052,11 @@ fn execute_verified_function_rule(
                     });
                     continue;
                 }
-                Err(VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(_)) => {
-                    unreachable!("undecided allocation identities are split above")
+                Err(VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(_)) => {
+                    unreachable!("undecided allocation continuity is split above")
+                }
+                Err(VerifiedAllocationLifetimeError::InconsistentReturnedAllocation) => {
+                    unreachable!("inconsistent returned allocations are discarded above")
                 }
             };
             facts.extend(lifetime_effects);
@@ -1150,54 +1158,113 @@ fn add_verified_function_ensure_facts(
     Ok(())
 }
 
-fn output_allocation_backing_for_resource(
-    resource: &CResourceFact,
-    retired_base: &Pointer,
-    output_allocations_by_base: &BTreeMap<Pointer, Vec<(Pointer, Bitvector32Term)>>,
+fn allocation_continuity(
+    input_base: &Pointer,
+    input_bytes: &Bitvector32Term,
+    output_base: &Pointer,
+    output_bytes: &Bitvector32Term,
     assumptions: &PureFactContext,
-) -> OutputAllocationBacking {
-    let range = match resource {
-        CResourceFact::Own(CResource::Memory(range), _)
-        | CResourceFact::View(CResource::Memory(range)) => range,
-        _ => return OutputAllocationBacking::None,
-    };
-    let canonical_base = assumptions.canonical_pointer(range.base());
-    let Some(allocations) = output_allocations_by_base.get(&canonical_base) else {
-        return OutputAllocationBacking::None;
-    };
-    let mut undecided = None;
-    for (base, bytes) in allocations {
-        let Some(element_count) = int32_element_count_from_bytes(bytes) else {
-            continue;
-        };
-        let allocation_range =
-            CMemoryRange::new(base.clone(), Bitvector32Term::Constant(0), element_count);
-        if !super::assumptions::memory_range_contained_for_memory_resolution(
-            range,
-            &allocation_range,
+) -> AllocationContinuity {
+    if pointers_proven_equal_for_memory_resolution(input_base, output_base, assumptions) {
+        if bitvector_terms_proven_equal_for_memory_resolution(
+            input_bytes,
+            output_bytes,
             assumptions,
         ) {
-            continue;
+            return AllocationContinuity::Same;
         }
-        if pointers_proven_distinct_for_memory_resolution(retired_base, base, assumptions) {
-            return OutputAllocationBacking::Distinct;
+        let condition = ConditionTerm::Bitvector32Equal(
+            Box::new(input_bytes.clone()),
+            Box::new(output_bytes.clone()),
+        );
+        if assumptions.proves(&Proposition::ConditionIs(condition.clone(), false)) {
+            AllocationContinuity::Inconsistent
+        } else {
+            AllocationContinuity::Undecided(condition)
         }
-        if !pointers_proven_equal_for_memory_resolution(retired_base, base, assumptions) {
-            undecided = Some(ConditionTerm::pointer_equal(
-                retired_base.clone(),
-                base.clone(),
-            ));
+    } else if pointers_proven_distinct_for_memory_resolution(input_base, output_base, assumptions) {
+        AllocationContinuity::Distinct
+    } else {
+        AllocationContinuity::Undecided(ConditionTerm::pointer_equal(
+            input_base.clone(),
+            output_base.clone(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod allocation_continuity_tests {
+    use super::*;
+
+    fn external_pointer(variable: u64) -> Pointer {
+        Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::scale_int32(
+                Bitvector32Term::Variable(Variable(variable)),
+                4,
+            ),
         }
     }
-    undecided.map_or(
-        OutputAllocationBacking::None,
-        OutputAllocationBacking::Undecided,
-    )
+
+    #[test]
+    fn continuity_requires_both_the_allocation_base_and_size() {
+        let assumptions = PureFactContext::new();
+        let input = external_pointer(930_000);
+        assert_eq!(
+            allocation_continuity(
+                &input,
+                &Bitvector32Term::Constant(4),
+                &input,
+                &Bitvector32Term::Constant(4),
+                &assumptions,
+            ),
+            AllocationContinuity::Same,
+        );
+        assert_eq!(
+            allocation_continuity(
+                &input,
+                &Bitvector32Term::Constant(4),
+                &input,
+                &Bitvector32Term::Constant(8),
+                &assumptions,
+            ),
+            AllocationContinuity::Inconsistent,
+        );
+        assert_eq!(
+            allocation_continuity(
+                &Pointer {
+                    block: PointerBlock::Heap(930_002),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                &Bitvector32Term::Constant(4),
+                &Pointer {
+                    block: PointerBlock::Heap(930_003),
+                    offset: PointerOffsetTerm::Constant(0),
+                },
+                &Bitvector32Term::Constant(4),
+                &assumptions,
+            ),
+            AllocationContinuity::Distinct,
+        );
+
+        let other = external_pointer(930_001);
+        assert_eq!(
+            allocation_continuity(
+                &input,
+                &Bitvector32Term::Constant(4),
+                &other,
+                &Bitvector32Term::Constant(4),
+                &assumptions,
+            ),
+            AllocationContinuity::Undecided(ConditionTerm::pointer_equal(input, other)),
+        );
+    }
 }
 
 fn apply_verified_allocation_lifetime_effects(
     mut memory: CMemory,
     input_resources: &ResourceContext,
+    preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &PureFactContext,
@@ -1225,17 +1292,31 @@ fn apply_verified_allocation_lifetime_effects(
             "could not inspect output allocation effects at call".to_string(),
         ))
     })?;
+    // Returned projections describe the successor allocation. They decide
+    // whether an input allocation continues, but they are not resources that
+    // survived from the caller and therefore cannot be stale after retirement.
+    let preserved = expand_all_composite_resource_facts(
+        preserved_caller_resources,
+        function.composite_resource_definitions(),
+        &memory,
+        assumptions,
+    )
+    .ok_or_else(|| {
+        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
+            "could not inspect preserved caller allocation effects at call".to_string(),
+        ))
+    })?;
     let lifetime_assumptions = input
         .observable_facts_assuming_valid(assumptions)
         .into_iter()
         .fold(assumptions.clone(), |assumptions, fact| {
             assumptions.assume_proposition(fact)
         });
-    let mut output_allocations_by_base =
-        BTreeMap::<Pointer, Vec<(Pointer, Bitvector32Term)>>::new();
+    let mut output_allocations_by_block =
+        BTreeMap::<PointerBlock, Vec<(Pointer, Bitvector32Term)>>::new();
     for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
-        output_allocations_by_base
-            .entry(lifetime_assumptions.canonical_pointer(base))
+        output_allocations_by_block
+            .entry(base.block.clone())
             .or_default()
             .push((base.clone(), bytes.clone()));
     }
@@ -1256,32 +1337,50 @@ fn apply_verified_allocation_lifetime_effects(
         {
             continue;
         }
-        for resource in output.facts() {
+        if let Some(output_allocations) = output_allocations_by_block.get(&base.block) {
+            let mut retained = false;
+            for (output_base, output_bytes) in output_allocations {
+                match allocation_continuity(
+                    &base,
+                    &bytes,
+                    output_base,
+                    output_bytes,
+                    &lifetime_assumptions,
+                ) {
+                    AllocationContinuity::Same => retained = true,
+                    AllocationContinuity::Distinct => {}
+                    AllocationContinuity::Undecided(condition) => {
+                        return Err(
+                            VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(
+                                condition,
+                            ),
+                        );
+                    }
+                    AllocationContinuity::Inconsistent => {
+                        return Err(
+                            VerifiedAllocationLifetimeError::InconsistentReturnedAllocation,
+                        );
+                    }
+                }
+            }
+            if retained {
+                continue;
+            }
+        }
+        // Only the untransferred caller frame survives independently across
+        // the call. Any such resource that can still refer to the retiring
+        // allocation makes this successor unsafe.
+        for resource in preserved.facts() {
             if !resource.may_refer_to_memory_block(&base.block)
                 || resource.is_proven_separate_from_allocation(&base, &bytes, &lifetime_assumptions)
             {
                 continue;
             }
-            match output_allocation_backing_for_resource(
-                resource,
-                &base,
-                &output_allocations_by_base,
-                &lifetime_assumptions,
-            ) {
-                OutputAllocationBacking::Distinct => continue,
-                OutputAllocationBacking::Undecided(condition) => {
-                    return Err(
-                        VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(condition),
-                    );
-                }
-                OutputAllocationBacking::None => {
-                    return Err(VerifiedAllocationLifetimeError::Runtime(
-                        CRuntimeError::StaleResourceAfterFree {
-                            resource: resource.clone(),
-                        },
-                    ));
-                }
-            }
+            return Err(VerifiedAllocationLifetimeError::Runtime(
+                CRuntimeError::StaleResourceAfterFree {
+                    resource: resource.clone(),
+                },
+            ));
         }
         let lifetime_before = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
