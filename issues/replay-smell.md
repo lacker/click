@@ -1,31 +1,60 @@
-# Replay is a second proof engine
+# Retire the parallel replay proof engine
 
 ## Violated invariant
 
-Click should have one audited model for advancing a proof. A smart tactic may
-search over immutable `Proof` values, and an independently supplied or
-expanded certificate must still be checked, but certificate checking should
-interpret recorded operations through the same audited proof transitions. It
-should not require a second large mutable state machine that separately owns
-the C state, facts, execution frontier, branch provenance, and certificate
-bookkeeping.
+`Proof` must be the sole owner of proof-semantic state and the sole authority
+for advancing it. The kernel remains the authority for primitive logical, C,
+memory, and resource semantics; `Proof` is the checked orchestration boundary
+through which those operations change a proof.
 
-Today `ProofReplayContext` remains that parallel representation. The completed
-proof-object migration retired it as a smart-tactic interface, but explicit
-source verification and expansion replay still thread it by value through
-`execute_internal_proof`. `TacticReplayState` carries execution-frontier and
-proof-construction metadata while the context separately carries `CState`, a
-fact vector, and branch history. Replay code converts between this state and
-proof-object state at multiple boundaries.
+Explicit tactics apply named simple steps or audited structural operations to
+`Proof`. Smart tactics search by applying those same operations to persistent
+`Proof` descendants. A successful descendant retains the exact
+surface-expressible provenance of the operations that produced it. Extracting
+that provenance is serialization: it must not rediscover a proof from semantic
+aftermath or rerun search.
 
-Independent checking is required; this issue does not propose trusting an
-expansion because the smart tactic that produced it succeeded. The smell is
-that independent checking appears to be a second operational proof model
-rather than a thin interpreter of the same checked `Proof` operations.
+Ordinary verification must not construct and independently replay a second
+certificate before accepting work already checked through `Proof`. Expansion
+instead extracts the selected provenance from a completed `Proof`, renders it
+as ordinary Surface Click, rewrites the source, and verifies the rewritten
+source through the normal verification entry point before emitting it. This is
+the independence boundary that checks extraction, rendering, parsing,
+lowering, and source interpretation without retaining a second proof engine.
+
+An internal `ProofCertificate`-like tree may remain as a surface serialization
+format. It carries no semantic authority and should be materialized only when
+surface proof text or an equivalent inspection result is requested. A source
+or expansion cursor may retain source locations, goal identities, provenance
+checkpoints, and diagnostic paths, but it must not own independent facts,
+`CState`, resources, execution frontiers, branch outcomes, or proof-building
+authority.
+
+## Transitional implementation
+
+`Proof` already owns persistent typed goals, facts, execution state, and the
+private provenance nodes connecting every accepted successor to its checked
+operation. Its focus, split records, and ancestry checkpoints are typed
+cursors into that state rather than alternate semantic representations.
+
+`ProofReplayContext` remains a parallel representation around this completed
+model. Explicit function-proof verification constructs it and threads it by
+value through `execute_internal_proof`. `TacticReplayState` owns an execution
+frontier and substantial logical, branch, scope, outcome, effect, deferral,
+and proof-construction bookkeeping while `ProofReplayContext` separately owns
+`CState`, a fact vector, and branch history. Several operations construct a
+temporary `Proof` from this context and then export the checked result back
+into replay-owned state.
+
+Legacy smart paths also construct `ProofCertificate` values, replay them
+through `execute_internal_proof`, and merge the resulting replay contexts.
+Whole-claim and whole-contract gates can synthesize another certificate and
+verify the claim again before acceptance. These compatibility boundaries are
+the duplicated proof engine to remove; independent internal certificate replay
+is not an invariant to preserve.
 
 This is not a canonicalization issue. It concerns proof-state ownership and
-the relationship between certificate interpretation and the audited proof
-object API.
+the final removal of adapters left by the proof-object migration.
 
 ## Evidence exposed by the stack issue
 
@@ -36,75 +65,114 @@ depth is nine. Before the bounded stack repair, each debug replay frame used
 about 123 KiB because it reserved many large replay-context temporaries. Merely
 boxing the embedded `TacticReplayState` approximately halved that frame.
 
-The stack failure can and should be repaired independently with bounded depth,
-a small-stack regression, and mundane representation fixes. Do not make this
-architectural issue a prerequisite for retiring
-`expansion-replay-recursion-exhausts-the-stack.md`, and do not hide the stack
-failure by granting verifier threads oversized stacks.
+The stack failure was repaired independently with a bounded-depth guard and a
+small-stack regression. Preserve that regression while removing the machinery
+it currently measures; do not weaken the stack bound or grant verifier threads
+oversized stacks during the migration.
 
-## Questions to resolve first
+## Migration constraints
 
-- Which fields of `ProofReplayContext` are genuine certificate-interpreter
-  cursors, and which duplicate state already owned by `Proof`?
-- Can explicit source and serialized certificates be interpreted by applying
-  their recorded simple and structural operations to a checker-owned `Proof`?
-- Which current replay operations perform semantic work not expressible by an
-  audited proof-object operation? Those are missing checked operations, not a
-  reason for a general mutable replay escape hatch.
-- Does certificate extraction still need to run during independent checking,
-  or can the checker retain only source locations and diagnostics while the
-  checked `Proof` records derivation structure?
-- Can branch, scope, join, outcome, and effect traversal share the proof
-  object's goal structure without trusting certificate-supplied goal sets or
-  rediscovering smart-tactic choices?
+- Start each ordinary proof unit with one checker-owned `Proof`. Interpret
+  explicit simple tactics by applying their corresponding checked operation to
+  that value.
+- Interpret branches, scopes, joins, outcomes, effects, and loop phases through
+  typed `Proof` goals and audited structural operations. A syntax driver may
+  choose the current source node or focused goal, but it cannot assemble a
+  semantic successor.
+- Run smart search transactionally over persistent `Proof` descendants. A
+  smart success is the completed descendant itself, not a candidate
+  certificate awaiting compatibility replay.
+- Retain source attribution on checked provenance so expansion can select one
+  tactic's contribution after the complete proof unit succeeds. Empty
+  contributions remain valid when a smart tactic needed no explicit step.
+- Extract structured surface steps from provenance. Do not infer them from
+  final facts, execution paths, resources, or outcomes, and do not rerun a
+  planner during extraction.
+- Verify the complete rewritten source through the ordinary entry point before
+  `click expand` writes output. `click audit` may add fixed-point, cold-run, and
+  performance checks, but it uses the same verification boundary.
+- Keep diagnostic context and source locations sufficient to preserve useful
+  failures. Compatibility wording is not a reason to retain semantic replay
+  state.
+
+If a source tactic currently performs semantic work that cannot be expressed
+as a `Proof` operation, add the missing named audited operation. Do not keep a
+general mutable replay escape hatch. An unrelated missing resource or language
+operation remains a separate issue rather than being folded into this
+architectural migration.
 
 ## Intended regressions
 
 ### One transition authority
 
-Check representative explicit and expanded certificates for pure reasoning,
-C execution, branches, resource scopes, calls/effects, and function outcomes.
-Instrument every semantic successor and assert that it is produced by
-`Proof::apply_step` or a named audited structural proof operation, with no
-parallel mutation of a replay-owned semantic state.
+Verify representative explicit and smart proofs covering pure reasoning, C
+execution, logical and C branches, resource scopes, calls/effects, loop phases,
+and function outcomes. Instrument semantic successor construction and assert
+that every successor is produced by `Proof::apply_step` or a named audited
+structural operation, with no parallel mutation of replay-owned semantic
+state.
 
-### Independent rejection
+### No ordinary certificate replay
 
-Corrupt one recorded operation in each representative certificate and confirm
-that independent verification rejects it at the corresponding audited proof
-operation. Removing the parallel replay model must not make expansion success
+Assert that ordinary verification of representative smart proofs performs no
+surface-certificate, compatibility, whole-claim, or whole-contract replay.
+The checked `Proof` descendant is accepted directly and its provenance is not
+materialized merely to establish validity.
+
+### Independent rewritten-source rejection
+
+Expand representative smart proofs and verify the complete rewritten source
+normally. Corrupt one rendered simple operation in each representative family
+and confirm ordinary verification rejects it at the corresponding checked
+`Proof` operation. Expansion success must not make its emitted source
 self-authenticating.
+
+### Provenance-only extraction
+
+Assert that expansion returns the steps attributed to the selected source site
+from the completed `Proof` lineage, including nested branches and scopes.
+Extraction may traverse provenance and surface metadata but must not invoke
+semantic transitions, planners, or kernel proof search.
 
 ### State ownership census
 
-Add a source-level or instrumentation census proving that production
-certificate interpretation does not construct or advance
-`ProofReplayContext`, directly mutate `CState` or fact collections, or maintain
-a second execution frontier. Diagnostic cursors and source-location stacks are
-allowed, but they must not be semantic authority.
+Add a source-level or instrumentation census proving that production source
+interpretation and expansion do not construct or advance
+`ProofReplayContext`, directly mutate replay-owned `CState` or fact
+collections, or maintain a second execution frontier. Surviving cursors must
+have their non-semantic fields individually justified.
 
 ### Deterministic scaling
 
-Measure explicit certificate checking over increasing linear proof lengths and
-branching certificates. Work and allocation must be proportional to the
-certificate and retained proof delta, up to the documented indexing factors;
-the replacement must not clone complete proof states or histories per step.
+Measure explicit source checking and expansion extraction over increasing
+linear proof lengths and branching proofs. Work and allocation must be
+proportional to the source, retained proof delta, and emitted surface output,
+up to the documented indexing factors. The replacement must not clone complete
+proof states or histories per step.
 
 ## Acceptance criteria
 
-- The required independence boundary is documented: certificates are checked
-  separately from smart-tactic search, but through the same audited proof
-  transitions.
-- `ProofReplayContext` and the semantic portions of `TacticReplayState` are
-  deleted, or any surviving replay type is a thin non-semantic interpreter
-  cursor whose fields are individually justified.
-- Explicit source verification, `click expand` verification, and `click audit`
-  retain their current independent rejection guarantees and diagnostics.
-- Branching, scopes, joins, outcomes, and effects are checked through
-  proof-object goal structure rather than a caller-assembled parallel state.
-- No semantic transition is accepted by directly editing replay-owned
-  `CState`, facts, resources, frontiers, or certificate builders.
+- Ordinary explicit and smart verification advance one `Proof` through checked
+  simple or structural operations and do not construct or replay a separate
+  certificate as an acceptance gate.
+- `ProofReplayContext`, `execute_internal_proof`, compatibility certificate
+  replay, whole-claim/whole-contract replay gates, and parallel semantic or
+  certificate builders are deleted.
+- Any surviving source, focus, diagnostic, or expansion cursor contains no
+  independent proof-semantic state and cannot construct a semantic successor.
+- Every accepted smart operation retains exact surface-expressible provenance;
+  expansion serializes that provenance rather than reconstructing it from
+  semantic aftermath.
+- `click expand` verifies the complete rewritten source through ordinary
+  verification before output, and `click audit` retains its fixed-point,
+  independent-entry-point, and performance guarantees.
+- Explicit invalid source and deliberately corrupted expansions are rejected
+  by the corresponding audited `Proof` operation.
+- Representative pure, execution, branch, scope, loop, outcome, and effect
+  regressions pass without compatibility replay.
 - Multi-size regressions satisfy the repository's verification-efficiency
   contract, and `scripts/check.sh` is green.
-- This file and its Open-list line are deleted when the duplicated replay
-  model and its obsolete adapters are removed.
+- User and internal documentation describes checked `Proof` transitions and
+  verified expansion rather than ordinary certificate replay.
+- This file and its Open-list line are deleted when the parallel replay model,
+  its obsolete adapters, regressions, and documentation are complete.

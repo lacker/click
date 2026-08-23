@@ -20,9 +20,9 @@ when evidence exposes one.
 
 ## Other open issues: 2
 
-- [Replay is a second proof engine](replay-smell.md): independent certificate
-  checking still advances a large parallel mutable replay state instead of
-  interpreting recorded operations through the audited proof-object model.
+- [Retire the parallel replay proof engine](replay-smell.md): ordinary source
+  verification and expansion still advance a large mutable semantic state in
+  parallel with the checked `Proof` model.
 - [Resource tracking across execution transitions](resource-tracking.md):
   owned-vector retains persistent `observe` projections across a consuming
   reallocation; audit the existing scoped resource mechanism and ensure
