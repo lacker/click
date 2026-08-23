@@ -600,9 +600,8 @@ int32 caller(struct box* p, int32 x) {
         .expect("the opaque call should be the second statement step");
     assert!(step_using.contains("0 < p->value;"), "{expanded}");
     assert!(!step_using.contains("x < 100;"), "{expanded}");
-    assert!(step_using.contains("loadable("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the condition and its loadability should replay");
+        .expect("the condition and its ambient view should verify normally");
 }
 
 #[test]

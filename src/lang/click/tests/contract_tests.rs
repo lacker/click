@@ -257,6 +257,97 @@ fn grouped_n_way_outcomes_discard_exactly_infeasible_siblings_on_proof() {
 }
 
 #[test]
+fn grouped_calls_keep_contract_transitions_on_proof() {
+    let set_source = r#"
+            void set_one(int32* data, int32 permit) {
+                data[0] = 1;
+            }
+        "#;
+    let caller_source = r#"
+            int32 call_set_one(int32* data, int32 permit) {
+                set_one(data, permit);
+                return data[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "set_one.c";
+            verifying "call_set_one.c";
+
+            void set_one(int32 data[], int32 permit) {
+                requires permit >= 0;
+                owns data[0..1];
+                mutable data[0..1];
+                ensures data[0] == 1;
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+
+            int32 call_set_one(int32 data[], int32 permit) {
+                requires permit >= 1;
+                owns data[0..1];
+                mutable data[0..1];
+                ensures exact: result == 1;
+                ensures post_call: data[0] == 1;
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+    let sources = &[("set_one.c", set_source), ("call_set_one.c", caller_source)];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    verified.expect("the grouped call and callee proofs should verify");
+    assert_eq!(flat_units, 2, "both functions should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the grouped caller must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the grouped caller must not export its checked call state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary grouped call verification must not check a source certificate"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, sources, "call_set_one", CProofClaim::Grouped)
+            .expect("the retained grouped call Proof should expand");
+    let caller_expansion = expanded
+        .split("int32 call_set_one")
+        .nth(1)
+        .expect("the expanded source should retain the selected caller");
+    assert!(!caller_expansion.contains("execute();"), "{expanded}");
+    assert!(!caller_expansion.contains("frame();"), "{expanded}");
+    assert!(!caller_expansion.contains("simp();"), "{expanded}");
+    assert!(caller_expansion.contains("step() using"), "{expanded}");
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten grouped call proof should verify normally");
+
+    let checked_call = "step() using {\n                    permit >= 1;\n                }";
+    assert!(
+        expanded.contains(checked_call),
+        "the call expansion should retain its exact prerequisite: {expanded}"
+    );
+    let corrupted = expanded.replacen(checked_call, "step() using {\n                }", 1);
+    verify_c0_sources(&corrupted, sources)
+        .expect_err("removing the extracted call prerequisite must invalidate the proof");
+}
+
+#[test]
 fn flat_function_expansion_rewrites_and_rejects_tampering() {
     let c_source = r#"
             int32 identity(int32 x) {

@@ -22,16 +22,30 @@ pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) proof_owned: bool,
 }
 
-fn grouped_flat_proof_supported(
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    tactics: &[ProofTactic],
-) -> bool {
-    // The direct grouped slice owns one call-free execution frontier with
-    // plain contract claims, including all of its feasible successor paths.
-    // Opaque calls, predicate folding, leading point scopes, and grouped
-    // choice scopes still need compatibility planning to preserve their exact
-    // prerequisites and cursor locations.
+fn resource_clause_contains_declared(resource: &ResourceClause) -> bool {
+    match resource {
+        ResourceClause::Declared { .. } => true,
+        ResourceClause::Quantified { resource, .. } => resource_clause_contains_declared(resource),
+        ResourceClause::Read(_) | ResourceClause::Write(_) => false,
+    }
+}
+
+fn requirement_contains_declared_resource(requirement: &Requirement) -> bool {
+    match requirement {
+        Requirement::Labeled { requirement, .. } => {
+            requirement_contains_declared_resource(requirement)
+        }
+        Requirement::Resource(resource) => resource_clause_contains_declared(resource),
+        Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => false,
+    }
+}
+
+fn grouped_flat_proof_supported(function_block: &FunctionBlock, tactics: &[ProofTactic]) -> bool {
+    // The direct grouped slice owns one execution frontier with plain contract
+    // claims, including checked calls and all feasible successor paths.
+    // Predicate folding, declared composite contract resources, leading point
+    // scopes, and grouped choice scopes still need compatibility planning to
+    // preserve their exact prerequisites and cursor locations.
     let leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -49,8 +63,21 @@ fn grouped_flat_proof_supported(
     let grouped_choice_scope = tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
+    let compatibility_empty_mutable_frame = function_block
+        .effects()
+        .iter()
+        .any(|clause| !matches!(clause.effect(), Effect::Immutable))
+        && tactics.iter().any(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::FrameUsing {
+                    region: None | Some(CodeRegionRef::Function),
+                    premises,
+                } if premises.is_empty()
+            )
+        });
     let owns_one_execution_frontier =
-        !statement_contains_call(function.body()) && !leading_have && !grouped_choice_scope;
+        !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
     let plain_contract = function_block
         .requires()
         .iter()
@@ -65,6 +92,16 @@ fn grouped_flat_proof_supported(
             let mut predicates = BTreeSet::new();
             collect_called_predicates(proposition, &mut predicates);
             predicates.is_empty()
+        })
+        && function_block
+            .requires()
+            .iter()
+            .all(|requirement| !requirement_contains_declared_resource(requirement))
+        && function_block.ensures().iter().all(|clause| {
+            !matches!(
+                clause.ensure(),
+                Ensure::Resource(resource) if resource_clause_contains_declared(resource)
+            )
         });
     owns_one_execution_frontier && plain_contract
 }
@@ -356,7 +393,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let direct_proof = if !grouped_flat_proof_supported(function_block, &function, tactics) {
+    let direct_proof = if !grouped_flat_proof_supported(function_block, tactics) {
         None
     } else {
         try_check_flat_function_proof(
