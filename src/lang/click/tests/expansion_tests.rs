@@ -4627,6 +4627,25 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
         + 1;
     let sources = [("read_at.c", c_source)];
 
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        });
+    verified.expect("the leading loadability have should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replay_executions, 0, "the loadability have entered replay");
+    assert_eq!(context_exports, 0, "the loadability Proof exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary loadability verification checked a certificate"
+    );
+
     let expanded = expand_c0_tactic_source_at(click_source, &sources, line, column)
         .expect("restricted simp loadability proof should expand");
     let expanded_have_start = expanded.find("have loadable(").unwrap();

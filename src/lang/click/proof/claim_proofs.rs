@@ -218,7 +218,9 @@ fn value_predicate_definition_supported(
 
 fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
     match proposition {
-        ClickProposition::Comparison { .. } | ClickProposition::Defined { .. } => true,
+        ClickProposition::Comparison { .. }
+        | ClickProposition::Defined { .. }
+        | ClickProposition::Loadable { .. } => true,
         ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
             leading_point_proposition_supported(proposition)
         }
@@ -233,7 +235,6 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         }
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
-        | ClickProposition::Loadable { .. }
         | ClickProposition::PredicateCall { .. } => false,
     }
 }

@@ -11353,13 +11353,16 @@ impl<'a> Proof<'a> {
             vec![checked.target.clone()]
         };
         facts = facts.with_fact(checked.target);
+        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .replace_execution_at(self.focused, facts, execution),
+            goals: self.state.goals.discharged_if_or_execution_at(
+                self.focused,
+                complete,
+                facts,
+                execution,
+            ),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
         })
