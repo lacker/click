@@ -1209,6 +1209,29 @@ fn example_project_creates_only_canonical_terms(project: &str, sidecar: &str) {
 }
 
 #[test]
+fn owned_split_buffer_carried_load_facts_stay_on_direct_proof_path() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest
+        .join("examples")
+        .join("owned-split-buffer")
+        .join("owned_split_buffer.click");
+    let click_source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let sources = crate::cli::read_verifying_sources(&path, &click_source)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
+    let (verified, fallbacks) =
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&click_source, &c_sources));
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    assert_eq!(
+        fallbacks,
+        0,
+        "`{}` should interpret every explicit linear tactic directly on Proof",
+        path.display()
+    );
+}
+
+#[test]
 fn borrowed_slice_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("borrowed-slice", "borrowed_slice.click");
 }

@@ -15,6 +15,9 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -34,6 +37,16 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
     let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_explicit_linear_fallbacks<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -1736,6 +1749,22 @@ impl<'a> Proof<'a> {
         let facts = ProofFacts::from_ordered(available);
         let mut lowering_context = available.to_vec();
         append_resource_context_observable_facts(state.resources(), &mut lowering_context);
+        let goal = goal(GoalContext {
+            facts,
+            unfolded_predicates: PersistentOrderedSet::default(),
+            execution: None,
+        });
+        let goal = match &goal {
+            Goal::Proposition(proposition) => goal.with_context(GoalContext {
+                facts: proposition
+                    .context
+                    .facts
+                    .with_selected_load_equality_bridge(&proposition.kernel),
+                unfolded_predicates: proposition.context.unfolded_predicates.clone(),
+                execution: proposition.context.execution.clone(),
+            }),
+            Goal::Frontier(_) | Goal::FunctionOutcome(_) => goal.clone(),
+        };
         Self {
             context: Arc::new(ProofContext::Point(PointProofContext {
                 claim_label,
@@ -1761,11 +1790,7 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
 
-                goals: ProofGoals::root(goal(GoalContext {
-                    facts,
-                    unfolded_predicates: PersistentOrderedSet::default(),
-                    execution: None,
-                })),
+                goals: ProofGoals::root(goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
@@ -8752,7 +8777,11 @@ impl<'a> Proof<'a> {
             // surface did not yet admit it. Preserve that transactional
             // fallback while successful explicit scripts take the direct
             // path. Smart-script failures retain their checked diagnostic.
-            Err(_) if !contains_search && !crate::instrumentation::deadline_exceeded() => Ok(None),
+            Err(_) if !contains_search && !crate::instrumentation::deadline_exceeded() => {
+                #[cfg(test)]
+                EXPLICIT_LINEAR_FALLBACKS.with(|fallbacks| fallbacks.set(fallbacks.get() + 1));
+                Ok(None)
+            }
             result => result,
         }
     }
@@ -11948,6 +11977,35 @@ impl ProofFacts {
             Proposition::CResourceSeparate { .. } | Proposition::CMemoryDisjoint { .. }
         ) && !self.contains(goal)
             && self.assumptions.proves(goal)
+        {
+            self.with_fact(goal.clone())
+        } else {
+            self.clone()
+        }
+    }
+
+    /// Materializes one selected equality across a checked chain of load
+    /// variables. This keeps the ordinary `Assumption` checker exact while
+    /// allowing a new point goal to consume equality transport explicitly
+    /// carried through the preceding statement. Selection follows only the
+    /// goal's indexed equality buckets; unrelated ambient equalities remain
+    /// implicit and are never visited.
+    fn with_selected_load_equality_bridge(&self, goal: &Proposition) -> Self {
+        if self.pure_replay_available(goal)
+            || !matches!(
+                goal,
+                Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
+            )
+        {
+            return self.clone();
+        }
+        let candidates = self.bitvector_equalities_mentioning(goal);
+        if !candidates.is_empty()
+            && premise_bridged_by_load_variable_chain_with_origins(
+                goal,
+                &candidates,
+                &self.assumptions,
+            )
         {
             self.with_fact(goal.clone())
         } else {
