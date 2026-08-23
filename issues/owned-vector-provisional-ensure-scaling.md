@@ -1,4 +1,4 @@
-# Owned-vector provisional ensure lowering is superlinear
+# Owned-vector provisional ensure lowering repeatedly scans range facts
 
 ## Violated invariant
 
@@ -15,23 +15,41 @@ In `examples/owned-vector/vector.click`, replace the persistent
 `open(allocated_vector(owner)) { ... }` scope containing the three preparatory
 steps, so the scope closes before `vector_grow(owner)`.
 
-With the returned-allocation/caller-frame fix in place, run:
+With the returned-allocation/caller-frame fix in place, use the existing
+explicit statement operation for the `vector_grow` call while the ordinary
+statement-step replay handoff is incomplete:
+
+```click
+step() using {
+    owner->cap <= 536870910;
+}
+```
+
+This is a diagnostic route through the already checked multi-successor
+operation, not the intended final surface proof. A plain `step()` must work
+again when `replay-smell.md` retires the parallel exactly-one adapter.
+
+Then run:
 
 ```text
 click profile examples/owned-vector --time-limit 30s
 ```
 
 The resource transition advances, but the profile times out in the
-`c(grown) == 0` proof branch. On the 2026-08-23 development baseline it reports:
+`c(grown) == 0` proof branch. On the current 2026-08-23 development baseline it
+reports:
 
-- 18.093 seconds in `vector_push` provisional ensure lowering;
-- 55,847 `range membership: offset equality` calls taking 8.740 seconds; and
-- 25.212 seconds of interrupted verifier-core work at the 30-second deadline.
+- 22.821 seconds in `vector_push` provisional ensure lowering;
+- 98,586 `range membership: offset equality` calls taking 8.998 seconds; and
+- 26.714 seconds of interrupted verifier-core work at the 30-second deadline.
 
 The focused dynamic reallocation mdtest remains fast, so this is not necessary
 cost for classifying allocation continuity. The uncommitted owned-vector proof
 edit is only the end-to-end trigger; reduce the repeated range query into a
-small deterministic scaling regression before changing the engine.
+small deterministic scaling regression before changing the engine. Keep this
+issue separate from the resource roadmap because the violated invariant is
+general ensure-lowering complexity and the likely repair is a fact-query index
+or memo boundary, not resource lifetime semantics.
 
 ## Intended regression
 

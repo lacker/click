@@ -134,10 +134,13 @@ explicit persistent view at `free` and preserve a proved-separate view.
 The focused scoped-open regression now passes. Opaque allocation lifetime
 effects lower provisional ensures first, split only when returned and consumed
 allocation identities remain undecided, and retain one checked successor per
-identity case. Ordinary `step(); if ...` certificates own and replay those
-successor siblings; no new surface tactic was added. The generated identity
-condition is snapshot-qualified, and whole-function replay lowers it separately
-for each concrete outcome instead of reusing one branch's fresh kernel variables.
+identity case. The checked `Proof` statement operation can retain that binary
+partition. The remaining legacy grouped-replay adapter still rejects the same
+ordinary `step()` because it requires exactly one successor; completing that
+handoff belongs to `replay-smell.md`, not to a new resource operation or surface
+tactic. The generated identity condition is snapshot-qualified, and
+whole-function replay lowers it separately for each concrete outcome instead
+of reusing one branch's fresh kernel variables.
 
 The returned dynamic-range association is now reduced and covered separately.
 Opaque lifetime checking first classifies returned allocation continuity by
@@ -148,11 +151,29 @@ focused regression uses a returned allocation and owned range whose size is a
 mutable field; it fails on the old kernel with the same stale returned `owns`
 diagnostic and passes with the corrected transition.
 
-Applying the scoped proof repair to `owned-vector` now advances beyond that
-runtime error and exposes an independent verifier-core scaling problem while
-lowering the later `vector_push` ensures. That tooling failure is tracked in
-`owned-vector-provisional-ensure-scaling.md`; the incomplete owned-vector proof
+Applying the scoped proof repair to `owned-vector` and selecting the existing
+multi-successor-aware explicit statement operation advances beyond that runtime
+error. A current 30-second profile then spends 22.821 seconds lowering
+provisional `vector_push` ensures and performs 98,586 range-membership offset
+equality queries before timing out. This is a distinct verifier-core scaling
+invariant with a different likely fix, so its reduction remains in
+`owned-vector-provisional-ensure-scaling.md`. The incomplete owned-vector proof
 edit remains out of this green resource-kernel checkpoint.
+
+## Remaining roadmap
+
+1. Complete the ordinary statement-step handoff in `replay-smell.md`, so a
+   plain `step()` retains the kernel-certified successor partition through
+   `Proof` without a parallel exactly-one replay rule. Do not add resource
+   semantics or require different surface syntax for this adapter gap.
+2. Reduce and fix the provisional-ensure query curve in
+   `owned-vector-provisional-ensure-scaling.md`. Judge it with deterministic
+   work over several context sizes, not only the owned-vector wall clock.
+3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
+   unchanged owned-vector proof, remove its quarantine, and run the full gate.
+4. Close this issue only after the focused lifetime regressions, resource
+   scaling regression, and owned-vector end-to-end case are all green. File a
+   new issue only if that completed path exposes another independent invariant.
 
 ## Intended regressions
 

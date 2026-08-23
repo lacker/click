@@ -24,9 +24,10 @@ when evidence exposes one.
   verification and expansion still advance a large mutable semantic state in
   parallel with the checked `Proof` model.
 - [Resource tracking across execution transitions](resource-tracking.md):
-  owned-vector retains persistent `observe` projections across a consuming
-  reallocation; audit the existing scoped resource mechanism and ensure
-  direct and opaque frontier steps apply one documented lifetime law.
+  umbrella roadmap for the scoped owned-vector repair, checked successor
+  handoff, resource-lifetime regressions, scaling dependency, and final
+  end-to-end unquarantine.
 - [Owned-vector provisional ensure scaling](owned-vector-provisional-ensure-scaling.md):
   after the resource transition advances, dynamic range membership repeatedly
-  scans the proof context while lowering a later verified call's ensures.
+  scans the proof context while lowering a later verified call's ensures; this
+  is a separate verifier-core complexity invariant.
