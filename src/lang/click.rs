@@ -1775,7 +1775,7 @@ pub struct CertifiedFactTransport {
 pub(crate) struct PlannedStatementTransition {
     pub(crate) transition: CertifiedStatementTransition,
     pub(crate) next_opaque_call: u64,
-    pub(crate) next_verification_variable: u64,
+    pub(crate) next_kernel_variable: u64,
 }
 
 /// A tactic in an explicit `.click` proof script.

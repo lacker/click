@@ -166,7 +166,7 @@ pub(super) fn execute_c_statement_verification_paths(
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     budget.consume_statement_step()?;
     if execution_semantics.loops == CLoopSemantics::ApplyVerifiedRules
@@ -326,8 +326,7 @@ pub(super) fn execute_c_statement_verification_paths(
             // while ordinary statement execution allocates opaque-call
             // identities through `budget`; synchronize both sides before and
             // after crossing that boundary so neither can reuse an identity.
-            budget.next_verification_variable =
-                budget.next_verification_variable.max(variables.next);
+            budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
             let operation = match statement {
                 CStatement::Skip => "verification statement: skip",
                 CStatement::Declare { .. } => "verification statement: declare",
@@ -358,7 +357,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     )
                 },
             );
-            variables.next = variables.next.max(budget.next_verification_variable);
+            variables.next = variables.next.max(budget.next_kernel_variable);
             paths?
         }
     };
@@ -375,7 +374,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
     prefix_facts: &[ExecutionPureFact],
     prefix_obligations: &[ProofObligation],
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let effective_assumptions =
         assumptions_with_path_context(assumptions, prefix_facts, prefix_obligations);
@@ -419,7 +418,7 @@ pub(super) fn execute_c_while_verification_paths(
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -450,7 +449,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     initialization_proven: bool,
     preservation_proven: bool,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -481,7 +480,7 @@ fn execute_c_while_exit_paths(
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     let mut base_obligations = Vec::new();
     for proposition in invariant {
@@ -933,7 +932,7 @@ pub(super) fn collect_loop_preservation_summary(
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
     let whole_loop_effect_facts = whole_loop_effect_summaries
@@ -1099,7 +1098,7 @@ pub(super) fn prepare_loop_top_state(
     body: &CStatement,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<(CState, Vec<Proposition>)> {
     let mut top_state = havoc_loop_modified_locals(entry_state, body, variables);
     let include_mutable_summaries = statement_may_write_memory(body);
@@ -1610,7 +1609,7 @@ pub(super) fn assume_condition_truthiness(
 pub(super) fn havoc_loop_modified_locals(
     state: &CState,
     body: &CStatement,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
 ) -> CState {
     let mut state = state.clone();
     let mut names = BTreeSet::new();

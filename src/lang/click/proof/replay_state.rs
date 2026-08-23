@@ -172,7 +172,7 @@ pub(super) struct TacticReplayState {
     pub(super) ordered_finalization: bool,
     pub(super) grouped_contract: bool,
     pub(super) next_opaque_call: u64,
-    pub(super) next_verification_variable: u64,
+    pub(super) next_kernel_variable: u64,
     pub(super) next_path_choice: usize,
     /// Immutable facts at the execution root. Every proof branch reads the
     /// same entry context, so clones share it rather than copying a

@@ -64,7 +64,7 @@ applies there.
 
 ## Load variables are the canonical form of a load
 
-A load variable is the canonical form of the load it stands for, not an
+A load variable is the canonical form of the load it represents, not an
 alias for it. The load term carries an entire interned snapshot; the
 variable is small, stable across snapshots that leave the cell alone, and
 content-addressed so that independent producers (symbolic execution,
@@ -93,8 +93,8 @@ or `old(x)`, and diagnostics print one by looking up the load it stands for.
 ## What is enforced today
 
 - `canonical_term`, `canonical_offset_term`, and `canonical_condition_fact`
-  are the comparison form: `terms_match_modulo_canonical_names` and
-  `offsets_match_modulo_canonical_names` answer exactly by canonical-form
+  are the comparison form: `terms_have_same_canonical_form` and
+  `offsets_have_same_canonical_form` answer exactly by canonical-form
   equality (with a load-free fast path, since load-free terms are fixed
   points). Regressions live in `src/kernel/tests/canonicalization_tests.rs`.
 - **Comparison-side keying is canonical throughout the availability
@@ -122,7 +122,7 @@ or `old(x)`, and diagnostics print one by looking up the load it stands for.
   cell never enters offset arithmetic as a load term, and its defining fact
   is emitted beside it.
 - Surface synthesis resolves load variables it cannot otherwise express
-  through the registry (`resolve_canonical_load_variables_from_registry`) —
+  through the registry (`resolve_load_variables_from_registry`) —
   the sanctioned display direction: rendering a variable as source syntax
   is the printer's job, distinct from the forbidden comparison-side
   expansion.
@@ -135,19 +135,20 @@ variable where it is born, with its defining fact beside it, so every
 fact, offset, and range built from it is canonical and no consumer depends
 on bridging between canonical and non-canonical terms. Comparison-time
 canonicalization (`canonical_term`) remains as the definition of the form,
-and the reasoning that views a load variable as the load it names
-(`viewed_as_memory_load`, `registered_canonical_load`) is how consumers
+and the reasoning that views a load variable as the load it represents
+(`viewed_as_memory_load`, `registered_load_for_variable`) is how consumers
 keyed on load shape — substitution, quantifier triggers, frame checks,
-loadability witnesses, the quantified replay index — see through a name.
+loadability witnesses, and the quantified replay index — see through the
+variable.
 
 A load variable is identified by its cell and the cell's *epoch*: the
-snapshot the naming walk (`cell_epoch_for_canonical_naming`) reaches from
+snapshot the epoch walk (`cell_epoch_for_load_variable`) reaches from
 the load's snapshot by crossing only edges proven, without assumptions, not
 to write the cell — block declarations, cells forgotten, stores and call
 havocs at constant-disjoint offsets or in distinct blocks. The walk runs on
 the live snapshot before the canonical form restricts it, since the
 restricted snapshot is a fresh intern with no derivation. Two snapshots
-that reach one epoch name the cell identically, and the frame checks'
+that reach one epoch produce the same load variable, and the frame checks'
 endpoint matching (`memories_directly_match_for_pointer_load`) accepts
 that identity, so a fact carried unchanged through several steps still
 meets a later effect summary.

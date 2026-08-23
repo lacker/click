@@ -292,7 +292,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         crate::kernel::CExpressionOutcome::Value(CValue::Int32(
             bits @ Bitvector32Term::Variable(variable),
         )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer)
-            && crate::kernel::is_canonical_load_variable(&variable) =>
+            && crate::kernel::is_load_variable(&variable) =>
         {
             symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
@@ -614,11 +614,11 @@ pub(in crate::lang::click) fn symbolic_contract_memory_load(
         CType::Void => Err("cannot symbolically load void".to_string()),
         // Canonicalizing at creation: the contract-side read evaluates to the
         // same load variable symbolic execution introduces for this cell.
-        CType::Int32 => Ok(CValue::Int32(crate::kernel::canonical_load_term(
+        CType::Int32 => Ok(CValue::Int32(crate::kernel::canonical_form_of_load(
             crate::kernel::intern_c_memory(memory.clone()),
             pointer,
         ))),
-        CType::UInt8 => Ok(CValue::UInt8(crate::kernel::canonical_load_term(
+        CType::UInt8 => Ok(CValue::UInt8(crate::kernel::canonical_form_of_load(
             crate::kernel::intern_c_memory(memory.clone()),
             pointer,
         ))),
@@ -646,9 +646,9 @@ fn symbolic_pointer_contract_memory_load(
         }
     };
     // A load never enters a pointer offset as a `MemoryLoad` term: the
-    // canonical load variable names it, so contract-lowered ranges write
+    // load variable represents it, so contract-lowered ranges write
     // addresses exactly as kernel execution does.
-    let bits = if let Some((variable, _)) = crate::kernel::canonical_load_variable_for_term(&bits) {
+    let bits = if let Some((variable, _)) = crate::kernel::load_variable_for_term(&bits) {
         Bitvector32Term::Variable(variable)
     } else {
         bits

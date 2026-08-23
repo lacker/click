@@ -457,9 +457,9 @@ fn materialized_load_is_unchanged(
         // stands for.
         CValue::Int32(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
-            if crate::kernel::eval::is_canonical_load_variable(variable) =>
+            if crate::kernel::eval::is_load_variable(variable) =>
         {
-            let Some(load) = crate::kernel::eval::registered_canonical_load(variable) else {
+            let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) else {
                 return false;
             };
             load

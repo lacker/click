@@ -215,7 +215,7 @@ pub(super) fn execute_c_function_verification_paths(
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
-    variables: &mut VerificationVariableGenerator,
+    variables: &mut KernelVariableGenerator,
     prepare_contract_resources: bool,
 ) -> ExecutionResult<Vec<CFunctionPath>> {
     budget.consume_function_call()?;
@@ -544,13 +544,11 @@ fn execute_verified_function_rule(
             existing_variables
         },
     );
-    let mut variables = VerificationVariableGenerator::fresh_for(
-        budget.next_verification_variable,
-        existing_variables,
-    );
+    let mut variables =
+        KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
     let memory_identity = variables.next();
     let result_identity = variables.next();
-    budget.next_verification_variable = variables.next;
+    budget.next_kernel_variable = variables.next;
     let mut paths = Vec::new();
     for arguments_path in evaluate_c_arguments_paths(caller_state, arguments, assumptions, budget)?
     {

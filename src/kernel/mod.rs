@@ -23,30 +23,29 @@ pub(crate) use assumptions::{
     record_implicit_reasoning_provenance, with_search_attempt_rollback,
 };
 pub(crate) use eval::canonical_condition_fact;
-pub(crate) use eval::canonical_load_term;
-pub(crate) use eval::canonical_load_variable_for_term;
-#[cfg(test)]
-pub(crate) use eval::canonical_load_variable_with_origin;
+pub(crate) use eval::canonical_form_of_load;
 pub(crate) use eval::canonical_term;
 pub(crate) use eval::canonicalized_offset_index_term;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) use eval::count_canonical_at_creation_violations;
-pub(crate) use eval::is_canonical_load_defining_fact;
-pub(crate) use eval::is_canonical_load_variable;
-pub(crate) use eval::offsets_match_modulo_canonical_names;
-pub(crate) use eval::proposition_mentions_registered_canonical_load;
-pub(crate) use eval::registered_canonical_load;
-pub(crate) use eval::registered_canonical_load_origin;
+pub(crate) use eval::is_load_variable;
+pub(crate) use eval::is_load_variable_defining_fact;
+#[cfg(test)]
+pub(crate) use eval::load_variable_for_cell_with_origin;
+pub(crate) use eval::load_variable_for_term;
+pub(crate) use eval::offsets_have_same_canonical_form;
+pub(crate) use eval::proposition_mentions_registered_load_variable;
+pub(crate) use eval::registered_load_for_variable;
+pub(crate) use eval::registered_load_origin_for_variable;
 pub(crate) use eval::resolve_pending_heap_allocations;
-pub(crate) use eval::terms_match_modulo_canonical_names;
+pub(crate) use eval::terms_have_same_canonical_form;
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;
 pub use primitives::*;
 pub(crate) use reasoning::memory_effect_write_pointers;
-pub(crate) use reasoning::resolve_canonical_load_variables_from_registry;
-pub(crate) use reasoning::resolve_canonical_load_variables_via;
+pub(crate) use reasoning::resolve_load_variables_from_registry;
+pub(crate) use reasoning::resolve_load_variables_via;
 pub(crate) use reasoning::resolve_minted_load_variables;
 pub(crate) use reasoning::with_bounded_snapshot_comparison;
 pub(crate) use reasoning::with_isolated_memory_resolution_fuel;
@@ -111,8 +110,8 @@ impl VerificationSession {
         });
         if outermost {
             primitives::start_fresh_c_memory_arena();
-            eval::clear_canonical_load_registry();
-            eval::clear_load_name_caches();
+            eval::clear_load_variable_registry();
+            eval::clear_load_canonicalization_caches();
             memory_provenance::clear_canonical_form_caches();
             memory_provenance::clear_provenance_memos();
             reasoning::memory_resolution::clear_canonical_memory_cache();

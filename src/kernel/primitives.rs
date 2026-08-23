@@ -728,7 +728,7 @@ pub struct ExecutionBudget {
     pub(super) loop_unrolls: usize,
     pub(super) paths: usize,
     pub(super) next_opaque_call: u64,
-    pub(super) next_verification_variable: u64,
+    pub(super) next_kernel_variable: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -2078,12 +2078,12 @@ pub(super) struct CArgumentsPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct VerificationVariableGenerator {
+pub(super) struct KernelVariableGenerator {
     pub(super) next: u64,
     reserved: BTreeSet<Variable>,
 }
 
-impl VerificationVariableGenerator {
+impl KernelVariableGenerator {
     /// Build the deterministic fresh-name stream used by both planning and
     /// certificate replay. Given the same lower bound and reserved set, the
     /// first available identifier and every successor are identical; callers

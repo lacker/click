@@ -223,7 +223,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         program_point_states: context.program_point_states.clone(),
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
-                        next_verification_variable: context.next_verification_variable,
+                        next_kernel_variable: context.next_kernel_variable,
                     });
                 }
             }
@@ -454,7 +454,7 @@ fn split_execution_proof_branch_contexts(
                     case_path
                 },
                 next_opaque_call: context.next_opaque_call,
-                next_verification_variable: context.next_verification_variable,
+                next_kernel_variable: context.next_kernel_variable,
             };
             if transition.is_true {
                 then_contexts.push(next);
@@ -775,7 +775,7 @@ fn advance_execution_proof_statement(
                 CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
                 &label,
                 &mut context.next_opaque_call,
-                &mut context.next_verification_variable,
+                &mut context.next_kernel_variable,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
             )?,
@@ -788,7 +788,7 @@ fn advance_execution_proof_statement(
                 initialization_proven,
                 preservation_proven,
                 &mut context.next_opaque_call,
-                &mut context.next_verification_variable,
+                &mut context.next_kernel_variable,
             )?,
         };
         if matches!(statement, CStatement::While { .. }) {
@@ -946,7 +946,7 @@ fn advance_execution_proof_statement(
                     program_point_states,
                     case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
-                    next_verification_variable: context.next_verification_variable,
+                    next_kernel_variable: context.next_kernel_variable,
                 }),
                 CStatementOutcome::Return { .. } => {}
                 CStatementOutcome::VerificationDiverges => {}

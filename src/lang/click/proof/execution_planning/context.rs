@@ -77,7 +77,7 @@ pub(in crate::lang::click) fn verify_loop_execution_proofs(
             program_point_states: ProgramPointStates::new(),
             case_path: Vec::new(),
             next_opaque_call: 0,
-            next_verification_variable: 0,
+            next_kernel_variable: 0,
         }],
         &mut next_statement_index,
         &mut next_loop_index,
@@ -221,7 +221,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofContext {
     pub(in crate::lang::click::proof) program_point_states: ProgramPointStates,
     pub(in crate::lang::click::proof) case_path: Vec<ProofCaseChoice>,
     pub(in crate::lang::click::proof) next_opaque_call: u64,
-    pub(in crate::lang::click::proof) next_verification_variable: u64,
+    pub(in crate::lang::click::proof) next_kernel_variable: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -463,7 +463,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         .push(PlannedStatementTransition {
             transition: transition.clone(),
             next_opaque_call: replay.next_opaque_call,
-            next_verification_variable: replay.next_verification_variable,
+            next_kernel_variable: replay.next_kernel_variable,
         });
     if let Some(environments) = construction {
         construct_simple_step_for_planned_operation(

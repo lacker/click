@@ -320,12 +320,12 @@ fn execute_c_heap_allocate_paths(
 
         while state
             .memory
-            .heap_identity_in_use(budget.next_verification_variable)
+            .heap_identity_in_use(budget.next_kernel_variable)
         {
-            budget.next_verification_variable += 1;
+            budget.next_kernel_variable += 1;
         }
-        let pointer = Pointer::symbolic(Variable(budget.next_verification_variable));
-        budget.next_verification_variable += 1;
+        let pointer = Pointer::symbolic(Variable(budget.next_kernel_variable));
+        budget.next_kernel_variable += 1;
         let success_state = state.clone().with_memory(
             state
                 .memory

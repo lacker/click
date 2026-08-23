@@ -380,9 +380,10 @@ fn condition_fact_mentions_load_of(
     fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
         match term {
             Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
-            // A load variable mentions the load it names.
+            // A load variable mentions the load it represents.
             Bitvector32Term::Variable(variable) => {
-                if let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+                if let Some((_, pointer)) =
+                    crate::kernel::eval::registered_load_for_variable(variable)
                 {
                     pointers.push(pointer);
                 }
@@ -640,11 +641,11 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
         (premises, conclusion)
     }
 
-    /// A load the conclusion reads: a load term, or a load variable with
-    /// the load it names.
+    /// A load the conclusion reads, represented by either a load term or a
+    /// load variable.
     enum ConclusionLoad {
         Term(SharedCMemory, Pointer),
-        Name(Variable, Pointer),
+        Variable(Variable, Pointer),
     }
     fn collect_loads(term: &Bitvector32Term, loads: &mut Vec<ConclusionLoad>) {
         match term {
@@ -655,9 +656,10 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                 ));
             }
             Bitvector32Term::Variable(variable) => {
-                if let Some((_, pointer)) = crate::kernel::eval::registered_canonical_load(variable)
+                if let Some((_, pointer)) =
+                    crate::kernel::eval::registered_load_for_variable(variable)
                 {
-                    loads.push(ConclusionLoad::Name(*variable, pointer));
+                    loads.push(ConclusionLoad::Variable(*variable, pointer));
                 }
             }
             Bitvector32Term::Add(left, right)
@@ -763,7 +765,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
                 }
                 // The name denotes this memory's cell exactly when this
                 // memory's own name for the cell is that name.
-                ConclusionLoad::Name(variable, pointer) => (
+                ConclusionLoad::Variable(variable, pointer) => (
                     pointer,
                     crate::kernel::canonical_term(&Bitvector32Term::MemoryLoad(
                         crate::kernel::intern_c_memory(memory.clone()),
@@ -1190,7 +1192,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
     let existing = crate::instrumentation::measure_operation(
         function.name(),
         "independent kernel execution",
-        "verification variable collection",
+        "kernel variable collection",
         || {
             let mut existing = BTreeSet::new();
             collect_c_state_bitvector_variables(&state, &mut existing);
@@ -1203,8 +1205,7 @@ pub(super) fn prove_symbolic_c_function_verification_paths_with_environment_and_
             existing
         },
     );
-    let mut variables =
-        VerificationVariableGenerator::fresh_for(budget.next_verification_variable, existing);
+    let mut variables = KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing);
     let paths = match crate::instrumentation::measure_operation(
         function.name(),
         "independent kernel execution",
@@ -1778,8 +1779,8 @@ pub(crate) fn propositions_alpha_equivalent(left: &Proposition, right: &Proposit
             Proposition::ConditionIs(right_condition, right_value),
         ) => {
             left_value == right_value
-                && condition_with_canonical_loads(left_condition)
-                    .zip(condition_with_canonical_loads(right_condition))
+                && condition_with_canonicalized_loads(left_condition)
+                    .zip(condition_with_canonicalized_loads(right_condition))
                     .is_some_and(|(left, right)| left == right)
         }
         (
@@ -2242,7 +2243,7 @@ pub(super) fn certification_proves_proposition(
         return true;
     }
     if let Proposition::ConditionIs(condition, value) = proposition
-        && let Some(canonical) = condition_with_canonical_loads(condition)
+        && let Some(canonical) = condition_with_canonicalized_loads(condition)
         && &canonical != condition
         && certification_proves_proposition(
             assumptions,
@@ -2488,8 +2489,8 @@ fn names_of_one_cell_framed(
         return false;
     };
     let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
-        crate::kernel::eval::registered_canonical_load_origin(left_variable),
-        crate::kernel::eval::registered_canonical_load_origin(right_variable),
+        crate::kernel::eval::registered_load_origin_for_variable(left_variable),
+        crate::kernel::eval::registered_load_origin_for_variable(right_variable),
     ) else {
         return false;
     };

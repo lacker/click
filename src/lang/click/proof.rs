@@ -246,7 +246,7 @@ fn apply_logical_goal_tactic(
 }
 
 /// Checks a bitvector equality target by transitive chaining of the listed
-/// equality premises, with canonical load terms as term identity. The
+/// equality premises, with load terms in canonical form as term identity. The
 /// decide engine chains constants and variables; certificates also chain
 /// through load terms recorded at intermediate states.
 fn pointer_offsets_match_by_term_equivalence(
@@ -325,7 +325,7 @@ fn equal_by_premise_chain(
     available: &[Proposition],
 ) -> bool {
     let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(target_left, target_right), true) =
-        crate::kernel::c_condition_fact_with_canonical_loads(target)
+        crate::kernel::c_condition_fact_with_canonicalized_loads(target)
     else {
         return false;
     };
@@ -397,7 +397,7 @@ fn equal_by_premise_chain(
                 add_equality(left, right);
             }
             let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
-                crate::kernel::c_condition_fact_with_canonical_loads(premise)
+                crate::kernel::c_condition_fact_with_canonicalized_loads(premise)
             else {
                 continue;
             };
@@ -725,14 +725,14 @@ pub(super) fn check_atomic_premise_derivation_goal(
     let derivation = derive_from(&premises, target)
         .or_else(|| derive_from(&with_effect_context(&premises), target));
     // Premises recorded at different program points can write the same load
-    // through different snapshots; retry with canonical loads so the chain
+    // through different snapshots; retry with loads in canonical form so the chain
     // unifies.
     let derivation = derivation.or_else(|| {
         let canonical_premises = premises
             .iter()
-            .map(crate::kernel::c_condition_fact_with_canonical_loads)
+            .map(crate::kernel::c_condition_fact_with_canonicalized_loads)
             .collect::<Vec<_>>();
-        let canonical_target = crate::kernel::c_condition_fact_with_canonical_loads(target);
+        let canonical_target = crate::kernel::c_condition_fact_with_canonicalized_loads(target);
         if canonical_premises == premises && &canonical_target == target {
             return None;
         }

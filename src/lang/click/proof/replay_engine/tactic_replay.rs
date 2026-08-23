@@ -178,7 +178,7 @@ fn execute_frontier_local_loop(
             program_point_states: replay.program_point_states.clone(),
             case_path,
             next_opaque_call: replay.next_opaque_call,
-            next_verification_variable: replay.next_verification_variable,
+            next_kernel_variable: replay.next_kernel_variable,
         }],
         &mut next_statement_index,
         &mut next_loop_index,

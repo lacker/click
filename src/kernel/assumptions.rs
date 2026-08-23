@@ -1465,7 +1465,7 @@ impl PureFactContext {
 
     /// The load-variable congruence neighbor of a term: a load variable
     /// whose address lowers through the ground equalities in scope to a
-    /// different address names the same cell as the load variable for the
+    /// different address denotes the same cell as the load variable for the
     /// lowered address over the same epoch (`data[index]` with `index == 0`
     /// is `data[0]`). One bounded lowering per visited vertex; terms that
     /// are not load variables, or whose address is already lowest, have no
@@ -1477,7 +1477,7 @@ impl PureFactContext {
         let Bitvector32Term::Variable(variable) = term else {
             return None;
         };
-        let (memory, pointer) = crate::kernel::eval::registered_canonical_load(variable)?;
+        let (memory, pointer) = crate::kernel::eval::registered_load_for_variable(variable)?;
         let lowered = self.canonical_pointer(&pointer);
         if lowered == pointer {
             return None;
@@ -2917,8 +2917,8 @@ fn collect_affine_bitvector_terms(
             collect_affine_bitvector_terms(right, coefficient.checked_neg()?, terms, constant)?;
         }
         atom => {
-            // Atoms are keyed by their canonical form, so a raw load and
-            // the canonical variable naming it cancel affinely; the verdict
+            // Atoms are keyed by their canonical form, so a load term and
+            // its load variable cancel affinely; the verdict
             // stays assumption-free and replay-identical because the
             // canonical form is deterministic.
             let current = terms

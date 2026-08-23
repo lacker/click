@@ -165,7 +165,7 @@ thread_local! {
 /// per-cell distinctness stays on the bounded resolution check, and each
 /// suppression records a search truncation so the weaker context's negative
 /// answers are never memoized where the full check would have run. For
-/// callers like canonical-name origin bridging, whose answers must come
+/// callers like load-variable origin bridging, whose answers must come
 /// from recorded derivations and effect facts, never from whole-snapshot
 /// alias search.
 pub(crate) fn with_bounded_snapshot_comparison<T>(body: impl FnOnce() -> T) -> T {
@@ -636,14 +636,14 @@ fn bitvector_terms_equal_for_memory_resolution(
     if !consume_memory_resolution_fuel() {
         return false;
     }
-    // A canonical load variable is its load for equality reasoning: view it
+    // A load variable is its load for equality reasoning: view it
     // through the registry so snapshot provenance fires exactly as it would
     // for the load term, then fall through to the variable-form
     // paths if the load view does not decide.
     let canonical_view = |term: &Bitvector32Term| {
         if let Bitvector32Term::Variable(variable) = term {
             if let Some((memory, pointer)) =
-                crate::kernel::eval::registered_canonical_load_origin(variable)
+                crate::kernel::eval::registered_load_origin_for_variable(variable)
             {
                 return Some(Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
             }
@@ -1278,10 +1278,10 @@ fn materialized_cell_source(cell_pointer: &Pointer, value: &CValue) -> Option<Sh
         }
         CValue::Int32(Bitvector32Term::Variable(variable))
         | CValue::UInt8(Bitvector32Term::Variable(variable))
-            if crate::kernel::eval::is_canonical_load_variable(variable) =>
+            if crate::kernel::eval::is_load_variable(variable) =>
         {
             let (source, source_pointer) =
-                crate::kernel::eval::registered_canonical_load(variable)?;
+                crate::kernel::eval::registered_load_for_variable(variable)?;
             (&source_pointer == cell_pointer).then_some(source)
         }
         CValue::Void | CValue::Int32(_) | CValue::UInt8(_) | CValue::Pointer(_) => None,

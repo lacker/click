@@ -1347,12 +1347,12 @@ fn typed_ranges_disjoint_from_pointer_evidence(
         .collect()
 }
 
-/// The DAG epoch of one cell for canonical load naming: the snapshot at
+/// The DAG epoch used to construct one cell's load variable: the snapshot at
 /// which the loaded cell was last written or entered the world, walked
 /// assumption-free over recorded edges. Snapshots that differ only by
 /// effects the DAG proves disjoint from the cell share an epoch, so
-/// canonical names stay stable across them.
-pub(crate) fn cell_epoch_for_canonical_naming(
+/// load variables stay stable across them.
+pub(crate) fn cell_epoch_for_load_variable(
     memory: &SharedCMemory,
     pointer: &Pointer,
 ) -> Option<SharedCMemory> {
@@ -2169,11 +2169,8 @@ fn memories_directly_match_for_pointer_load(
     // effect summary whose `before` is the later live snapshot.
     if !pointer.block.starts_with("local:")
         && let (Some(left_epoch), Some(right_epoch)) = (
-            cell_epoch_for_canonical_naming(&crate::kernel::intern_c_memory(left.clone()), pointer),
-            cell_epoch_for_canonical_naming(
-                &crate::kernel::intern_c_memory(right.clone()),
-                pointer,
-            ),
+            cell_epoch_for_load_variable(&crate::kernel::intern_c_memory(left.clone()), pointer),
+            cell_epoch_for_load_variable(&crate::kernel::intern_c_memory(right.clone()), pointer),
         )
         && left_epoch == right_epoch
     {
@@ -2514,7 +2511,7 @@ pub(crate) fn clear_canonical_form_caches() {
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-const CANONICAL_LOAD_DEPTH_LIMIT: usize = 24;
+const LOAD_CANONICALIZATION_DEPTH_LIMIT: usize = 24;
 
 /// Deep, assumption-free canonical form for a term: every load resolves its
 /// cached cell or canonicalizes its snapshot and pointer, at every depth,
@@ -2525,7 +2522,7 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
     term: &Bitvector32Term,
     depth: usize,
 ) -> Bitvector32Term {
-    if depth >= CANONICAL_LOAD_DEPTH_LIMIT {
+    if depth >= LOAD_CANONICALIZATION_DEPTH_LIMIT {
         return term.clone();
     }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
@@ -2557,7 +2554,7 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
                         // could not cross anything. Walking the original
                         // snapshot lets two loads of one unwritten cell at
                         // different points share one canonical form.
-                        let epoch = cell_epoch_for_canonical_naming(memory, &canonical_pointer);
+                        let epoch = cell_epoch_for_load_variable(memory, &canonical_pointer);
                         let epoch = epoch.as_ref().unwrap_or(memory);
                         Bitvector32Term::MemoryLoad(
                             crate::kernel::intern_c_memory(canonical_c_memory_for_pointer_load(
@@ -2619,7 +2616,7 @@ pub(super) fn canonicalize_atomic_loads_with_depth(
             else_term,
         } => Bitvector32Term::If {
             condition: Box::new(
-                condition_with_canonical_loads_with_depth(condition, depth + 1)
+                condition_with_canonicalized_loads_with_depth(condition, depth + 1)
                     .unwrap_or_else(|| condition.as_ref().clone()),
             ),
             then_term: Box::new(canonicalize_atomic_loads_with_depth(then_term, depth + 1)),
@@ -3044,11 +3041,11 @@ fn transport_framed_atomic_bitvector(
     Some(match term {
         Bitvector32Term::Constant(_) => term.clone(),
         Bitvector32Term::Variable(variable) => {
-            // A canonical load variable transports as the load it names:
+            // A load variable transports as the load it represents:
             // when frame evidence rewrites that load to the post-effect
-            // snapshot, the fact is rewriteed with the post-point canonical
-            // name — the content-addressed mint gives the same name any
-            // later lowering at that snapshot produces. A defining equation
+            // snapshot, the fact is rewritten with the post-point load
+            // variable. Content-addressed construction gives the same variable
+            // to any later lowering at that snapshot. A defining equation
             // in the ambient assumptions carries the mint-time form,
             // whose live snapshot the frame checks can actually relate to
             // `after`; the registry's canonicalized form is the
@@ -3056,13 +3053,13 @@ fn transport_framed_atomic_bitvector(
             // The registry's origin is the first live snapshot the variable
             // was minted from: DAG-connected and cell-comparable to `after`,
             // which is what the frame checks below relate.
-            let named_load = crate::kernel::eval::registered_canonical_load_origin(variable)
+            let named_load = crate::kernel::eval::registered_load_origin_for_variable(variable)
                 .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)));
             if let Some(load) = named_load {
                 let transported = transport_framed_atomic_bitvector(&load, after, assumptions)?;
                 if transported != load
                     && let Some((renamed, _)) =
-                        crate::kernel::eval::canonical_load_variable_for_term(&transported)
+                        crate::kernel::eval::load_variable_for_term(&transported)
                 {
                     Bitvector32Term::Variable(renamed)
                 } else {
@@ -3402,11 +3399,13 @@ fn effect_pointer_equality_stops_at_the_verification_deadline() {
 
 /// Canonicalizes the loads inside a binary condition so forms differing
 /// only in redundant cached cells compare and prove identically.
-pub(super) fn condition_with_canonical_loads(condition: &ConditionTerm) -> Option<ConditionTerm> {
-    condition_with_canonical_loads_with_depth(condition, 0)
+pub(super) fn condition_with_canonicalized_loads(
+    condition: &ConditionTerm,
+) -> Option<ConditionTerm> {
+    condition_with_canonicalized_loads_with_depth(condition, 0)
 }
 
-fn condition_with_canonical_loads_with_depth(
+fn condition_with_canonicalized_loads_with_depth(
     condition: &ConditionTerm,
     depth: usize,
 ) -> Option<ConditionTerm> {
@@ -3441,13 +3440,13 @@ fn condition_with_canonical_loads_with_depth(
     })
 }
 
-/// Public form of canonical-load rewriting for condition facts: forms
-/// that differ only in redundant cached cells canonicalize identically.
-pub(crate) fn c_condition_fact_with_canonical_loads(fact: &Proposition) -> Proposition {
+/// Returns a condition fact with its loads in canonical form. Forms that
+/// differ only in redundant cached cells canonicalize identically.
+pub(crate) fn c_condition_fact_with_canonicalized_loads(fact: &Proposition) -> Proposition {
     let Proposition::ConditionIs(condition, value) = fact else {
         return fact.clone();
     };
-    match condition_with_canonical_loads(condition) {
+    match condition_with_canonicalized_loads(condition) {
         Some(canonical) => Proposition::ConditionIs(canonical, *value),
         None => fact.clone(),
     }

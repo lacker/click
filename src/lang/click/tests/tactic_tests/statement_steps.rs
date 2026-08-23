@@ -197,7 +197,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         value_type: CType::Int32,
     };
     let mut next_opaque_call = 0;
-    let mut next_verification_variable = 0;
+    let mut next_kernel_variable = 0;
     let (transitions, _) = certified_statement_transitions(
         &state,
         std::slice::from_ref(&fact),
@@ -206,7 +206,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         "simple transition test",
         &mut next_opaque_call,
-        &mut next_verification_variable,
+        &mut next_kernel_variable,
         StatementPrerequisitePolicy::Explicit,
         StatementFactTransportPolicy::None,
     )

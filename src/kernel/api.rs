@@ -151,10 +151,8 @@ pub fn c_loop_preservation_contexts(
     }
     collect_c_statement_bitvector_variables(body, &mut existing_variables);
     collect_assumption_variables(assumptions, &mut existing_variables);
-    let mut variables = VerificationVariableGenerator::fresh_for(
-        budget.next_verification_variable,
-        existing_variables,
-    );
+    let mut variables =
+        KernelVariableGenerator::fresh_for(budget.next_kernel_variable, existing_variables);
     let (top_state, whole_loop_effect_summaries) = prepare_loop_top_state(
         loop_entry_state,
         effect_checks,
@@ -373,7 +371,7 @@ pub fn abstract_c_state_for_join(
     for value in stable_entry_locals.values() {
         collect_c_value_bitvector_variables(value, &mut existing_variables);
     }
-    let mut variables = VerificationVariableGenerator::fresh_for(1_000_000, existing_variables);
+    let mut variables = KernelVariableGenerator::fresh_for(1_000_000, existing_variables);
     let mut abstract_state = state.clone();
     let mut abstract_objects = Vec::new();
     let mut preserved_blocks = BTreeSet::new();
@@ -927,7 +925,7 @@ pub fn fresh_int32_variable_for_propositions(propositions: &[Proposition]) -> Va
         collect_proposition_bitvector_variables(proposition, &mut reserved);
         collect_proposition_bound_variables(proposition, &mut reserved);
     }
-    VerificationVariableGenerator::fresh_for(0, reserved).next()
+    KernelVariableGenerator::fresh_for(0, reserved).next()
 }
 
 pub fn c_max_body() -> CStatement {
@@ -1273,19 +1271,19 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     )
 }
 
-fn statement_verification_variables(
+fn statement_kernel_variables(
     lower_bound: u64,
     state: &CState,
     statement: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
-) -> VerificationVariableGenerator {
+) -> KernelVariableGenerator {
     let mut existing = BTreeSet::new();
     collect_c_state_bitvector_variables(state, &mut existing);
     collect_c_statement_bitvector_variables(statement, &mut existing);
     collect_assumption_variables(assumptions, &mut existing);
     collect_execution_environment_variables(environment, &mut existing);
-    VerificationVariableGenerator::fresh_for(lower_bound, existing)
+    KernelVariableGenerator::fresh_for(lower_bound, existing)
 }
 
 pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
@@ -1296,8 +1294,8 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut variables = statement_verification_variables(
-        budget.next_verification_variable,
+    let mut variables = statement_kernel_variables(
+        budget.next_kernel_variable,
         &state,
         &statement,
         &assumptions,
@@ -1312,7 +1310,7 @@ pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and
         budget,
         &mut variables,
     );
-    budget.next_verification_variable = budget.next_verification_variable.max(variables.next);
+    budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {
@@ -1374,8 +1372,8 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
             None,
         );
     };
-    let mut variables = statement_verification_variables(
-        budget.next_verification_variable,
+    let mut variables = statement_kernel_variables(
+        budget.next_kernel_variable,
         &state,
         &statement,
         &assumptions,
@@ -1396,7 +1394,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         budget,
         &mut variables,
     );
-    budget.next_verification_variable = budget.next_verification_variable.max(variables.next);
+    budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
     let paths = match execution {
         Ok(paths) => paths,
         Err(limit) => {

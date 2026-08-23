@@ -19,15 +19,19 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(directory).expect("read docs directory") {
-        let path = entry.expect("read docs entry").path();
+fn files_with_extension(directory: &Path, extension: &str, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory).expect("read directory") {
+        let path = entry.expect("read directory entry").path();
         if path.is_dir() {
-            markdown_files(&path, files);
-        } else if path.extension().and_then(|value| value.to_str()) == Some("md") {
+            files_with_extension(&path, extension, files);
+        } else if path.extension().and_then(|value| value.to_str()) == Some(extension) {
             files.push(path);
         }
     }
+}
+
+fn markdown_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    files_with_extension(directory, "md", files);
 }
 
 fn slug(heading: &str) -> String {
@@ -862,6 +866,47 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
     assert!(
         failures.is_empty(),
         "retired documentation terminology:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn implementation_uses_canonical_form_and_load_variable_terms() {
+    let repository = root();
+    let mut files = vec![repository.join("WIP-FALLOUT.md")];
+    files_with_extension(&repository.join("src"), "rs", &mut files);
+    files_with_extension(&repository.join("design"), "md", &mut files);
+    files.sort();
+
+    let retired = [
+        "canonical load variable",
+        "canonical_load_variable",
+        "canonical name",
+        "canonical-name",
+        "canonical_name",
+        "canonical variable",
+        "canonical-variable",
+        "verification variable",
+        "verification_variable",
+    ];
+    let mut failures = Vec::new();
+    for path in files {
+        let source = fs::read_to_string(&path).expect("read implementation terminology source");
+        let lower = source.to_ascii_lowercase();
+        for alias in retired {
+            if lower.contains(alias) {
+                failures.push(format!(
+                    "{}: replace retired term `{alias}`",
+                    path.strip_prefix(&repository)
+                        .expect("repository-relative path")
+                        .display()
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "retired implementation terminology:\n{}",
         failures.join("\n")
     );
 }

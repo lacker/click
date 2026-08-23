@@ -145,7 +145,7 @@ pub(in crate::lang::click) enum SnapshotBlindPointerOffsetKey {
 /// fragment used by replay premises. Bound variables are represented by
 /// structural ordinals while free variables retain their kernel identities.
 /// Memory snapshots in loads are deliberately omitted, matching the
-/// separately checked canonical-load replay equivalence.
+/// separately checked canonical-form replay equivalence.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct QuantifiedReplayKey(AlphaPropositionKey);
 
@@ -431,13 +431,11 @@ fn snapshot_blind_bitvector_key(term: &Bitvector32Term) -> SnapshotBlindBitvecto
         Bitvector32Term::MemoryLoad(_, pointer) => {
             SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(pointer)))
         }
-        // A canonical load variable keys as the load it names: one O(1)
+        // A load variable keys as the load it represents: one O(1)
         // registry lookup, no snapshot in the key, and canonical forms
         // bucket with the load terms of the same cell.
-        Bitvector32Term::Variable(variable)
-            if crate::kernel::is_canonical_load_variable(variable) =>
-        {
-            match crate::kernel::registered_canonical_load(variable) {
+        Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable) => {
+            match crate::kernel::registered_load_for_variable(variable) {
                 Some((_, pointer)) => {
                     SnapshotBlindBitvectorKey::Load(Box::new(snapshot_blind_pointer_key(&pointer)))
                 }
@@ -536,16 +534,14 @@ fn propositions_equal_modulo_proven_snapshots(
 /// Proves that one already-selected structural candidate is the same fact as
 /// `required` across certified memory snapshots. Candidate selection remains
 /// the caller's responsibility; this operation never searches a context.
-/// Resolves canonical load variables in comparison term positions only:
+/// Resolves load variables in comparison term positions only:
 /// condition terms and pointer offsets, never descending into embedded
 /// memory snapshots. The full resolver walks whole snapshots and is far too
 /// expensive for per-candidate comparison paths.
 fn resolve_canonical_bitvector_shallow(bits: &Bitvector32Term) -> Bitvector32Term {
     match bits {
-        Bitvector32Term::Variable(variable)
-            if crate::kernel::is_canonical_load_variable(variable) =>
-        {
-            match crate::kernel::registered_canonical_load(variable) {
+        Bitvector32Term::Variable(variable) if crate::kernel::is_load_variable(variable) => {
+            match crate::kernel::registered_load_for_variable(variable) {
                 Some((memory, pointer)) => Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
                 None => bits.clone(),
             }
@@ -900,13 +896,14 @@ fn alpha_bitvector_key(
         };
     Some(match term {
         Bitvector32Term::Constant(value) => AlphaBitvectorKey::Constant(*value),
-        // A load variable keys as the load it names: the load key is
+        // A load variable keys as the load it represents: the load key is
         // snapshot-blind, so a universal recorded with load terms and one
-        // lowered to names share a bucket, and a bound index sealed in the
-        // name keys by its binder ordinal rather than by the name's id.
+        // lowered to load variables share a bucket. A bound index inside the
+        // load variable keys by its binder ordinal rather than by the load
+        // variable's id.
         Bitvector32Term::Variable(variable) => {
-            match crate::kernel::is_canonical_load_variable(variable)
-                .then(|| crate::kernel::registered_canonical_load(variable))
+            match crate::kernel::is_load_variable(variable)
+                .then(|| crate::kernel::registered_load_for_variable(variable))
                 .flatten()
             {
                 Some((_, pointer)) => {
@@ -1740,7 +1737,7 @@ mod tests {
     use super::*;
     use crate::kernel::{
         CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
-        Variable, canonical_load_variable_with_origin, intern_c_memory,
+        Variable, intern_c_memory, load_variable_for_cell_with_origin,
     };
 
     #[test]
@@ -1766,13 +1763,13 @@ mod tests {
         // The canonical memories are the cells' epochs. Snapshots that
         // differ only by a declared block or a write to another cell share
         // an epoch, so a synthetic marker block would not separate these
-        // names; a write to the queried cell does (the second pair).
-        let left = canonical_load_variable_with_origin(
+        // load variables; a write to the queried cell does (the second pair).
+        let left = load_variable_for_cell_with_origin(
             &intern_c_memory(before.clone()),
             &preserved,
             &intern_c_memory(before.clone()),
         );
-        let right = canonical_load_variable_with_origin(
+        let right = load_variable_for_cell_with_origin(
             &intern_c_memory(after.clone()),
             &preserved,
             &intern_c_memory(after.clone()),
@@ -1785,7 +1782,7 @@ mod tests {
         );
 
         // Also force the snapshot-comparison fallback with a write to the
-        // queried cell. The answer is false, but the canonical-name bridge
+        // queried cell. The answer is false, but the load-variable bridge
         // must reach that answer through the bounded alias route rather than
         // re-entering the general alias search it exists to avoid.
         let loaded = preserved;
@@ -1794,12 +1791,12 @@ mod tests {
         let changed_after = changed_before
             .clone()
             .store(loaded.clone(), CValue::Int32(Bitvector32Term::Constant(2)));
-        let changed_left = canonical_load_variable_with_origin(
+        let changed_left = load_variable_for_cell_with_origin(
             &intern_c_memory(changed_before.clone()),
             &loaded,
             &intern_c_memory(changed_before),
         );
-        let changed_right = canonical_load_variable_with_origin(
+        let changed_right = load_variable_for_cell_with_origin(
             &intern_c_memory(changed_after.clone()),
             &loaded,
             &intern_c_memory(changed_after),
@@ -1890,10 +1887,10 @@ mod tests {
 
     #[test]
     fn quantified_replay_key_sees_through_load_variables() {
-        // A universal lowered to load variables keys as the loads the names
-        // denote: the bound index sealed in a name keys by binder ordinal,
-        // so renamed binders share a bucket with each other and with the
-        // same universal written in load terms.
+        // A universal lowered to load variables keys as the loads those
+        // variables represent. A bound index inside a load variable keys by
+        // binder ordinal, so renamed binders share a bucket with each other
+        // and with the same universal written in load terms.
         let memory = intern_c_memory(CMemory::new().with_block("p", 12));
         let cell = |index: Variable| {
             Bitvector32Term::MemoryLoad(
@@ -2088,26 +2085,26 @@ mod tests {
     }
 }
 
-/// One side of an equality that canonical-name bridging can walk.
+/// One side of an equality that load-variable bridging can walk.
 ///
 /// The bridging argument is identical for pointer-offset and int32
 /// equalities — only the shape of a side and of the equality differ — so one
 /// implementation serves both.
-trait CanonicalBridgeSide: Clone + PartialEq + Sized {
-    /// The canonical load variable this side names, when it names one.
-    fn canonical_variable(&self) -> Option<Variable>;
+trait LoadVariableBridgeSide: Clone + PartialEq + Sized {
+    /// The load variable this side represents, when it represents one.
+    fn load_variable(&self) -> Option<Variable>;
     /// The two sides of an equality of this shape.
     fn equality_sides(proposition: &Proposition) -> Option<(Self, Self)>;
     /// An equality of this shape over the two sides.
     fn equality(left: Self, right: Self) -> Proposition;
 }
 
-impl CanonicalBridgeSide for PointerOffsetTerm {
-    fn canonical_variable(&self) -> Option<Variable> {
+impl LoadVariableBridgeSide for PointerOffsetTerm {
+    fn load_variable(&self) -> Option<Variable> {
         let PointerOffsetTerm::Int32Scaled { value, .. } = self else {
             return None;
         };
-        value.as_ref().canonical_variable()
+        value.as_ref().load_variable()
     }
 
     fn equality_sides(proposition: &Proposition) -> Option<(Self, Self)> {
@@ -2127,16 +2124,16 @@ impl CanonicalBridgeSide for PointerOffsetTerm {
     }
 }
 
-impl CanonicalBridgeSide for Bitvector32Term {
-    /// A side names a load either by its canonical variable or by the load
-    /// itself; both forms denote one atom, so both answer here.
-    fn canonical_variable(&self) -> Option<Variable> {
+impl LoadVariableBridgeSide for Bitvector32Term {
+    /// A side represents a load either with its load variable or with the
+    /// load term itself; both forms denote one atom, so both answer here.
+    fn load_variable(&self) -> Option<Variable> {
         match self {
             Bitvector32Term::Variable(variable) => {
-                crate::kernel::is_canonical_load_variable(variable).then_some(*variable)
+                crate::kernel::is_load_variable(variable).then_some(*variable)
             }
             Bitvector32Term::MemoryLoad(_, _) => {
-                crate::kernel::canonical_load_variable_for_term(self).map(|(name, _)| name)
+                crate::kernel::load_variable_for_term(self).map(|(variable, _)| variable)
             }
             _ => None,
         }
@@ -2160,13 +2157,12 @@ impl CanonicalBridgeSide for Bitvector32Term {
 }
 
 /// Whether an equality premise follows from recorded equalities of the same
-/// shape by chaining through canonical load variables. Canonical variables
-/// are kernel-internal names invisible to Click source, so a premise and the
-/// recorded facts may legitimately write one user-level equality through
-/// different intermediate names. The closure is bounded: only equality facts
-/// with a canonical-variable endpoint contribute edges, and the walk visits
-/// each side at most once.
-fn bridged_by_canonical_name_edges<S: CanonicalBridgeSide>(
+/// shape by chaining through load variables. Load variables are invisible to
+/// Click source, so a premise and the recorded facts may legitimately write
+/// one user-level equality through different intermediate variables. The
+/// closure is bounded: only equality facts with a load-variable endpoint
+/// contribute edges, and the walk visits each side at most once.
+fn bridged_by_load_variable_edges<S: LoadVariableBridgeSide>(
     premise: &Proposition,
     facts: &[Proposition],
 ) -> bool {
@@ -2176,9 +2172,7 @@ fn bridged_by_canonical_name_edges<S: CanonicalBridgeSide>(
     let edges: Vec<(S, S)> = facts
         .iter()
         .filter_map(S::equality_sides)
-        .filter(|(left, right)| {
-            left.canonical_variable().is_some() || right.canonical_variable().is_some()
-        })
+        .filter(|(left, right)| left.load_variable().is_some() || right.load_variable().is_some())
         .collect();
     if edges.is_empty() {
         return false;
@@ -2204,7 +2198,7 @@ fn bridged_by_canonical_name_edges<S: CanonicalBridgeSide>(
     false
 }
 
-/// Decides, and remembers, whether two canonical names stand for one cell
+/// Decides, and remembers, whether two load variables stand for one cell
 /// that framing shows unchanged between their origin snapshots.
 struct OriginsUnchanged<'a> {
     assumptions: &'a PureFactContext,
@@ -2235,15 +2229,15 @@ impl<'a> OriginsUnchanged<'a> {
 
     fn compute(&self, left: Variable, right: Variable) -> bool {
         let (Some((left_memory, left_pointer)), Some((right_memory, right_pointer))) = (
-            crate::kernel::registered_canonical_load_origin(&left),
-            crate::kernel::registered_canonical_load_origin(&right),
+            crate::kernel::registered_load_origin_for_variable(&left),
+            crate::kernel::registered_load_origin_for_variable(&right),
         ) else {
             return false;
         };
         // Bounded: the unchanged proof must come from the cheap routes —
         // recorded derivations crossed with exact-fact distinctness — never
         // from whole-snapshot alias search, which is the giant-term
-        // recursion canonical naming exists to avoid.
+        // recursion load-variable construction exists to avoid.
         left_pointer == right_pointer
             && crate::kernel::with_isolated_memory_resolution_fuel(8_000, || {
                 crate::kernel::with_bounded_snapshot_comparison(|| {
@@ -2263,20 +2257,18 @@ impl<'a> OriginsUnchanged<'a> {
     }
 }
 
-/// The forms of `side` that name the same cell as one of `endpoints`.
-fn origin_renamings<S: CanonicalBridgeSide>(
+/// The forms of `side` that represent the same cell as one of `endpoints`.
+fn origin_renamings<S: LoadVariableBridgeSide>(
     side: &S,
     endpoints: &[S],
     origins: &mut OriginsUnchanged<'_>,
 ) -> Vec<S> {
-    let Some(variable) = side.canonical_variable() else {
+    let Some(variable) = side.load_variable() else {
         return vec![side.clone()];
     };
     let mut forms = vec![side.clone()];
     for endpoint in endpoints {
-        let candidate = endpoint
-            .canonical_variable()
-            .expect("filtered by the caller");
+        let candidate = endpoint.load_variable().expect("filtered by the caller");
         if candidate != variable && origins.decide(variable, candidate) && !forms.contains(endpoint)
         {
             forms.push(endpoint.clone());
@@ -2285,7 +2277,7 @@ fn origin_renamings<S: CanonicalBridgeSide>(
     forms
 }
 
-fn bridged_with_origins<S: CanonicalBridgeSide>(
+fn bridged_with_origins<S: LoadVariableBridgeSide>(
     premise: &Proposition,
     facts: &[Proposition],
     assumptions: &PureFactContext,
@@ -2294,11 +2286,11 @@ fn bridged_with_origins<S: CanonicalBridgeSide>(
         return false;
     };
     let mut origins = OriginsUnchanged::new(assumptions);
-    // Two canonical names for one unchanged cell need no fact edge at all:
+    // Two load variables for one unchanged cell need no fact edge at all:
     // when the premise equates them directly, the origins-unchanged proof is
     // the whole content.
     if let (Some(start_variable), Some(goal_variable)) =
-        (start.canonical_variable(), goal.canonical_variable())
+        (start.load_variable(), goal.load_variable())
         && origins.decide(start_variable, goal_variable)
     {
         return true;
@@ -2310,7 +2302,7 @@ fn bridged_with_origins<S: CanonicalBridgeSide>(
         .iter()
         .filter_map(S::equality_sides)
         .flat_map(|(left, right)| [left, right])
-        .filter(|side| side.canonical_variable().is_some())
+        .filter(|side| side.load_variable().is_some())
         .collect();
     let start_forms = origin_renamings(&start, &endpoints, &mut origins);
     let goal_forms = origin_renamings(&goal, &endpoints, &mut origins);
@@ -2320,7 +2312,7 @@ fn bridged_with_origins<S: CanonicalBridgeSide>(
                 return true;
             }
             let candidate = S::equality(start_form.clone(), goal_form.clone());
-            if bridged_by_canonical_name_edges::<S>(&candidate, facts) {
+            if bridged_by_load_variable_edges::<S>(&candidate, facts) {
                 return true;
             }
         }
@@ -2328,34 +2320,34 @@ fn bridged_with_origins<S: CanonicalBridgeSide>(
     false
 }
 
-pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain(
+pub(in crate::lang::click) fn premise_bridged_by_load_variable_chain(
     premise: &Proposition,
     facts: &[Proposition],
 ) -> bool {
     match premise {
         Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(_, _), true) => {
-            bridged_by_canonical_name_edges::<PointerOffsetTerm>(premise, facts)
+            bridged_by_load_variable_edges::<PointerOffsetTerm>(premise, facts)
         }
         Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true) => {
-            bridged_by_canonical_name_edges::<Bitvector32Term>(premise, facts)
+            bridged_by_load_variable_edges::<Bitvector32Term>(premise, facts)
         }
         _ => false,
     }
 }
 
-/// The chain closure with origin-unchanged implicit edges: two canonical
-/// names additionally connect when the loads they were minted from are
+/// The chain closure with origin-unchanged implicit edges. Two load variables
+/// additionally connect when the loads they represent are
 /// provably unchanged between their origin snapshots under the supplied
 /// assumptions (call effect summaries and frame evidence). Reserved for
 /// once-per-tactic consumers such as explicit transport and rewrite premise
 /// checks — the unchanged proof is assumption-based and must stay off hot
 /// fact paths.
-pub(in crate::lang::click) fn premise_bridged_by_canonical_name_chain_with_origins(
+pub(in crate::lang::click) fn premise_bridged_by_load_variable_chain_with_origins(
     premise: &Proposition,
     facts: &[Proposition],
     assumptions: &PureFactContext,
 ) -> bool {
-    if premise_bridged_by_canonical_name_chain(premise, facts) {
+    if premise_bridged_by_load_variable_chain(premise, facts) {
         return true;
     }
     match premise {
@@ -2390,11 +2382,11 @@ fn separation_bridged_available(
     })
 }
 
-/// Whether two separations denote the same fact modulo canonical names and
-/// proven snapshots: each range's base offset and extent terms compare with
-/// canonical names resolved shallowly and load atoms bridged across proven
-/// snapshots — the relation the condition arm uses, applied to the terms a
-/// separation is made of. Separation is symmetric, so both pairings are
+/// Whether two separations denote the same fact after canonicalization and
+/// proven snapshot comparison: each range's base offset and extent terms
+/// compare with load variables resolved shallowly and load atoms bridged
+/// across proven snapshots — the relation the condition arm uses, applied
+/// to the terms a separation is made of. Separation is symmetric, so both pairings are
 /// tried. Keep its range temporaries local rather than charging every caller;
 /// the expansion small-stack regression pins that boundary.
 #[inline(never)]

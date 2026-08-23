@@ -427,12 +427,12 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
     }
 }
 
-/// Load variables are content-addressed names: minting one, and finding the
-/// same name again for an unwritten cell at a later point, must cost work
+/// Load variables are content-addressed: constructing one, and finding the
+/// same variable again for an unwritten cell at a later point, must cost work
 /// proportional to the load and the steps it crosses, not to the number of
-/// names or facts already in the proof.
+/// load variables or facts already in the proof.
 #[test]
-fn load_variable_naming_scales_near_linearly_with_statements() {
+fn load_variable_construction_scales_near_linearly_with_statements() {
     for axis in [
         LoadAxis::DistinctCells,
         LoadAxis::OneCell,
@@ -454,7 +454,7 @@ fn load_variable_naming_scales_near_linearly_with_statements() {
                 sample
             })
             .collect::<Vec<_>>();
-        assert_near_linear_scaling(&format!("load variable naming ({axis:?})"), &samples);
+        assert_near_linear_scaling(&format!("load-variable construction ({axis:?})"), &samples);
     }
 }
 

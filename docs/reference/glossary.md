@@ -135,8 +135,8 @@ Click's deliberately supported subset of C. It is the verification boundary,
 ### Canonical form
 
 The deterministic representation Click uses for definitional comparison. A
-term is in canonical form when each memory load has been resolved or reduced
-to its load variable; arithmetic order and proved equalities are unchanged.
+term is in canonical form when each memory load has been resolved or replaced
+with its load variable; arithmetic order and proved equalities are unchanged.
 See [Canonicalization](../internals/canonicalization.md).
 
 ### Canonicalization
@@ -441,10 +441,10 @@ planner that selected it.
 ### Kernel variable
 
 A term standing for a value the kernel doesn't know concretely: a function
-  parameter at entry, a local a loop may modify, the result of an opaque
-  call, or the contents of an unknown memory cell. Kernel variables are
-  anonymous ids, not C names; they appear in facts and goals and are related
-  to each other only through facts.
+parameter at entry, a local a loop may modify, the result of an opaque call,
+or the contents of an unknown memory cell. Kernel variables are anonymous
+ids, not C names; they appear in facts and goals and are related to each
+other only through facts. A load variable is one kind of kernel variable.
 
 ## L
 
@@ -462,12 +462,11 @@ the remaining load term with its load variable.
 
 ### Load variable
 
-A kernel variable introduced for the unknown value of a memory load,
-  identified by the loaded cell and its derivation epoch, so reads connected
-  by steps proved not to write that cell use the same variable. It is recorded
-  with a defining fact equating it to the load it stands for. Load variables
-  are distinguished from other kernel variables only by a reserved id range,
-  not by type.
+A kernel variable that serves as the canonical form of an unresolved memory
+load. The loaded cell and its derivation epoch identify the variable, so reads
+connected by steps proved not to write that cell use the same variable. A
+defining fact equates it to the load it represents. Load variables differ
+from other kernel variables only by a reserved id range, not by type.
 
 ### Loadability
 

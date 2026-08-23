@@ -1118,7 +1118,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
             CExecutionSemantics::APPLY_VERIFIED_RULES,
             &mut budget,
         );
-    let first_next = budget.next_verification_variable();
+    let first_next = budget.next_kernel_variable();
     let first_path = first_execution.paths().first().expect("first call path");
     let mut first_proposition = first_path.theorem().proposition();
     while let Proposition::Implies(_, body) = first_proposition {
@@ -1157,7 +1157,7 @@ fn separate_statement_verification_calls_preserve_fresh_identity_progress() {
     let second_value = second_state.locals().get("second").expect("second result");
 
     assert!(first_next > 0);
-    assert!(budget.next_verification_variable() > first_next);
+    assert!(budget.next_kernel_variable() > first_next);
     assert_ne!(first_value, second_value);
 }
 

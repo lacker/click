@@ -243,10 +243,10 @@ fn rewrite_through_load_variable(
     let Bitvector32Term::Variable(variable) = term else {
         return None;
     };
-    if !crate::kernel::is_canonical_load_variable(variable) {
+    if !crate::kernel::is_load_variable(variable) {
         return None;
     }
-    let (memory, pointer) = crate::kernel::registered_canonical_load(variable)?;
+    let (memory, pointer) = crate::kernel::registered_load_for_variable(variable)?;
     let rewritten = rewrite_pointer(&pointer);
     if rewritten == pointer {
         return None;
@@ -268,11 +268,11 @@ fn rewrite_atomic_proposition_by_exact_equality(
     let is_available = |fact: &Proposition| {
         available.contains(fact)
             || exactly_available_fact(fact, available).is_some()
-            // Canonical load variables are kernel-internal names. Recorded
-            // equalities chained through one are the same user-level fact,
-            // and two names framing shows to be one unchanged cell are the
+            // Load variables are kernel-internal. Recorded equalities
+            // chained through one are the same user-level fact, and two
+            // load variables that framing identifies with one unchanged cell are the
             // same atom, so an equality over either form is available.
-            || crate::lang::click::proof::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+            || crate::lang::click::proof::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
                 fact,
                 available,
                 bridging_assumptions
@@ -300,9 +300,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
             right: &PointerOffsetTerm,
         ) -> PointerOffsetTerm {
             if offset == left
-                // Canonical load names and load terms of one atom are
+                // Load variables and load terms of one atom are
                 // the same occurrence.
-                || crate::kernel::offsets_match_modulo_canonical_names(offset, left)
+                || crate::kernel::offsets_have_same_canonical_form(offset, left)
             {
                 return right.clone();
             }
@@ -664,9 +664,9 @@ fn rewrite_atomic_proposition_by_exact_equality(
             }
         }
         if term == from
-            // Canonical load names and load terms of one atom are the
+            // Load variables and load terms of one atom are the
             // same occurrence.
-            || crate::kernel::terms_match_modulo_canonical_names(term, from)
+            || crate::kernel::terms_have_same_canonical_form(term, from)
         {
             return to.clone();
         }

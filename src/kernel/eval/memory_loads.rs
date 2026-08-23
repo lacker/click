@@ -71,7 +71,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let _assumptions_id_scope = assumptions.enter_id_scope();
     let mut alias_cache = MemoryLoadAliasCache::default();
@@ -84,7 +84,7 @@ pub(in crate::kernel) fn evaluate_c_memory_load_paths(
         assumptions,
         has_external_read_resource,
         &mut alias_cache,
-        next_verification_variable,
+        next_kernel_variable,
     )
 }
 
@@ -98,7 +98,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     assumptions: &PureFactContext,
     has_external_read_resource: bool,
     alias_cache: &mut MemoryLoadAliasCache,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
 ) -> Vec<CExpressionPath> {
     let mut facts = facts;
     let mut load_assumptions = assumptions.clone();
@@ -138,7 +138,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             memory,
             &pointer,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) else {
@@ -175,7 +175,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &pointer,
             &value,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) {
@@ -208,7 +208,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &pointer,
             &value,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) {
@@ -258,7 +258,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             memory,
             &pointer,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) else {
@@ -297,7 +297,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &pointer,
             &value,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) {
@@ -326,7 +326,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &memory,
             &pointer,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) else {
@@ -372,7 +372,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 &pointer,
                 &stored_value,
                 value_type,
-                next_verification_variable,
+                next_kernel_variable,
                 &mut facts,
                 assumptions,
             ) {
@@ -408,7 +408,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
                 assumptions,
                 has_external_read_resource,
                 alias_cache,
-                next_verification_variable,
+                next_kernel_variable,
             ));
         }
 
@@ -420,7 +420,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             &memory,
             &pointer,
             value_type,
-            next_verification_variable,
+            next_kernel_variable,
             &mut facts,
             assumptions,
         ) else {
@@ -478,7 +478,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         &memory,
         &pointer,
         value_type,
-        next_verification_variable,
+        next_kernel_variable,
         &mut facts,
         assumptions,
     ) else {
@@ -506,7 +506,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     pointer: &Pointer,
     value: &CValue,
     value_type: CType,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
@@ -517,15 +517,13 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     };
     let fresh = match value {
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?
+            mint_load_variable(bits, next_kernel_variable, facts, assumptions)?
         }
         // A cell materialized with its load variable (canonicalizing at
         // creation) already carries the variable; record its defining fact
         // in this path's stream, as minting would have.
-        CValue::Int32(Bitvector32Term::Variable(variable))
-            if is_canonical_load_variable(variable) =>
-        {
-            if let Some((memory, pointer)) = registered_canonical_load(variable) {
+        CValue::Int32(Bitvector32Term::Variable(variable)) if is_load_variable(variable) => {
+            if let Some((memory, pointer)) = registered_load_for_variable(variable) {
                 record_load_variable_defining_fact(
                     *variable,
                     Bitvector32Term::MemoryLoad(memory, Box::new(pointer)),
@@ -546,7 +544,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
 }
 
 /// The canonicalizing form of [`symbolic_load_value`]: a pointer loaded from
-/// an opaque cell is written through a minted verification variable instead
+/// an opaque cell is written through a minted kernel variable instead
 /// of embedding the `MemoryLoad` term in its offset. Non-pointer loads pass
 /// through unchanged — the invariant governs pointer-offset positions, where
 /// arithmetic must stay over small terms.
@@ -554,7 +552,7 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     memory: &CMemory,
     pointer: &Pointer,
     value_type: CType,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
@@ -564,13 +562,11 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     // offset, and range built from the value is canonical.
     match &value {
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh =
-                mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
             return Some(CValue::Int32(Bitvector32Term::Variable(fresh)));
         }
         CValue::UInt8(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
-            let fresh =
-                mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+            let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
             return Some(CValue::UInt8(Bitvector32Term::Variable(fresh)));
         }
         _ => {}
@@ -589,7 +585,7 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
     if !matches!(bits.as_ref(), Bitvector32Term::MemoryLoad(_, _)) {
         return Some(value);
     }
-    let fresh = mint_canonical_load_variable(bits, next_verification_variable, facts, assumptions)?;
+    let fresh = mint_load_variable(bits, next_kernel_variable, facts, assumptions)?;
     Some(CValue::Pointer(Pointer {
         block: block.clone(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(fresh), *byte_width),
@@ -599,18 +595,18 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
 const LOAD_VARIABLE_BASE: u64 = 1 << 40;
 const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
 
-/// Whether a variable id lies in the reserved canonical-load id space.
+/// Whether a kernel variable id lies in the reserved load-variable id space.
 /// Structural: no registry consultation, so the answer is deterministic
 /// and thread-agnostic.
-pub(crate) fn is_canonical_load_variable(variable: &Variable) -> bool {
+pub(crate) fn is_load_variable(variable: &Variable) -> bool {
     (LOAD_VARIABLE_BASE..LOAD_VARIABLE_BASE + LOAD_VARIABLE_RANGE).contains(&variable.0)
 }
 
-/// Whether a proposition is a canonical-load defining equation
-/// (`v == load(snapshot, ptr)` for a reserved canonical variable). Such
-/// equations are true by construction of the canonical naming, so path
-/// wrapping treats them as ambient truths rather than premises.
-pub(crate) fn is_canonical_load_defining_fact(proposition: &Proposition) -> bool {
+/// Whether a proposition is a load-variable defining equation
+/// (`v == load(snapshot, ptr)` for a reserved load variable). Such
+/// equations are true by construction, so path wrapping treats them as
+/// ambient truths rather than premises.
+pub(crate) fn is_load_variable_defining_fact(proposition: &Proposition) -> bool {
     let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = proposition
     else {
         return false;
@@ -620,15 +616,15 @@ pub(crate) fn is_canonical_load_defining_fact(proposition: &Proposition) -> bool
         (
             Bitvector32Term::Variable(variable),
             Bitvector32Term::MemoryLoad(_, _)
-        ) if is_canonical_load_variable(variable)
+        ) if is_load_variable(variable)
     )
 }
 
 thread_local! {
-    static CANONICAL_LOAD_REGISTRY: std::cell::RefCell<
+    static LOAD_VARIABLE_REGISTRY: std::cell::RefCell<
         std::collections::HashMap<Variable, (SharedCMemory, Pointer, SharedCMemory)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
-    static NAME_CACHE: std::cell::RefCell<
+    static LOAD_VARIABLE_CACHE: std::cell::RefCell<
         std::collections::HashMap<Bitvector32Term, (Variable, Bitvector32Term)>,
     > = std::cell::RefCell::new(std::collections::HashMap::new());
     static TERM_CACHE: std::cell::RefCell<
@@ -636,21 +632,23 @@ thread_local! {
     > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-pub(crate) fn clear_load_name_caches() {
-    NAME_CACHE.with(|cache| cache.borrow_mut().clear());
+pub(crate) fn clear_load_canonicalization_caches() {
+    LOAD_VARIABLE_CACHE.with(|cache| cache.borrow_mut().clear());
     TERM_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-pub(crate) fn clear_canonical_load_registry() {
-    CANONICAL_LOAD_REGISTRY.with(|registry| registry.borrow_mut().clear());
+pub(crate) fn clear_load_variable_registry() {
+    LOAD_VARIABLE_REGISTRY.with(|registry| registry.borrow_mut().clear());
 }
 
-/// The load identity a canonical load variable names, when this thread
-/// minted it. Reasoning uses this to consult the snapshot lazily: a
-/// canonical variable in an equality query is viewed as its load exactly
-/// where a load term would have triggered provenance evidence.
-pub(crate) fn registered_canonical_load(variable: &Variable) -> Option<(SharedCMemory, Pointer)> {
-    CANONICAL_LOAD_REGISTRY.with(|registry| {
+/// The load represented by a load variable minted on this thread.
+/// Reasoning uses this to consult the snapshot lazily: a load variable in
+/// an equality query is viewed as its load exactly where a load term would
+/// have triggered provenance evidence.
+pub(crate) fn registered_load_for_variable(
+    variable: &Variable,
+) -> Option<(SharedCMemory, Pointer)> {
+    LOAD_VARIABLE_REGISTRY.with(|registry| {
         registry
             .borrow()
             .get(variable)
@@ -658,15 +656,15 @@ pub(crate) fn registered_canonical_load(variable: &Variable) -> Option<(SharedCM
     })
 }
 
-/// The first-seen live snapshot a canonical load variable was minted from.
+/// The first-seen live snapshot a load variable was minted from.
 /// The canonical form is a jumped placeholder unsuited to frame checks;
 /// transport resolves through this origin, which is DAG-connected and
 /// cell-comparable to later effect snapshots. First-seen is deterministic
 /// because mint order is execution order.
-pub(crate) fn registered_canonical_load_origin(
+pub(crate) fn registered_load_origin_for_variable(
     variable: &Variable,
 ) -> Option<(SharedCMemory, Pointer)> {
-    CANONICAL_LOAD_REGISTRY.with(|registry| {
+    LOAD_VARIABLE_REGISTRY.with(|registry| {
         registry
             .borrow()
             .get(variable)
@@ -675,29 +673,29 @@ pub(crate) fn registered_canonical_load_origin(
 }
 
 /// Views a term as a memory load for equality reasoning: load terms pass
-/// through, and registered canonical load variables resolve to the load
-/// they name. Other terms are not loads.
+/// through, and registered load variables resolve to the loads they
+/// represent. Other terms are not loads.
 pub(crate) fn viewed_as_memory_load(term: &Bitvector32Term) -> Option<Bitvector32Term> {
     match term {
         Bitvector32Term::MemoryLoad(_, _) => Some(term.clone()),
-        Bitvector32Term::Variable(variable) => registered_canonical_load(variable)
+        Bitvector32Term::Variable(variable) => registered_load_for_variable(variable)
             .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer))),
         _ => None,
     }
 }
 
-/// Whether a proposition mentions any registered canonical load variable.
-/// Cross-effect fact transport uses this to include canonical-written facts
-/// in rewriting, exactly as load-term facts are included by mentioning
-/// their snapshots.
-pub(crate) fn proposition_mentions_registered_canonical_load(proposition: &Proposition) -> bool {
+/// Whether a proposition mentions any registered load variable.
+/// Cross-effect fact transport uses this to include facts written with load
+/// variables in rewriting, exactly as load-term facts are included by
+/// mentioning their snapshots.
+pub(crate) fn proposition_mentions_registered_load_variable(proposition: &Proposition) -> bool {
     let mut variables = std::collections::BTreeSet::new();
     crate::kernel::reasoning::variable_collection::collect_proposition_bitvector_variables(
         proposition,
         &mut variables,
     );
     variables.iter().any(|variable| {
-        is_canonical_load_variable(variable) && registered_canonical_load(variable).is_some()
+        is_load_variable(variable) && registered_load_for_variable(variable).is_some()
     })
 }
 
@@ -716,7 +714,7 @@ pub(crate) fn canonical_term(term: &Bitvector32Term) -> Bitvector32Term {
         return hit;
     }
     let structural = crate::kernel::memory_provenance::canonicalize_atomic_loads(term);
-    let result = substitute_canonical_load_names(&structural, &mut None);
+    let result = substitute_load_variables(&structural, &mut None);
     TERM_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 100_000 {
@@ -743,7 +741,7 @@ pub(crate) fn canonical_offset_term(offset: &PointerOffsetTerm) -> PointerOffset
 
 /// Gives an index or endpoint term the model's stable representation before
 /// it enters pointer-offset or range arithmetic: every load atom is replaced
-/// by its canonical load variable and each name's defining equation joins
+/// by its load variable and each variable's defining equation joins
 /// the fact stream. Every producer that scales an integer term into an
 /// offset or evaluates a range endpoint must route the term through this,
 /// so a loaded index never enters a `PointerOffsetTerm` or a range bound as
@@ -757,7 +755,7 @@ pub(crate) fn canonicalized_offset_index_term(
     if !term_mentions_a_memory_load(&bits) {
         return bits;
     }
-    substitute_canonical_load_names(&bits, &mut Some(facts))
+    substitute_load_variables(&bits, &mut Some(facts))
 }
 
 /// The term for reading `pointer` from `memory` at a creation point with no
@@ -765,9 +763,9 @@ pub(crate) fn canonicalized_offset_index_term(
 /// variable. Load variables are content-addressed, so this agrees with
 /// every other creation point; the defining fact is available through the
 /// registry.
-pub(crate) fn canonical_load_term(memory: SharedCMemory, pointer: Pointer) -> Bitvector32Term {
+pub(crate) fn canonical_form_of_load(memory: SharedCMemory, pointer: Pointer) -> Bitvector32Term {
     let load = Bitvector32Term::MemoryLoad(memory, Box::new(pointer));
-    match canonical_load_variable_for_term(&load) {
+    match load_variable_for_term(&load) {
         Some((variable, _)) => Bitvector32Term::Variable(variable),
         None => load,
     }
@@ -795,7 +793,7 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
         return;
     }
     let proposition = Proposition::ConditionIs(condition.clone(), value);
-    if is_canonical_load_defining_fact(&proposition) || is_store_fact(condition, value) {
+    if is_load_variable_defining_fact(&proposition) || is_store_fact(condition, value) {
         return;
     }
     let canonical = canonical_condition(condition);
@@ -816,7 +814,7 @@ pub(crate) fn check_canonical_at_creation(condition: &ConditionTerm, value: bool
             &canonical,
             &mut variables,
         );
-        if variables.iter().any(is_canonical_load_variable) {
+        if variables.iter().any(is_load_variable) {
             "load -> load variable"
         } else {
             "load -> recorded value"
@@ -994,13 +992,13 @@ pub(crate) fn canonical_condition_fact(fact: &Proposition) -> Proposition {
     Proposition::ConditionIs(canonical_condition(condition), *value)
 }
 
-/// Replaces every load atom in a term with its canonical load variable.
+/// Replaces every load atom in a term with its load variable.
 /// When `facts` carries a stream, this is the production mode: each
 /// substituted load variable's defining fact joins the stream,
 /// deduplicated, so the variable always travels with its defining fact. Binder scopes
 /// (`RangeFold` bodies) are left untouched: a load under a fold can mention
 /// bound variables, which name no load identity.
-fn substitute_canonical_load_names(
+fn substitute_load_variables(
     term: &Bitvector32Term,
     facts: &mut Option<&mut Vec<ExecutionPureFact>>,
 ) -> Bitvector32Term {
@@ -1010,13 +1008,13 @@ fn substitute_canonical_load_names(
         facts: &mut Option<&mut Vec<ExecutionPureFact>>,
     ) -> (Box<Bitvector32Term>, Box<Bitvector32Term>) {
         (
-            Box::new(substitute_canonical_load_names(left, facts)),
-            Box::new(substitute_canonical_load_names(right, facts)),
+            Box::new(substitute_load_variables(left, facts)),
+            Box::new(substitute_load_variables(right, facts)),
         )
     }
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => term.clone(),
-        Bitvector32Term::MemoryLoad(_, _) => match canonical_load_variable_for_term(term) {
+        Bitvector32Term::MemoryLoad(_, _) => match load_variable_for_term(term) {
             Some((variable, load)) => {
                 if let Some(facts) = facts.as_deref_mut() {
                     record_load_variable_defining_fact(variable, load, facts);
@@ -1066,18 +1064,16 @@ fn substitute_canonical_load_names(
             Bitvector32Term::BitwiseXor(left, right)
         }
         Bitvector32Term::BitwiseNot(value) => {
-            Bitvector32Term::BitwiseNot(Box::new(substitute_canonical_load_names(value, facts)))
+            Bitvector32Term::BitwiseNot(Box::new(substitute_load_variables(value, facts)))
         }
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => Bitvector32Term::If {
-            condition: Box::new(substitute_canonical_load_names_in_condition(
-                condition, facts,
-            )),
-            then_term: Box::new(substitute_canonical_load_names(then_term, facts)),
-            else_term: Box::new(substitute_canonical_load_names(else_term, facts)),
+            condition: Box::new(substitute_load_variables_in_condition(condition, facts)),
+            then_term: Box::new(substitute_load_variables(then_term, facts)),
+            else_term: Box::new(substitute_load_variables(else_term, facts)),
         },
         Bitvector32Term::RangeFold { .. } => term.clone(),
         Bitvector32Term::PureFunctionApplication { name, arguments } => {
@@ -1085,14 +1081,14 @@ fn substitute_canonical_load_names(
                 name: name.clone(),
                 arguments: arguments
                     .iter()
-                    .map(|argument| substitute_canonical_load_names(argument, facts))
+                    .map(|argument| substitute_load_variables(argument, facts))
                     .collect(),
             }
         }
     }
 }
 
-fn substitute_canonical_load_names_in_condition(
+fn substitute_load_variables_in_condition(
     condition: &ConditionTerm,
     facts: &mut Option<&mut Vec<ExecutionPureFact>>,
 ) -> ConditionTerm {
@@ -1102,8 +1098,8 @@ fn substitute_canonical_load_names_in_condition(
         facts: &mut Option<&mut Vec<ExecutionPureFact>>,
     ) -> (Box<Bitvector32Term>, Box<Bitvector32Term>) {
         (
-            Box::new(substitute_canonical_load_names(left, facts)),
-            Box::new(substitute_canonical_load_names(right, facts)),
+            Box::new(substitute_load_variables(left, facts)),
+            Box::new(substitute_load_variables(right, facts)),
         )
     }
     match condition {
@@ -1149,45 +1145,44 @@ fn substitute_canonical_load_names_in_condition(
             ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right)
         }
         ConditionTerm::PointerOffsetEqual(left, right) => ConditionTerm::PointerOffsetEqual(
-            Box::new(substitute_canonical_load_names_in_offset(left, facts)),
-            Box::new(substitute_canonical_load_names_in_offset(right, facts)),
+            Box::new(substitute_load_variables_in_offset(left, facts)),
+            Box::new(substitute_load_variables_in_offset(right, facts)),
         ),
         ConditionTerm::PointerEqual(left, right) => ConditionTerm::PointerEqual(
             Box::new(Pointer {
                 block: left.block.clone(),
-                offset: substitute_canonical_load_names_in_offset(&left.offset, facts),
+                offset: substitute_load_variables_in_offset(&left.offset, facts),
             }),
             Box::new(Pointer {
                 block: right.block.clone(),
-                offset: substitute_canonical_load_names_in_offset(&right.offset, facts),
+                offset: substitute_load_variables_in_offset(&right.offset, facts),
             }),
         ),
     }
 }
 
-fn substitute_canonical_load_names_in_offset(
+fn substitute_load_variables_in_offset(
     offset: &PointerOffsetTerm,
     facts: &mut Option<&mut Vec<ExecutionPureFact>>,
 ) -> PointerOffsetTerm {
     match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => offset.clone(),
         PointerOffsetTerm::Add(left, right) => PointerOffsetTerm::add(
-            substitute_canonical_load_names_in_offset(left, facts),
-            substitute_canonical_load_names_in_offset(right, facts),
+            substitute_load_variables_in_offset(left, facts),
+            substitute_load_variables_in_offset(right, facts),
         ),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } => PointerOffsetTerm::scale_int32(
-            substitute_canonical_load_names(value, facts),
-            *byte_width,
-        ),
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+            PointerOffsetTerm::scale_int32(substitute_load_variables(value, facts), *byte_width)
+        }
     }
 }
 
-/// Structural term equality modulo canonical load names: two forms of
-/// one value compare equal exactly when their [`canonical_term`] forms are
+/// Whether two terms have the same canonical form. Two forms of one value
+/// compare equal exactly when their [`canonical_term`] forms are
 /// identical. Load-free terms are fixed points of the canonical form, so
 /// they compare by identity without a canonicalization walk. Bounded by
 /// term size, with both canonicalization stages memoized.
-pub(crate) fn terms_match_modulo_canonical_names(
+pub(crate) fn terms_have_same_canonical_form(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
 ) -> bool {
@@ -1200,9 +1195,9 @@ pub(crate) fn terms_match_modulo_canonical_names(
     canonical_term(left) == canonical_term(right)
 }
 
-/// Structural pointer-offset equality modulo canonical load names; the
-/// offset analogue of [`terms_match_modulo_canonical_names`].
-pub(crate) fn offsets_match_modulo_canonical_names(
+/// Whether two pointer offsets have the same canonical form; the offset
+/// analogue of [`terms_have_same_canonical_form`].
+pub(crate) fn offsets_have_same_canonical_form(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
 ) -> bool {
@@ -1289,41 +1284,41 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
     }
 }
 
-/// The canonical verification variable naming one load identity: the pair of
-/// a memory snapshot (by content) and a loaded pointer. The id is derived
+/// The load variable representing one load identity: the pair of a memory
+/// snapshot (by content) and a loaded pointer. The id is derived
 /// deterministically by hashing that identity into a reserved id space, so
 /// every pass — contract-grant lowering, requirement evaluation, and body
 /// execution — writes the same load with the same variable without sharing
 /// any allocator state, and certificates replay across runs. A thread-local
 /// registry detects hash collisions between distinct load identities and
 /// stops verification loudly instead of silently conflating them.
-pub(crate) fn canonical_load_variable(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
-    canonical_load_variable_with_origin(memory, pointer, memory)
+pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
+    load_variable_for_cell_with_origin(memory, pointer, memory)
 }
 
-pub(crate) fn canonical_load_variable_with_origin(
+pub(crate) fn load_variable_for_cell_with_origin(
     memory: &SharedCMemory,
     pointer: &Pointer,
     origin: &SharedCMemory,
 ) -> Variable {
     use std::hash::{Hash, Hasher};
-    // Name by the cell's DAG epoch when one is recorded: snapshots that
-    // differ only by effects provably disjoint from this cell then share
-    // the name, so bookkeeping drift and unrelated stores do not mint new
-    // identities for one load.
-    let epoch = crate::kernel::memory_provenance::cell_epoch_for_canonical_naming(memory, pointer);
+    // Derive the variable from the cell's DAG epoch when one is recorded:
+    // snapshots that differ only by effects provably disjoint from this
+    // cell then share the variable, so bookkeeping drift and unrelated
+    // stores do not mint new identities for one load.
+    let epoch = crate::kernel::memory_provenance::cell_epoch_for_load_variable(memory, pointer);
     let memory = epoch.as_ref().unwrap_or(memory);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     memory.hash(&mut hasher);
     pointer.hash(&mut hasher);
     let hash = hasher.finish();
     let variable = Variable(LOAD_VARIABLE_BASE + hash % LOAD_VARIABLE_RANGE);
-    CANONICAL_LOAD_REGISTRY.with(|registry| {
+    LOAD_VARIABLE_REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         if let Some((known_memory, known_pointer, _)) = registry.get(&variable) {
             assert!(
                 known_memory == memory && known_pointer == pointer,
-                "canonical load-variable collision: {variable:?} names two distinct loads"
+                "load-variable collision: {variable:?} represents two distinct loads"
             );
         } else {
             if registry.len() >= 1_000_000 {
@@ -1335,13 +1330,13 @@ pub(crate) fn canonical_load_variable_with_origin(
     variable
 }
 
-/// Names a load term through its provenance-stable form: the term is
-/// first canonicalized assumption-free (resolving cached cells and snapshot
-/// representation differences), so the same cell loaded at different
-/// execution points shares one canonical variable whenever the difference
-/// is representational. Returns the variable and the form its defining
-/// equation should use.
-pub(crate) fn canonical_load_variable_for_term(
+/// Returns the load variable for a load term's provenance-stable form.
+/// The term is first canonicalized without assumptions, resolving cached
+/// cells and snapshot representation differences. The same cell loaded at
+/// different execution points therefore shares one load variable whenever
+/// the difference is representational. The second return value is the form
+/// used by the variable's defining equation.
+pub(crate) fn load_variable_for_term(
     bits: &Bitvector32Term,
 ) -> Option<(Variable, Bitvector32Term)> {
     let Bitvector32Term::MemoryLoad(_, _) = bits else {
@@ -1351,12 +1346,12 @@ pub(crate) fn canonical_load_variable_for_term(
     // comparison; the epoch walk and canonicalization behind a cold call
     // are not free, so cache by term. Term hashing is cheap: embedded
     // snapshots hash by interned identity.
-    if let Some(hit) = NAME_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
+    if let Some(hit) = LOAD_VARIABLE_CACHE.with(|cache| cache.borrow().get(bits).cloned()) {
         return Some(hit);
     }
     crate::instrumentation::record_deterministic_work(1);
-    let computed = canonical_load_variable_for_term_uncached(bits)?;
-    NAME_CACHE.with(|cache| {
+    let computed = load_variable_for_term_uncached(bits)?;
+    LOAD_VARIABLE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= 100_000 {
             cache.clear();
@@ -1366,45 +1361,43 @@ pub(crate) fn canonical_load_variable_for_term(
     Some(computed)
 }
 
-fn canonical_load_variable_for_term_uncached(
-    bits: &Bitvector32Term,
-) -> Option<(Variable, Bitvector32Term)> {
+fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, Bitvector32Term)> {
     let canonical = crate::kernel::memory_provenance::canonicalize_atomic_loads(bits);
     if let Bitvector32Term::MemoryLoad(memory, pointer) = &canonical {
         let Bitvector32Term::MemoryLoad(origin, _) = bits else {
             unreachable!("the pattern above matched a memory load");
         };
         return Some((
-            canonical_load_variable_with_origin(memory, pointer, origin),
+            load_variable_for_cell_with_origin(memory, pointer, origin),
             canonical.clone(),
         ));
     }
     let Bitvector32Term::MemoryLoad(memory, pointer) = bits else {
         unreachable!("the pattern above matched a memory load");
     };
-    Some((canonical_load_variable(memory, pointer), bits.clone()))
+    Some((load_variable_for_cell(memory, pointer), bits.clone()))
 }
 
-/// Binds a load term to its canonical variable and records the defining
+/// Binds a load term to its load variable and records the defining
 /// equation in the path's fact stream. The defining equation is
-/// kernel-certified by construction: the variable is the kernel's own name
-/// for this load. It must not demand a replayable assumption derivation
+/// kernel-certified by construction: the load variable represents this
+/// load. It must not demand a replayable assumption derivation
 /// downstream.
-fn mint_canonical_load_variable(
+fn mint_load_variable(
     bits: &Bitvector32Term,
-    _next_verification_variable: &mut u64,
+    _next_kernel_variable: &mut u64,
     facts: &mut Vec<ExecutionPureFact>,
     _assumptions: &PureFactContext,
 ) -> Option<Variable> {
-    let (fresh, load) = canonical_load_variable_for_term(bits)?;
+    let (fresh, load) = load_variable_for_term(bits)?;
     record_load_variable_defining_fact(fresh, load, facts);
     Some(fresh)
 }
 
 /// Records a load variable's exact defining fact in a fact
 /// stream, deduplicated by proposition. The equation is kernel-certified by
-/// construction: the variable is the kernel's own name for this load. It
-/// must not demand a replayable assumption derivation downstream.
+/// construction: the load variable represents this load. It must not demand
+/// a replayable assumption derivation downstream.
 fn record_load_variable_defining_fact(
     variable: Variable,
     load: Bitvector32Term,

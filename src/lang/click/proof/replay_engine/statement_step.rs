@@ -187,11 +187,11 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
                 // (a shared post-branch step's premise after a
                 // constant assignment); it demands no evidence.
                 || PureFactContext::new().proves(&premise)
-                // Canonical load variables are kernel-internal names; two
+                // Load variables are kernel-internal; two
                 // recorded equalities chained through one are the same
                 // user-level fact, so availability closes over them rather
                 // than demanding the certificate write the chain.
-                || premise_bridged_by_canonical_names(&premise, requirement_pure_facts);
+                || premise_bridged_by_load_variables(&premise, requirement_pure_facts);
         if !premise_is_available {
             let all_pure_facts = requirement_pure_facts.to_vec();
             return Err(ClickError::new(format!(
@@ -291,10 +291,10 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     })
 }
 
-/// Frame-lean adapter for the shared canonical-name closure. Fact-vector
+/// Frame-lean adapter for the shared load-variable closure. Fact-vector
 /// materialization is local work and must not enlarge every statement replay
 /// frame; the expansion small-stack regression pins that boundary.
 #[inline(never)]
-fn premise_bridged_by_canonical_names(premise: &Proposition, facts: &ProofFacts) -> bool {
-    super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(premise, &facts.to_vec())
+fn premise_bridged_by_load_variables(premise: &Proposition, facts: &ProofFacts) -> bool {
+    super::super::fact_reasoning::premise_bridged_by_load_variable_chain(premise, &facts.to_vec())
 }

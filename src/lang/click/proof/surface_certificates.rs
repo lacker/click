@@ -125,12 +125,12 @@ pub(super) fn lower_surface_atomic_derivation(
         .iter()
         .map(syntax::C0Parameter::name)
         .collect::<BTreeSet<_>>();
-    // A premise written through canonical load variables has no direct
+    // A premise written through load variables has no direct
     // surface form; resolving the internal names back to their load
     // forms through the defining equations recovers one.
     let defining_premises: Vec<Proposition> = available
         .iter()
-        .filter(|premise| crate::kernel::is_canonical_load_defining_fact(premise))
+        .filter(|premise| crate::kernel::is_load_variable_defining_fact(premise))
         .cloned()
         .collect();
     for premise in derivation.context_premises() {
@@ -162,10 +162,9 @@ pub(super) fn lower_surface_atomic_derivation(
             }
         };
         match synthesize_premise(&premise).or_else(|error| {
-            let resolved =
-                crate::kernel::resolve_canonical_load_variables_via(&premise, &defining_premises);
+            let resolved = crate::kernel::resolve_load_variables_via(&premise, &defining_premises);
             let resolved = if resolved == premise {
-                crate::kernel::resolve_canonical_load_variables_from_registry(&premise)
+                crate::kernel::resolve_load_variables_from_registry(&premise)
             } else {
                 resolved
             };

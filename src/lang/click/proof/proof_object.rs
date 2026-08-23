@@ -4572,10 +4572,10 @@ impl<'a> Proof<'a> {
             .replay
             .next_opaque_call
             .max(else_abstract.replay.next_opaque_call);
-        execution.replay.next_verification_variable = then_abstract
+        execution.replay.next_kernel_variable = then_abstract
             .replay
-            .next_verification_variable
-            .max(else_abstract.replay.next_verification_variable);
+            .next_kernel_variable
+            .max(else_abstract.replay.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -4910,9 +4910,9 @@ impl<'a> Proof<'a> {
         execution.replay.next_opaque_call = then_replay
             .next_opaque_call
             .max(else_replay.next_opaque_call);
-        execution.replay.next_verification_variable = then_replay
-            .next_verification_variable
-            .max(else_replay.next_verification_variable);
+        execution.replay.next_kernel_variable = then_replay
+            .next_kernel_variable
+            .max(else_replay.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -5066,9 +5066,9 @@ impl<'a> Proof<'a> {
         execution.replay.next_opaque_call = then_replay
             .next_opaque_call
             .max(else_replay.next_opaque_call);
-        execution.replay.next_verification_variable = then_replay
-            .next_verification_variable
-            .max(else_replay.next_verification_variable);
+        execution.replay.next_kernel_variable = then_replay
+            .next_kernel_variable
+            .max(else_replay.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -7474,7 +7474,7 @@ impl<'a> Proof<'a> {
         // Quantified execution facts may be retained in the canonical memory
         // form used by the kernel while their recorded Surface form
         // lowers to a replay-equivalent snapshot term. Probe only the
-        // persistent alpha/canonical-load bucket for this selected premise;
+        // persistent alpha/canonical-form bucket for this selected premise;
         // `InstantiateUsing` validates the same equivalence on replay.
         if matches!(kernel, Proposition::ForAll { .. }) {
             for candidate in self.facts().matching_quantified_replay_facts(kernel) {

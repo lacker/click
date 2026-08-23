@@ -1501,7 +1501,7 @@ pub(super) fn execute_step_from_execution_point(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
         &mut replay.next_opaque_call,
-        &mut replay.next_verification_variable,
+        &mut replay.next_kernel_variable,
         prerequisite_policy,
         fact_transport_policy,
     )?

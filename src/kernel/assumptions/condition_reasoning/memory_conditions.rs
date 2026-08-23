@@ -50,15 +50,15 @@ impl PureFactContext {
             return self.bitvector_terms_proven_equal(left, &right);
         }
 
-        // Load variables are compared as the loads they name, viewed at the
+        // Load variables are compared as the loads they represent, viewed at the
         // live snapshot each was first read from: the canonical epoch has
         // no derivation history, while the origin is DAG-connected, so the
-        // frame legs below can relate two names for one cell across an
-        // effect the facts frame it through; two names over one epoch
+        // frame legs below can relate two load variables for one cell across an
+        // effect the facts frame it through; two variables over one epoch
         // whose addresses this context proves equal are one cell.
         let view_at_origin = |term: &Bitvector32Term| match term {
             Bitvector32Term::Variable(variable) => {
-                crate::kernel::eval::registered_canonical_load_origin(variable)
+                crate::kernel::eval::registered_load_origin_for_variable(variable)
                     .map(|(memory, pointer)| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)))
             }
             Bitvector32Term::MemoryLoad(_, _) => Some(term.clone()),
@@ -96,7 +96,7 @@ impl PureFactContext {
         // resolution, structural match, the DAG walk), so the residue runs
         // under one isolated node budget: load-equality questions the cheap
         // evidence cannot settle within it fail promptly here rather than
-        // fanning out into the giant-term recursion that canonical naming
+        // fanning out into the giant-term recursion that load-variable construction
         // exists to avoid.
         crate::kernel::reasoning::with_isolated_memory_resolution_fuel(8_000, || {
             if memories_match_for_pointer_load_under_assumptions(
@@ -114,9 +114,8 @@ impl PureFactContext {
             // summaries and mutates-only facts to frame the loaded pointer
             // across each intervening effect. Deciding the pair by that
             // proof, instead of by form coincidence, is what keeps fact
-            // transport working once canonicalization stops laundering havoc
-            // markers (see
-            // issues/canonical-load-jump-launders-havoc-markers.md).
+            // transport working once canonicalization preserves havoc
+            // markers.
             crate::kernel::api::c_memory_load_is_unchanged(
                 left_memory,
                 right_memory,
@@ -198,11 +197,11 @@ impl PureFactContext {
         &self,
         term: &Bitvector32Term,
     ) -> Option<Bitvector32Term> {
-        // A load variable resolves as the load it names: the cell it reads
+        // A load variable resolves as the load it represents: the cell it reads
         // may be decided by this context's facts (a bound index proven
-        // distinct from every stored cell) even though the name was
+        // distinct from every stored cell) even though the variable was
         // created without them. The result is canonical so a resolution
-        // to an earlier snapshot's load compares by name.
+        // to an earlier snapshot's load compares by canonical form.
         let viewed = crate::kernel::eval::viewed_as_memory_load(term)?;
         let Bitvector32Term::MemoryLoad(memory, pointer) = &viewed else {
             return None;

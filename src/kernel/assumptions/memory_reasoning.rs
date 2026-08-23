@@ -958,11 +958,11 @@ impl PureFactContext {
         }
 
         // Bounded comparison scopes answer offset equality by structure and
-        // canonical names only; the general decider's per-pair cost is the
+        // load variables only; the general decider's per-pair cost is the
         // breadth that bounded callers exist to avoid.
         let offsets_equal = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             if crate::kernel::reasoning::memory_resolution::bounded_snapshot_comparison_active() {
-                crate::kernel::eval::offsets_match_modulo_canonical_names(left, right)
+                crate::kernel::eval::offsets_have_same_canonical_form(left, right)
             } else {
                 self.decide(&ConditionTerm::pointer_offset_equal(
                     left.clone(),
@@ -1083,9 +1083,9 @@ impl PureFactContext {
     }
 
     /// An exact ordering fact whose operands match the queried condition's
-    /// operands modulo canonical load names: facts may write a load atom at
+    /// operands modulo load variables: facts may write a load atom at
     /// a recorded snapshot while the query carries the placeholder load or
-    /// the canonical variable, and all of those are one atom. Bounded by
+    /// the load variable, and all of those are one atom. Bounded by
     /// the exact fact set and term size.
     fn exact_ordering_modulo_canonical_atoms(&self, condition: &ConditionTerm) -> bool {
         let query = match condition {
@@ -1109,9 +1109,9 @@ impl PureFactContext {
                 _ => return false,
             };
             let left_match =
-                crate::kernel::eval::terms_match_modulo_canonical_names(query.0, operands.0);
+                crate::kernel::eval::terms_have_same_canonical_form(query.0, operands.0);
             let right_match =
-                crate::kernel::eval::terms_match_modulo_canonical_names(query.1, operands.1);
+                crate::kernel::eval::terms_have_same_canonical_form(query.1, operands.1);
             left_match && right_match
         })
     }
@@ -1136,12 +1136,10 @@ impl PureFactContext {
         if !matches!(one.as_ref(), Bitvector32Term::Constant(1)) {
             return false;
         }
-        // Facts may write the load atom by its canonical name while the
+        // Facts may write the load atom by its load variable while the
         // index carries the raw load (or vice versa); try both forms.
         let mut forms = vec![term.as_ref().clone()];
-        if let Some((variable, _)) =
-            crate::kernel::eval::canonical_load_variable_for_term(term.as_ref())
-        {
+        if let Some((variable, _)) = crate::kernel::eval::load_variable_for_term(term.as_ref()) {
             let named = Bitvector32Term::Variable(variable);
             if !forms.contains(&named) {
                 forms.push(named);
@@ -1157,7 +1155,7 @@ impl PureFactContext {
                         && matches!(
                             fact,
                             ConditionTerm::Bitvector32SignedLessThan(left, _)
-                                if crate::kernel::eval::terms_match_modulo_canonical_names(
+                                if crate::kernel::eval::terms_have_same_canonical_form(
                                     left, form,
                                 )
                         )

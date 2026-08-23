@@ -334,7 +334,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
                 assumptions.assume_proposition(fact.proposition().clone())
             })
             .assume_proposition(source.clone());
-        // Canonical-name bridges decide search-free before the reachability
+        // Load-variable bridges decide search-free before the reachability
         // walk: a target equating two internal names for one unchanged cell
         // needs only the bounded origins proof, and the walk's general
         // equality legs would re-enter snapshot comparison on exactly these
@@ -349,14 +349,14 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         // justification is contract-level context, not a proof premise the
         // tactic must list. The restricted premise contract still governs
         // what proves the target; this context only decides whether two
-        // canonical names denote one unchanged cell.
+        // load variables denote one unchanged cell.
         let chain_assumptions = chain_facts
             .iter()
             .filter(|fact| matches!(fact, Proposition::ConditionIs(_, _)))
             .fold(transport_assumptions.clone(), |assumptions, fact| {
                 assumptions.assume_proposition(fact.clone())
             });
-        if super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+        if super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
             &target,
             &chain_facts,
             &chain_assumptions,

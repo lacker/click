@@ -908,9 +908,9 @@ impl PureFactContext {
         // except via another fact that mentions the load itself. Without the
         // gate the walk pays a bridging search against every fact at every
         // recursion level.
-        // A load variable is gated exactly as the load it names: without
+        // A load variable is gated exactly as the load it represents: without
         // the gate every equality fact in the context is a deep-equality
-        // candidate for every name, which is quadratic in the facts.
+        // candidate for every load variable, which is quadratic in the facts.
         let term_view = crate::kernel::eval::viewed_as_memory_load(term);
         let plausibly_equal = |candidate: &Bitvector32Term| {
             if candidate == term {

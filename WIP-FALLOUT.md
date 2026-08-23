@@ -81,8 +81,8 @@ path and may be the intended tool).
 
 ## Layer 4 infrastructure landed; the finding is fact flow
 
-Two sound mechanisms are in: mint memoization (one canonical variable
-per (snapshot arena id, pointer) — repeated loads reuse the name, so
+Two sound mechanisms are in: mint memoization (one load variable
+per (snapshot arena id, pointer) — repeated loads reuse the variable, so
 self-relations stay syntactic) and `resolve_minted_load_pointer`
 (range/containment provers rewrite a minted query address to its load
 spelling before matching load-spelled owned ranges; wired into
@@ -115,18 +115,18 @@ shapes mentioning the contract variable in this test's entry facts
 that shape, bridging entry-to-current memory through the existing
 unchanged-load machinery if the handles differ.
 
-## Layer 4 closed: content-addressed canonical load variables
+## Layer 4 closed: content-addressed load variables
 
 The MissingResource class was a three-way spelling split for one load:
 contract-grant lowering (surface, raw `MemoryLoad(empty-placeholder)`),
 requirement evaluation (kernel mint from one counter), and body execution
 (kernel mint from another counter). Counter-based minting cannot unify
 passes that share no allocator state, so the mint is now content-addressed:
-`canonical_load_variable(memory, pointer)` hashes the load identity into a
+`load_variable_for_cell(memory, pointer)` hashes the load identity into a
 reserved id space (base 2^40, precedent `spec_fold_bound_variable`), with a
 thread-local registry that panics on a hash collision between distinct
 identities instead of silently conflating them. All three birth paths —
-`mint_canonical_load_variable` (eval + spec) and the surface
+`mint_load_variable` (eval + spec) and the surface
 `symbolic_pointer_contract_memory_load` — now call it, so every pass spells
 the same load with the same variable and containment is syntactic. The
 counter threading is now vestigial (parameters retained, unused) and can be
@@ -136,27 +136,27 @@ removed in cleanup. Lead test passes; suite fallout dropped 14 → 6.
 
 1. **Snapshot-unstable naming** (`truncated_service_step…`, likely the
    perpetual-service and simp-premise tests): the same cell loaded at two
-   snapshots hashes to two canonical variables, where raw load spellings
+   snapshots hashes to two load variables, where raw load spellings
    were previously bridged by atomic-load provenance seeing through the
    terms. Fix direction: canonicalize the load term to its
    provenance-stable spelling (store-equation / placeholder resolution,
    the existing `canonicalize_atomic_loads` layer) before hashing, so
-   unchanged cells share one name across snapshots.
-2. **No surface spelling for canonical variables in expansion**
+   unchanged cells share one load variable across snapshots.
+2. **No surface spelling for load variables in expansion**
    (`modular_call_snapshot_anchor…`, expansion tests): fact transports over
    defining equations have no recorded Click spelling. Same family as the
    layer-2 fix; extend the resolved round-trip or synthesize spellings for
    defining facts. The transport source also shows an un-canonicalized
    load born through the pointer-ADD operator path (worklist item).
 
-## Snapshot-stable naming: canonical spelling + registry view (6 -> 4)
+## Snapshot-stable load variables: canonical form + registry view (6 -> 4)
 
-Two refinements landed. First, the canonical variable id now hashes the
+Two refinements landed. First, the load variable id now hashes the
 provenance-stable spelling (`canonicalize_atomic_loads`) rather than the
-raw term, so representational snapshot differences share one name. Second,
+raw term, so representational snapshot differences share one load variable. Second,
 assumption-based cross-snapshot equalities (call-havoc boundaries) cannot
-be hashed away, so equality reasoning views a registered canonical
-variable as the load it names at the three trigger points
+be hashed away, so equality reasoning views a registered load variable as
+the load it represents at the three trigger points
 (`bitvector_terms_equal_for_memory_resolution`, the chase-pair check in
 assumptions.rs, and `memory_load_terms_equal_for_fact_transport`),
 letting the existing provenance evidence fire exactly as it did for load
@@ -191,7 +191,7 @@ Remaining failures (4): this one; expansion separation `have`
 (source_expander_derives_separation_from_call_postconditions); and the
 two expansion transport spelling tests (modular_call_snapshot_anchor,
 snapshot_bridged_simp_premise) which need Click surface spellings for
-canonical-variable defining equations. Probes still in tree: statements/
+load-variable defining equations. Probes still in tree: statements/
 expression/functions MissingResource sites, resource_algebra write-miss
 probe — remove before integration.
 
@@ -201,24 +201,24 @@ The resource-neutral-callee failure traced to `wrap_path_context`: call
 postcondition equalities were being wrapped as
 `Implies(defining-equation, equality)`, and the resource argument
 equality path (`pointer_offsets_equal_for_memory_resolution` ->
-`exact_condition_value`) does not discharge implications. A canonical
-defining equation is true by construction of the naming, so both wraps
+`exact_condition_value`) does not discharge implications. A load-variable
+defining equation is true by construction, so both wraps
 (`wrap_proof_facts`, `wrap_path_context`) now skip
-`is_canonical_load_defining_fact` propositions, leaving consequents
+`is_load_variable_defining_fact` propositions, leaving consequents
 unguarded and reachable by exact fact lookup. Suite time back to ~22s.
-Remaining: the three expansion tests (transport spellings for canonical
+Remaining: the three expansion tests (transport spellings for load
 variables, separation have).
 
-## Canonical-name chain closure (3 -> 1)
+## Load-variable chain closure (3 -> 1)
 
 Exact-premise checks in three consumers (step-using replay availability,
 restricted-simp premise vetting in have proofs and its certification-side
 twin, and `rewrite`'s exact-equality check) now close over pointer-offset
-equalities chained through canonical load variables
-(`premise_bridged_by_canonical_name_chain` in proof/fact_reasoning.rs):
+equalities chained through load variables
+(`premise_bridged_by_load_variable_chain` in proof/fact_reasoning.rs):
 a premise and the recorded facts may spell one user-level equality
-through different kernel-internal names, and the closure is a bounded
-BFS over equality facts with a canonical endpoint. The
+through different kernel variables, and the closure is a bounded BFS over
+equality facts with a load-variable endpoint. The
 snapshot-bridged-simp test's expansion no longer needs an explicit
 transport step — its stale assertion was updated (a legitimate
 certificate-spelling simplification, per the fallout-audit criterion).
@@ -237,12 +237,12 @@ Remaining failure (1): source_expander_derives_separation_from_call_postconditio
 
 `source_expander_derives_separation_from_call_postconditions` remains.
 The smart separation derivation has one context premise spelled through a
-canonical variable (`scaled(v1406...) == scaled(v100002)`, an init-ensures
+load variable (`scaled(v1406...) == scaled(v100002)`, an init-ensures
 equality), and `checked_surface_comparison_fact_at_point` cannot express
 it in Click. Two resolution retries were added to the premise-spelling
 loops in surface_certificates.rs (defining-equation based, then
 registry-based via the new
-`resolve_canonical_load_variables_from_registry`); the registry retry
+`resolve_load_variables_from_registry`); the registry retry
 advanced synthesis from "0 structural bases" to "1 structural bases",
 but the load spelling sits at the call-havoc snapshot and no compatible
 recorded snapshot exists at the proof point, so no replayable surface
@@ -269,9 +269,9 @@ surface_replay.rs must come out before integration.
 ## Suite green (1062/1062, 18.3s)
 
 The last test closed when snapshot-indexed program points were computed
-from the RESOLVED load spelling instead of the canonical-variable form:
-`checked_surface_comparison_fact_at_point` now resolves canonical
-variables (defining facts in scope, else the registry) before indexing
+from the RESOLVED load spelling instead of the load-variable form:
+`checked_surface_comparison_fact_at_point` now resolves load variables
+(defining facts in scope, else the registry) before indexing
 recorded snapshots, so the separation-derivation premise finds its
 compatible point and a replayable Click spelling. Full lib suite passes;
 time back to ~18s. Remaining before integration: strip probes and
@@ -291,16 +291,16 @@ certified connection. Grounded findings:
   PointerOffsetEqual sources) — the target `left->data == data` at the
   current point was EXACTLY available in the fact set.
 - On the WIP branch, `available` holds `v1406 == v100002` and
-  `v1840 == v100002` but NO fact mentioning v1810, the canonical name of
-  left->data at the current point. Three canonical names exist for the
+  `v1840 == v100002` but NO fact mentioning v1810, the load variable of
+  left->data at the current point. Three load variables exist for the
   same cell at different effect points (their snapshots differ by
   call-havoc markers — correctly distinct, since equality across a call
   needs frame evidence).
 - The regression is therefore in fact RESPELLING across effects: the old
   flow re-spelled load(m_pre, p) facts to load(m_post, p) under frame
   evidence as they crossed call statements, keeping current-point
-  spellings available. Canonical-variable facts cross effects unchanged,
-  so the current-point name is never connected.
+  spellings available. Load-variable facts cross effects unchanged,
+  so the current-point load variable is never connected.
 - A transport hook in `transport_framed_atomic_bitvector`'s Variable arm
   (transport the registered load, re-canonicalize at the post snapshot)
   did NOT fix the example and DID break box_pipeline's step()-using
@@ -314,7 +314,7 @@ Next session: find where a `step() using`'s introduced facts and call
 postconditions get re-spelled to the post-statement snapshot at base
 (search for the old load-respelling on the introduction path, e.g.
 `replay_available_across_effects` / drain transported facts), and add
-the canonical-name analogue THERE: when the frame evidence rewrites the
+the load-variable analogue THERE: when the frame evidence rewrites the
 underlying load, emit the bridging equality `v_pre == v_post` (or the
 re-spelled fact) into the introduced fact set. Supporting changes kept
 on this branch (all lib-green): canonical chain closure in the have
@@ -326,16 +326,16 @@ source, and the resolved-source assumption.
 Session findings, all lib-green (1062/1062):
 
 - The cross-statement automatic fact transport (transition_certification)
-  now includes canonical-spelled facts (gate widened with
-  `proposition_mentions_registered_canonical_load`), and
-  `transport_framed_atomic_bitvector` transports a canonical variable as
-  the load it names — resolving through a defining equation in the
+  now includes facts written with load variables (gate widened with
+  `proposition_mentions_registered_load_variable`), and
+  `transport_framed_atomic_bitvector` transports a load variable as
+  the load it represents — resolving through a defining equation in the
   ambient assumptions first (mint-time spelling, live snapshot), falling
   back to the registry (canonicalized spelling).
-- The snapshot-blind fact key now keys a canonical variable as
+- The snapshot-blind fact key now keys a load variable as
   `Load(registered pointer)` — one O(1) registry lookup, no snapshot in
-  the key — so canonical spellings bucket with load spellings of the
-  same cell. The candidate comparison resolves canonical names
+  the key — so canonical forms bucket with load spellings of the
+  same cell. The candidate comparison resolves load variables
   shallowly (term positions only, never walking embedded snapshots).
   IMPORTANT perf lesson: the first cut resolved with the full
   substitution walk per key/per candidate, and
@@ -364,9 +364,9 @@ accepted it at base).
 
 ## Origin registry and the shared transport-connect gap
 
-The registry now keeps, per canonical variable, the first-seen ORIGIN
-snapshot alongside the canonical (jumped) spelling
-(`registered_canonical_load_origin`): the canonical spelling is right
+The registry now keeps, per load variable, the first-seen ORIGIN
+snapshot alongside the canonical (jumped) form
+(`registered_load_origin_for_variable`): the canonical form is right
 for identity, but frame checks and snapshot indexing need the live,
 DAG-connected origin. The transport hook and the registry resolver use
 origins now; with that, the introduction respelling fires for some hops
@@ -376,13 +376,13 @@ evidence connects.
 
 Both remaining gate failures are ONE capability gap, now precisely
 characterized: an explicit `transport(at(P, e) == X, e == X)` must
-connect a recorded-point canonical name to the current-point canonical
-name across intervening effects. The evidence exists (effect summaries
+connect a recorded-point load variable to the current-point load variable
+across intervening effects. The evidence exists (effect summaries
 / store disjointness), but: (a) `c_memory_load_is_unchanged` on the two
 ORIGIN snapshots does not compose across multiple effect hops and its
 effect-fact arms demand exact memory identities that origin handles do
 not always meet; (b) the origin-unchanged chain edges
-(`premise_bridged_by_canonical_name_chain_with_origins`, wired into the
+(`premise_bridged_by_load_variable_chain_with_origins`, wired into the
 have-transport check with full-transition assumptions) therefore fail;
 and (c) letting the resolved-load retry search freely reintroduces the
 giant-term recursion — the motivating metadata-write mdtest burned its
@@ -391,13 +391,13 @@ bound on the retry cut the cost but broke
 restricted_simp_certifies_unchanged_prefix_after_indexed_store (bound
 reverted; lib suite green again at 1062).
 
-The principled fix, for a fresh session: make the canonical name itself
+The principled fix, for a fresh session: make the load variable itself
 stable across provably-disjoint effects at MINT time — the DAG epoch
-keying (already in `canonical_load_variable`) returns None for these
+keying (already in `load_variable_for_cell`) returns None for these
 snapshots because point-state memories lack derivation records; either
 record derivations for replay point states, or extend
-`cell_epoch_for_canonical_naming` to walk effect facts. If the entry
-name and the current name coincide whenever the cell is untouched, the
+`cell_epoch_for_load_variable` to walk effect facts. If the entry
+entry and current load variables coincide whenever the cell is untouched, the
 explicit transports connect syntactically and no bounded search is
 needed at all. Gate status on this branch: lib 1062/1062 green;
 mdtests 395/397 (field_derived metadata-write, leaf_flag_grouped_simp);
@@ -490,7 +490,7 @@ modulo comparisons (`conditions_equal_modulo_proven_snapshots` ->
 `memory_loads_proven_equal`) are UNBOUNDED and re-enter whole-snapshot
 alias comparison when canonical-resolved loads cannot be decided
 cheaply. The pattern is now clear across three sites: every consumer
-that resolves canonical names to loads and asks general load equality
+that resolves load variables to loads and asks general load equality
 needs the same bounded-fuel discipline; the next session should bound
 `memory_loads_proven_equal`'s deep legs behind isolated fuel at ITS
 entry (one site instead of per-consumer whack-a-mole) and measure the
@@ -512,7 +512,7 @@ walk re-asks it per store edge unmemoized. Next session, two options:
 (a) memoize the per-edge disjointness by (write, pointer, assumptions
 id) and make the derived-separation scan output-bounded; (b) a cheap
 targeted route for the canonical case — write base and separation range
-base share a canonical name, so membership needs only the extent
+base share a load variable, so membership needs only the extent
 ordering, decidable from exact requires facts once their spellings
 normalize (at-spelling vs live). Option (b) is the semantics the case
 actually needs; (a) is the general hygiene both the scalability
@@ -554,7 +554,7 @@ fallback) used by the DAG store edge, which cut the walk's cost from
 1.99M units to ~1.2k — per-edge work is now genuinely bounded; and the
 `nonnegative_successor_by_exact_facts` rule in `pointer_in_range`
 (0 <= t+1 from exact 0 <= t plus any exact strict upper bound as the
-no-overflow witness), with dual raw/canonical spelling lookup.
+no-overflow witness), with dual raw/canonical-form lookup.
 
 Probes then located the exact remaining gap at the blocking store edge
 (write = data[len+1], loaded = owner->data): of 61 edge queries, 42 run
@@ -563,10 +563,10 @@ passing PureFactContext::new() — those can never decide and should
 skip the edge fast), and the 19 real ones carry 21 facts / 9 candidates
 whose ordering facts spell load atoms at STATEMENT-ENTRY memories while
 the write's index spells the EMPTY-PLACEHOLDER load — exact mismatch.
-Both sides canonicalize to the same name (placeholder-cell
+Both sides canonicalize to the same load variable (placeholder-cell
 materialization), so the fix is: in the successor rule and/or the
 membership ordering lookups, normalize the FACT'S load atoms to
-canonical names too (the index side already tries its canonical name),
+load variables too (the index side already tries its load variable),
 i.e. compare orderings with both atoms canonicalized. Bounded: per
 fact-atom canonicalize is memoized and the fact set is small.
 
@@ -577,18 +577,18 @@ case. If it still burns for other pairs, the same
 canonicalize-then-compare discipline applies to its per-cell
 membership checks.
 
-## Modulo-canonical orderings, bounded comparison scope, name cache (2026-08-19)
+## Canonical-form orderings, bounded comparison scope, load-variable cache (2026-08-19)
 
-Landed suite-green: `terms_match_modulo_canonical_names` (structural
-equality with load atoms compared by canonical name),
+Landed suite-green: `terms_have_same_canonical_form` (structural
+equality with load atoms compared by load variable),
 `exact_ordering_modulo_canonical_atoms` in pointer_in_range's proves
 (facts spelled at recorded snapshots now match queries spelled with
-placeholder loads or canonical variables), the successor rule's lookups
+placeholder loads or load variables), the successor rule's lookups
 widened the same way, `with_bounded_snapshot_comparison` (suppresses
 the whole-snapshot general-alias leg AND the decide fallback inside
 bounded scopes, with truncation notes — the same pattern as
 inside_condition_decision), the chain's origins check running inside
-that scope, and a name cache for canonical_load_variable_for_term.
+that scope, and a load-variable cache for `load_variable_for_term`.
 
 Result: the general-alias burn (1.57M) is gone from the metadata-write
 trace. The residual budget burn is 1.25M deterministic units attributed
@@ -613,8 +613,8 @@ record_deterministic_work — remove after use, done) pinned the burn to
 fuel-check breadth inside the equality recursion under
 pointer_element_index_from_base's five per-candidate `decide` calls.
 Bounded comparison scopes now answer offset equality by structure and
-canonical names only (offsets_match_modulo_canonical_names), and the
-canonical matcher canonicalizes both sides before naming (a post-store
+load variables only (offsets_have_same_canonical_form), and the
+canonical matcher canonicalizes both sides before comparison (a post-store
 load resolves to its stored arithmetic). RESULT: the metadata-write
 failure is PROMPT — no budget exhaustion anywhere in the trace. Suite
 green.
@@ -754,7 +754,7 @@ and the choice is a design decision, not a mechanical fix:
     keeps the example unchanged, but it needs composite definitions
     threaded into those query paths.
 
-Landed green alongside this finding: canonical-name matching in the
+Landed green alongside this finding: load-variable matching in the
 `assumption` availability check and in `rewrite` occurrence matching
 (both term and pointer-offset positions). Those are the same family as
 the already-landed matchers — any consumer comparing terms must see
@@ -825,16 +825,16 @@ spelling mismatch, not a missing fact.
 Two things were tried and reverted because they did not close it, and
 unexercised code should not land: routing `rewrite` availability through
 `snapshot_bridged_fact_is_available`, and matching int32 equalities
-modulo canonical names. Neither matches, because the two loads
-canonicalize to DIFFERENT names — they are distinct cells to the
+modulo load variables. Neither matches, because the two loads
+canonicalize to different load variables — they are distinct cells to the
 canonicalizer, and only framing can show the cell is unchanged across
 the store.
 
-That is precisely what `premise_bridged_by_canonical_name_chain_with_origins`
+That is precisely what `premise_bridged_by_load_variable_chain_with_origins`
 does, and it is restricted to pointer-offset equalities. Closing
 owned-string means generalising the origins bridge to int32 equalities:
-given available `A == B` and query `A == B'` where B and B' are canonical
-names whose origins are provably one unchanged cell, accept. The bounded
+given available `A == B` and query `A == B'` where B and B' are load
+variables whose origins are provably one unchanged cell, accept. The bounded
 origins machinery already exists; this is a shape generalisation of it.
 
 Deleting the two now-redundant rewrites in that `have` was also tried:
@@ -843,9 +843,9 @@ it advances proof 24 to 25, i.e. the same class recurs in the following
 
 ## The origins bridge is generalised over equality shapes (2026-08-19)
 
-Canonical-name bridging is now one implementation serving both
-pointer-offset and int32 equalities, behind a `CanonicalBridgeSide`
-trait: a side yields the canonical load variable it names, the sides of
+Load-variable bridging is now one implementation serving both
+pointer-offset and int32 equalities, behind a `LoadVariableBridgeSide`
+trait: a side yields the load variable it represents, the sides of
 an equality of its shape, and an equality over two sides. Both public
 entry points dispatch on the premise, so every existing consumer — the
 `assumption` availability check, explicit transport, and now `rewrite`'s
@@ -853,9 +853,9 @@ premise check — bridges int32 equalities as well.
 
 Two capability gains beyond the shape generalisation:
 
-- A side is recognised whether it spells a load by its canonical name or
+- A side is recognised whether it spells a load by its load variable or
   by the load itself; both denote one atom, so `value == load(m, p)`
-  bridges against a fact spelled with the name.
+  bridges against a fact spelled with the load variable.
 - The origins decision is memoised per call (`OriginsUnchanged`), which
   it was not before, so a renaming pass over many endpoints pays for each
   distinct pair once.
@@ -875,7 +875,7 @@ correctly: the query's named load and one recorded endpoint carry the
 SAME pointer. The unchanged proof still fails — and rightly so. Probed
 both ways, `c_memory_load_is_unchanged` returns false bounded AND
 unbounded, because the cell in question is the one the store wrote. The
-two names denote that cell before and after the write; they are not one
+the two load variables denote that cell before and after the write; they are not one
 unchanged cell, so no origins argument can connect them and none should.
 
 What proof 24 actually needs is the recorded store equation transported
@@ -909,7 +909,7 @@ comes out of the script.
 Reverted along the way, because the diagnosis behind it did not hold and
 it fixed nothing: threading effect facts into the rewrite premise check
 (a signature change across six call sites), and comparing vacuity modulo
-resolution. The canonical-name bridge generalisation stays — it is what
+resolution. The load-variable bridge generalisation stays — it is what
 proved the origins route was the wrong tool here.
 
 Branch state: lib/bins 1200/1200, ALL examples pass, mdtests 396/397
@@ -925,13 +925,13 @@ pre-existing failure. My earlier description of it as independent was
 wrong.
 
 The unspellable premise was `p->left != 0` with `p->left` spelled as a
-canonical load variable. Surface synthesis renders C expressions and a
-canonical name has no spelling, so the premise could not be expressed
+load variable. Surface synthesis renders C expressions and a
+load variable has no spelling, so the premise could not be expressed
 and the grouped transition fell back to an opaque certificate — exactly
 what that mdtest exists to forbid. Two fixes, both looking through the
-registry: synthesis resolves canonical names to the loads they name
+registry: synthesis resolves load variables to the loads they represent
 before rendering, and `bridged_match` accepts a fresh lowering that
-spells the load against a required premise that names it.
+spells the load against a required premise that uses its load variable.
 
 THE FULL GATE IS GREEN: scripts/check.sh exits 0, with 1200/1200 unit
 tests, 397/397 mdtests and every example project verifying.

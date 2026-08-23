@@ -10,27 +10,33 @@ use super::*;
 // offsets directly do not establish this invariant.
 
 /// Walks every pointer offset reachable from a value, collecting the
-/// canonical load variables found in scaled positions and rejecting any
+/// load variables found in scaled positions and rejecting any
 /// reachable raw `MemoryLoad` inside an `Int32Scaled` value.
-fn collect_offset_names_from_value(value: &CValue, names: &mut BTreeSet<Variable>) {
+fn collect_offset_load_variables_from_value(
+    value: &CValue,
+    load_variables: &mut BTreeSet<Variable>,
+) {
     match value {
         CValue::Void => {}
         CValue::Int32(term) | CValue::UInt8(term) => {
-            collect_offset_names_from_term(term, names);
+            collect_offset_load_variables_from_term(term, load_variables);
         }
         CValue::Pointer(pointer) => {
-            collect_offset_names_from_offset(&pointer.offset, names);
+            collect_offset_load_variables_from_offset(&pointer.offset, load_variables);
         }
     }
 }
 
 /// Walks a term in value position: load atoms are legitimate here, but
 /// their pointers' offsets must satisfy the no-raw-load invariant.
-fn collect_offset_names_from_term(term: &Bitvector32Term, names: &mut BTreeSet<Variable>) {
+fn collect_offset_load_variables_from_term(
+    term: &Bitvector32Term,
+    load_variables: &mut BTreeSet<Variable>,
+) {
     match term {
         Bitvector32Term::Constant(_) | Bitvector32Term::Variable(_) => {}
         Bitvector32Term::MemoryLoad(_, pointer) => {
-            collect_offset_names_from_offset(&pointer.offset, names);
+            collect_offset_load_variables_from_offset(&pointer.offset, load_variables);
         }
         Bitvector32Term::Add(left, right)
         | Bitvector32Term::Subtract(left, right)
@@ -42,43 +48,51 @@ fn collect_offset_names_from_term(term: &Bitvector32Term, names: &mut BTreeSet<V
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
-            collect_offset_names_from_term(left, names);
-            collect_offset_names_from_term(right, names);
+            collect_offset_load_variables_from_term(left, load_variables);
+            collect_offset_load_variables_from_term(right, load_variables);
         }
-        Bitvector32Term::BitwiseNot(value) => collect_offset_names_from_term(value, names),
+        Bitvector32Term::BitwiseNot(value) => {
+            collect_offset_load_variables_from_term(value, load_variables)
+        }
         Bitvector32Term::If {
             condition: _,
             then_term,
             else_term,
         } => {
-            collect_offset_names_from_term(then_term, names);
-            collect_offset_names_from_term(else_term, names);
+            collect_offset_load_variables_from_term(then_term, load_variables);
+            collect_offset_load_variables_from_term(else_term, load_variables);
         }
         Bitvector32Term::RangeFold { .. } | Bitvector32Term::PureFunctionApplication { .. } => {}
     }
 }
 
-fn collect_offset_names_from_offset(offset: &PointerOffsetTerm, names: &mut BTreeSet<Variable>) {
+fn collect_offset_load_variables_from_offset(
+    offset: &PointerOffsetTerm,
+    load_variables: &mut BTreeSet<Variable>,
+) {
     match offset {
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => {}
         PointerOffsetTerm::Add(left, right) => {
-            collect_offset_names_from_offset(left, names);
-            collect_offset_names_from_offset(right, names);
+            collect_offset_load_variables_from_offset(left, load_variables);
+            collect_offset_load_variables_from_offset(right, load_variables);
         }
         PointerOffsetTerm::Int32Scaled { value, .. } => {
-            assert_scaled_index_free_of_raw_loads(value, names);
+            assert_scaled_index_free_of_raw_loads(value, load_variables);
         }
     }
 }
 
 /// Inside an `Int32Scaled` value no load term may appear; load variables
 /// are recorded for the defining-fact check.
-fn assert_scaled_index_free_of_raw_loads(term: &Bitvector32Term, names: &mut BTreeSet<Variable>) {
+fn assert_scaled_index_free_of_raw_loads(
+    term: &Bitvector32Term,
+    load_variables: &mut BTreeSet<Variable>,
+) {
     match term {
         Bitvector32Term::Constant(_) => {}
         Bitvector32Term::Variable(variable) => {
-            if crate::kernel::is_canonical_load_variable(variable) {
-                names.insert(*variable);
+            if crate::kernel::is_load_variable(variable) {
+                load_variables.insert(*variable);
             }
         }
         Bitvector32Term::MemoryLoad(_, _) => {
@@ -94,17 +108,19 @@ fn assert_scaled_index_free_of_raw_loads(term: &Bitvector32Term, names: &mut BTr
         | Bitvector32Term::BitwiseAnd(left, right)
         | Bitvector32Term::BitwiseOr(left, right)
         | Bitvector32Term::BitwiseXor(left, right) => {
-            assert_scaled_index_free_of_raw_loads(left, names);
-            assert_scaled_index_free_of_raw_loads(right, names);
+            assert_scaled_index_free_of_raw_loads(left, load_variables);
+            assert_scaled_index_free_of_raw_loads(right, load_variables);
         }
-        Bitvector32Term::BitwiseNot(value) => assert_scaled_index_free_of_raw_loads(value, names),
+        Bitvector32Term::BitwiseNot(value) => {
+            assert_scaled_index_free_of_raw_loads(value, load_variables)
+        }
         Bitvector32Term::If {
             condition: _,
             then_term,
             else_term,
         } => {
-            assert_scaled_index_free_of_raw_loads(then_term, names);
-            assert_scaled_index_free_of_raw_loads(else_term, names);
+            assert_scaled_index_free_of_raw_loads(then_term, load_variables);
+            assert_scaled_index_free_of_raw_loads(else_term, load_variables);
         }
         Bitvector32Term::RangeFold { .. } | Bitvector32Term::PureFunctionApplication { .. } => {}
     }
@@ -112,29 +128,32 @@ fn assert_scaled_index_free_of_raw_loads(term: &Bitvector32Term, names: &mut BTr
 
 /// Every load variable selected into an offset must carry its exact
 /// defining fact in the path's emitted facts.
-fn assert_names_have_defining_facts(names: &BTreeSet<Variable>, facts: &[ExecutionPureFact]) {
-    for name in names {
+fn assert_load_variables_have_defining_facts(
+    load_variables: &BTreeSet<Variable>,
+    facts: &[ExecutionPureFact],
+) {
+    for load_variable in load_variables {
         let defined = facts.iter().any(|fact| {
-            crate::kernel::is_canonical_load_defining_fact(&fact.proposition)
+            crate::kernel::is_load_variable_defining_fact(&fact.proposition)
                 && matches!(
                     &fact.proposition,
                     Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, _), true)
-                        if matches!(left.as_ref(), Bitvector32Term::Variable(variable) if variable == name)
+                        if matches!(left.as_ref(), Bitvector32Term::Variable(variable) if variable == load_variable)
                 )
         });
         assert!(
             defined,
-            "load variable {name:?} has no defining fact in the emitted facts"
+            "load variable {load_variable:?} has no defining fact in the emitted facts"
         );
     }
 }
 
 /// The loaded-array-index half of the representation invariant: the index
 /// `*len_ptr` of `data + *len_ptr` is a load variable in the resulting
-/// offset (never a raw load), and the registry names the opaque cell for
-/// it. The defining equation is a tautology of the canonical model, so the
-/// operand merge drops it from the path facts; the registry, not the fact
-/// stream, is what ties a name to its cell.
+/// offset (never a raw load), and the registry associates the load variable
+/// with its opaque cell. The defining equation is a tautology of the canonical
+/// model, so the operand merge drops it from the path facts; the registry, not
+/// the fact stream, is what ties a load variable to its cell.
 #[test]
 fn index_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
     let len_cell = Pointer {
@@ -166,17 +185,17 @@ fn index_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
         let CStatementOutcome::Return { value, .. } = outcome else {
             continue;
         };
-        let mut names = BTreeSet::new();
-        collect_offset_names_from_value(value, &mut names);
-        for name in &names {
-            let (_, pointer) = crate::kernel::registered_canonical_load(name)
+        let mut load_variables = BTreeSet::new();
+        collect_offset_load_variables_from_value(value, &mut load_variables);
+        for load_variable in &load_variables {
+            let (_, pointer) = crate::kernel::registered_load_for_variable(load_variable)
                 .expect("the index's load variable should be registered");
             assert_eq!(
                 pointer, len_cell,
-                "the name should denote the loaded index cell"
+                "the load variable should denote the loaded index cell"
             );
         }
-        saw_a_canonical_offset |= !names.is_empty();
+        saw_a_canonical_offset |= !load_variables.is_empty();
     }
     assert!(
         saw_a_canonical_offset,
@@ -207,10 +226,10 @@ fn pointer_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
         let CStatementOutcome::Return { value, .. } = outcome else {
             continue;
         };
-        let mut names = BTreeSet::new();
-        collect_offset_names_from_value(value, &mut names);
-        assert_names_have_defining_facts(&names, &path.execution_facts());
-        saw_a_canonical_offset |= !names.is_empty();
+        let mut load_variables = BTreeSet::new();
+        collect_offset_load_variables_from_value(value, &mut load_variables);
+        assert_load_variables_have_defining_facts(&load_variables, &path.execution_facts());
+        saw_a_canonical_offset |= !load_variables.is_empty();
     }
     assert!(
         saw_a_canonical_offset,
@@ -245,10 +264,10 @@ fn canonical_term_resolves_equal_loads_to_one_form() {
         crate::kernel::eval::canonical_term(&load_at_drifted),
         "representational snapshot drift must not change the canonical form"
     );
-    let Bitvector32Term::Variable(name) = &canonical else {
+    let Bitvector32Term::Variable(load_variable) = &canonical else {
         panic!("an unresolved load's canonical form is its load variable: {canonical:?}");
     };
-    assert!(crate::kernel::is_canonical_load_variable(name));
+    assert!(crate::kernel::is_load_variable(load_variable));
     // Idempotence: the canonical form is its own canonical form.
     assert_eq!(canonical, crate::kernel::eval::canonical_term(&canonical));
 
@@ -263,7 +282,7 @@ fn canonical_term_resolves_equal_loads_to_one_form() {
 }
 
 #[test]
-fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
+fn offsets_have_same_canonical_form_through_the_canonical_form() {
     let pointer = Pointer {
         block: "cells".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -278,13 +297,13 @@ fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
         byte_width: 4,
     };
 
-    assert!(crate::kernel::offsets_match_modulo_canonical_names(
+    assert!(crate::kernel::offsets_have_same_canonical_form(
         &scaled(base.clone()),
         &scaled(drifted.clone()),
     ));
     // The load term and its load variable are one offset.
     let named = crate::kernel::eval::canonical_offset_term(&scaled(base.clone()));
-    assert!(crate::kernel::offsets_match_modulo_canonical_names(
+    assert!(crate::kernel::offsets_have_same_canonical_form(
         &named,
         &scaled(drifted),
     ));
@@ -300,7 +319,7 @@ fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
         )),
         byte_width: 4,
     };
-    assert!(!crate::kernel::offsets_match_modulo_canonical_names(
+    assert!(!crate::kernel::offsets_have_same_canonical_form(
         &scaled(base),
         &other_scaled,
     ));
@@ -310,7 +329,7 @@ fn offsets_match_modulo_canonical_names_through_the_canonical_form() {
 fn load_variables_are_congruent_through_ground_index_equalities() {
     // `data[index]` with `index == 0` in scope is the cell `data[0]`: the
     // two load variables are content-addressed by different addresses, so
-    // comparison joins them by congruence rather than by a shared name.
+    // comparison joins them by congruence rather than by a shared load variable.
     let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("data", 8));
     let index = Bitvector32Term::Variable(Variable(7));
     let indexed = Bitvector32Term::MemoryLoad(
@@ -330,23 +349,32 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
             offset: PointerOffsetTerm::Constant(0),
         }),
     );
-    let indexed_name = crate::kernel::eval::canonical_term(&indexed);
-    let first_name = crate::kernel::eval::canonical_term(&first);
+    let indexed_load_variable = crate::kernel::eval::canonical_term(&indexed);
+    let first_load_variable = crate::kernel::eval::canonical_term(&first);
     assert_ne!(
-        indexed_name, first_name,
-        "distinct addresses take distinct names"
+        indexed_load_variable, first_load_variable,
+        "distinct addresses take distinct load variables"
     );
 
     let without_index_fact = PureFactContext::new();
-    assert!(!without_index_fact.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
+    assert!(
+        !without_index_fact
+            .bitvector_terms_equal_from_facts(&indexed_load_variable, &first_load_variable)
+    );
 
     let with_index_fact = PureFactContext::new().assume_condition(
         ConditionTerm::equal(index, Bitvector32Term::Constant(0)),
         true,
     );
-    assert!(with_index_fact.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
-    assert!(with_index_fact.bitvector_terms_equal_from_facts(&first_name, &indexed_name));
-    // A different constant index names a different cell.
+    assert!(
+        with_index_fact
+            .bitvector_terms_equal_from_facts(&indexed_load_variable, &first_load_variable)
+    );
+    assert!(
+        with_index_fact
+            .bitvector_terms_equal_from_facts(&first_load_variable, &indexed_load_variable)
+    );
+    // A different constant index selects a different cell.
     let other = PureFactContext::new().assume_condition(
         ConditionTerm::equal(
             Bitvector32Term::Variable(Variable(7)),
@@ -354,14 +382,15 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
         ),
         true,
     );
-    assert!(!other.bitvector_terms_equal_from_facts(&indexed_name, &first_name));
+    assert!(!other.bitvector_terms_equal_from_facts(&indexed_load_variable, &first_load_variable));
 }
 
 #[test]
-fn substitution_reaches_through_a_load_variable_naming_a_bound_index() {
-    // A universal's body names `p[k]` with the bound `k` sealed inside the
-    // load variable's address. Instantiating `k := 0` must reach through
-    // the name and produce the load variable a direct read of `p[0]` takes.
+fn substitution_reaches_through_a_load_variable_with_a_bound_index() {
+    // A universal's body contains `p[k]` with the bound `k` sealed inside
+    // the load variable's address. Instantiating `k := 0` must reach through
+    // the load variable and produce the load variable used by a direct read
+    // of `p[0]`.
     let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("p", 12));
     let bound = Variable(3_000_000);
     let cell = |offset: PointerOffsetTerm| {
@@ -373,13 +402,17 @@ fn substitution_reaches_through_a_load_variable_naming_a_bound_index() {
             }),
         )
     };
-    let indexed_name = crate::kernel::eval::canonical_term(&cell(PointerOffsetTerm::Int32Scaled {
-        value: Box::new(Bitvector32Term::Variable(bound)),
-        byte_width: 4,
-    }));
-    assert!(matches!(indexed_name, Bitvector32Term::Variable(_)));
+    let indexed_load_variable =
+        crate::kernel::eval::canonical_term(&cell(PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(bound)),
+            byte_width: 4,
+        }));
+    assert!(matches!(
+        indexed_load_variable,
+        Bitvector32Term::Variable(_)
+    ));
     let instantiated = crate::kernel::reasoning::substitute_bitvector_variable(
-        &indexed_name,
+        &indexed_load_variable,
         bound,
         &Bitvector32Term::Constant(0),
     );
@@ -387,22 +420,22 @@ fn substitution_reaches_through_a_load_variable_naming_a_bound_index() {
         instantiated,
         crate::kernel::eval::canonical_term(&cell(PointerOffsetTerm::Constant(0)))
     );
-    // Substituting an unrelated variable leaves the name untouched.
+    // Substituting an unrelated variable leaves the load variable untouched.
     assert_eq!(
         crate::kernel::reasoning::substitute_bitvector_variable(
-            &indexed_name,
+            &indexed_load_variable,
             Variable(3_000_001),
             &Bitvector32Term::Constant(0),
         ),
-        indexed_name
+        indexed_load_variable
     );
 }
 
 #[test]
 fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
     // `p[j]` and `p[2]` are one cell when `j <= 2` and `not (j < 2)`: no
-    // recorded equality names the index, so the comparison must view the
-    // names as the loads they name and decide the addresses from bounds.
+    // recorded equality mentions the index, so the comparison must view the
+    // load variables as their loads and decide the addresses from bounds.
     let memory = crate::kernel::intern_c_memory(CMemory::new().with_block("p", 12));
     let j = Bitvector32Term::Variable(Variable(7));
     let cell = |offset: PointerOffsetTerm| {
@@ -420,7 +453,7 @@ fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
     });
     let third = cell(PointerOffsetTerm::Constant(8));
     assert_ne!(indexed, third);
-    // The index is a free variable of the name's denotation.
+    // The index is a free variable of the load variable's denotation.
     let mut variables = BTreeSet::new();
     crate::kernel::reasoning::collect_bitvector_variables(&indexed, &mut variables);
     assert!(variables.contains(&Variable(7)));
@@ -440,9 +473,9 @@ fn load_variables_compare_as_loads_under_bounds_pinned_indices() {
 
 #[test]
 fn load_variable_free_variables_include_its_snapshot_cells() {
-    // A name over a snapshot whose cells mention a loop counter denotes a
-    // term mentioning that counter: finite context splits keyed on a goal's
-    // variables must see it through the name.
+    // A load variable over a snapshot whose cells mention a loop counter
+    // denotes a term mentioning that counter: finite context splits keyed on
+    // a goal's variables must see it through the load variable.
     let counter = Variable(11);
     let written = CMemory::new().with_block("p", 12).store(
         Pointer {
@@ -454,15 +487,15 @@ fn load_variable_free_variables_include_its_snapshot_cells() {
         },
         CValue::Int32(Bitvector32Term::Constant(5)),
     );
-    let name = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
+    let load_variable = crate::kernel::eval::canonical_term(&Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory(written),
         Box::new(Pointer {
             block: "p".into(),
             offset: PointerOffsetTerm::Constant(8),
         }),
     ));
-    assert!(matches!(name, Bitvector32Term::Variable(_)));
+    assert!(matches!(load_variable, Bitvector32Term::Variable(_)));
     let mut variables = BTreeSet::new();
-    crate::kernel::reasoning::collect_bitvector_variables(&name, &mut variables);
+    crate::kernel::reasoning::collect_bitvector_variables(&load_variable, &mut variables);
     assert!(variables.contains(&counter));
 }

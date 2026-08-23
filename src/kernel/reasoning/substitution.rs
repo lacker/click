@@ -34,16 +34,16 @@ pub(crate) fn resolve_minted_load_pointer(
     resolved
 }
 
-/// Resolves canonical load variables in a proposition through
+/// Resolves load variables in a proposition through
 /// defining-equation propositions (`v == load(snapshot, ptr)`), restoring
 /// the load terms. For surface-form synthesis, where the internal
 /// names have no surface form but their loads do.
-/// Resolves canonical load variables in a proposition through the
+/// Resolves load variables in a proposition through the
 /// thread-local registry, restoring the load terms the internal names
 /// stand for. For surface-form synthesis when no defining equation is
 /// in scope: the registry is the mint's own record of what each canonical
 /// variable names.
-pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition) -> Proposition {
+pub fn resolve_load_variables_from_registry(proposition: &Proposition) -> Proposition {
     let mut variables = std::collections::BTreeSet::new();
     super::variable_collection::collect_proposition_bitvector_variables(
         proposition,
@@ -51,11 +51,11 @@ pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition)
     );
     let mut resolved = proposition.clone();
     for variable in variables {
-        if !crate::kernel::eval::is_canonical_load_variable(&variable) {
+        if !crate::kernel::eval::is_load_variable(&variable) {
             continue;
         }
         let Some((memory, pointer)) =
-            crate::kernel::eval::registered_canonical_load_origin(&variable)
+            crate::kernel::eval::registered_load_origin_for_variable(&variable)
         else {
             continue;
         };
@@ -65,7 +65,7 @@ pub fn resolve_canonical_load_variables_from_registry(proposition: &Proposition)
     resolved
 }
 
-pub fn resolve_canonical_load_variables_via(
+pub fn resolve_load_variables_via(
     proposition: &Proposition,
     defining: &[Proposition],
 ) -> Proposition {
@@ -80,7 +80,7 @@ pub fn resolve_canonical_load_variables_via(
         else {
             continue;
         };
-        if !crate::kernel::eval::is_canonical_load_variable(variable) {
+        if !crate::kernel::eval::is_load_variable(variable) {
             continue;
         }
         resolved = substitute_bitvector_variable_in_proposition(&resolved, *variable, load);
@@ -392,7 +392,7 @@ fn capture_avoiding_quantifier_body(
     collect_proposition_bound_variables(body, &mut reserved);
     reserved.insert(binder);
     reserved.insert(substituted);
-    let mut variables = VerificationVariableGenerator::fresh_for(0, reserved);
+    let mut variables = KernelVariableGenerator::fresh_for(0, reserved);
     let fresh = variables.next();
     let renamed = substitute_bitvector_variable_in_proposition(
         body,
@@ -1605,10 +1605,10 @@ fn substitute_through_load_variable(
     from: Variable,
     to: &Bitvector32Term,
 ) -> Option<Bitvector32Term> {
-    if !crate::kernel::is_canonical_load_variable(&variable) {
+    if !crate::kernel::is_load_variable(&variable) {
         return None;
     }
-    let (memory, pointer) = crate::kernel::eval::registered_canonical_load(&variable)?;
+    let (memory, pointer) = crate::kernel::eval::registered_load_for_variable(&variable)?;
     let substituted_pointer = Pointer {
         block: pointer.block.clone(),
         offset: substitute_bitvector_variable_in_pointer_offset(&pointer.offset, from, to),
@@ -1634,12 +1634,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable(
         Bitvector32Term::Constant(value) => Bitvector32Term::Constant(*value),
         Bitvector32Term::Variable(variable) if *variable == from => to.clone(),
         Bitvector32Term::Variable(variable) => {
-            // A load variable names a load whose address may mention the
-            // substituted variable (a universal's body names `p[k]` with
-            // the bound `k` inside the address). Substitution reaches
-            // through the name into the load it names and takes the
-            // canonical form of the result, so instantiating a universal
-            // yields the same name a direct read of that cell takes.
+            // A load variable can represent a load whose address mentions
+            // the substituted variable (a universal's body contains `p[k]`
+            // with the bound `k` inside the address). Substitution reaches
+            // through the variable into the load and takes the canonical
+            // form of the result, so instantiating a universal yields the
+            // same load variable as a direct read of that cell.
             substitute_through_load_variable(*variable, from, to)
                 .unwrap_or(Bitvector32Term::Variable(*variable))
         }

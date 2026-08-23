@@ -406,7 +406,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the snapshot-bridged restricted simp should expand");
     // `owner->data` is untouched by `box_touch` (`mutable owner->value`
-    // only), so its canonical name after the calls is the name at
+    // only), so its load variable after the calls is the same variable as at
     // statement 2's entry: the snapshot premise is reflexive and the
     // expansion rewrites straight from the remaining one.
     assert!(

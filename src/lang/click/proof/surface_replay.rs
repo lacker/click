@@ -152,8 +152,8 @@ fn checked_surface_fact_at_point_with_assumptions(
     // registry is the kernel's own record of what each one stands for, and
     // resolving through it is the sanctioned display direction.
     let resolved_kernel =
-        if crate::kernel::proposition_mentions_registered_canonical_load(&resolved_kernel) {
-            crate::kernel::resolve_canonical_load_variables_from_registry(&resolved_kernel)
+        if crate::kernel::proposition_mentions_registered_load_variable(&resolved_kernel) {
+            crate::kernel::resolve_load_variables_from_registry(&resolved_kernel)
         } else {
             resolved_kernel
         };
@@ -168,7 +168,7 @@ fn checked_surface_fact_at_point_with_assumptions(
     // for that snapshot, so the form stays correct at every later proof
     // point where the certificate is replayed, rather than a plain form
     // that is correct only until the cell changes.
-    if crate::kernel::proposition_mentions_registered_canonical_load(kernel) {
+    if crate::kernel::proposition_mentions_registered_load_variable(kernel) {
         let (exact_points, compatible_points) =
             snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
         for (point, point_state) in exact_points.iter().chain(&compatible_points) {
@@ -534,7 +534,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     // correct at every later proof point, while a plain current-state form
     // is correct only until the cell changes: anchored forms are tried first
     // and plain forms last.
-    let prefer_anchored = crate::kernel::proposition_mentions_registered_canonical_load(kernel);
+    let prefer_anchored = crate::kernel::proposition_mentions_registered_load_variable(kernel);
     if !prefer_anchored
         && let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
             replay,
@@ -559,11 +559,11 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     let resolved_kernel =
         crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
-    // Canonical variables name loads whose snapshots the point index needs;
+    // Load variables represent loads whose snapshots the point index needs;
     // resolve through the registry when no defining fact is in scope, and
-    // index points from the load term rather than the internal name.
+    // index points from the load term rather than the kernel variable.
     let resolved_kernel = if &resolved_kernel == kernel {
-        crate::kernel::resolve_canonical_load_variables_from_registry(kernel)
+        crate::kernel::resolve_load_variables_from_registry(kernel)
     } else {
         resolved_kernel
     };
@@ -1719,12 +1719,12 @@ pub(super) fn append_simple_proof_step_for_operation(
             });
         }
         (None, Some(ConstructionEvidence::CertifiedFactTransport { source, target, .. })) => {
-            // A canonical-load defining equation is kernel-internal naming
-            // with no user-visible form; its transported form at the new
-            // snapshot is itself certified by construction, so expansion
+            // A load-variable defining equation has no user-visible form;
+            // its transported form at the new snapshot is itself certified
+            // by construction, so expansion
             // needs no explicit step for it.
-            if crate::kernel::is_canonical_load_defining_fact(source)
-                && crate::kernel::is_canonical_load_defining_fact(target)
+            if crate::kernel::is_load_variable_defining_fact(source)
+                && crate::kernel::is_load_variable_defining_fact(target)
             {
                 return;
             }
@@ -2668,12 +2668,12 @@ pub(super) fn surface_smart_have_certificate(
                             return Ok((fact, PremiseForm::ExactlyAvailable));
                         }
                         if let Ok(lowered) = &freshly_lowered
-                            && premise_bridged_by_canonical_name_chain(
+                            && premise_bridged_by_load_variable_chain(
                                 lowered,
                                 restricted_context_available,
                             )
                         {
-                            // Canonical load variables are kernel-internal
+                            // Load variables are kernel-internal
                             // names; recorded equalities chained through one
                             // are the same user-level fact, and replay closes
                             // over the same chain, so the listed form is

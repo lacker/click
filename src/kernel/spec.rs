@@ -1102,7 +1102,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                         &pointer,
                         &stored,
                         *value_type,
-                        &mut budget.next_verification_variable,
+                        &mut budget.next_kernel_variable,
                         &mut facts,
                         assumptions,
                     )
@@ -1113,7 +1113,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
                         memory,
                         &pointer,
                         *value_type,
-                        &mut budget.next_verification_variable,
+                        &mut budget.next_kernel_variable,
                         &mut facts,
                         assumptions,
                     );

@@ -1264,7 +1264,7 @@ impl PureFactContext {
                 .add_const_base(1)
                 .as_ref()
                 .is_some_and(|increment_base| {
-                    crate::kernel::eval::terms_match_modulo_canonical_names(increment_base, base)
+                    crate::kernel::eval::terms_have_same_canonical_form(increment_base, base)
                 }) =>
             {
                 self.exact_direct_strict_upper_bound_step(base)
@@ -1851,9 +1851,9 @@ impl PureFactContext {
                 .add_const_base(1)
                 .as_ref()
                 .is_some_and(|increment_base| {
-                    crate::kernel::eval::terms_match_modulo_canonical_names(increment_base, base)
+                    crate::kernel::eval::terms_have_same_canonical_form(increment_base, base)
                 })
-                && crate::kernel::eval::terms_match_modulo_canonical_names(&step.lower, base)
+                && crate::kernel::eval::terms_have_same_canonical_form(&step.lower, base)
                 && step.strict
                 && matches!(
                     &step.premise,
@@ -2368,14 +2368,14 @@ impl PureFactContext {
             .any(|(_, other, entry_strict, forward)| {
                 forward
                     && (entry_strict || !strict)
-                    && crate::kernel::eval::terms_match_modulo_canonical_names(&other, upper)
+                    && crate::kernel::eval::terms_have_same_canonical_form(&other, upper)
             })
             || self
                 .signed_order_bound_entries(upper)
                 .any(|(_, other, entry_strict, forward)| {
                     !forward
                         && (entry_strict || !strict)
-                        && crate::kernel::eval::terms_match_modulo_canonical_names(&other, lower)
+                        && crate::kernel::eval::terms_have_same_canonical_form(&other, lower)
                 })
     }
 
@@ -3182,8 +3182,8 @@ impl PureFactContext {
                 candidates.insert(target.clone());
                 return;
             }
-            // A load variable is the kernel's name for a load: match it as
-            // the load it names, so a universal over array cells
+            // A load variable represents a load. Match it as that load so a
+            // universal over array cells
             // instantiates against a cell read under the creation-time
             // invariant exactly as against a load term.
             let pattern_load = crate::kernel::eval::viewed_as_memory_load(pattern);
@@ -3882,7 +3882,7 @@ impl PureFactContext {
         /// an unresolved load keeps its canonical memory, and a sum that
         /// collapses to one addend becomes that addend. Everything here is
         /// justified by a kernel equality (resolution, bitvector addition,
-        /// canonical load memories), so terms sharing a canonical form are
+        /// canonical-form equality for loads), so terms sharing a canonical form are
         /// provably equal.
         fn canonical_order_endpoint(
             assumptions: &PureFactContext,
@@ -3901,7 +3901,7 @@ impl PureFactContext {
                     equality_graph_term_key(term)
                 }
                 Bitvector32Term::Variable(variable)
-                    if crate::kernel::is_canonical_load_variable(variable) =>
+                    if crate::kernel::is_load_variable(variable) =>
                 {
                     if let Some(resolved) = assumptions.resolve_memory_load_term(term) {
                         return canonical_order_endpoint(assumptions, &resolved, depth - 1);

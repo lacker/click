@@ -162,8 +162,8 @@ nobody had recorded:
 **The critical scoping lesson:** the new edges plus the stronger
 walks (separation-strength `Store`-hop crossing, stored-value pinning,
 order-path DAG matching) CANNOT be enabled globally. Distinctness and
-equality answers feed execution pruning, canonical load spellings, and
-simp case-split structure, all of which certified sidecars replay
+equality answers feed execution pruning, canonical forms of loads, and simp
+case-split structure, all of which certified sidecars replay
 byte-for-byte; unscoped enabling broke owned-string's later functions
 (pop_preserves_first: "planned simp context premise is not an
 available source fact") and drifted Return-value spellings through

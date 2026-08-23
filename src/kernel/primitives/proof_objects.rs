@@ -706,7 +706,7 @@ impl Default for ExecutionBudget {
             loop_unrolls: 256,
             paths: 10_000,
             next_opaque_call: 0,
-            next_verification_variable: 1_000_000,
+            next_kernel_variable: 1_000_000,
         }
     }
 }
@@ -750,16 +750,13 @@ impl ExecutionBudget {
         self.next_opaque_call
     }
 
-    pub(crate) fn with_next_verification_variable(
-        mut self,
-        next_verification_variable: u64,
-    ) -> Self {
-        self.next_verification_variable = 1_000_000 + next_verification_variable;
+    pub(crate) fn with_next_kernel_variable(mut self, next_kernel_variable: u64) -> Self {
+        self.next_kernel_variable = 1_000_000 + next_kernel_variable;
         self
     }
 
-    pub(crate) fn next_verification_variable(&self) -> u64 {
-        self.next_verification_variable - 1_000_000
+    pub(crate) fn next_kernel_variable(&self) -> u64 {
+        self.next_kernel_variable - 1_000_000
     }
 
     pub(in crate::kernel) fn consume_expression_step(&mut self) -> ExecutionResult<()> {

@@ -2961,7 +2961,7 @@ fn materialize_composite_resource_cells(
         if matches!(memory.load(&pointer), CExpressionOutcome::Value(_)) {
             continue;
         }
-        let load = crate::kernel::canonical_load_term(
+        let load = crate::kernel::canonical_form_of_load(
             crate::kernel::intern_c_memory(base_memory.clone()),
             pointer.clone(),
         );

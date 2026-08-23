@@ -484,10 +484,10 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 })
                 .or_else(|| exactly_available_fact(&lowered, &available))
                 .or_else(|| {
-                    // Canonical load variables are kernel-internal names;
+                    // Load variables are kernel-internal;
                     // recorded equalities chained through one are the same
                     // user-level fact.
-                    super::super::fact_reasoning::premise_bridged_by_canonical_name_chain(
+                    super::super::fact_reasoning::premise_bridged_by_load_variable_chain(
                         &lowered, &available,
                     )
                     .then_some(lowered.clone())
@@ -1076,7 +1076,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 drop(target_timing);
                 if !exact_fact_is_available(&target, &available)
                     && exactly_available_fact(&target, &available).is_none()
-                    // Canonical-name and snapshot rewritings of an
+                    // Load-variable and snapshot rewritings of an
                     // available fact transport trivially. The bridge reasons
                     // under the selected premises plus the recorded
                     // transitions, the same context the reachability walk
@@ -1094,11 +1094,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     )
                 {
                     // The effect-window selection keys on the memories the
-                    // source names; a canonical-variable form names its
+                    // source mentions. A load-variable form identifies its
                     // memory only through the registry, so resolve before
                     // selecting the window.
                     let window_source =
-                        crate::kernel::resolve_canonical_load_variables_from_registry(&source);
+                        crate::kernel::resolve_load_variables_from_registry(&source);
                     let all_transition_facts = transition_facts;
                     let transition_facts =
                         fact_transport_transition_facts(transition_facts, &window_source);
@@ -1126,7 +1126,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             )
                         },
                     );
-                    // Canonical load variables are kernel-internal names;
+                    // Load variables are kernel-internal;
                     // with the source assumed, the target may follow from
                     // recorded equalities chained through them.
                     let reaches = reaches
@@ -1143,7 +1143,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     assumptions.assume_proposition(fact.proposition().clone())
                                 },
                             );
-                            super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+                            super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
                             &target,
                             &chain_facts,
                             &chain_assumptions,
@@ -1619,11 +1619,11 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 &available,
                             )
                             .is_none()
-                            // Canonical load variables are kernel-internal
+                            // Load variables are kernel-internal
                             // names; recorded equalities chained through one,
                             // including the bounded origins bridge, are the
                             // same user-level fact.
-                            && !super::super::fact_reasoning::premise_bridged_by_canonical_name_chain_with_origins(
+                            && !super::super::fact_reasoning::premise_bridged_by_load_variable_chain_with_origins(
                                 &unfolded_goal,
                                 &available,
                                 &assumptions_from_propositions(&available),

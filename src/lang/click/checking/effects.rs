@@ -629,7 +629,7 @@ fn pointer_offsets_align_exact(
     right: &PointerOffsetTerm,
     available: &[Proposition],
 ) -> bool {
-    crate::kernel::offsets_match_modulo_canonical_names(left, right)
+    crate::kernel::offsets_have_same_canonical_form(left, right)
         || exact_proposition_is_available_or_true(
             &pointer_offset_alignment_goal(left, right),
             available,

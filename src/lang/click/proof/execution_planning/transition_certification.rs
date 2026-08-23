@@ -289,7 +289,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
     execution_semantics: CExecutionSemantics,
     context_label: &str,
     next_opaque_call: &mut u64,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
@@ -307,7 +307,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
     }
     let mut budget = ExecutionBudget::default()
         .with_next_opaque_call(*next_opaque_call)
-        .with_next_verification_variable(*next_verification_variable);
+        .with_next_kernel_variable(*next_kernel_variable);
     let execute = || {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
@@ -366,7 +366,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
         planning_premises = leaf_premises;
     }
     *next_opaque_call = budget.next_opaque_call();
-    *next_verification_variable = budget.next_verification_variable();
+    *next_kernel_variable = budget.next_kernel_variable();
     let (mut transitions, loop_rule) = certified_transitions_from_execution(
         execution,
         loop_rule,
@@ -445,12 +445,12 @@ pub(in crate::lang::click::proof) fn certified_loop_exit_transitions_with_proven
     initialization_proven: bool,
     preservation_proven: bool,
     next_opaque_call: &mut u64,
-    next_verification_variable: &mut u64,
+    next_kernel_variable: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
     let mut budget = ExecutionBudget::default()
         .with_next_opaque_call(*next_opaque_call)
-        .with_next_verification_variable(*next_verification_variable);
+        .with_next_kernel_variable(*next_kernel_variable);
     let (execution, loop_rule) = prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state.clone(),
         statement.clone(),
@@ -461,7 +461,7 @@ pub(in crate::lang::click::proof) fn certified_loop_exit_transitions_with_proven
         &mut budget,
     );
     *next_opaque_call = budget.next_opaque_call();
-    *next_verification_variable = budget.next_verification_variable();
+    *next_kernel_variable = budget.next_kernel_variable();
     certified_transitions_from_execution(
         execution,
         loop_rule,
@@ -900,7 +900,7 @@ fn certified_transitions_from_execution(
                         // A name-bearing source stays true after the step
                         // (its cells are named by epoch); a later premise
                         // may cite it at the statement entry. Keep it.
-                        if !crate::kernel::proposition_mentions_registered_canonical_load(&fact) {
+                        if !crate::kernel::proposition_mentions_registered_load_variable(&fact) {
                             successor_facts.retain(|available| available != &fact);
                         }
                         if !successor_facts.contains(target) {
@@ -934,7 +934,7 @@ fn certified_transitions_from_execution(
                     };
                     for fact in automatic_sources {
                         if !c_condition_fact_has_memory(&fact)
-                            && !crate::kernel::proposition_mentions_registered_canonical_load(&fact)
+                            && !crate::kernel::proposition_mentions_registered_load_variable(&fact)
                         {
                             continue;
                         }
@@ -973,7 +973,7 @@ fn certified_transitions_from_execution(
                     // step: a later premise may cite either the entry
                     // form (`at(statement(n).entry, ...)`) or the carried
                     // one. Keep both.
-                    if crate::kernel::proposition_mentions_registered_canonical_load(
+                    if crate::kernel::proposition_mentions_registered_load_variable(
                         &transport.source,
                     ) {
                         if !successor_facts.contains(&transport.target) {
