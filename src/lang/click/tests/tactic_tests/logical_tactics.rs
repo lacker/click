@@ -1810,10 +1810,34 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("keep.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("keep.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("nested point have search should verify through Proof scopes");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the leading point scope must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the leading point scope must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary leading-point verification must not check a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -1849,6 +1873,14 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
     );
     verify_c0_sources(&expanded_source, &[("keep.c", c_source)])
         .expect("the serialized nested point scopes should independently reverify");
+
+    let corrupted = expanded_source.replacen("have x == 0 by {", "have x != 0 by {", 1);
+    assert_ne!(
+        corrupted, expanded_source,
+        "the expansion should expose the checked leading point scope"
+    );
+    verify_c0_sources(&corrupted, &[("keep.c", c_source)])
+        .expect_err("tampering with the extracted point goal must invalidate the proof");
 }
 
 #[test]

@@ -216,6 +216,50 @@ fn value_predicate_definition_supported(
     supported
 }
 
+fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
+    match proposition {
+        ClickProposition::Comparison { .. } | ClickProposition::Defined { .. } => true,
+        ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
+            leading_point_proposition_supported(proposition)
+        }
+        ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::And(_, _)
+        | ClickProposition::Or(_, _)
+        | ClickProposition::Implies(_, _)
+        | ClickProposition::ForAll { .. }
+        | ClickProposition::Exists { .. }
+        | ClickProposition::RangeAll { .. }
+        | ClickProposition::RangeAny { .. }
+        | ClickProposition::PredicateCall { .. } => false,
+    }
+}
+
+fn leading_point_source_proof_supported(proof: &SourceProof) -> bool {
+    match proof {
+        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
+        SourceProof::Script(tactics) => tactics.iter().all(|tactic| match tactic {
+            ProofTactic::ApplyTheorem(_)
+            | ProofTactic::ApplyTheoremUsing { .. }
+            | ProofTactic::Assumption
+            | ProofTactic::Normalize
+            | ProofTactic::Rewrite(_)
+            | ProofTactic::TransportUsing { .. }
+            | ProofTactic::Simp
+            | ProofTactic::SimpUsing(_) => true,
+            ProofTactic::Have(have) => leading_point_have_supported(have),
+            _ => false,
+        }),
+        SourceProof::Tactic(SmartTactic::Frame) => false,
+    }
+}
+
+fn leading_point_have_supported(have: &ProofHave) -> bool {
+    leading_point_proposition_supported(&have.proposition)
+        && leading_point_source_proof_supported(&have.proof)
+}
+
 fn grouped_flat_proof_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -226,10 +270,13 @@ fn grouped_flat_proof_supported(
     // unmixed declared composite resources, and all feasible successor paths.
     // Heap/resource-observing predicate bodies, mixed raw-memory/composite
     // contracts, and explicit composite manipulation still depend on outcome
-    // compatibility planning. Leading point scopes, grouped choice scopes, and
-    // empty mutable exact-frame boundaries likewise preserve their
-    // compatibility prerequisites and cursor locations.
-    let leading_have = tactics
+    // compatibility planning. The direct leading-point slice deliberately
+    // starts with proposition-only goals and the linear operations already
+    // checked by Proof. Logical decomposition, quantified choices,
+    // loadability/resource obligations, grouped choice scopes, and empty
+    // mutable exact-frame boundaries preserve their compatibility
+    // prerequisites and cursor locations.
+    let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
             !matches!(
@@ -242,7 +289,9 @@ fn grouped_flat_proof_supported(
                     | ProofTactic::ExecuteUntil(_)
             )
         })
-        .any(|tactic| matches!(tactic, ProofTactic::Have(_)));
+        .any(|tactic| {
+            matches!(tactic, ProofTactic::Have(have) if !leading_point_have_supported(have))
+        });
     let grouped_choice_scope = tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
@@ -278,7 +327,7 @@ fn grouped_flat_proof_supported(
             )
         });
     let owns_one_execution_frontier =
-        !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
+        !unsupported_leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
     owns_one_execution_frontier
         && value_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)
