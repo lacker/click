@@ -9450,8 +9450,9 @@ impl<'a> Proof<'a> {
 
     /// Derives the typed function-outcome goal set from a function-exit
     /// frontier: the successor retires the focused frontier goal and opens
-    /// one outcome goal per checked returning path, in the checked
-    /// execution's deterministic path order.
+    /// one outcome goal per feasible checked returning path, in the checked
+    /// execution's deterministic path order. Candidate paths whose exact
+    /// facts contradict the enclosing proof facts contribute no goal.
     ///
     /// Each outcome goal owns its path's result value, post-outcome C state,
     /// and fact context (the frontier's facts extended by only that path's
@@ -9537,6 +9538,20 @@ impl<'a> Proof<'a> {
         let mut goals = self.state.goals.discharge_at(self.focused);
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
+            // One checked statement may produce several candidate outcomes.
+            // The enclosing Proof facts select the feasible successors; an
+            // exact contradictory path fact cannot become a typed outcome
+            // goal merely because the legacy execution container retained
+            // every candidate. Preserve the original path index so later
+            // finalization addresses the checked candidate without rebuilding
+            // or renumbering the path set.
+            if path
+                .facts()
+                .iter()
+                .any(|fact| self.facts().directly_conflicts_with(fact.proposition()))
+            {
+                continue;
+            }
             let (result, state) = match path.outcome() {
                 CFunctionOutcome::Return { value, state } => (value.clone(), state.clone()),
                 // A path proved non-returning owes no outcome judgment.

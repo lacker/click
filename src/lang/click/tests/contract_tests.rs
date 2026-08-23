@@ -142,6 +142,121 @@ fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
 }
 
 #[test]
+fn grouped_n_way_function_outcomes_stay_on_one_proof() {
+    let c_source = r#"
+            int32 classify(int32 x) {
+                if (x < 0) {
+                    return -1;
+                }
+                if (x == 0) {
+                    return 0;
+                }
+                return 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "classify.c";
+
+            int32 classify(int32 x) {
+                ensures lower: result >= -1;
+                ensures upper: result <= 1;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("classify.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("the grouped N-way function proof should verify");
+    assert_eq!(
+        verified.len(),
+        6,
+        "both claims should be proved on each of the three outcomes"
+    );
+    assert_eq!(flat_units, 1, "all outcomes should stay on one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "grouped N-way verification must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the grouped N-way Proof must not export into ProofReplayContext"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary grouped N-way verification must not check a source certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("classify.c", c_source)],
+        "classify",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained grouped N-way Proof should expand");
+    assert!(!expanded.contains("execute();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("classify.c", c_source)])
+        .expect("the expanded grouped N-way proof should verify normally");
+}
+
+#[test]
+fn grouped_n_way_outcomes_discard_exactly_infeasible_siblings_on_proof() {
+    let c_source = r#"
+            int32 pointer_is_null(int32* p) {
+                return p == 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "pointer_is_null.c";
+
+            int32 pointer_is_null(int32* p) {
+                requires p == 0;
+                ensures result == 1;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("pointer_is_null.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("the feasible grouped outcome should verify");
+    assert_eq!(verified.len(), 1);
+    assert_eq!(flat_units, 1, "the selected outcome should stay on Proof");
+    assert_eq!(replay_executions, 0);
+    assert_eq!(context_exports, 0);
+    assert_eq!(certificate_checks, 0);
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("pointer_is_null.c", c_source)],
+        "pointer_is_null",
+        CProofClaim::Grouped,
+    )
+    .expect("the feasible grouped outcome should expand");
+    verify_c0_sources(&expanded, &[("pointer_is_null.c", c_source)])
+        .expect("the rewritten feasible-outcome proof should verify normally");
+}
+
+#[test]
 fn flat_function_expansion_rewrites_and_rejects_tampering() {
     let c_source = r#"
             int32 identity(int32 x) {

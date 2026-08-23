@@ -27,19 +27,30 @@ fn grouped_flat_proof_supported(
     function: &CFunction,
     tactics: &[ProofTactic],
 ) -> bool {
-    // This first direct grouped slice owns one single-successor, call-free
-    // execution frontier with plain contract claims. N-way successors,
-    // opaque calls, predicate folding, and top-level point scopes still need
-    // compatibility planning to preserve their exact paths, prerequisites,
-    // and cursor locations.
-    let owns_one_execution_frontier = !statement_contains_call(function.body())
-        && !statement_may_have_multiple_successors(function.body())
-        && tactics.iter().all(|tactic| {
+    // The direct grouped slice owns one call-free execution frontier with
+    // plain contract claims, including all of its feasible successor paths.
+    // Opaque calls, predicate folding, leading point scopes, and grouped
+    // choice scopes still need compatibility planning to preserve their exact
+    // prerequisites and cursor locations.
+    let leading_have = tactics
+        .iter()
+        .take_while(|tactic| {
             !matches!(
                 tactic,
-                ProofTactic::Have(_) | ProofTactic::Choose(_) | ProofTactic::Witness(_)
+                ProofTactic::Step
+                    | ProofTactic::StepUsing(_)
+                    | ProofTactic::SmartStep
+                    | ProofTactic::SmartExecute
+                    | ProofTactic::SmartExecuteAllPaths
+                    | ProofTactic::ExecuteUntil(_)
             )
-        });
+        })
+        .any(|tactic| matches!(tactic, ProofTactic::Have(_)));
+    let grouped_choice_scope = tactics
+        .iter()
+        .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
+    let owns_one_execution_frontier =
+        !statement_contains_call(function.body()) && !leading_have && !grouped_choice_scope;
     let plain_contract = function_block
         .requires()
         .iter()
@@ -1405,7 +1416,20 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         .then(|| vec![Some(0); execution.paths().len()]));
                 }
                 let mut pairing = Vec::with_capacity(execution.paths().len());
-                for replayed in execution.paths() {
+                for (path_index, replayed) in execution.paths().iter().enumerate() {
+                    if matches!(&unit, OrderedProofUnit::Checked(_))
+                        && outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
+                            substrate.outcome_goal_for_path(path_index).is_none()
+                        })
+                    {
+                        // The Proof-owned N-way outcome derivation rejected
+                        // this candidate under an exact contradictory path
+                        // fact. It owns no semantic goal and needs no whole-
+                        // function pairing; a compatible certified sibling
+                        // remains addressed by its original path index.
+                        pairing.push(None);
+                        continue;
+                    }
                     if let Some(certified_index) = (0..certified_outcomes.len())
                         .find(|certified_index| outcomes_match(replayed, *certified_index))
                     {
