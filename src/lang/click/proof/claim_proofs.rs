@@ -233,8 +233,9 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         | ClickProposition::Implies(left, right) => {
             leading_point_proposition_supported(left) && leading_point_proposition_supported(right)
         }
-        ClickProposition::PredicateCall { .. } => true,
-        ClickProposition::Separate { .. } | ClickProposition::Contains { .. } => false,
+        ClickProposition::PredicateCall { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. } => true,
     }
 }
 
@@ -325,8 +326,8 @@ fn grouped_flat_proof_supported(
     // cursor state. An exact empty mutable frame is checked here when it
     // immediately follows the execution operation. A post-execution logical
     // operation before that frame still needs the ordered compatibility
-    // driver. Explicit separation/containment goals and top-level grouped
-    // choices preserve their compatibility prerequisites and cursor locations.
+    // driver. Entry resource-relation facts use the same nested proposition
+    // scopes; top-level grouped choices preserve their compatibility cursor.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {

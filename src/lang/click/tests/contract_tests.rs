@@ -903,6 +903,125 @@ fn grouped_predicate_contracts_stay_on_one_proof() {
 }
 
 #[test]
+fn grouped_leading_resource_relations_stay_on_one_proof() {
+    let c_source = r#"
+            int32 inspect_pair(int32 left[], int32 right[]) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            resource pair(left: int32[], right: int32[]) {
+                owns left[0..1];
+                owns right[0..1];
+            }
+
+            verifying "inspect_pair.c";
+
+            int32 inspect_pair(int32 left[], int32 right[]) {
+                requires contains(pair(left, right), memory(left[0..1]));
+                requires separate(memory(left[0..1]), memory(right[0..1]));
+                ensures result == 0;
+            } by {
+                have contains(pair(left, right), memory(left[0..1])) by {
+                    assumption();
+                }
+                have separate(memory(left[0..1]), memory(right[0..1])) by {
+                    assumption();
+                }
+                execute();
+                simp();
+            }
+        "#;
+    let sources = &[("inspect_pair.c", c_source)];
+
+    let (
+        (
+            (((verified, explicit_fallbacks), certificate_checks), context_exports),
+            replay_executions,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        })
+    });
+    verified.expect("leading resource relations should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "resource-relation haves must not replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "resource-relation haves must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary resource-relation verification must not check a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "resource-relation assumptions must apply directly to Proof"
+    );
+
+    let expanded =
+        expand_c0_claim_source(click_source, sources, "inspect_pair", CProofClaim::Grouped)
+            .expect("the retained resource-relation scopes should expand");
+    assert!(
+        expanded.contains("have contains(pair(left, right)"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("have separate(memory(left[0..1])"),
+        "{expanded}"
+    );
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten resource-relation proof should verify normally");
+
+    for (relation, corrupted) in [
+        (
+            "containment",
+            expanded.replacen(
+                "have contains(pair(left, right), memory(left[0..1]))",
+                "have contains(pair(left, right), memory(right[0..1]))",
+                1,
+            ),
+        ),
+        (
+            "separation",
+            expanded.replacen(
+                "have separate(memory(left[0..1]), memory(right[0..1]))",
+                "have separate(memory(left[0..1]), memory(left[0..1]))",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(corrupted, expanded, "expansion should expose {relation}");
+        let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources))
+            });
+        corrupted_result.expect_err(&format!(
+            "tampering with {relation} must invalidate the proof"
+        ));
+        assert_eq!(
+            corrupted_fallbacks, 0,
+            "invalid migrated {relation} must not become a compatibility miss"
+        );
+        assert_eq!(
+            corrupted_replays, 0,
+            "invalid migrated {relation} must not enter replay"
+        );
+    }
+}
+
+#[test]
 fn flat_function_expansion_rewrites_and_rejects_tampering() {
     let c_source = r#"
             int32 identity(int32 x) {
