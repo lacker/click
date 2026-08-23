@@ -55,6 +55,22 @@ fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]
     }
 }
 
+fn internal_proof_first_index(node: &InternalProofNode) -> Option<usize> {
+    match node {
+        InternalProofNode::Done => None,
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => tactics
+            .first()
+            .map(|indexed| indexed.index)
+            .or_else(|| internal_proof_first_index(continuation)),
+        InternalProofNode::Open { index, .. }
+        | InternalProofNode::If { index, .. }
+        | InternalProofNode::Branch { index, .. } => Some(*index),
+    }
+}
+
 fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
     let tactics = linear_execution_tactics(node)?;
     (tactics.iter().enumerate().all(|(index, indexed)| {
@@ -530,11 +546,12 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     Ok(Some(proof))
 }
 
-/// Checks one function proof containing a single top-level linear
-/// `open(resource) { ... }` without exporting the checked scope back into
-/// replay-owned semantic state. A linear prefix, scope entry and body, close,
-/// continuation, frame, and outcome suffix remain one persistent Proof
-/// lineage; a miss publishes neither semantic state nor expansion metadata.
+/// Checks one function proof containing top-level linear
+/// `open(resource) { ... }` scopes without exporting any checked scope back
+/// into replay-owned semantic state. Linear prefixes, scope entries and bodies,
+/// closes, intervening continuations, the frame, and the outcome suffix remain
+/// one persistent Proof lineage; a miss publishes neither semantic state nor
+/// expansion metadata.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     context: &ProofReplayContext,
@@ -552,36 +569,13 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     function: &'a CFunction,
     arguments: &'a [CExpression],
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    let (prefix, open_node) = match program {
-        InternalProofNode::Open { .. } => (&[][..], program),
-        InternalProofNode::Linear {
-            tactics,
-            continuation,
-        } if matches!(continuation.as_ref(), InternalProofNode::Open { .. }) => {
-            (tactics.as_slice(), continuation.as_ref())
-        }
-        _ => return Ok(None),
-    };
-    let InternalProofNode::Open {
-        index,
-        source_index,
-        resource,
-        body,
-        continuation,
-    } = open_node
-    else {
-        unreachable!("the scoped proof shape selected an open node")
-    };
-    if linear_execution_tactics(body).is_none() || linear_execution_tactics(continuation).is_none()
-    {
-        return Ok(None);
-    }
-
     let mut staged_expansion_capture = expansion_capture.as_deref().cloned();
     let proof_site = context.replay.proof_site.clone();
     let mut proof = Proof::for_execution_frontier(
         claim_label,
-        prefix.first().map_or(*index, |indexed| indexed.index),
+        internal_proof_first_index(program).ok_or_else(|| {
+            ClickError::new(format!("`{claim_label}` has no scoped proof tactics"))
+        })?,
         context.clone(),
         function_block,
         function,
@@ -593,53 +587,73 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    if !prefix.is_empty() {
-        let prefix_node = InternalProofNode::Linear {
-            tactics: prefix.to_vec(),
-            continuation: Box::new(InternalProofNode::Done),
-        };
-        let Some((advanced, remaining)) = advance_checked_linear_continuation(
-            proof,
-            &prefix_node,
-            staged_expansion_capture.as_mut(),
-            proof_site.as_ref(),
-            generated_by_source_index.unwrap_or(usize::MAX),
-            true,
-            true,
-            Some(claim_label),
-        )?
-        else {
-            return Ok(None);
-        };
-        if !remaining.is_empty() || advanced.is_at_function_exit() {
-            return Ok(None);
+    let mut current = program;
+    let mut remaining = Vec::new();
+    let mut saw_scope = false;
+    loop {
+        match current {
+            InternalProofNode::Done => break,
+            InternalProofNode::Linear {
+                tactics,
+                continuation,
+            } => {
+                let linear = InternalProofNode::Linear {
+                    tactics: tactics.clone(),
+                    continuation: Box::new(InternalProofNode::Done),
+                };
+                let Some((advanced, unconsumed)) = advance_checked_linear_continuation(
+                    proof,
+                    &linear,
+                    staged_expansion_capture.as_mut(),
+                    proof_site.as_ref(),
+                    generated_by_source_index.unwrap_or(usize::MAX),
+                    true,
+                    true,
+                    Some(claim_label),
+                )?
+                else {
+                    return Ok(None);
+                };
+                proof = advanced;
+                if !unconsumed.is_empty() {
+                    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
+                        return Ok(None);
+                    }
+                    remaining = unconsumed;
+                    break;
+                }
+                current = continuation;
+            }
+            InternalProofNode::Open {
+                source_index,
+                resource,
+                body,
+                continuation,
+                ..
+            } => {
+                if proof.is_at_function_exit() || linear_execution_tactics(body).is_none() {
+                    return Ok(None);
+                }
+                saw_scope = true;
+                let scope = proof.begin_open(resource.clone(), *source_index)?;
+                let Some(scope) = advance_checked_open_scope(
+                    scope,
+                    body,
+                    staged_expansion_capture.as_mut(),
+                    proof_site.as_ref(),
+                )?
+                else {
+                    return Ok(None);
+                };
+                proof = scope.join()?;
+                current = continuation;
+            }
+            InternalProofNode::If { .. } | InternalProofNode::Branch { .. } => return Ok(None),
         }
-        proof = advanced;
     }
-    let scope = proof.begin_open(resource.clone(), *source_index)?;
-    let Some(scope) = advance_checked_open_scope(
-        scope,
-        body,
-        staged_expansion_capture.as_mut(),
-        proof_site.as_ref(),
-    )?
-    else {
+    if !saw_scope {
         return Ok(None);
-    };
-    let proof = scope.join()?;
-    let Some((mut proof, remaining)) = advance_checked_linear_continuation(
-        proof,
-        continuation,
-        staged_expansion_capture.as_mut(),
-        proof_site.as_ref(),
-        generated_by_source_index.unwrap_or(usize::MAX),
-        true,
-        true,
-        Some(claim_label),
-    )?
-    else {
-        return Ok(None);
-    };
+    }
     check_verification_deadline()?;
     if !proof.is_at_function_exit() || retained_surface_has_empty_branch_leaf(&proof) {
         return Ok(None);

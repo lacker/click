@@ -100,32 +100,27 @@ fn value_predicate_contract_supported(
         })
 }
 
-/// Selects the complete-proof route for one top-level composite scope with
-/// only linear tactics before, inside, and after it. Counted populations,
+/// Selects the complete-proof route for one or more top-level composite scopes
+/// with only linear tactics before, inside, between, and after them. Counted populations,
 /// quantified resources, heap-backed contract predicates, nested scopes, and
 /// structural proof branches retain their separately audited compatibility
 /// paths until those semantic joins are owned by the same Proof driver.
-fn single_top_level_linear_scope_supported(
+fn top_level_linear_scopes_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> bool {
-    let Some(open_index) = tactics
+    let opens = tactics
         .iter()
-        .position(|tactic| matches!(tactic, ProofTactic::Open(_)))
-    else {
-        return false;
-    };
-    if tactics[open_index + 1..]
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::Open(_)))
-    {
+        .filter_map(|tactic| match tactic {
+            ProofTactic::Open(open) => Some(open),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if opens.is_empty() {
         return false;
     }
-    let ProofTactic::Open(open) = &tactics[open_index] else {
-        unreachable!("the selected tactic is an open scope")
-    };
     let has_quantified_contract_resource = function_block
         .requires()
         .iter()
@@ -148,7 +143,7 @@ fn single_top_level_linear_scope_supported(
             Some(proposition)
         }))
         .any(crate::lang::click::validation::proposition_contains_resource_count);
-    let scope_definition_is_nonpopulation = match &open.resource {
+    let scope_definitions_are_nonpopulation = opens.iter().all(|open| match &open.resource {
         ResourceClause::Declared { name, .. } => {
             resource_environment.get(name).is_some_and(|definition| {
                 definition.composite_body().is_some_and(|body| {
@@ -168,26 +163,26 @@ fn single_top_level_linear_scope_supported(
         ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Quantified { .. } => {
             false
         }
+    });
+    let is_linear = |tactic: &ProofTactic| {
+        !matches!(
+            tactic,
+            ProofTactic::Open(_)
+                | ProofTactic::If(_)
+                | ProofTactic::Cases(_)
+                | ProofTactic::Branch(_)
+                | ProofTactic::Loop(_)
+                | ProofTactic::Choose(_)
+                | ProofTactic::Witness(_)
+        )
     };
-    let linear_tactics = tactics[..open_index]
-        .iter()
-        .chain(&open.tactics)
-        .chain(&tactics[open_index + 1..])
-        .all(|tactic| {
-            !matches!(
-                tactic,
-                ProofTactic::Open(_)
-                    | ProofTactic::If(_)
-                    | ProofTactic::Cases(_)
-                    | ProofTactic::Branch(_)
-                    | ProofTactic::Loop(_)
-                    | ProofTactic::Choose(_)
-                    | ProofTactic::Witness(_)
-            )
-        });
+    let linear_tactics = tactics.iter().all(|tactic| match tactic {
+        ProofTactic::Open(open) => open.tactics.iter().all(is_linear),
+        tactic => is_linear(tactic),
+    });
     !has_quantified_contract_resource
         && !contract_observes_population
-        && scope_definition_is_nonpopulation
+        && scope_definitions_are_nonpopulation
         && linear_tactics
         && value_predicate_contract_supported(function_block, predicate_environment)
 }
@@ -406,7 +401,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let direct_proof = if single_top_level_linear_scope_supported(
+    let direct_proof = if top_level_linear_scopes_supported(
         function_block,
         tactics,
         predicate_environment,
@@ -603,7 +598,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     };
     let grouped_direct_supported =
         grouped_flat_proof_supported(function_block, tactics, predicate_environment);
-    let grouped_scoped_supported = single_top_level_linear_scope_supported(
+    let grouped_scoped_supported = top_level_linear_scopes_supported(
         function_block,
         tactics,
         predicate_environment,

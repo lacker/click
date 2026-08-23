@@ -734,6 +734,96 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
 }
 
 #[test]
+fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
+    let c_source = r#"
+            int32 add_twice(int32 x) {
+                int32 first;
+                first = x + 1;
+                return first + 1;
+            }
+        "#;
+    let click_source = r#"
+            resource first_marker(x: int32) {
+                fact x == x;
+            }
+
+            resource second_marker(x: int32) {
+                fact x == x;
+            }
+
+            verifying "add_twice.c";
+
+            int32 add_twice(int32 x) {
+                requires x >= 0;
+                requires x <= 2147483645;
+                owns first_marker(x);
+                owns second_marker(x);
+                immutable;
+                ensures result == (x + 1) + 1;
+            } by {
+                open(first_marker(x)) {
+                    step();
+                }
+                open(second_marker(x)) {
+                    execute();
+                }
+                frame();
+                simp();
+            }
+        "#;
+    let sources = &[("add_twice.c", c_source)];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    verified.expect("both sequential scopes should advance one checked Proof");
+    assert_eq!(flat_units, 1, "the function should retain one Proof");
+    assert_eq!(replay_executions, 0, "sequential scopes must not replay");
+    assert_eq!(
+        context_exports, 0,
+        "sequential scopes must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(click_source, sources, "add_twice", CProofClaim::Grouped)
+        .expect("the retained sequential scopes should expand");
+    let caller_expansion = expanded
+        .split("int32 add_twice")
+        .nth(1)
+        .expect("the expanded source should retain the selected function");
+    assert_eq!(
+        caller_expansion.matches("open(").count(),
+        2,
+        "both top-level scopes should be serialized: {expanded}"
+    );
+    assert!(!caller_expansion.contains("step();"), "{expanded}");
+    assert!(!caller_expansion.contains("execute();"), "{expanded}");
+    assert!(!caller_expansion.contains("frame();"), "{expanded}");
+    assert!(!caller_expansion.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten sequential-scope proof should verify normally");
+
+    let checked_step = "                    step() using {\n                    }\n";
+    let corrupted = expanded.replacen(checked_step, "", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose both checked statements"
+    );
+    verify_c0_sources(&corrupted, sources)
+        .expect_err("removing one scoped statement must invalidate the rewritten proof");
+}
+
+#[test]
 fn grouped_predicate_contracts_stay_on_one_proof() {
     let c_source = r#"
             int32 identity(int32 x) {
