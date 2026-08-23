@@ -314,6 +314,7 @@ fn advance_checked_linear_continuation<'a>(
     owning_source_index: usize,
     allow_unrelated_statement_context: bool,
     allow_contextual_frame: bool,
+    authoritative_nested_haves: bool,
     timing_claim_label: Option<&str>,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
     let Some(tactics) = linear_execution_tactics(continuation) else {
@@ -385,7 +386,8 @@ fn advance_checked_linear_continuation<'a>(
             transported
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
-            let Some(selected) = solve_nested_have(nested, have)? else {
+            let Some(selected) = solve_nested_have(nested, have, authoritative_nested_haves)?
+            else {
                 return Ok(None);
             };
             selected.join()?
@@ -477,6 +479,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
     arguments: &'a [CExpression],
+    authoritative_nested_haves: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     // A compatibility miss must leave the expansion cursor untouched just as
     // it leaves the semantic root untouched. Only publish cursor metadata
@@ -510,6 +513,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
         generated_by_source_index.unwrap_or(usize::MAX),
         false,
         true,
+        authoritative_nested_haves,
         Some(claim_label),
     )?
     else {
@@ -609,6 +613,7 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
                     generated_by_source_index.unwrap_or(usize::MAX),
                     true,
                     true,
+                    false,
                     Some(claim_label),
                 )?
                 else {
@@ -721,6 +726,7 @@ fn try_execute_checked_terminal_effect_script<'a>(
         theorem_environment,
         function,
         arguments,
+        false,
     )?
     else {
         return Ok(None);
@@ -739,13 +745,19 @@ fn try_execute_checked_terminal_effect_script<'a>(
 fn solve_nested_have<'a>(
     nested: ProofScope<'a>,
     have: &ProofHave,
+    authoritative: bool,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     let selected = match &have.proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
-            if let Some(selected) = nested.try_linear_script(body)? {
+            let selected = if authoritative {
+                nested.try_authoritative_linear_script(body)?
+            } else {
+                nested.try_linear_script(body)?
+            };
+            if let Some(selected) = selected {
                 Some(selected)
             } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
                 nested.apply_candidate_certificate(&certificate).ok()
@@ -804,7 +816,7 @@ fn advance_focused_execution_arm<'a>(
             proof = next;
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
-            let Some(nested) = solve_nested_have(nested, have)? else {
+            let Some(nested) = solve_nested_have(nested, have, false)? else {
                 return Ok(None);
             };
             proof = nested.join()?;
@@ -998,7 +1010,7 @@ fn advance_linear_open_scope<'a>(
             return Ok(None);
         };
         let nested = scope.begin_have(have.proposition.clone())?;
-        let selected = solve_nested_have(nested, have)?;
+        let selected = solve_nested_have(nested, have, false)?;
         let Some(selected) = selected else {
             return Ok(None);
         };
@@ -1817,6 +1829,7 @@ fn execute_internal_proof_inner(
                             expansion_capture.as_deref_mut(),
                             context.replay.proof_site.as_ref(),
                             *source_index,
+                            false,
                             false,
                             false,
                             None,

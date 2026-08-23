@@ -8935,8 +8935,16 @@ impl<'a> Proof<'a> {
     /// goal. Both smart and explicit bodies apply their operations directly to
     /// this `Proof`; ordinary source interpretation does not first construct a
     /// certificate.
-    fn try_focused_script_arm(&self, tactics: &[ProofTactic]) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script(tactics)
+    fn try_focused_script_arm(
+        &self,
+        tactics: &[ProofTactic],
+        authoritative: bool,
+    ) -> Result<Option<Self>, ClickError> {
+        if authoritative {
+            self.try_authoritative_linear_script(tactics)
+        } else {
+            self.try_linear_script(tactics)
+        }
     }
 
     /// Interprets one supported source script directly on this proof.
@@ -8950,7 +8958,7 @@ impl<'a> Proof<'a> {
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
         let contains_search = script_contains_linear_search(tactics);
-        match self.try_linear_script_inner(tactics) {
+        match self.try_linear_script_inner(tactics, false) {
             // Before this migration, an explicit-only script was checked by
             // the established source interpreter whenever the typed Proof
             // surface did not yet admit it. Preserve that transactional
@@ -8965,7 +8973,22 @@ impl<'a> Proof<'a> {
         }
     }
 
-    fn try_linear_script_inner(&self, tactics: &[ProofTactic]) -> Result<Option<Self>, ClickError> {
+    /// Checks source whose caller has already selected this Proof driver as
+    /// the semantic authority. Explicit operation failures propagate instead
+    /// of being converted into a compatibility miss; recursive scopes and
+    /// branch arms inherit the same rule.
+    pub(super) fn try_authoritative_linear_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_linear_script_inner(tactics, true)
+    }
+
+    fn try_linear_script_inner(
+        &self,
+        tactics: &[ProofTactic],
+        authoritative: bool,
+    ) -> Result<Option<Self>, ClickError> {
         if tactics.is_empty() {
             return Ok(None);
         }
@@ -9017,7 +9040,13 @@ impl<'a> Proof<'a> {
                         | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                             scope.try_simp_closure()?
                         }
-                        SourceProof::Script(body) => scope.try_linear_script(body)?,
+                        SourceProof::Script(body) => {
+                            if authoritative {
+                                scope.try_authoritative_linear_script(body)?
+                            } else {
+                                scope.try_linear_script(body)?
+                            }
+                        }
                         SourceProof::Tactic(SmartTactic::Frame) => None,
                     };
                     let Some(selected) = selected else {
@@ -9031,13 +9060,13 @@ impl<'a> Proof<'a> {
                     let marker = split_proof.checkpoint();
                     let Some(then_done) = split_proof
                         .focus(ids[0])?
-                        .try_focused_script_arm(&proof_if.then_tactics)?
+                        .try_focused_script_arm(&proof_if.then_tactics, authoritative)?
                     else {
                         return Ok(None);
                     };
                     let Some(both_done) = then_done
                         .focus(ids[1])?
-                        .try_focused_script_arm(&proof_if.else_tactics)?
+                        .try_focused_script_arm(&proof_if.else_tactics, authoritative)?
                     else {
                         return Ok(None);
                     };
@@ -9054,13 +9083,13 @@ impl<'a> Proof<'a> {
                     let marker = split_proof.checkpoint();
                     let Some(left_done) = split_proof
                         .focus(ids[0])?
-                        .try_focused_script_arm(&proof_cases.left_tactics)?
+                        .try_focused_script_arm(&proof_cases.left_tactics, authoritative)?
                     else {
                         return Ok(None);
                     };
                     let Some(both_done) = left_done
                         .focus(ids[1])?
-                        .try_focused_script_arm(&proof_cases.right_tactics)?
+                        .try_focused_script_arm(&proof_cases.right_tactics, authoritative)?
                     else {
                         return Ok(None);
                     };
@@ -11023,11 +11052,6 @@ impl<'a> Proof<'a> {
     }
 
     fn apply_extract(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
-        if matches!(self.context.as_ref(), ProofContext::Execution(_))
-            && self.focused_outcome_point().is_none()
-        {
-            return Err(self.step_error("`extract` requires a proposition proof"));
-        }
         let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
         if !self.facts().contains_proper_conjunct(&proposition)
             && !self
@@ -12009,6 +12033,21 @@ impl<'a> ProofScope<'a> {
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
         let Some(body) = self.body.try_linear_script(tactics)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
+    /// Checks a source body after its enclosing driver has selected Proof as
+    /// the authority for this scope. Explicit failures remain checked errors
+    /// through every nested scope and logical arm.
+    pub(super) fn try_authoritative_linear_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_authoritative_linear_script(tactics)? else {
             return Ok(None);
         };
         let mut next = self.clone();

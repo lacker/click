@@ -1916,6 +1916,135 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
 }
 
 #[test]
+fn leading_logical_have_decomposition_stays_on_one_proof() {
+    let c_source = "int32 logical_haves(int32 x, int32 y) { return x; }";
+    let click_source = r#"
+        verifying "logical_haves.c";
+
+        int32 logical_haves(int32 x, int32 y) {
+            requires pair: x == 0 and y == 0;
+            requires sign: x <= 0 or x > 0;
+            ensures result == x;
+        } by {
+            have x == 0 by {
+                extract(x == 0);
+            }
+            have y == 0 by {
+                extract(y == 0);
+            }
+            have x == 0 and y == 0 by {
+                split();
+            }
+            have x == 0 implies x == 0 by {
+                intro();
+                assumption();
+            }
+            have x <= 0 or x > 0 by {
+                cases (x <= 0 or x > 0) {
+                    left();
+                } {
+                    right();
+                }
+            }
+            have x == 0 or not (x == 0) by {
+                if x == 0 {
+                    left();
+                } else {
+                    right();
+                }
+            }
+            execute();
+            simp();
+        }
+    "#;
+
+    let (
+        (
+            (((verified, explicit_fallbacks), certificate_checks), context_exports),
+            replay_executions,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &[("logical_haves.c", c_source)])
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("leading logical have scopes should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "logical have decomposition must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "logical have decomposition must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary logical have verification must not check a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "every explicit logical operation should apply directly to Proof"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked logical scopes should expose retained provenance");
+    let expanded_debug = format!("{expanded:#?}");
+    for operation in ["Extract", "Split", "Intro", "Cases", "If"] {
+        assert!(
+            expanded_debug.contains(operation),
+            "the expansion should retain {operation}: {expanded_debug}"
+        );
+    }
+
+    let rewritten = expand_c0_claim_source(
+        click_source,
+        &[("logical_haves.c", c_source)],
+        "logical_haves",
+        CProofClaim::Grouped,
+    )
+    .expect("the checked logical scopes should serialize");
+    verify_c0_sources(&rewritten, &[("logical_haves.c", c_source)])
+        .expect("the serialized logical scopes should independently reverify");
+
+    let corrupted = rewritten.replacen("left();", "right();", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose a checked branch selection"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&corrupted, &[("logical_haves.c", c_source)])
+            })
+        });
+    let error = corrupted_result
+        .expect_err("tampering with a logical branch selection must invalidate the proof");
+    assert!(
+        error
+            .message()
+            .contains("`right` requires its selected disjunct as an exact fact"),
+        "the checked Proof operation should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "an invalid migrated operation must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "invalid migrated source must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn smart_pure_if_retains_checked_arm_proofs_directly() {
     let click_source = r#"
         theorem equality_case(x: int32) {

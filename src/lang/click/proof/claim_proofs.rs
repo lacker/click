@@ -223,35 +223,59 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
             leading_point_proposition_supported(proposition)
         }
         ClickProposition::Exists { .. } | ClickProposition::RangeAny { .. } => true,
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            leading_point_proposition_supported(left) && leading_point_proposition_supported(right)
+        }
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
-        | ClickProposition::And(_, _)
-        | ClickProposition::Or(_, _)
-        | ClickProposition::Implies(_, _)
         | ClickProposition::ForAll { .. }
         | ClickProposition::RangeAll { .. }
         | ClickProposition::PredicateCall { .. } => false,
     }
 }
 
+fn leading_point_tactics_supported(tactics: &[ProofTactic]) -> bool {
+    !tactics.is_empty()
+        && tactics
+            .iter()
+            .enumerate()
+            .all(|(index, tactic)| match tactic {
+                ProofTactic::ApplyTheorem(_)
+                | ProofTactic::ApplyTheoremUsing { .. }
+                | ProofTactic::Choose(_)
+                | ProofTactic::Witness(_)
+                | ProofTactic::Assumption
+                | ProofTactic::Extract(_)
+                | ProofTactic::Normalize
+                | ProofTactic::Intro
+                | ProofTactic::Split
+                | ProofTactic::Left
+                | ProofTactic::Right
+                | ProofTactic::Rewrite(_)
+                | ProofTactic::TransportUsing { .. } => true,
+                ProofTactic::Simp | ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
+                ProofTactic::Have(have) => leading_point_have_supported(have),
+                ProofTactic::If(proof_if) => {
+                    index + 1 == tactics.len()
+                        && leading_point_tactics_supported(&proof_if.then_tactics)
+                        && leading_point_tactics_supported(&proof_if.else_tactics)
+                }
+                ProofTactic::Cases(proof_cases) => {
+                    index + 1 == tactics.len()
+                        && leading_point_tactics_supported(&proof_cases.left_tactics)
+                        && leading_point_tactics_supported(&proof_cases.right_tactics)
+                }
+                _ => false,
+            })
+}
+
 fn leading_point_source_proof_supported(proof: &SourceProof) -> bool {
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        SourceProof::Script(tactics) => tactics.iter().all(|tactic| match tactic {
-            ProofTactic::ApplyTheorem(_)
-            | ProofTactic::ApplyTheoremUsing { .. }
-            | ProofTactic::Choose(_)
-            | ProofTactic::Witness(_)
-            | ProofTactic::Assumption
-            | ProofTactic::Normalize
-            | ProofTactic::Rewrite(_)
-            | ProofTactic::TransportUsing { .. }
-            | ProofTactic::Simp
-            | ProofTactic::SimpUsing(_) => true,
-            ProofTactic::Have(have) => leading_point_have_supported(have),
-            _ => false,
-        }),
+        SourceProof::Script(tactics) => leading_point_tactics_supported(tactics),
         SourceProof::Tactic(SmartTactic::Frame) => false,
     }
 }
@@ -273,10 +297,11 @@ fn grouped_flat_proof_supported(
     // contracts, and explicit composite manipulation still depend on outcome
     // compatibility planning. The direct leading-point slice deliberately
     // starts with proposition-only goals and the linear operations already
-    // checked by Proof. Logical decomposition, universal binders,
-    // loadability/resource obligations, top-level grouped choices, and empty
-    // mutable exact-frame boundaries preserve their compatibility
-    // prerequisites and cursor locations.
+    // checked by Proof. Logical decomposition over value propositions stays
+    // inside the nested Proof goal; universal binders, loadability/resource
+    // obligations, top-level grouped choices, and empty mutable exact-frame
+    // boundaries preserve their compatibility prerequisites and cursor
+    // locations.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -489,6 +514,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             theorem_environment,
             &function,
             &arguments,
+            false,
         )?
     };
     if let Some(proof) = direct_proof {
@@ -670,6 +696,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             theorem_environment,
             &function,
             &arguments,
+            true,
         )?
     } else if grouped_scoped_supported {
         try_check_scoped_function_proof(
