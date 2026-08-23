@@ -1370,19 +1370,32 @@ fn marked_constant_store_transport_retains_load_identity() {
     verified.expect("the smart marked transport should verify before expansion");
     let simple_transport_checks = events
         .iter()
-        .filter(|event| {
-            matches!(
-                event,
-                crate::instrumentation::VerificationEvent::TacticStarted(tactic)
-                    if tactic.claim == "pipeline.contract"
-                        && tactic.tactic_name == "transport"
-                        && tactic.class == "simple"
-            )
+        .filter_map(|event| {
+            let crate::instrumentation::VerificationEvent::TacticStarted(tactic) = event else {
+                return None;
+            };
+            (tactic.claim == "pipeline.contract"
+                && tactic.tactic_name == "transport"
+                && tactic.class == "simple")
+                .then_some(tactic)
         })
-        .count();
+        .collect::<Vec<_>>();
+    let replay_operations = events
+        .iter()
+        .filter_map(|event| {
+            let crate::instrumentation::VerificationEvent::OperationFinished {
+                function, name, ..
+            } = event
+            else {
+                return None;
+            };
+            (function == "pipeline" && name.contains("replay")).then_some(name)
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        simple_transport_checks, 1,
-        "ordinary verification should not replay the smart transport before whole-certificate checking"
+        simple_transport_checks.len(),
+        1,
+        "ordinary verification should not replay the smart transport before whole-certificate checking: {simple_transport_checks:#?}; replay operations: {replay_operations:#?}"
     );
     let selected = click_source.find("transport(").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -5569,6 +5582,109 @@ fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
     .expect("the smart immutable frame should expand");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the selected empty frame step should independently replay");
+}
+
+#[test]
+fn grouped_explicit_empty_mutable_frame_rejects_missing_premises_without_replay() {
+    let c_source = r#"
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            p[i] = 9;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_in_bounds.c";
+
+        int32 write_in_bounds(int32 p[], int32 i, int32 n) {
+            requires n >= 0;
+            requires n <= 2147483647;
+            requires i >= 0;
+            requires i < n;
+            requires loadable(p[0..n]);
+            consumes p[0..n];
+            mutable p[0..n];
+        } by {
+            execute();
+            frame() using {};
+        }
+    "#;
+
+    let (((verified, certificate_checks), context_exports), replay_executions) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+                })
+            })
+        });
+    let error = verified.expect_err("the exact empty frame must not import ambient bounds");
+    assert_eq!(replay_executions, 0, "the explicit frame entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the effect Proof exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+    assert!(
+        error.message().contains("outside the mutable footprint"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn grouped_explicit_empty_mutable_frame_stays_on_proof() {
+    let c_source = r#"
+        int32 write_first(int32 p[]) {
+            p[0] = 9;
+            return 0;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_first.c";
+
+        int32 write_first(int32 p[]) {
+            requires loadable(p[0..1]);
+            consumes p[0..1];
+            mutable p[0..1];
+        } by {
+            execute();
+            frame() using {};
+        }
+    "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("write_first.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("the exact empty mutable frame should verify on Proof");
+    assert_eq!(flat_units, 1, "the grouped effect should retain one Proof");
+    assert_eq!(replay_executions, 0, "the explicit frame entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the effect Proof exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the exact frame should retain its checked operation");
+    assert!(
+        matches!(
+            tactics.last(),
+            Some(ProofTactic::FrameUsing { region: None, premises }) if premises.is_empty()
+        ),
+        "{tactics:#?}"
+    );
 }
 
 #[test]

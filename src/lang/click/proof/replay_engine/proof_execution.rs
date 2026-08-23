@@ -354,6 +354,7 @@ fn advance_checked_linear_continuation<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             if let SimpleProofStep::FrameUsing { region, premises } = &step
+                && !authoritative_nested_haves
                 && !proof.supports_checked_frame_using(region.as_ref(), premises)?
             {
                 return Ok(None);

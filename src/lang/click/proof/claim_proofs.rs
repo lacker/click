@@ -320,9 +320,11 @@ fn grouped_flat_proof_supported(
     // checked by Proof. Logical decomposition over value propositions stays
     // inside the nested Proof goal. Universal and existential value binders
     // also remain inside that goal; their explicit checked operations need no
-    // cursor state. Loadability/resource obligations, top-level grouped
-    // choices, and empty mutable exact-frame boundaries preserve their
-    // compatibility prerequisites and cursor locations.
+    // cursor state. An exact empty mutable frame is checked here when it
+    // immediately follows the execution operation. A post-execution logical
+    // operation before that frame still needs the ordered compatibility
+    // driver. Loadability/resource obligations and top-level grouped choices
+    // preserve their compatibility prerequisites and cursor locations.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -357,21 +359,32 @@ fn grouped_flat_proof_supported(
                     | ProofTactic::Open(_)
             )
         });
-    let compatibility_empty_mutable_frame = function_block
+    let has_mutable_effect = function_block
         .effects()
         .iter()
-        .any(|clause| !matches!(clause.effect(), Effect::Immutable))
-        && tactics.iter().any(|tactic| {
+        .any(|clause| !matches!(clause.effect(), Effect::Immutable));
+    let unsupported_empty_mutable_frame_ordering = has_mutable_effect
+        && tactics.iter().enumerate().any(|(index, tactic)| {
             matches!(
                 tactic,
                 ProofTactic::FrameUsing {
                     region: None | Some(CodeRegionRef::Function),
                     premises,
                 } if premises.is_empty()
-            )
+            ) && !index.checked_sub(1).is_some_and(|previous| {
+                matches!(
+                    tactics[previous],
+                    ProofTactic::Step
+                        | ProofTactic::StepUsing(_)
+                        | ProofTactic::SmartStep
+                        | ProofTactic::SmartExecute
+                        | ProofTactic::SmartExecuteAllPaths
+                        | ProofTactic::ExecuteUntil(_)
+                )
+            })
         });
     let owns_one_execution_frontier =
-        !unsupported_leading_have && !compatibility_empty_mutable_frame;
+        !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
     owns_one_execution_frontier
         && value_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)

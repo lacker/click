@@ -2365,10 +2365,12 @@ impl<'a> Proof<'a> {
         Ok(indices)
     }
 
-    /// Whether this frame step is inside the deliberately narrow checked
-    /// terminal-operation slice. Returning `false` preserves the legacy path
-    /// for empty mutable function frames whose current surface meaning still
-    /// includes ambient-fact selection.
+    /// Whether a transitional driver may check and then export this frame
+    /// step. Empty mutable function frames stay out of that adapter: their
+    /// exact `Proof` meaning differs from the legacy ambient-fact behavior,
+    /// so checking one before compatibility replay would apply earlier smart
+    /// operations twice. An authoritative Proof unit applies the exact step
+    /// directly instead of consulting this compatibility query.
     fn supports_checked_execution_frame_using(
         &self,
         region: Option<&CodeRegionRef>,
