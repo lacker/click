@@ -14,7 +14,7 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[(
     "opaque_call_scoped_composite_reallocation.md",
-    "opaque return-core projection creates a stale view after scoped preparation; see issues/resource-tracking.md",
+    "conditional output ownership is checked before path-specific ensures; see issues/resource-tracking.md",
 )];
 
 #[test]

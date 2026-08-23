@@ -243,29 +243,88 @@ impl ResourceContext {
     ) -> Option<Self> {
         let mut changed = left.changed_facts_since(ancestor)?;
         changed.extend(right.changed_facts_since(ancestor)?);
-        let mut common = left.clone();
-        for fact in changed {
-            let right_count = right
+        let representations = |context: &Self, fact: &CResourceFact| {
+            let mut explicit = 0;
+            let mut supported = BTreeMap::<CResourceFact, usize>::new();
+            for entry in context
                 .storage
                 .index
                 .exact
-                .get(&fact)
-                .map_or(0, PersistentSet::len);
-            while common
-                .storage
-                .index
-                .exact
-                .get(&fact)
-                .is_some_and(|entries| entries.len() > right_count)
+                .get(fact)
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
             {
-                let entry = common
-                    .storage
-                    .index
-                    .exact
-                    .get(&fact)
-                    .and_then(|entries| entries.iter().next().copied())
-                    .expect("an excessive exact resource multiplicity has an entry");
-                common.remove_entry(entry);
+                if let Some(support) = context.storage.supported_by.get(entry) {
+                    *supported.entry(support.clone()).or_default() += 1;
+                } else {
+                    explicit += 1;
+                }
+            }
+            (explicit, supported)
+        };
+        let mut common_representations = Vec::new();
+        for fact in &changed {
+            let (left_explicit, left_supported) = representations(left, fact);
+            let (right_explicit, right_supported) = representations(right, fact);
+            let supported = left_supported
+                .into_iter()
+                .filter_map(|(support, left_count)| {
+                    right_supported
+                        .get(&support)
+                        .map(|right_count| (support, left_count.min(*right_count)))
+                })
+                .collect::<Vec<_>>();
+            let expansion = left
+                .storage
+                .expansions_by_support
+                .get(fact)
+                .filter(|left_expansion| {
+                    right.storage.expansions_by_support.get(fact) == Some(*left_expansion)
+                })
+                .map(|expansion| expansion.as_ref().clone());
+            common_representations.push((
+                fact.clone(),
+                left_explicit.min(right_explicit),
+                supported,
+                expansion,
+            ));
+        }
+
+        let mut common = left.clone();
+        for fact in &changed {
+            let entries = common
+                .storage
+                .index
+                .exact
+                .get(fact)
+                .cloned()
+                .unwrap_or_default();
+            for entry in entries.iter().copied() {
+                if common.storage.facts.contains_key(&entry) {
+                    common.remove_entry(entry);
+                }
+            }
+        }
+        for (fact, explicit, _, _) in &common_representations {
+            for _ in 0..*explicit {
+                common.insert_fact(fact.clone());
+            }
+        }
+        for (fact, _, supported, _) in &common_representations {
+            for (support, count) in supported {
+                if !common.storage.index.exact.contains_key(support) {
+                    continue;
+                }
+                for _ in 0..*count {
+                    common.insert_fact_with_support(fact.clone(), Some(support.clone()));
+                }
+            }
+        }
+        for (support, _, _, expansion) in common_representations {
+            if let Some(expansion) = expansion
+                && common.storage.index.exact.contains_key(&support)
+            {
+                common = common.with_cached_supported_expansion(&support, expansion);
             }
         }
         Some(common)
@@ -283,16 +342,41 @@ impl ResourceContext {
     }
 
     fn insert_fact(&mut self, fact: CResourceFact) {
+        self.insert_fact_with_support(fact, None);
+    }
+
+    fn insert_fact_with_support(&mut self, fact: CResourceFact, support: Option<CResourceFact>) {
         let entry = self.storage.next_entry_id;
         let next_entry_id = self
             .storage
             .next_entry_id
             .checked_add(1)
             .expect("resource entry id space exhausted");
+        let supported_by = support.as_ref().map_or_else(
+            || self.storage.supported_by.clone(),
+            |support| {
+                self.storage
+                    .supported_by
+                    .with_inserted(entry, support.clone())
+            },
+        );
+        let projections_by_support = support.as_ref().map_or_else(
+            || self.storage.projections_by_support.clone(),
+            |support| {
+                insert_resource_index_entry(
+                    &self.storage.projections_by_support,
+                    support.clone(),
+                    entry,
+                )
+            },
+        );
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.with_inserted(entry, fact.clone()),
             next_entry_id,
             index: self.storage.index.with_inserted(entry, &fact),
+            supported_by,
+            projections_by_support,
+            expansions_by_support: self.storage.expansions_by_support.clone(),
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact,
@@ -304,10 +388,37 @@ impl ResourceContext {
 
     fn remove_entry(&mut self, entry: ResourceEntryId) -> CResourceFact {
         let fact = self.fact(entry).clone();
+        let projections = self
+            .storage
+            .projections_by_support
+            .get(&fact)
+            .cloned()
+            .unwrap_or_default();
+        for projection in projections.iter().copied() {
+            crate::instrumentation::record_deterministic_work(1);
+            self.remove_entry_only(projection);
+        }
+        self.remove_entry_only(entry)
+    }
+
+    fn remove_entry_only(&mut self, entry: ResourceEntryId) -> CResourceFact {
+        let fact = self.fact(entry).clone();
+        let support = self.storage.supported_by.get(&entry).cloned();
+        let supported_by = self.storage.supported_by.without_key(&entry);
+        let projections_by_support = support.as_ref().map_or_else(
+            || self.storage.projections_by_support.clone(),
+            |support| {
+                remove_resource_index_entry(&self.storage.projections_by_support, support, entry)
+            },
+        );
+        let expansions_by_support = self.storage.expansions_by_support.without_key(&fact);
         self.storage = std::sync::Arc::new(ResourceContextStorage {
             facts: self.storage.facts.without_key(&entry),
             next_entry_id: self.storage.next_entry_id,
             index: self.storage.index.without_entry(entry, &fact),
+            supported_by,
+            projections_by_support,
+            expansions_by_support,
             origin: self.storage.origin.clone(),
             history: Some(std::sync::Arc::new(ResourceContextChange {
                 fact: fact.clone(),
@@ -344,6 +455,9 @@ impl ResourceContext {
             facts: replacement_facts,
             next_entry_id,
             index: replacement_index,
+            supported_by: PersistentMap::default(),
+            projections_by_support: PersistentMap::default(),
+            expansions_by_support: PersistentMap::default(),
             origin: self.storage.origin.clone(),
             history,
             materialized: std::sync::OnceLock::new(),
@@ -701,6 +815,61 @@ impl ResourceContext {
             self.insert_fact(fact);
         }
         self
+    }
+
+    /// Adds duplicable views derived from one exact owned resource.
+    ///
+    /// The reverse support index makes later retirement proportional to the
+    /// projections of this authority rather than the size of the context.
+    pub(crate) fn unchecked_with_supported_facts(
+        mut self,
+        support: &CResourceFact,
+        facts: impl IntoIterator<Item = CResourceFact>,
+    ) -> Self {
+        debug_assert!(support.is_own());
+        debug_assert!(self.storage.index.exact.contains_key(support));
+        for fact in facts {
+            debug_assert!(fact.is_view());
+            self.insert_fact_with_support(fact, Some(support.clone()));
+        }
+        self
+    }
+
+    pub(crate) fn with_cached_supported_expansion(
+        mut self,
+        support: &CResourceFact,
+        expansion: Vec<CResourceFact>,
+    ) -> Self {
+        debug_assert!(support.is_own());
+        debug_assert!(self.storage.index.exact.contains_key(support));
+        self.storage = std::sync::Arc::new(ResourceContextStorage {
+            facts: self.storage.facts.clone(),
+            next_entry_id: self.storage.next_entry_id,
+            index: self.storage.index.clone(),
+            supported_by: self.storage.supported_by.clone(),
+            projections_by_support: self.storage.projections_by_support.clone(),
+            expansions_by_support: self
+                .storage
+                .expansions_by_support
+                .with_inserted(support.clone(), std::sync::Arc::new(expansion)),
+            origin: self.storage.origin.clone(),
+            history: Some(std::sync::Arc::new(ResourceContextChange {
+                fact: support.clone(),
+                parent: self.storage.history.clone(),
+            })),
+            materialized: std::sync::OnceLock::new(),
+        });
+        self
+    }
+
+    pub(crate) fn cached_supported_expansion(
+        &self,
+        support: &CResourceFact,
+    ) -> Option<&[CResourceFact]> {
+        self.storage
+            .expansions_by_support
+            .get(support)
+            .map(|expansion| expansion.as_slice())
     }
 
     pub fn try_compose_with_fact(
@@ -1174,6 +1343,8 @@ impl ResourceContext {
         seeds: &[CResourceFact],
         assumptions: &PureFactContext,
     ) -> Self {
+        let supported = self.supported_projection_pairs();
+        let expansions = self.cached_support_expansions();
         let mut exact_resources = BTreeSet::new();
         let mut memory_blocks = BTreeSet::new();
         for fact in seeds {
@@ -1218,7 +1389,8 @@ impl ResourceContext {
                 self.insert_fact(fact);
             }
         }
-        self
+        self.restore_supported_projection_pairs(supported)
+            .restore_cached_support_expansions(expansions)
     }
 
     pub(crate) fn without_exact_representation(mut self, fact: &CResourceFact) -> Option<Self> {
@@ -1335,6 +1507,34 @@ impl ResourceContext {
     }
 
     pub(in crate::kernel) fn normalized(mut self, assumptions: &PureFactContext) -> Self {
+        if !self.storage.supported_by.is_empty() || !self.storage.expansions_by_support.is_empty() {
+            let supported = self.supported_projection_pairs();
+            let expansions = self.cached_support_expansions();
+            let entries = self
+                .storage
+                .supported_by
+                .iter()
+                .map(|(entry, _)| *entry)
+                .collect::<Vec<_>>();
+            for entry in entries {
+                self.remove_entry_only(entry);
+            }
+            self.storage = std::sync::Arc::new(ResourceContextStorage {
+                facts: self.storage.facts.clone(),
+                next_entry_id: self.storage.next_entry_id,
+                index: self.storage.index.clone(),
+                supported_by: self.storage.supported_by.clone(),
+                projections_by_support: self.storage.projections_by_support.clone(),
+                expansions_by_support: PersistentMap::default(),
+                origin: self.storage.origin.clone(),
+                history: self.storage.history.clone(),
+                materialized: std::sync::OnceLock::new(),
+            });
+            return self
+                .normalized(assumptions)
+                .restore_supported_projection_pairs(supported)
+                .restore_cached_support_expansions(expansions);
+        }
         let mut changed_facts = BTreeSet::new();
         let retained = self
             .iter()
@@ -1388,6 +1588,56 @@ impl ResourceContext {
             return self;
         }
         self.replace_facts(slots.into_iter().flatten(), changed_facts);
+        self
+    }
+
+    fn supported_projection_pairs(&self) -> Vec<(CResourceFact, CResourceFact)> {
+        self.storage
+            .supported_by
+            .iter()
+            .map(|(entry, support)| (support.clone(), self.fact(*entry).clone()))
+            .collect()
+    }
+
+    fn restore_supported_projection_pairs(
+        mut self,
+        supported: Vec<(CResourceFact, CResourceFact)>,
+    ) -> Self {
+        for (support, projection) in supported {
+            if !self.storage.index.exact.contains_key(&support) {
+                continue;
+            }
+            let already_present = self
+                .storage
+                .projections_by_support
+                .get(&support)
+                .into_iter()
+                .flat_map(ResourceEntryIds::iter)
+                .any(|entry| self.fact(*entry) == &projection);
+            if !already_present {
+                self.insert_fact_with_support(projection, Some(support));
+            }
+        }
+        self
+    }
+
+    fn cached_support_expansions(&self) -> Vec<(CResourceFact, Vec<CResourceFact>)> {
+        self.storage
+            .expansions_by_support
+            .iter()
+            .map(|(support, expansion)| (support.clone(), expansion.as_ref().clone()))
+            .collect()
+    }
+
+    fn restore_cached_support_expansions(
+        mut self,
+        expansions: Vec<(CResourceFact, Vec<CResourceFact>)>,
+    ) -> Self {
+        for (support, expansion) in expansions {
+            if self.storage.index.exact.contains_key(&support) {
+                self = self.with_cached_supported_expansion(&support, expansion);
+            }
+        }
         self
     }
 }

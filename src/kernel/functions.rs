@@ -1583,42 +1583,55 @@ fn evaluate_function_return_resources(
         Ok(resources) => resources,
         Err(error) => return Ok(Err(resource_context_runtime_error(error))),
     };
-    let Some(expanded_ensured_resources) = crate::instrumentation::measure_operation(
+    let Some(projected_cores_by_support) = crate::instrumentation::measure_operation(
         function.name(),
         "contract resource transition",
-        "ensured resource expansion",
+        "ensured resource core projection",
         || {
-            expand_all_composite_resource_facts(
-                &ensured_resources,
-                function.composite_resource_definitions(),
-                post_state.memory(),
-                assumptions,
-            )
+            let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(assumptions);
+            ensured_resources
+                .facts()
+                .iter()
+                .filter(|support| support.is_own())
+                .map(|support| {
+                    let singleton = ResourceContext::new().unchecked_with_fact(support.clone());
+                    let expanded = expand_all_composite_resource_facts(
+                        &singleton,
+                        function.composite_resource_definitions(),
+                        post_state.memory(),
+                        assumptions,
+                    )?;
+                    let expansion = expanded.facts().to_vec();
+                    let projected = expansion
+                        .iter()
+                        .filter_map(|fact| fact.core_with_assumptions(assumptions))
+                        .filter(|core| !return_resources.satisfies_fact(core, assumptions))
+                        .collect::<BTreeSet<_>>()
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                    Some((support.clone(), expansion, projected))
+                })
+                .collect::<Option<Vec<_>>>()
         },
     ) else {
         return Ok(Err(CRuntimeError::FunctionContract(format!(
             "could not expand ensured composite resources after call: {ensured_resources:?}"
         ))));
     };
-    let projected_cores = crate::instrumentation::measure_operation(
-        function.name(),
-        "contract resource transition",
-        "ensured resource core projection",
-        || {
-            let _assumptions_id_scope = crate::kernel::PureFactContextIdScope::enter(assumptions);
-            expanded_ensured_resources
-                .facts()
-                .iter()
-                .filter_map(|fact| fact.core_with_assumptions(assumptions))
-                .filter(|core| !return_resources.satisfies_fact(core, assumptions))
-                .collect::<Vec<_>>()
-        },
-    );
     // The callee has already certified every ensured composite and its
     // instantiated body. Its duplicable cores are therefore observations of
-    // certified ownership, not newly composed ownership that needs another
-    // global validity/normalization pass.
-    Ok(Ok(return_resources.unchecked_with_facts(projected_cores)))
+    // certified ownership, not independent persistent caller capabilities.
+    // Record their exact support so consuming that ownership retires only
+    // its projections through the reverse index.
+    let return_resources = projected_cores_by_support.into_iter().fold(
+        return_resources,
+        |resources, (support, expansion, projected)| {
+            resources
+                .unchecked_with_supported_facts(&support, projected)
+                .with_cached_supported_expansion(&support, expansion)
+        },
+    );
+    Ok(Ok(return_resources))
 }
 
 fn counted_population_quantities(
@@ -2518,7 +2531,34 @@ pub(super) fn expand_all_composite_resource_facts(
     memory: &CMemory,
     assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
-    expand_composite_resource_context(context, definitions, memory, assumptions)
+    let mut cached = context.clone();
+    let supports = context
+        .facts()
+        .iter()
+        .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
+        .filter_map(|support| {
+            context
+                .cached_supported_expansion(support)
+                .map(|expansion| (support.clone(), expansion.to_vec()))
+        })
+        .collect::<Vec<_>>();
+    for (support, expansion) in supports {
+        if expansion.as_slice() == [support.clone()] {
+            continue;
+        }
+        cached = cached.without_exact_representation(&support)?;
+        let missing = expansion
+            .into_iter()
+            .filter(|fact| {
+                !cached.facts().contains(fact)
+                    && !resource_context_contains_exact_owned_fact(&cached, fact, assumptions)
+            })
+            .collect::<Vec<_>>();
+        cached = cached
+            .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
+            .ok()?;
+    }
+    expand_composite_resource_context(&cached, definitions, memory, assumptions)
         .map(|(resources, _)| resources)
 }
 

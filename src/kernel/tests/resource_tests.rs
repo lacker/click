@@ -56,6 +56,123 @@ fn resource_context_fork_updates_are_persistent_and_logarithmic() {
 }
 
 #[test]
+fn consuming_support_retires_only_its_derived_views() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let view = CResourceFact::view_token("derived".to_string(), vec![int32(7)]);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(view.clone())
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts(&authority, [view.clone()]);
+    assert_eq!(
+        context
+            .storage
+            .index
+            .exact
+            .get(&view)
+            .map_or(0, |entries| entries.len()),
+        2,
+        "an explicit view and a supported projection are distinct capabilities"
+    );
+
+    let remaining = context
+        .without_exact_representation(&authority)
+        .expect("the authority should be removable");
+    assert_eq!(remaining.facts(), [view]);
+    assert!(remaining.storage.supported_by.is_empty());
+    assert!(remaining.storage.projections_by_support.is_empty());
+}
+
+#[test]
+fn normalization_preserves_projection_support() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let view = CResourceFact::view_token("derived".to_string(), vec![int32(7)]);
+    let expanded = CResourceFact::own_token("expanded".to_string(), vec![int32(9)]);
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts(&authority, [view])
+        .with_cached_supported_expansion(&authority, vec![expanded.clone()])
+        .normalized(&PureFactContext::new());
+    assert_eq!(
+        context.cached_supported_expansion(&authority),
+        Some([expanded].as_slice())
+    );
+
+    let remaining = context
+        .without_exact_representation(&authority)
+        .expect("normalization should retain the authority");
+    assert!(remaining.is_empty());
+    assert!(remaining.storage.expansions_by_support.is_empty());
+}
+
+#[test]
+fn support_retirement_visits_only_the_supported_projections() {
+    const PROJECTION_COUNT: usize = 8;
+    for size in [16_usize, 64, 256, 1024, 4096] {
+        let authority =
+            CResourceFact::own_composite("authority".to_string(), vec![int32(size as u32)]);
+        let projections = (0..PROJECTION_COUNT)
+            .map(|index| {
+                CResourceFact::view_token(format!("projection_{index}"), vec![int32(size as u32)])
+            })
+            .collect::<Vec<_>>();
+        let context = unrelated_token_context(size)
+            .unchecked_with_fact(authority.clone())
+            .unchecked_with_supported_facts(&authority, projections.clone());
+        let ancestor = context.clone();
+
+        let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+            context
+                .without_exact_representation(&authority)
+                .expect("the authority should be removable")
+        });
+        assert_eq!(
+            work, PROJECTION_COUNT,
+            "retiring support in a size-{size} context must visit only its projections"
+        );
+        assert_eq!(remaining.facts().len(), size);
+        assert_eq!(ancestor.facts().len(), size + PROJECTION_COUNT + 1);
+        for projection in projections {
+            assert!(!remaining.satisfies_fact(&projection, &PureFactContext::new()));
+        }
+    }
+}
+
+#[test]
+fn resource_join_preserves_only_common_projection_support() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let view = CResourceFact::view_token("derived".to_string(), Vec::new());
+    let expansion = vec![CResourceFact::own_token("expanded".to_string(), Vec::new())];
+    let root = ResourceContext::new().unchecked_with_fact(authority.clone());
+    let left = root
+        .clone()
+        .unchecked_with_supported_facts(&authority, [view.clone()])
+        .with_cached_supported_expansion(&authority, expansion.clone());
+    let right = root
+        .clone()
+        .unchecked_with_supported_facts(&authority, [view.clone()])
+        .with_cached_supported_expansion(&authority, expansion);
+    let common = ResourceContext::common_exact_descendant(&left, &right, &root)
+        .expect("both contexts descend from the same root");
+    assert_eq!(
+        common.cached_supported_expansion(&authority).unwrap().len(),
+        1
+    );
+    assert!(
+        common
+            .without_exact_representation(&authority)
+            .expect("the common authority should be removable")
+            .is_empty(),
+        "a projection supported in both branches must remain supported"
+    );
+
+    let explicit_right = root.clone().unchecked_with_fact(view);
+    let mixed = ResourceContext::common_exact_descendant(&left, &explicit_right, &root)
+        .expect("both contexts descend from the same root");
+    assert_eq!(mixed.facts(), [authority]);
+    assert!(mixed.storage.expansions_by_support.is_empty());
+}
+
+#[test]
 fn resource_common_descendant_visits_only_branch_local_changes() {
     let left_path = CResourceFact::own_token("left_path".to_string(), Vec::new());
     let right_path = CResourceFact::own_token("right_path".to_string(), Vec::new());

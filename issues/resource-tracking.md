@@ -115,6 +115,30 @@ semantics—for example, closing one named observation projection—not infer
 revocation from a later mutation or grant smart tactics authority unavailable
 to simple replay.
 
+## Support-aware representation checkpoint
+
+Returned cores are now stored as derived views supported by the exact owned
+resource generation that produced them. `ResourceContext` maintains the
+reverse support index, so consuming an authority retires only its projections;
+an identical explicit persistent view remains independent and still blocks a
+conflicting lifetime transition. Certified owned expansions are cached on the
+same support record so later inspection does not mint a different symbolic
+load identity for the same generation. Normalization and branch joins preserve
+only support metadata common to their surviving ownership.
+
+The deterministic regression grows the unrelated frame from 16 through 4,096
+facts while holding eight projections fixed. Retirement visits exactly those
+eight projections at every size. The ordinary heap regressions still reject an
+explicit persistent view at `free` and preserve a proved-separate view.
+
+This moves the focused scoped-open regression past the derived-view error. Its
+next failure is an owned post-state range on the allocation-retaining failure
+outcome. Opaque allocation lifetime effects currently run before function
+ensures are lowered into path-specific facts, so the rule cannot use
+`result == 0 implies owner->data == old(owner->data)` to keep the old allocation
+on only that outcome. The next chunk is therefore path-sensitive ordering of
+ensures and lifetime effects, not broader view revocation.
+
 ## Intended regressions
 
 ### Scoped preparation before mutation

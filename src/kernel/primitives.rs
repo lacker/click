@@ -1282,6 +1282,17 @@ pub(super) struct ResourceContextStorage {
     pub(super) facts: PersistentMap<ResourceEntryId, CResourceFact>,
     pub(super) next_entry_id: ResourceEntryId,
     pub(super) index: ResourceContextIndex,
+    /// Derived view entries name the exact owned resource that supports them.
+    /// Ordinary entries are explicit and therefore absent from this map.
+    pub(super) supported_by: PersistentMap<ResourceEntryId, CResourceFact>,
+    /// Reverse support index used to retire only the projections of a
+    /// consumed owned resource, without scanning the ambient context.
+    pub(super) projections_by_support: PersistentMap<CResourceFact, ResourceEntryIds>,
+    /// Certified, snapshot-stable owned expansions for folded resource
+    /// generations. Reusing these avoids re-lowering the same body into
+    /// fresh symbolic load identities at each later transition.
+    pub(super) expansions_by_support:
+        PersistentMap<CResourceFact, std::sync::Arc<Vec<CResourceFact>>>,
     /// Persistent mutation ancestry used by checked Proof joins. The origin
     /// distinguishes unrelated snapshots; the history names only exact facts
     /// whose multiplicity or representation changed.
@@ -1324,6 +1335,8 @@ impl std::fmt::Debug for ResourceContext {
 impl PartialEq for ResourceContext {
     fn eq(&self, other: &Self) -> bool {
         self.facts() == other.facts()
+            && self.storage.supported_by == other.storage.supported_by
+            && self.storage.expansions_by_support == other.storage.expansions_by_support
     }
 }
 
@@ -1332,12 +1345,31 @@ impl Eq for ResourceContext {}
 impl std::hash::Hash for ResourceContext {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.facts().hash(state);
+        for entry in self.storage.supported_by.iter() {
+            entry.hash(state);
+        }
+        for entry in self.storage.expansions_by_support.iter() {
+            entry.hash(state);
+        }
     }
 }
 
 impl Ord for ResourceContext {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.facts().cmp(other.facts())
+        self.facts()
+            .cmp(other.facts())
+            .then_with(|| {
+                self.storage
+                    .supported_by
+                    .iter()
+                    .cmp(other.storage.supported_by.iter())
+            })
+            .then_with(|| {
+                self.storage
+                    .expansions_by_support
+                    .iter()
+                    .cmp(other.storage.expansions_by_support.iter())
+            })
     }
 }
 
