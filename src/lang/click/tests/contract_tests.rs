@@ -563,6 +563,111 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
 }
 
 #[test]
+fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
+    let set_source = r#"
+            int32 set_seven(int32* cell, int32 choose) {
+                if (choose == 0) {
+                    return 0;
+                }
+                cell[0] = 7;
+                return 1;
+            }
+        "#;
+    let caller_source = r#"
+            int32 prepare_then_set_seven(int32* cell, int32 choose) {
+                int32 value;
+                value = set_seven(cell, choose);
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            resource owned_cell(cell: int32*) {
+                owns cell[0..1];
+            }
+
+            resource wrapped_cell(cell: int32*) {
+                contains owned_cell(cell);
+            }
+
+            verifying "set_seven.c";
+            verifying "prepare_then_set_seven.c";
+
+            int32 set_seven(int32* cell, int32 choose) {
+                consumes owned_cell(cell);
+                mutable cell[0..1];
+                produces owned_cell(cell);
+                ensures result == 0 or result == 1;
+            } by {
+                open(owned_cell(cell)) {
+                    execute();
+                    frame();
+                }
+                simp();
+            }
+
+            int32 prepare_then_set_seven(int32* cell, int32 choose) {
+                consumes wrapped_cell(cell);
+                mutable cell[0..1];
+                produces wrapped_cell(cell);
+                ensures result == 0 or result == 1;
+            } by {
+                open(wrapped_cell(cell)) {
+                }
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+    let sources = &[
+        ("set_seven.c", set_source),
+        ("prepare_then_set_seven.c", caller_source),
+    ];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    verified.expect("the closed preparatory scope should continue through the checked call");
+    assert_eq!(flat_units, 2, "both functions should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the preparatory scope continuation must not replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the closed preparatory scope must not export replay state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        sources,
+        "prepare_then_set_seven",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained preparatory scope Proof should expand");
+    let caller_expansion = expanded
+        .split("int32 prepare_then_set_seven")
+        .nth(1)
+        .expect("the expanded source should retain the selected caller");
+    assert!(!caller_expansion.contains("execute();"), "{expanded}");
+    assert!(!caller_expansion.contains("frame();"), "{expanded}");
+    assert!(!caller_expansion.contains("simp();"), "{expanded}");
+    assert!(caller_expansion.contains("open(wrapped_cell(cell))"));
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten preparatory-scope proof should verify normally");
+}
+
+#[test]
 fn grouped_predicate_contracts_stay_on_one_proof() {
     let c_source = r#"
             int32 identity(int32 x) {

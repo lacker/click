@@ -159,6 +159,18 @@ fn grouped_scoped_resource_call_supported(
             ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
         )
     });
+    let continuation_executes = continuation.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        )
+    });
+    let continuation_frames = continuation.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+        )
+    });
     let linear_body = open.tactics.iter().all(|tactic| {
         !matches!(
             tactic,
@@ -186,15 +198,16 @@ fn grouped_scoped_resource_call_supported(
                 | ProofTactic::TransportUsing { .. }
         )
     });
+    let scoped_execution_shape = body_executes && body_frames && outcome_only_continuation;
+    let preparatory_scope_shape =
+        !body_executes && !body_frames && continuation_executes && continuation_frames;
     has_declared_contract_resource
         && declared_resources_are_unmixed
         && single_declared_contract_resources
         && scope_definition_is_nonpopulation
         && mutable_contract
-        && body_executes
-        && body_frames
         && linear_body
-        && outcome_only_continuation
+        && (scoped_execution_shape || preparatory_scope_shape)
         && grouped_value_predicate_contract_supported(function_block, predicate_environment)
 }
 
