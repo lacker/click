@@ -25,9 +25,8 @@ when evidence exposes one.
   parallel with the checked `Proof` model.
 - [Resource tracking across execution transitions](resource-tracking.md):
   umbrella roadmap for the scoped owned-vector repair, checked successor
-  handoff, resource-lifetime regressions, scaling dependency, and final
+  handoff, resource-lifetime regressions, scoped population repair, and final
   end-to-end unquarantine.
-- [Owned-vector provisional ensure scaling](owned-vector-provisional-ensure-scaling.md):
-  after the resource transition advances, dynamic range membership repeatedly
-  scans the proof context while lowering a later verified call's ensures; this
-  is a separate verifier-core complexity invariant.
+- [Scoped composite close disagrees with allocation certification](scoped-composite-population-replay.md):
+  closing an allocation-bearing composite before an opaque retiring call leaves
+  stale counted-population state on the proof replay path.

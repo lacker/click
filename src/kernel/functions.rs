@@ -1111,7 +1111,16 @@ fn add_verified_function_ensure_facts(
     for ensure in function.contract_ensures() {
         let ensure_assumptions =
             assumptions_with_path_context(effective_assumptions, facts, obligations);
-        let lowering_assumptions = ensure_assumptions.clone().allow_symbolic_contract_loads();
+        // A verified callee certifies that its ensures, including the memory
+        // loads used to state them, are well-defined. Lower those loads into
+        // explicit path obligations here instead of asking the general prover
+        // to rediscover each contextual range proof while applying the call
+        // rule. The obligations are retained below as certified consequences
+        // of the verified contract.
+        let lowering_assumptions = ensure_assumptions
+            .clone()
+            .allow_symbolic_contract_loads()
+            .defer_non_exact_loadability_obligations();
         let ensure_paths = lower_spec_proposition_at_state_with_loop_entry(
             post_contract_state,
             ensure,
@@ -4470,5 +4479,90 @@ impl From<u32> for Bitvector32Term {
 impl From<bool> for ConditionTerm {
     fn from(value: bool) -> Self {
         Self::Constant(value)
+    }
+}
+
+#[cfg(test)]
+mod provisional_ensure_obligation_tests {
+    use super::*;
+
+    #[test]
+    fn provisional_ensure_loadability_work_ignores_unrelated_facts() {
+        let memory = CMemory::new();
+        let data = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let state = CState::new()
+            .with_local("data", CValue::Pointer(data.clone()))
+            .with_memory(memory.clone());
+        let ensure = SpecProposition::Comparison {
+            left: SpecExpression::MemoryLoad {
+                memory: SpecMemory::Current,
+                pointer: Box::new(SpecExpression::PointerOffset {
+                    pointer: Box::new(SpecExpression::CExpression(c_variable("data"))),
+                    elements: Box::new(SpecExpression::CExpression(c_int32_literal(1))),
+                    byte_width: 4,
+                }),
+                value_type: CType::Int32,
+            },
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(c_int32_literal(0)),
+        };
+        let function = c_function(
+            CType::Int32,
+            "provisional_loadability_probe",
+            vec![c_parameter("data", CType::Int32Pointer)],
+            c_return(c_int32_literal(0)),
+        )
+        .with_contract(Vec::new(), vec![ensure], Vec::new(), Vec::new(), true);
+        let base_assumptions =
+            PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: data.clone(),
+                bytes: Bitvector32Term::Constant(8),
+            });
+        let element_loadable = Proposition::CMemoryLoadable {
+            memory,
+            base: data.offset_by_int32_elements(Bitvector32Term::Constant(1)),
+            bytes: Bitvector32Term::Constant(4),
+        };
+        let mut work_by_size = Vec::new();
+        for unrelated_count in [16, 64, 256, 1024] {
+            let mut assumptions = base_assumptions.clone();
+            for index in 0..unrelated_count {
+                assumptions = assumptions.assume_proposition(Proposition::Predicate {
+                    name: format!("unrelated_{index}"),
+                    arguments: Vec::new(),
+                });
+            }
+            let mut facts = Vec::new();
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                add_verified_function_ensure_facts(
+                    &mut facts,
+                    &[],
+                    &state,
+                    &state,
+                    &function,
+                    &assumptions,
+                    &mut ExecutionBudget::new(),
+                )
+            });
+            result.expect("the provisional ensure should lower");
+            assert!(
+                facts
+                    .iter()
+                    .any(|fact| fact.proposition() == &element_loadable),
+                "contextual loadability must remain an explicit provisional obligation"
+            );
+            work_by_size.push((unrelated_count, work));
+        }
+
+        let baseline = work_by_size[0].1.max(1);
+        let largest = work_by_size.last().unwrap().1;
+        assert!(
+            largest <= baseline * 2,
+            "provisional ensure work should be independent of unrelated facts: {work_by_size:?}"
+        );
     }
 }

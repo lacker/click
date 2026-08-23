@@ -152,13 +152,19 @@ mutable field; it fails on the old kernel with the same stale returned `owns`
 diagnostic and passes with the corrected transition.
 
 Applying the scoped proof repair to `owned-vector` and selecting the existing
-multi-successor-aware explicit statement operation advances beyond that runtime
-error. A current 30-second profile then spends 22.821 seconds lowering
-provisional `vector_push` ensures and performs 98,586 range-membership offset
-equality queries before timing out. This is a distinct verifier-core scaling
-invariant with a different likely fix, so its reduction remains in
-`owned-vector-provisional-ensure-scaling.md`. The incomplete owned-vector proof
-edit remains out of this green resource-kernel checkpoint.
+multi-successor-aware explicit statement operation exposed a separate
+provisional-ensure scaling failure. Verified-call ensure lowering now retains
+non-exact loadability as an explicit certified obligation instead of invoking
+the general contextual prover for every load. A deterministic multi-size
+regression holds the affected ensure fixed while growing unrelated facts from
+16 through 1,024 and requires bounded work.
+
+The repaired call step finishes promptly and exposes the next independent
+failure: proof replay retains the consumed allocation and counted composite
+populations after the preparatory `open` scope closes, while fresh kernel
+certification retires that allocation. The focused reproduction and acceptance
+criteria are in `scoped-composite-population-replay.md`; the incomplete
+owned-vector proof edit remains out of the green scaling checkpoint.
 
 ## Remaining roadmap
 
@@ -166,14 +172,15 @@ edit remains out of this green resource-kernel checkpoint.
    plain `step()` retains the kernel-certified successor partition through
    `Proof` without a parallel exactly-one replay rule. Do not add resource
    semantics or require different surface syntax for this adapter gap.
-2. Reduce and fix the provisional-ensure query curve in
-   `owned-vector-provisional-ensure-scaling.md`. Judge it with deterministic
-   work over several context sizes, not only the owned-vector wall clock.
+2. Repair the scoped composite counted-population mismatch in
+   `scoped-composite-population-replay.md`, preserving exact replay and
+   independent-certification allocation state on every call outcome.
 3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
-4. Close this issue only after the focused lifetime regressions, resource
-   scaling regression, and owned-vector end-to-end case are all green. File a
-   new issue only if that completed path exposes another independent invariant.
+4. Close this issue only after the focused lifetime regressions, resource and
+   ensure-lowering scaling regressions, scoped population regression, and
+   owned-vector end-to-end case are all green. File a new issue only if that
+   completed path exposes another independent invariant.
 
 ## Intended regressions
 

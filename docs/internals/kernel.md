@@ -151,6 +151,14 @@ definitions carry their logical facts into the kernel, and fold/unfold,
 loadability, separation, and post-resource checks are performed against the
 exact definition rather than accepted as caller assertions.
 
+Applying a verified function rule lowers the callee's ensures twice when
+allocation lifetime effects depend on an outcome: once provisionally to select
+the lifetime transition, then against the final memory to publish the public
+postconditions. Non-exact loadability needed to state either ensure remains an
+explicit certified path obligation. The call rule does not invoke the general
+contextual prover to rediscover those range proofs during lowering; their
+authority is the already certified callee contract.
+
 When two certified execution paths use different memory snapshots, resource
 representation comparison unfolds each composite against its own snapshot.
 Unfolding replaces the folded parent with its children while they are
