@@ -2045,6 +2045,144 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
 }
 
 #[test]
+fn leading_universal_have_scopes_stay_on_one_proof() {
+    let c_source = "int32 universal_haves(int32 x) { return x; }";
+    let click_source = r#"
+        verifying "universal_haves.c";
+
+        int32 universal_haves(int32 x) {
+            requires small: x <= 5;
+            requires bounded: forall (k: int32) {
+                0 <= k and k < 2 implies k <= x
+            };
+            ensures result == x;
+        } by {
+            have forall (j: int32) { j == j } by {
+                intro();
+                normalize();
+            }
+            have 1 <= x by {
+                instantiate(forall (k: int32) {
+                    0 <= k and k < 2 implies k <= x
+                }, 1) using {}
+                assumption();
+            }
+            have forall (k: int32) {
+                0 <= k and k < 2 implies x <= 5
+            } by {
+                have 0 <= 0 and 0 < 2 implies x <= 5 by {
+                    intro();
+                    assumption();
+                }
+                have 0 <= 1 and 1 < 2 implies x <= 5 by {
+                    intro();
+                    assumption();
+                }
+                enumerate();
+            }
+            have (0..2).all(|k| { x <= 5 }) by {
+                have 0 <= 0 and 0 < 2 implies x <= 5 by {
+                    intro();
+                    assumption();
+                }
+                have 0 <= 1 and 1 < 2 implies x <= 5 by {
+                    intro();
+                    assumption();
+                }
+                enumerate();
+            }
+            execute();
+            simp();
+        }
+    "#;
+
+    let (
+        (
+            (((verified, explicit_fallbacks), certificate_checks), context_exports),
+            replay_executions,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &[("universal_haves.c", c_source)])
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("leading universal have scopes should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "universal have scopes must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "universal have scopes must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary universal verification must not check a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "every explicit universal operation should apply directly to Proof"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked universal scopes should expose retained provenance");
+    let expanded_debug = format!("{expanded:#?}");
+    for operation in ["Intro", "InstantiateUsing", "Enumerate"] {
+        assert!(
+            expanded_debug.contains(operation),
+            "the expansion should retain {operation}: {expanded_debug}"
+        );
+    }
+
+    let rewritten = expand_c0_claim_source(
+        click_source,
+        &[("universal_haves.c", c_source)],
+        "universal_haves",
+        CProofClaim::Grouped,
+    )
+    .expect("the checked universal scopes should serialize");
+    verify_c0_sources(&rewritten, &[("universal_haves.c", c_source)])
+        .expect("the serialized universal scopes should independently reverify");
+
+    let corrupted = rewritten.replacen("}, 1) using {", "}, 0) using {", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the checked instantiation argument"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&corrupted, &[("universal_haves.c", c_source)])
+            })
+        });
+    let error = corrupted_result
+        .expect_err("tampering with a universal instantiation must invalidate the proof");
+    assert!(
+        error
+            .message()
+            .contains("`assumption` requires the exact current goal as an available fact"),
+        "the checked Proof operation should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "an invalid migrated operation must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "invalid migrated source must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn smart_pure_if_retains_checked_arm_proofs_directly() {
     let click_source = r#"
         theorem equality_case(x: int32) {

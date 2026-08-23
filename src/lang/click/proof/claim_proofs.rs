@@ -223,6 +223,9 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
             leading_point_proposition_supported(proposition)
         }
         ClickProposition::Exists { .. } | ClickProposition::RangeAny { .. } => true,
+        ClickProposition::ForAll { body, .. } | ClickProposition::RangeAll { body, .. } => {
+            leading_point_proposition_supported(body)
+        }
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
@@ -231,8 +234,6 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
-        | ClickProposition::ForAll { .. }
-        | ClickProposition::RangeAll { .. }
         | ClickProposition::PredicateCall { .. } => false,
     }
 }
@@ -247,6 +248,7 @@ fn leading_point_tactics_supported(tactics: &[ProofTactic]) -> bool {
                 | ProofTactic::ApplyTheoremUsing { .. }
                 | ProofTactic::Choose(_)
                 | ProofTactic::Witness(_)
+                | ProofTactic::InstantiateUsing { .. }
                 | ProofTactic::Assumption
                 | ProofTactic::Extract(_)
                 | ProofTactic::Normalize
@@ -254,6 +256,7 @@ fn leading_point_tactics_supported(tactics: &[ProofTactic]) -> bool {
                 | ProofTactic::Split
                 | ProofTactic::Left
                 | ProofTactic::Right
+                | ProofTactic::Enumerate
                 | ProofTactic::Rewrite(_)
                 | ProofTactic::TransportUsing { .. } => true,
                 ProofTactic::Simp | ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
@@ -298,10 +301,11 @@ fn grouped_flat_proof_supported(
     // compatibility planning. The direct leading-point slice deliberately
     // starts with proposition-only goals and the linear operations already
     // checked by Proof. Logical decomposition over value propositions stays
-    // inside the nested Proof goal; universal binders, loadability/resource
-    // obligations, top-level grouped choices, and empty mutable exact-frame
-    // boundaries preserve their compatibility prerequisites and cursor
-    // locations.
+    // inside the nested Proof goal. Universal and existential value binders
+    // also remain inside that goal; their explicit checked operations need no
+    // cursor state. Loadability/resource obligations, top-level grouped
+    // choices, and empty mutable exact-frame boundaries preserve their
+    // compatibility prerequisites and cursor locations.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {

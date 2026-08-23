@@ -10820,6 +10820,15 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
                 .outcome_point_view()
                 .expect("a focused outcome judgment resolves its point view"),
+            // A leading nested `have` is a proposition proof at the
+            // execution frontier. It evaluates the quantified fact and
+            // argument in that frontier's point environment without
+            // exporting or replaying execution state.
+            ProofContext::Execution(_) => {
+                self.execution_proposition_point_view().ok_or_else(|| {
+                    self.step_error("`instantiate` requires a point proposition proof")
+                })?
+            }
             _ => {
                 return Err(self.step_error("`instantiate` requires a point proposition proof"));
             }
