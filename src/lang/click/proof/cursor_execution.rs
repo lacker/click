@@ -1401,6 +1401,13 @@ pub(super) struct ExecutionPointStepSuccessor {
     pub(super) path: Option<(ConditionTerm, bool)>,
 }
 
+fn statement_supports_retained_successor_partition(statement: &CStatement) -> bool {
+    matches!(
+        statement,
+        CStatement::CallAssign { .. } | CStatement::Call { .. }
+    )
+}
+
 /// Executes one source statement into every safe kernel-certified successor.
 ///
 /// Most statements have one successor and retain the ordinary fast path. An
@@ -1434,31 +1441,42 @@ pub(super) fn execute_step_successors_from_execution_point(
         tactic_index,
         tactic_name,
     )?;
-    let mut preview_next_opaque_call = replay.next_opaque_call;
-    let mut preview_next_kernel_variable = replay.next_kernel_variable;
-    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-    let preview = certified_statement_transitions(
-        &current_state,
-        available_pure_facts,
-        &statement,
-        function_environment,
-        CExecutionSemantics::APPLY_VERIFIED_RULES,
-        &transition_label,
-        &mut preview_next_opaque_call,
-        &mut preview_next_kernel_variable,
-        prerequisite_policy,
-        fact_transport_policy,
-    )?
-    .0;
-    let safe_partition = (preview.len() > 1
-        && preview.iter().all(|transition| {
-            matches!(
-                transition.outcome,
-                CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
-            )
-        }))
-    .then(|| certified_transition_condition_partition(&preview))
-    .flatten();
+    // Only an opaque verified call may expose the allocation-identity sibling
+    // frontiers represented by this adapter. In particular, previewing a
+    // source loop executes its whole lowered `while` and returns eventual body
+    // paths; those are not immediate successors of the loop-head step, whose
+    // dedicated cursor rule below advances exactly one concrete transition.
+    // The proof surface currently represents one binary partition, so require
+    // exactly one checked transition per polarity here.
+    let safe_partition = if statement_supports_retained_successor_partition(&statement) {
+        let mut preview_next_opaque_call = replay.next_opaque_call;
+        let mut preview_next_kernel_variable = replay.next_kernel_variable;
+        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
+        let preview = certified_statement_transitions(
+            &current_state,
+            available_pure_facts,
+            &statement,
+            function_environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut preview_next_opaque_call,
+            &mut preview_next_kernel_variable,
+            prerequisite_policy,
+            fact_transport_policy,
+        )?
+        .0;
+        (preview.len() == 2
+            && preview.iter().all(|transition| {
+                matches!(
+                    transition.outcome,
+                    CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
+                )
+            }))
+        .then(|| certified_transition_condition_partition(&preview))
+        .flatten()
+    } else {
+        None
+    };
 
     let selected_paths = safe_partition.map_or_else(
         || vec![(None, None)],
@@ -2326,6 +2344,45 @@ fn certified_transition_condition_partition(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod statement_successor_partition_tests {
+    use super::*;
+
+    #[test]
+    fn retained_successor_partitions_are_call_only() {
+        let call = CStatement::Call {
+            function_name: "opaque".to_string(),
+            arguments: Vec::new(),
+        };
+        let call_assign = CStatement::CallAssign {
+            target: "result".to_string(),
+            function_name: "opaque".to_string(),
+            arguments: Vec::new(),
+        };
+        let loop_statement = CStatement::While {
+            condition: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+            invariant: Vec::new(),
+            invariant_checks: Vec::new(),
+            effect_checks: Vec::new(),
+            body: Box::new(CStatement::Skip),
+        };
+        let branch = CStatement::If {
+            condition: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(CStatement::Skip),
+        };
+
+        assert!(statement_supports_retained_successor_partition(&call));
+        assert!(statement_supports_retained_successor_partition(
+            &call_assign
+        ));
+        assert!(!statement_supports_retained_successor_partition(
+            &loop_statement
+        ));
+        assert!(!statement_supports_retained_successor_partition(&branch));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
