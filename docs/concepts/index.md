@@ -16,7 +16,7 @@ fits into verification.
 ## Proof and execution models
 
 - [The verification pipeline](verification-pipeline.md)
-- [Proof state and replay](proof-state-and-replay.md)
+- [Proof state and checked transitions](proof-state.md)
 - [Smart and simple tactics](smart-and-simple-tactics.md)
 - [Proof workflow](proof-workflow.md)
 - [Surface Click and Kernel Click](surface-and-kernel.md)

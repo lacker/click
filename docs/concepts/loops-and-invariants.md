@@ -172,7 +172,7 @@ preserve by {
 
 Writing it is optional. If a `preserve` script does not close the bundle,
 Click appends the closer implicitly after the last written tactic. The
-certificate contains an explicit `close_invariants` leaf either way, so it
+expanded proof contains an explicit `close_invariants` leaf either way, so it
 always appears in an expanded proof.
 
 Successful initialization, preservation, and effect proofs certify and apply a

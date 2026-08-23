@@ -53,7 +53,7 @@ its fresh, uninitialized block. A successful `free` also emits a checked heap
 lifetime-retirement effect connecting its before and after snapshots, exact
 base, and possibly symbolic byte extent. This is deliberately distinct from a
 mutable byte range: retirement changes which allocation identities are live,
-while a mutable range bounds ordinary stores. Exact contract replay and
+while a mutable range bounds ordinary stores. Exact contract checking and
 modular call verification therefore use the same lifetime model as direct
 execution without pretending deallocation is a byte write.
 

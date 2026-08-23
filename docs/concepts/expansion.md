@@ -1,21 +1,24 @@
 # Expansion
 
-Expansion replaces a smart proof site with the simple tactics in its replayable
-certificate. It turns a heuristic proof request into an explicit proof script
-without changing the claim being proved.
+Expansion replaces a smart proof site with the checked simple operations that
+produced its successful proof state. It turns a heuristic proof request into an
+explicit proof script without changing the claim being proved.
 
 The workflow is:
 
-1. Verify the target and let the smart tactic construct a certificate.
-2. Replay the certificate from the proof site's initial state.
-3. Render its simple steps as Surface Click.
+1. Verify the target and retain the checked transition history attributed to
+   the selected smart proof site.
+2. Extract the surface-expressible simple operations from that history.
+3. Render the operations as Surface Click.
 4. Replace the selected proof site in output or in place.
-5. Verify the expanded source again.
+5. Verify the complete rewritten source through the ordinary verification
+   entry point.
 
-Replayability is the boundary. Click must not emit an expansion merely because
-search reported success; the certificate and printed rewrite must verify. An
-expansion failure, a rewrite that doesn't verify, or disagreement with profile
-or audit is a tooling defect to investigate.
+Rewritten-source verification is the boundary. Click must not emit an
+expansion merely because search reported success: extraction, rendering,
+parsing, and ordinary checking must agree on the resulting proof. An expansion
+failure, a rewrite that doesn't verify, or disagreement with profile or audit
+is a tooling defect to investigate.
 
 Expansion removes search from that site, which improves reproducibility and
 makes the chosen operations reviewable. It doesn't guarantee that the explicit

@@ -5,7 +5,7 @@ The `click` executable provides four subcommands:
 ```text
 click verify   Verify a sidecar, proof unit, project, or examples directory.
 click profile  Measure verification and identify slow tactics.
-click expand   Replace smart proof source with its checked simple certificate.
+click expand   Replace smart proof source with a checked explicit proof.
 click audit    Check expansion across a project or repository.
 ```
 
@@ -21,7 +21,7 @@ status 1.
 - [`click profile`](profile.md) attributes verification work after correctness
   is established.
 - [`click expand`](expand.md) rewrites selected smart proof source into an
-  independently replayed certificate.
+  explicit proof and verifies the complete rewritten source.
 - [`click audit`](audit.md) checks the expansion boundary across many sites.
 
 ## Common target forms

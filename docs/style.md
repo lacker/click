@@ -27,8 +27,8 @@ and focused regressions.
 
 Do not change C to make documentation easier to write. If supported existing C
 cannot prove a true claim, document or fix the Click gap. If a smart tactic
-times out, emits an unreplayable certificate, or requires unnatural proof
-bookkeeping, follow the tooling-stability policy in `AGENTS.md`.
+times out, produces an expansion that doesn't verify, or requires unnatural
+proof bookkeeping, follow the tooling-stability policy in `AGENTS.md`.
 
 Normative examples must be backed by an mdtest, an example project, or a checked
 source include. Immediately precede each normative `click` or `c` fence with a
@@ -73,18 +73,25 @@ diagnostic.
 - A **sidecar** is a `.click` file that specifies one or more C sources.
 - A **proof unit** is one independently selectable function claim or theorem
   proof together with the dependencies needed to check it.
-- A **proof object** is the persistent typed state of evolving goals and
-  checked transitions during proof construction.
-- A **certificate** is a replayable proof made from surface-expressible simple
-  operations.
-- A **certificate step** is one path-annotated operation stored in a
-  certificate; a **simple tactic** is the Surface Click command that requests
-  such an operation.
+- **Proof state** is the user-facing model of the current goals, facts,
+  resources, and execution frontier.
+- A **proof object** is the internal persistent representation of proof state
+  and checked transition history. Use the term in Internals, not as an artifact
+  that proof authors manipulate.
+- A **certificate** is a surface-expressible explicit proof used as
+  independently checkable output, especially by expansion. It is not a
+  required intermediate artifact of ordinary verification.
+- A **certificate step** is one simple operation in that internal
+  serialization; a **simple tactic** is the Surface Click command that requests
+  the corresponding checked transition.
 - A **kernel derivation** is trusted typed evidence for a proposition or state
   transition. Don't call a certificate or an evolving proof object a kernel
   derivation.
-- **Expansion** replaces smart proof source with its checked certificate.
-- **Replay** independently checks the explicit operations in a certificate.
+- **Expansion** replaces smart proof source with an extracted explicit proof
+  and verifies the complete rewritten source through ordinary verification.
+- Use **replay** only for checking previously produced proof text again or for
+  the current compatibility implementation. Don't present it as a required
+  phase of ordinary verification.
 - A **program point** is a location in C. An **execution frontier** combines
   one current program point with its symbolic state and pending continuations.
   Use *frontier* only as its short form.
@@ -115,7 +122,7 @@ related entries.
 ### Tactic
 
 State syntax and variants, class, accepted proof state, consumed and produced
-state, replay behavior, smart-search failure behavior when applicable,
+state, checking behavior, smart-search failure behavior when applicable,
 expansion and profiling behavior, a verified example, and retired spellings.
 
 ### Command

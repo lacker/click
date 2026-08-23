@@ -189,7 +189,7 @@ Likely additions:
   selection, and eventually separate reusable resource-rule forms if repeated
   unfold/fold patterns justify them.
 - More reusable rewrite support: `rewrite(P)` and named theorem applications
-  provide explicit certificate steps; remaining work is better theorem
+  provide explicit checked steps; remaining work is better theorem
   selection and reusable algebraic lemmas rather than another calculation
   vocabulary.
 - Predicate/function namespaces that scale with modules.

@@ -29,7 +29,7 @@ with the ordinary parser.
 ## Surface versus core
 
 Surface Click is context-sensitive. A term such as `p[k]` or `old(p)` is not
-itself the final proof object; it still depends on where the term appears.
+itself a complete Kernel Click term; it still depends on where the term appears.
 
 Kernel Click is pure and explicit. It may still mention C semantic data, but
 only as values:

@@ -152,7 +152,7 @@ int32 set_first(int32 p[], int32 value) {
 ```
 
 The trailing block executes the function once and proves every listed claim
-from that shared replay. It may also certify a resource-only contract with no
+from that shared execution. It may also certify a resource-only contract with no
 effect or postcondition clauses. `frame()` discharges the effect claims, while
 `simp()` and resource steps discharge the postconditions. A function uses
 either this grouped form or per-claim `by` clauses; the two forms cannot be
@@ -185,12 +185,12 @@ contract claims.
 Post-execution grouped steps run in source order. `fold`, `apply`, and `have`
 update each symbolic path once; `frame()` closes its effect claims and `simp()`
 closes the postconditions currently provable. Facts established after a closing
-step do not retroactively affect it. All certificates for one symbolic path use
+step do not retroactively affect it. All claim proofs for one symbolic path use
 the same finalized specification.
 
 Inside a proof-level `if`, post-execution tactics apply only to execution paths
 compatible with that branch's checked condition. In particular, `frame()` does
-not plan certificates for a contradictory sibling outcome and then align them
+not plan operations for a contradictory sibling outcome and then align them
 by vector position. Branch-local expansion therefore preserves the sibling's
 proof text and reports a compact `pN` path identifier if surface and execution
 coverage ever diverge.
@@ -291,7 +291,7 @@ theorem int32_sign_split(x: int32) {
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
 Inside a case, smart `step()` uses the exact case fact to enter the selected C
-arm. Expansion prints the corresponding `step() using { ... }` certificate.
+arm. Expansion prints the corresponding explicit `step() using { ... }` tactic.
 
 When a C `if` is at the execution frontier, use `branch` instead of repeating
 its condition as a logical case split:
@@ -770,7 +770,7 @@ result == at(statement(1).entry, c(result))
 
 The AST retains this distinction; `c(result)` is not converted to an ordinary
 string variable and cannot be reinterpreted as contract `result`. Expansion
-uses this spelling when a generated certificate must name an overlapping C
+uses this spelling when an explicit proof must name an overlapping C
 binding.
 
 ## `at(...)`

@@ -1,9 +1,10 @@
 # `click expand` command
 
-`click expand` replaces selected smart proof source with the Surface Click
-certificate already constructed, printed, and independently replayed for that
-success. Expansion is an optimization and audit operation on a correct proof;
-it is not a proof-repair command.
+`click expand` replaces selected smart proof source with the checked operations
+attributed to that success, rendered as an explicit Surface Click proof. It
+verifies the complete rewritten source through the ordinary verification entry
+point before emitting it. Expansion is an optimization and audit operation on
+a correct proof; it is not a proof-repair command.
 
 ## Synopsis
 
@@ -48,10 +49,10 @@ option is an error.
 
 Without an output option, the command writes the complete rewritten source to
 standard output. An empty expansion deletes the selected tactic because the
-smart success contributed no surface certificate steps.
+smart success contributed no surface-expressible steps.
 
 The command exits with status 1 and writes no requested artifact when
-selection, expansion, certificate replay, rewritten proof verification, the
+selection, expansion extraction, rewritten proof verification, the
 deadline, or file output fails. In-place output uses an adjacent temporary file
 and an atomic rename after all checks pass.
 
@@ -75,4 +76,5 @@ click expand --claim function.contract \
 Use a recommendation from [`click profile`](profile.md), then verify the exact
 output with [`click verify`](verify.md). [`click audit`](audit.md) applies the
 same boundary systematically. The [expansion concept](../../concepts/expansion.md)
-explains why the rewrite is trusted only after replay.
+explains why the rewrite is trusted only after ordinary verification of the
+rewritten source.

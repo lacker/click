@@ -28,16 +28,16 @@ authorities. The distinction is load-bearing and must stay explicit.
 definition when their difference is bookkeeping that symbolic memory
 introduced: a cell whose value the snapshot already records, a snapshot
 carrying cells or blocks the load cannot observe, or a chain of recorded
-snapshot derivations that provably left the loaded cell alone. Verifiers
-and replay accept equality of canonical forms directly.
+snapshot derivations that provably left the loaded cell alone. Proof checking
+accepts equality of canonical forms directly.
 
 **Proved equality** covers everything else: an assignment such as
 `index == old(owner->len)`, a store crossing justified by pointer
-distinctness, an arithmetic bound. These require a fact in the proof
-context or a certificate, and any use of one in a derivation must be
-expressible as a replayable certificate step. No comparator, tactic, or search
-may silently consume a proved equality while answering a question that
-should be definitional.
+distinctness, an arithmetic bound. These require a fact in the proof context,
+and any use of one in a derivation must occur through a checked proof
+operation with retained provenance. No comparator, tactic, or search may
+silently consume a proved equality while answering a question that should be
+definitional.
 
 ## The canonical form
 
@@ -86,9 +86,9 @@ Two consequences:
   registry membership alone is never proof that two terms are equal.
 
 Load variables are ordinary kernel variables distinguished only by a
-reserved id range, not by type. Their ids are opaque hashes; a certificate
-refers to one through a snapshot form such as `at(statement(3).entry, x)`
-or `old(x)`, and diagnostics print one by looking up the load it stands for.
+reserved id range, not by type. Their ids are opaque hashes; an expanded proof
+refers to one through a snapshot form such as `at(statement(3).entry, x)` or
+`old(x)`, and diagnostics print one by looking up the load it stands for.
 
 ## What is enforced today
 
@@ -106,16 +106,17 @@ or `old(x)`, and diagnostics print one by looking up the load it stands for.
   goals and available facts by `canonical_condition_fact`. A load and the
   load variable for it are therefore one vertex, one affine atom, one bound
   entry, and one fact. This keying is deterministic and assumption-free, so
-  exact certificate replay is unaffected.
+  exact checking is unaffected.
 - The arithmetic provers join by canonical form: the memory-resolution
   equality's deep arm compares full canonical forms, the increment and
   decrement overflow helpers match bases canonically, and
   `canonical_bound_holds` answers single-fact range bounds from the index
   before any searching arm runs.
-- Certificate evidence follows the implicit-join design: a typed
+- Checked evidence follows the implicit-join design: a typed
   derivation cites its premise as the exact fact, while the tie between
   that premise and a differently written goal base is a canonical
-  comparison — definitional, deterministic, and therefore replay-identical.
+  comparison — definitional, deterministic, and therefore identical across
+  repeated verification.
 - Symbolic execution introduces load variables for loaded **pointers**
   (`canonicalized_pointer_value_from_int_cell`,
   `canonicalized_symbolic_load_value`), so a pointer loaded from an opaque
@@ -138,7 +139,7 @@ canonicalization (`canonical_term`) remains as the definition of the form,
 and the reasoning that views a load variable as the load it represents
 (`viewed_as_memory_load`, `registered_load_for_variable`) is how consumers
 keyed on load shape — substitution, quantifier triggers, frame checks,
-loadability witnesses, and the quantified replay index — see through the
+loadability witnesses, and the quantified-fact index — see through the
 variable.
 
 A load variable is identified by its cell and the cell's *epoch*: the

@@ -61,7 +61,7 @@ order. `fold`, `apply`, and `have` transform the current finalized path;
 `frame()` closes the effect goals then provable, and `simp()` closes the
 postconditions then provable. A later fact or fold does not retroactively affect
 an earlier closing step. Each symbolic path is finalized once, and every
-contract certificate is packaged from that same finalized specification.
+contract proof is packaged from that same finalized specification.
 
 ## Tactics
 
@@ -202,7 +202,7 @@ control flow.
   spelling of the same rule.
 - `simp() using { Q; ... }`: smart simplification restricted to exactly the
   listed proposition facts. Expansion must produce named simple rules; if no
-  explicit certificate vocabulary covers the selected proof, expansion fails
+  explicit tactic vocabulary covers the selected proof, expansion fails
   locally instead of retaining a hidden search step.
 
 - `intro();`, `split();`, `left();`, `right();`, `contradiction(P);`: one
@@ -273,7 +273,7 @@ statement IDs globally in source preorder: a compound statement receives its
 ID before the statements nested in its arms or body. A sequence itself does
 not receive an ID. Structural assertion and loop checks inserted by Click are
 not source statements and do not consume IDs. Structural traversal, tactic
-execution, snapshots, expansion, and replay all use this same layout. Every
+execution, snapshots, and expansion all use this same layout. Every
 continuing arm must establish every `ensuring` assertion. Exact common facts
 and resources remain available automatically; facts about changed state that
 the continuation needs must be listed explicitly. Deterministic consequences
@@ -308,8 +308,9 @@ fact or resource fact required by the following `step()` or `fold(resource)`.
 Applications after function exit remain path-local, so `result` and post-state
 expressions are interpreted separately for each completed path.
 
-Some successful `auto` proofs record replayable tactic certificates when the
-current tactic language can express the argument.
+Successful `auto` proofs retain surface-expressible transition provenance when
+the current tactic language can express the argument. Expansion can render
+that provenance as an explicit proof.
 
 An execution proof tracks an execution frontier: the current program point,
 symbolic state, and enclosing continuation stack. Proof scripts can start at
@@ -335,7 +336,7 @@ one step automatically, matching `observe(composite(...))` for immediate
 contained views. Owned composite resources still require an explicit
 `observe(...)` when a proof wants to read through the folded resource.
 
-Existential tactics are deterministic replay steps, not search tactics. A
+Existential tactics are deterministic simple tactics, not search tactics. A
 typical existential-introduction proof names a witness:
 
 <!-- verified-example: mdtests/grouped_function_proof.md -->
@@ -404,7 +405,7 @@ by {
 }
 ```
 
-`have` does not replay the function prefix. It sees the exact facts and
+`have` does not re-execute the function prefix. It sees the exact facts and
 resources established by preceding `step() using`, `unfold`, `fold`, and other
 ordinary proof tactics. It proves its proposition on every active proof path
 and adds the resulting fact to the following context.

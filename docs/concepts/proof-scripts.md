@@ -4,8 +4,8 @@ A Click contract says what must hold. Its proof clause says how Click should
 establish it.
 
 Use an omitted proof clause or `by auto;` by default. `auto` orchestrates C
-execution, effect reasoning, and proposition reasoning, and retains a checked
-certificate when it succeeds.
+execution, effect reasoning, and proposition reasoning through checked proof
+operations.
 
 Prefer smart tactics while authoring unless profiling identifies a hotspot.
 Exact `using` blocks are ordinary Click and may be committed after expansion,
@@ -91,10 +91,10 @@ frontier and is not an `execute_until` target.
 
 ## Expansion and diagnosis
 
-`click expand` replaces a selected smart tactic with its checked simple
-certificate. `click profile` identifies slow tactics and distinguishes smart
-automation from simple leaves. `click audit` checks that smart tactics across a
-project expand and replay successfully. Use this workflow only after the
+`click expand` replaces a selected smart tactic with a checked explicit proof.
+`click profile` identifies slow tactics and distinguishes smart automation from
+simple leaves. `click audit` checks that smart tactics across a project expand
+into source that verifies normally. Use this workflow only after the
 selected proof is correct: expansion is a checked optimization, not a way to
 extract a partial result from a proof whose later tactics fail.
 

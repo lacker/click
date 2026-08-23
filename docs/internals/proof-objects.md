@@ -1,65 +1,95 @@
 # Proof objects
 
-Click represents accepted proof work as deterministic simple steps rather than
-trusting the search procedure that found them.
+Click's internal `Proof` object is the persistent checked representation of an
+evolving proof. It lets explicit tactics and smart search share one semantic
+transition boundary while retaining enough provenance to explain or expand the
+result.
 
-## Surface proof and certificate types
+## Persistent proof state
+
+`Proof` owns an immutable `ProofState`, a provenance `ProofNode`, shared proof
+context, and one focused goal. Applying a checked operation returns a successor
+that shares unchanged structure with its ancestor. A smart tactic can therefore
+branch, inspect alternatives, and abandon candidates without cloning the
+complete logical or execution state.
+
+Goals carry the facts, resources, and symbolic execution state relevant to one
+judgment. Typed scope, split, and join helpers preserve branch and loop
+structure. A focus is only a cursor into the owned goal structure; it isn't a
+second semantic state.
+
+## Source proof and expansion types
 
 `SourceProof` distinguishes an omitted proof, a smart proof request, and an
 explicit tactic block. Parsed tactic statements become `ProofTactic` values.
 Each tactic has a `TacticClass` used by checking, instrumentation, profiling,
 and expansion.
 
-After proof construction, `ProofCertificate` stores a sequence of
-`SimpleProofStep` values. Steps identify nested branch or structural positions
-with `CertificatePathSegment`; this keeps a certificate's operation attached
-to the proof state in which it was produced. A certificate can be rendered
-back to surface tactics for expansion.
+`Proof` provenance retains the surface-expressible operation that produced each
+checked successor. `ProofCertificate` is the current structured serialization
+of those operations as `SimpleProofStep` values, including nested scopes and
+branches. It can be rendered back to surface tactics for expansion. The
+serialization carries no semantic authority of its own and need not exist
+during ordinary verification in the intended architecture.
 
-## Replay state
+## Compatibility replay state
 
-The replay state combines logical and execution state. It owns the available
-surface-to-kernel fact mappings, symbolic C execution frontier, resources,
-marks, focus, and structural context. A replayed step must resolve its
-selectors in this state and justify the requested transition through checked
-operations.
+The migration is incomplete. `ProofReplayContext` still owns a `CState`, pure
+facts, branch history, and a boxed `TacticReplayState`. That nested state owns
+an execution frontier, fact and resource metadata, marks, structural context,
+loop rules, deferrals, and certificate builders. `execute_internal_proof`
+interprets source or generated proof trees by advancing this parallel context.
 
-Control-flow certificates preserve structure rather than flattening every
-branch into an unrelated list. Branches carry path-local assumptions;
-continuations identify where common execution resumes; joins require compatible
-facts and resources. Loop certificates correspond to initialization,
-preservation, and exit obligations rather than a fixed unrolling.
+Several migrated paths construct a temporary `Proof`, apply checked operations,
+and then export the result back into replay-owned state. Legacy smart paths can
+also construct a `ProofCertificate`, run it through the same compatibility
+engine, and merge returned replay contexts. These adapters preserve current
+behavior, but they duplicate semantic ownership and are tracked for removal in
+`issues/replay-smell.md`.
+
+A surviving source or expansion cursor may own syntax position, focus,
+attribution, and diagnostics. It must not own facts, resources, `CState`, an
+execution frontier, or authority to construct a successor.
 
 ## Smart planning
 
-Planning modules can inspect a state, rank candidate steps, and explore within
-deterministic budgets. They return candidate simple transitions through the
-same certification boundary used by explicit tactics. A candidate is not
-accepted merely because the planner labels it successful.
+Planning modules inspect `Proof`, rank candidate operations, and explore
+persistent descendants within deterministic budgets. They use the same checked
+simple and structural operations as explicit tactics. A candidate is not
+accepted merely because the planner labels it successful; success is a
+completed checked descendant.
 
-The replay pipeline reconstructs the initial claim state and applies the
-certificate. Failure is attributed to the selected fact, program point,
-resource, or path when possible. Expansion uses only a successfully replayed
-certificate.
+For expansion, the completed proof's provenance is filtered to the selected
+source site and rendered as an explicit Surface Click proof. The complete
+rewritten source is then parsed and verified through the ordinary entry point.
+That check validates provenance extraction, surface synthesis, rendering,
+parsing, lowering, and source interpretation without preserving a second
+semantic proof engine.
 
 ## Kernel derivations
 
 Kernel structures in `src/kernel/primitives/proof_objects.rs` represent
 primitive semantic evidence and obligations. They are separate from the
-surface certificate: surface proof steps encode user-reviewable operations,
+surface expansion: surface proof steps encode user-reviewable operations,
 while kernel derivations justify the underlying proposition, execution,
 memory, or resource transition. `Theorem` is authority for an established
 proposition; `PropositionDerivation` retains the checked reasoning tree; other
 typed evidence records execution and memory transitions.
 
-Important invariants are:
+The target invariants are:
 
-- all accepted smart work has a replayable simple certificate;
-- selectors resolve against the state at their certificate path;
+- explicit and smart tactics advance one `Proof` through checked operations;
+- smart success is a completed checked descendant, not an unchecked plan;
+- selectors resolve against the focused state where their operation applies;
 - proof checking doesn't depend on failed-search history;
-- expansion preserves proof-site identity and emits verifiable Surface Click;
+- expansion extracts exact attributed provenance and emits verifiable Surface
+  Click;
 - persistent proof-state sharing must not permit mutation of an earlier state;
 - instrumentation can observe work but cannot change the validity decision.
+
+Until the compatibility migration finishes, the parallel replay types above
+are an explicit exception to the first invariant. Don't add new semantic fields
+or operations to them.
 
 The former chronological proof-object design log is preserved at
 `design/proof-object-api.md`; this page describes the current architecture.

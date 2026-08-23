@@ -4,8 +4,8 @@ Click uses ordinary Rust tests plus markdown integration tests.
 
 The [verification efficiency contract](verification-efficiency.md) is part of
 correctness testing. In particular, an all-simple project must scale with the
-selected source and certificate rather than with repeatedly copied or scanned
-ambient state. Wall-clock profiling locates current pain; deterministic
+selected source and explicit proof rather than with repeatedly copied or
+scanned ambient state. Wall-clock profiling locates current pain; deterministic
 multi-size regressions protect the scaling law.
 
 Use [Triaging Proof Failures](../concepts/proof-failure-triage.md) to classify a failed
@@ -17,8 +17,8 @@ tooling failures identified by that process.
 
 Treat the verifier and its proof tools as the foundation for every language
 feature and example. If verification becomes unexpectedly slow without a local
-bounded failure, a searched certificate does not replay, `click-expand` fails
-or emits an unverifiable rewrite, the performance tools disagree, or a normal
+bounded failure, a smart success cannot expand into verifiable source,
+`click-expand` fails or emits an unverifiable rewrite, the performance tools disagree, or a normal
 diagnostic dumps enormous internal state, stop feature work. Reduce and fix the
 tooling defect first. If it cannot be fixed in the same chunk, record a focused
 issue with a regression plan and return the branch to a green checkpoint before
@@ -34,7 +34,7 @@ A smart tactic that promptly reports that it did not find a proof is not one of
 these tooling failures. Smart search is heuristic and incomplete. Continue
 with a smaller search or explicit relevant simple tactics. Reduce the engine
 only if search misses its budget, produces an unusable diagnostic, reports
-success without replayable expansion, behaves unstably, or exposes a missing
+success without verifiable expansion, behaves unstably, or exposes a missing
 simple proof operation.
 
 Ordinary verifier errors are capped at 16 KiB of UTF-8 text. Fact and resource
@@ -306,9 +306,9 @@ that class to prescribe the next action:
   artifact, verify it, and reprofile that exact artifact with the same limits.
   A successful step observed before a later correctness failure or timeout is
   diagnostic only and produces no expansion command. Failed smart search has
-  no certificate; normally decompose the proof. An interrupted search is a
+  no successful proof; normally decompose the proof. An interrupted search is a
   tooling bug only when it ignores or badly overshoots its enforced bound.
-- `SIMPLE` steps are deterministic certificate replay. Do not expand them;
+- `SIMPLE` steps are deterministic checked operations. Do not expand them;
   reduce and fix the verifier bottleneck first.
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple
   timings rather than optimizing the container row by itself.
@@ -319,9 +319,8 @@ nonempty all-simple body. Other `have` forms remain CONTROL. Timing, inventory,
 and expansion use that same source-site classification.
 
 If a project reaches its limit, the report classifies every active step and
-applies the same advice. This prevents a slow internal certificate replay from
-being mistaken for smart search merely because it is nested inside a smart
-tactic.
+applies the same advice. This prevents slow compatibility checking from being
+mistaken for smart search merely because it is nested inside a smart tactic.
 
 The category sections list only steps that crossed a tail threshold. `TIME
 ACCOUNTING` reconciles direct verification wall time across frontend,
@@ -399,10 +398,10 @@ click audit mdtests
 click audit .
 ```
 
-The repository-root form is the complete manual release/certificate-boundary
+The repository-root form is the complete manual expansion-boundary
 gate: it covers examples and every passing mdtest in one resumable run.
 Negative mdtests are excluded because their intended result is proof failure,
-so they cannot supply accepted certificates. The ordinary `cargo test` and
+so they cannot supply successful expansions. The ordinary `cargo test` and
 nextest gates keep fast unit, timing-parser, expansion, and markdown smoke
 coverage; they do not run the exhaustive audit.
 
@@ -457,7 +456,7 @@ timings:
 [1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, cold original 37ms, cold rewritten 35ms, reexpand 23ms)
 ```
 
-### Expansion replay stack budget
+### Compatibility replay stack budget
 
 Independent checking of explicit and expanded proofs currently uses the
 recursive internal-proof interpreter. The complete mdtest gate, complete
@@ -539,7 +538,7 @@ command retests that same site before continuing. The cursor also skips
 session initialization for preceding files. `--keep-going` requests the older
 failure-collecting behavior. Use `--max-sites` only for a deliberately partial
 diagnostic run; it prints the next cursor when the bound is reached. A release
-or certificate-boundary audit should omit it and finish one complete pass.
+or expansion-boundary audit should omit it and finish one complete pass.
 
 Every site starts from the unchanged baseline source, so an earlier rewrite
 cannot hide or cause a later failure. With `--keep-going`, a failed session is
@@ -549,8 +548,8 @@ proof-unit verification, the fixed-point check, the confirmed relative
 performance contract, or the run limit fails.
 
 Proof scripts have no runtime semantics. Re-verifying the same isolated claim
-is the semantic audit condition; requiring the automation and explicit
-certificate to visit byte-identical internal branch/path states would reject
+is the semantic audit condition; requiring the automation and generated
+explicit proof to visit byte-identical internal branch/path states would reject
 valid expansions and is intentionally not an audit invariant.
 
 ## Unit tests

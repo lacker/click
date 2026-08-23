@@ -87,8 +87,9 @@ Prefer deterministic, narrow rules. Good examples:
 - expose one loop effect summary
 - instantiate one finite quantified pattern
 
-Avoid broad heuristic search unless it lives behind `auto` and successful cases
-can still produce replayable tactic certificates when possible.
+Avoid broad heuristic search unless it lives behind `auto`, advances proof
+state only through checked operations, and retains surface-expressible
+provenance when possible.
 
 ## Adding standard library definitions
 

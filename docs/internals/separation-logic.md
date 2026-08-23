@@ -218,9 +218,9 @@ execution may strengthen those assumptions, but it must apply the registered
 rule when crossing an annotated loop. A missing or incompatible rule is a
 proof failure, not a request to run automatic loop verification again.
 
-Function contracts are packaged similarly. Each checked clause produces a
-kernel certificate keyed to that exact effect or postcondition. Only a complete
-set of certificates can construct a `CVerifiedFunctionRule`; a theorem about
+Function contracts are packaged similarly. Each checked clause produces kernel
+evidence keyed to that exact effect or postcondition. Only a complete evidence
+set can construct a `CVerifiedFunctionRule`; a theorem about
 the same function is not sufficient by itself.
 Crossing a call instantiates that rule at the caller's arguments and entry
 state, checks its pure and resource premises, constructs a fresh abstract

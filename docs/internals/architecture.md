@@ -1,7 +1,9 @@
 # Architecture
 
-Click is divided into a source-language front end, proof construction and
-replay, a kernel semantic core, and command-line orchestration.
+Click is divided into a source-language front end, proof construction, a
+kernel semantic core, and command-line orchestration. Some source-checking and
+expansion paths still pass through a transitional compatibility replay engine;
+that engine isn't part of the intended proof model.
 
 ## Repository map
 
@@ -12,7 +14,7 @@ replay, a kernel semantic core, and command-line orchestration.
 | `src/lang/click/validation/` | Resolve declarations and enforce source-level type and form rules. |
 | `src/lang/click/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
 | `src/lang/click/checking/` | Evaluate contract forms and connect them to kernel structures. |
-| `src/lang/click/proof/` | Construct proofs, manage proof state, replay certificates, and synthesize surface expansions. |
+| `src/lang/click/proof/` | Construct persistent checked proofs, interpret tactics, run smart search, and synthesize surface expansions. This directory also contains the remaining compatibility replay adapters. |
 | `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, and memory reasoning. |
 | `src/cli.rs` | Shared CLI parsing, target selection, durations, and user-facing command metadata. |
 | `src/bin/` | Thin entry points and command-specific reporting for verify, profile, expand, and audit. |
@@ -28,20 +30,38 @@ The C and Click parsers retain source spans. Validation builds a
 Lowering records the relationship between surface propositions and kernel
 propositions so diagnostics and expansion can return to source language.
 
-Proof construction operates over a replay state containing facts, symbolic C
-paths, resources, and proof-site context. Smart planners may propose
-transitions, but `ProofCertificate` contains only checked simple steps.
-`replay_engine` applies those steps and rejects unavailable selections or
-invalid transitions. Kernel APIs expose the narrow semantic operations needed
-for that checking.
+The persistent `Proof` object owns typed goals, facts, symbolic C execution,
+resources, focus, and the checked provenance of each successor. Explicit
+tactics request named simple or structural operations. Smart planners try the
+same operations transactionally on persistent `Proof` descendants; they can't
+construct semantic successors directly. Kernel APIs expose the primitive
+logical, execution, memory, and resource operations needed for that checking.
+
+The migration to this model isn't complete. `ProofReplayContext` and
+`TacticReplayState` still duplicate facts, `CState`, the execution frontier,
+branch and scope state, and certificate-construction bookkeeping for some
+source and expansion paths. `execute_internal_proof` advances those contexts
+and sometimes imports or exports state across the `Proof` boundary. This is a
+compatibility architecture tracked by `issues/replay-smell.md`, not a second
+concept contributors should extend.
+
+`ProofCertificate` is the current structured form for a surface-expressible
+explicit proof. In the intended architecture it is serialization: expansion
+extracts attributed operations from checked `Proof` provenance only when proof
+text or an inspection result is requested.
 
 ## Trust and boundaries
 
 The kernel semantics and the code that translates accepted source claims into
 kernel obligations are in the trusted computing base. Smart planning isn't:
-its results must replay. CLI rendering and profiling don't decide validity.
-Expansion is accepted only when its certificate replays and the rendered
-source verifies.
+it can advance proof state only through checked operations. CLI rendering and
+profiling don't decide validity. Expansion is accepted only after the complete
+rendered source verifies through the ordinary entry point.
+
+Current compatibility paths add independent internal certificate replay before
+that rewritten-source check. Don't treat this duplication as an additional
+trust guarantee that must be preserved; the ordinary `Proof` transition
+boundary and rewritten-source verification are the durable invariants.
 
 OS process wrappers aren't part of the proof architecture. CLI commands and
 fixture gates call the shared bounded verification engine directly. Deadlines
@@ -54,8 +74,8 @@ reference inventory in the same slice:
 
 - a language form normally touches the parser, syntax type, validation,
   lowering, printing, tests, and language reference;
-- a tactic touches the surface enum/parser, classification, replay or planning,
-  printing/expansion, tests, and tactic reference;
+- a tactic touches the surface enum/parser, classification, its checked `Proof`
+  operation or smart planning, printing/expansion, tests, and tactic reference;
 - a kernel rule needs a focused kernel regression and an explicit account of
   why the rule is sound;
 - a CLI option belongs in shared metadata and command tests before its

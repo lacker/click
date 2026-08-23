@@ -12,9 +12,9 @@ will have exactly the names used here.
   Click uses the simpler word axiom.
 - A **theorem** is a proposition produced by axioms.
 - A **simple tactic** is a deterministic, bounded command that requests one
-  explicit checked transition and contributes one certificate step.
-- A **proof** is a `by` clause containing a replayable tactic script or one
-  smart tactic that can later be expanded into a simple-tactic certificate.
+  explicit checked transition.
+- A **proof** is a `by` clause containing a tactic script or one smart tactic
+  that can later be expanded into explicit simple tactics.
 - A **smart tactic** may search or orchestrate several rules. Logically it
   should be replaceable by a sequence of simple tactics when it succeeds.
   Smart search is best-effort and incomplete; the simple tactic language, not

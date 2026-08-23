@@ -73,11 +73,11 @@ predecessor-bound, successor-order, positive-to-nonnegative, and
 order-transitivity implications documented in the standard library.
 Standard-library verification checks each parsed declaration against its exact
 proposition before theorem application becomes available; expanded user proofs
-then use the ordinary simple `apply(...) using { ... }` certificate.
+then use the ordinary simple `apply(...) using { ... }` tactic.
 
 Execution theorems retain every verification condition as an implication
 premise, including conditions that are not assumable during execution.
-`CFunctionExecutionCandidates` is deliberately theorem-free: replayed or
+`CFunctionExecutionCandidates` is deliberately theorem-free: interpreter- or
 caller-supplied outcomes are only candidates until a kernel execution
 reproduces them.
 
@@ -91,15 +91,15 @@ Opaque function rules have a narrower boundary:
   that canonical entry, so callers cannot inject hypotheses;
 - contract execution mode is explicit. `VerifyLoops` checks annotated loop
   rules, while `ExecuteLoops` independently repeats a bounded concrete
-  execution certificate;
+  execution trace;
 - every path verification condition is discharged before any body-safety,
   postcondition, resource, or effect claim is certified;
-- all recorded contract claims must have certificates for that same exact
+- all recorded contract claims must have checked evidence for that same exact
   function before `CVerifiedFunctionRule` can be constructed.
 
 If exact certification cannot reproduce a complete claim set, Click installs
 no opaque rule for that function. It does not fall back to a weaker identity
-check or to the proof replay's ambient assumptions.
+check or to the proof driver's ambient assumptions.
 
 Recursive C contracts use the standard partial-correctness recursion rule.
 While one closed call-graph transaction is being checked, the kernel permits
@@ -267,7 +267,7 @@ available to an execution; it does not select between these semantics. In
 particular, rule lookup is not a fallback mechanism. Applying verified rules
 without a matching rule fails, while direct body verification behaves the same
 whether or not a matching rule is present. `CExecutionSemantics` also exposes
-`APPLY_CALL_RULES_AND_VERIFY_LOOPS` for the certificate-construction phase,
+`APPLY_CALL_RULES_AND_VERIFY_LOOPS` for the loop-rule construction phase,
 where calls remain modular while the current loop body is verified directly.
 
 Concrete execution judgments and modular verification transitions are
@@ -320,11 +320,11 @@ does not create a new persistent view on return. Thus a borrow from ownership
 ends before a following `free`, while any independently present view remains
 and must be proved separate or causes `free` to fail locally. Retired identities
 make use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed`
-memory derivation DAG edges preserve these transitions for replay; an allocation
+memory derivation DAG edges preserve these transitions for later checking; an allocation
 resource that crosses a verified call is also interpreted as a lifetime effect,
 not as an untrusted ordinary token. Exact execution records every successful
 retirement as `CHeapLifetimeRetired(before, after, base, bytes)`. Effect
-certification checks that replaying `free(base)` from `before` with the stated
+certification checks that executing `free(base)` from `before` with the stated
 extent produces `after`, and chains that transition separately from ordinary
 `CMemoryMutatesOnly` and ranged call-havoc effects. This lets a function free
 owned storage directly even when its surface `mutable` clause names only
@@ -354,17 +354,17 @@ A `CallHavoc` edge carries the callee's checked mutable ranges. Load transport
 may cross that edge only when the loaded address is proved disjoint from every
 range; multiple opaque calls compose by following the corresponding bounded
 effect chain. This rule preserves an adjacent unchanged field without exposing
-havoc block names in a surface certificate. A dependent address is transported
+havoc block names in an expanded proof. A dependent address is transported
 only when its pointer and index expressions are themselves stable. An
 overlapping or undecidable footprint stops the transport.
 
-Whole-path replay can independently regenerate fresh return variables and
+Independent whole-path checking can regenerate fresh return variables and
 `call-havoc` marker identities for the same execution path. Certification
 couples those encodings only through matching memory-derivation structure:
 local bookkeeping edges are transparent, stores must have equal pointers and
 values, and call-havoc edges must have definitionally equal mutable ranges and
 matching base histories. An empty store list is not evidence of equal memory.
-Fresh return values may be related using kernel-certified replay facts, but
+Fresh return values may be related using kernel-certified path-equivalence facts, but
 never by ordinary untrusted facts; exact memory and ghost-resource changes are
 still rejected.
 
@@ -388,13 +388,13 @@ derivations. In particular, a strict upper bound justifies the non-wrapping
 step from `x` to `x + 1` even when the two `x` loads use memory snapshots
 connected by deterministic derivation edges. Resource separation also treats
 intrinsically distinct pointer blocks as context-free evidence. Consequently,
-an opaque-call premise proved during search always has a replayable derivation
+an opaque-call premise proved during search always has a checked derivation
 rather than becoming an assumed verification condition.
 
 Universal introduction treats the quantified variable as a binder, not as an
 ambient free variable with the same numeric identifier. Facts containing that
 free identifier are shadowed while checking the body, and explicit derivations
-replay under the same shadowed context.
+apply under the same shadowed context.
 
 When adding proof power, prefer a narrow deterministic rule with a test over a
 large heuristic. Good rules usually belong near:
@@ -461,7 +461,7 @@ The Click parser is hand-written in `src/lang/click.rs`. Validation checks:
 - unavailable `old(...)`
 - unsupported predicate calls in pure `if` conditions
 - well-founded recursive Click functions and their `decreases` edges
-- explicit nonnegative `int32` induction in pure theorem replay, including
+- explicit nonnegative `int32` induction in pure theorem checking, including
   exact universal instantiation of the local smaller-value hypothesis
 
 Stdlib definitions are parsed and combined with user definitions for validation

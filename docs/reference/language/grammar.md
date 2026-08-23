@@ -51,7 +51,7 @@ documentation inventory keep the following accepted words synchronized.
 | `apply`, `have`, `if`, `cases`, `branch`, `loop` | Theorem application and structural proof tactics. |
 | `witness`, `choose`, `from`, `requirement` | Existential evidence and fact selection. |
 | `assumption`, `extract`, `normalize`, `intro`, `split`, `left`, `right`, `enumerate`, `contradiction` | Explicit proposition tactics. |
-| `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-certificate tactics. |
+| `rewrite`, `transport`, `instantiate`, `simp`, `induct`, `close_invariants` | Equality, snapshot, quantifier, simplification, induction, and loop-proof tactics. |
 | `as`, `else`, `ensuring`, `then` | Names and branches inside structural proof forms. |
 | `function`, `loop`, `statement`, `entry`, `exit` | Program-region and program-point selectors. |
 | `apply_loop_summary`, `bounded_execute`, `calculate`, `conjunction`, `double_negation`, `execute_else_step`, `execute_rest`, `execute_step`, `execute_then_step`, `summarize`, `symbolic_execute`, `vacuous` | Compatibility-only tactic spellings that produce focused migration diagnostics. |
@@ -172,7 +172,8 @@ tactic statements. Tactic arguments use the expression and proposition forms
 documented for that tactic. The exhaustive surface-spelling inventory is in
 [Tactics](../tactics/index.md).
 
-Omitting a proof and writing `by auto` request smart proof construction. A
-successful smart proof is accepted only after its simple certificate replays.
-Use [`click expand`](../cli/expand.md) to replace expandable smart proof sites
-with the replayable simple steps.
+Omitting a proof and writing `by auto` request smart proof construction. Smart
+search can advance proof state only through checked operations. Use
+[`click expand`](../cli/expand.md) to replace expandable smart proof sites with
+the corresponding explicit simple steps; Click verifies the complete rewritten
+source.

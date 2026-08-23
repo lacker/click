@@ -31,7 +31,7 @@
 - [Proofs and proof scripts](concepts/proof-scripts.md)
 - [Reading Click](concepts/reading-click.md)
 - [The verification pipeline](concepts/verification-pipeline.md)
-- [Proof state and replay](concepts/proof-state-and-replay.md)
+- [Proof state and checked transitions](concepts/proof-state.md)
 - [Smart and simple tactics](concepts/smart-and-simple-tactics.md)
 - [Expansion](concepts/expansion.md)
 - [Profiling](concepts/profiling.md)

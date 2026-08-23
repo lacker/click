@@ -54,7 +54,7 @@ if the function later updates `owner->len`. Click transports unchanged field
 loads across certified writes when matching the executed stores to that
 footprint. Which facts a statement step carries across such a write, and what
 must be proved explicitly instead, is the step rule in
-[Proof state and replay](proof-state-and-replay.md#what-a-step-carries).
+[Proof state and checked transitions](proof-state.md#what-a-step-carries).
 
 ## Old-Memory postconditions
 

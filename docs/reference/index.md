@@ -13,7 +13,7 @@ Kernel Click, and C fragments, and records unsupported neighboring forms.
 
 ## Tactics
 
-The [tactic reference](tactics/index.md) covers simple certificate steps, smart
+The [tactic reference](tactics/index.md) covers simple checked operations, smart
 search operations, and structured control flow. It documents the proof state
 each tactic accepts and produces.
 

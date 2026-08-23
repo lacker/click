@@ -8,17 +8,19 @@ The verifier checks the requested transition directly. Work may scale with the
 explicit input and affected proof-state delta, but it must not perform hidden
 project-wide search.
 
-A smart tactic is a planner. It examines the proof state, tries candidate
-operations under deterministic work budgets, and returns a certificate made of
-simple steps. `auto`, `simp`, and other tactics classified as smart can fail to
-find an existing proof. That is bounded incompleteness, not evidence that the
-claim is false.
+A smart tactic is a planner. It examines the proof state and tries candidate
+checked operations on persistent alternatives under deterministic work
+budgets. `auto`, `simp`, and other tactics classified as smart can fail to find
+an existing proof. That is bounded incompleteness, not evidence that the claim
+is false.
 
 Smart search remains outside the trust boundary:
 
-- reported success must produce a certificate;
-- the certificate must replay deterministically;
-- expansion must print an equivalent sequence of surface-level simple tactics;
+- search can advance proof state only through checked simple or structural
+  operations;
+- a reported success must be a completed checked proof state;
+- expansion must extract an equivalent sequence of surface-level simple
+  tactics and verify the rewritten source;
 - a missed or exhausted budget must produce a bounded, actionable failure.
 
 Use a small smart tactic when it closes a local, routine gap. Prefer explicit

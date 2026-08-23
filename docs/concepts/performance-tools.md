@@ -5,14 +5,15 @@ auditing into distinct operations:
 
 1. Run `click verify` to establish ordinary correctness.
 2. Run `click profile` to attribute verifier work to source proof sites.
-3. Expand a successful smart hotspot when explicit replay is preferable.
+3. Expand a successful smart hotspot when an explicit proof is preferable.
 4. Run `click verify` on the rewritten source.
-5. Use `click audit` to check discovery, expansion, replay, verification, and
-   performance policy across a larger selection.
+5. Use `click audit` to check discovery, expansion, rewritten-source
+   verification, and performance policy across a larger selection.
 
 A prompt proof failure isn't a performance target. Repair the proof first. A
 profile of a timeout or unexpectedly slow failure is useful only as a partial
-diagnostic frontier, and a failed smart tactic has no certificate to expand.
+diagnostic frontier, and a failed smart tactic has no successful proof to
+expand.
 
 High aggregate cost can come from one expensive operation or from many healthy
 operations. Profiling distinguishes those cases. Expansion can remove search

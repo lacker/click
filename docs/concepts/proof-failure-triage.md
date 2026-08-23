@@ -44,7 +44,7 @@ simple tactics with explicit premises.
 
 The result distinguishes three important cases:
 
-- If an explicit proof works and replays, the smart tactic's miss is at most an
+- If an explicit proof works, the smart tactic's miss is at most an
   **ergonomic or automation problem**. Improve it only when there is a useful
   general pattern; do not retune shared heuristics just to make one broad
   search pass.
@@ -64,7 +64,8 @@ is easy to prove. Treat the failure as a high-priority **tooling reliability
 bug** when:
 
 - a tactic exceeds its enforced class budget instead of failing promptly;
-- smart search reports success but its certificate does not replay;
+- smart search reports success but cannot advance through checked proof
+  operations;
 - `click verify`, `click profile`, `click expand`, and `click audit` disagree;
 - expansion emits an unverifiable rewrite or operates on a failing proof;
 - a normal error produces an enormous or misleading internal-state dump; or
@@ -82,10 +83,10 @@ Classify tactics by whether they select a proof rule, not by whether the user
 listed their input facts. A tactic that receives hints and chooses among
 normalization, rewriting, arithmetic, transport, framing, or other theories is
 smart and must expand. A simple tactic checks one named rule from explicit
-evidence with work proportional to that certificate. Simple replay must not
-fall through alternate strategies or reconstruct a proof from ambient history;
-if expansion cannot express the selected rule, that is a certificate-language
-issue.
+evidence with work proportional to that input and the proof-state delta. Simple
+checking must not fall through alternate strategies or reconstruct a proof
+from ambient history; if expansion cannot express the selected rule, that is
+an expansion-language issue.
 
 ## Classification summary
 
@@ -101,7 +102,7 @@ Use the narrowest description supported by the evidence:
   form, semantic rule, or simple tactic that Click cannot express.
 - **Correctness bug:** an existing supported rule, semantic model, or proof
   operation rejects a valid use or accepts an invalid one.
-- **Tooling reliability bug:** budgets, diagnostics, certificate replay, or
+- **Tooling reliability bug:** budgets, diagnostics, checked transitions, or
   the profile/expand/audit workflow violates its guarantees.
 
 When evidence is incomplete, say what is known instead of guessing a label.
@@ -117,7 +118,8 @@ An issue should preserve enough information to test the classification:
 - the contract and property being proved, including why the claim is true;
 - the smallest explicit proof attempted and the exact point where it stops;
 - the expected category and the evidence for it;
-- whether verification, certificate replay, expansion, and audit agree;
+- whether verification, expansion, rewritten-source verification, and audit
+  agree;
 - timing and diagnostic behavior when tooling reliability is involved; and
 - concrete acceptance criteria.
 

@@ -65,8 +65,8 @@ and output mode. The summary distinguishes passing sites, site failures, and
 incomplete work.
 
 The command exits with status 1 for any audit failure or exhausted hard limit.
-A full audit is a manual release and certificate-boundary gate, not part of
-ordinary `scripts/check.sh`.
+A full audit is a manual release gate for expansion integrity and performance,
+not part of ordinary `scripts/check.sh`.
 
 ## Example
 

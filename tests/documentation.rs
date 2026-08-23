@@ -814,6 +814,53 @@ fn glossary_inventory_is_bidirectional() {
 }
 
 #[test]
+fn public_docs_do_not_make_certificate_replay_a_verification_phase() {
+    let docs = root().join("docs");
+    let mut files = Vec::new();
+    markdown_files(&docs.join("concepts"), &mut files);
+    markdown_files(&docs.join("reference"), &mut files);
+    files.sort();
+
+    let retired_claims = [
+        "certificate replay",
+        "certificate replays",
+        "certificate does not replay",
+        "replayable certificate",
+        "replayable tactic",
+        "replay step",
+        "replay boundary",
+        "simple replay",
+    ];
+    let glossary = docs.join("reference/glossary.md");
+    let mut failures = Vec::new();
+    for path in files {
+        if path == glossary {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read public documentation page");
+        for (line, text) in source.lines().enumerate() {
+            let lower = text.to_ascii_lowercase();
+            for claim in retired_claims {
+                if lower.contains(claim) {
+                    failures.push(format!(
+                        "{}:{}: replace retired public verification model `{claim}`",
+                        path.strip_prefix(&docs)
+                            .expect("docs-relative path")
+                            .display(),
+                        line + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "retired certificate-replay model in public docs:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn canonical_documentation_terms_have_no_retired_aliases() {
     let docs = root().join("docs");
     let mut files = Vec::new();

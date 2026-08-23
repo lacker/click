@@ -1,9 +1,9 @@
 # Verification efficiency
 
 Click is intended to verify existing programs at codebase scale. Fast examples
-are not enough: deterministic verification of an explicitly certificated
-project must remain approximately linear in the amount of C and Click that is
-actually relevant to the selected proof units.
+are not enough: deterministic verification of a project written with explicit
+proofs must remain approximately linear in the amount of C and Click actually
+relevant to the selected proof units.
 
 This is a correctness requirement for the proof-tool boundary. A simple proof
 that becomes unusably slow as unrelated functions, facts, snapshots, or
@@ -12,8 +12,8 @@ resources are added is a verifier defect, even if it eventually succeeds.
 ## Complexity contract
 
 Let `N` be the size of the selected C source, Click source, imported
-definitions, and explicit certificate. Let `q` be the size of the input named
-by one tactic, and let `d` be the amount of new proof state or certificate text
+definitions, and explicit proof text. Let `q` be the size of the input named by
+one tactic, and let `d` be the amount of new proof state or expanded proof text
 that the tactic must produce.
 
 A simple tactic should take
@@ -32,7 +32,7 @@ O((N + D) polylog N)
 
 work, where `D` is unavoidable semantic output such as explicitly enumerated
 execution paths or unfolded resource members. For ordinary straight-line,
-modular code, `D` should itself be linear in the source and certificate.
+modular code, `D` should itself be linear in the source and explicit proof.
 
 `O(log N)` is shorthand for indexed access, not permission to ignore input or
 output size. Reading ten explicit premises costs at least ten operations;
@@ -43,7 +43,7 @@ resources that the tactic did not name.
 ## Simple means locally checkable
 
 A simple tactic checks one named proof rule from explicit evidence. Expansion
-removes smart search by producing such a certificate. It cannot repair a
+removes smart search by producing such an explicit proof. It cannot repair a
 simple checker that performs global search, rebuilds its whole context, or
 copies the complete project state at every step.
 
@@ -61,8 +61,8 @@ It may not, by default:
 - linearly search all ambient facts for an exact named premise;
 - enumerate all theorem facts for every function;
 - materialize all pairwise separation facts in a resource context;
-- rerun a theory prover once per unrelated premise merely to minimize a
-  certificate; or
+- rerun a theory prover once per unrelated premise merely to minimize an
+  expanded proof; or
 - use a bounded linear cache with deep structural comparison as the durable
   identity mechanism.
 
@@ -72,7 +72,7 @@ against the statement's declared effect, with ownership consulted by direct
 lookup only. A fact it cannot carry stays at its pre-step snapshot; an
 explicit `transport` pays for anything more. Term comparison performs no
 frame reasoning. The user-facing statement of this rule is
-[What a step carries](../concepts/proof-state-and-replay.md#what-a-step-carries).
+[What a step carries](../concepts/proof-state.md#what-a-step-carries).
 
 ## Output-sensitive exceptions
 
@@ -81,7 +81,7 @@ charged to visible semantic output rather than hidden ambient state:
 
 - A source branch can create two paths. Repeated branching may create many
   paths, but verification should share common prefixes and cost no more than
-  the explicit path certificate it checks.
+  the explicit path structure it checks.
 - A finite quantified proof may enumerate its declared finite range. The range
   and its bound must be explicit and enforced.
 - Unfolding or folding may visit every member of the named definition, but not
@@ -127,7 +127,7 @@ disjointness, subrange inheritance — are answered from the carrier's
 projection with indexed per-query work
 (`symbolic_same_block_ranges_emit_no_pairs_with_near_linear_work` pins the
 projection curve). Consumers that need a separation *proposition* — a
-certificate premise, a have-proof `assumption` goal — ask the prover, which
+  explicit premise, a have-proof `assumption` goal — ask the prover, which
 serves it from the carrier on demand; the proposition is materialized only
 at that ask, never into ambient fact sets. Adding a valid carrier must be
 monotone for already-provable snapshot premises
@@ -152,7 +152,7 @@ explicit:
 - **Transport facts at statement boundaries.** A statement step carries only
   the selected or automatically considered facts whose direct frame check
   succeeds. More general cross-snapshot reasoning is an explicit `transport`
-  certificate step, not a comparator side effect.
+  proof step, not a comparator side effect.
 - **Write-set fingerprints.** Call-havoc markers carry a representation-invariant
   fingerprint of their write set in the marker block size, so
   alpha-colliding claims whose same-named havocs wrote different shapes stay
@@ -202,8 +202,9 @@ derivations.
 
 ## Checked execution reuse
 
-Proof replay and opaque-contract certification may share function-body work
-only through `CCheckedFunctionExecution`, a kernel-created artifact. The
+The current compatibility proof replay and opaque-contract certification may
+share function-body work only through `CCheckedFunctionExecution`, a
+kernel-created artifact. The
 artifact seals the exact entry state, annotated function, arguments,
 environment, execution semantics, loop judgment, assumptions, and complete
 checked frontier. Its fields are private to the kernel; a proof planner can
@@ -267,7 +268,7 @@ useful corroboration, not a substitute for the scaling assertion.
 Any new hot-path collection, cache, or clone should answer these review
 questions:
 
-1. What is its size in terms of source or certificate input?
+1. What is its size in terms of source or explicit-proof input?
 2. Is lookup indexed by the exact semantic key?
 3. Does mutation share unchanged structure?
 4. Can one operation enumerate unrelated entries?

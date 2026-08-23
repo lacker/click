@@ -81,7 +81,7 @@ derivation information becomes available.
 The stronger bridging that crosses `BlockDeclared` and `CellsForgotten` is
 scoped to loadability reasoning through `with_extended_dag_bridging`. Enabling
 that reasoning globally can change which surface facts a planner selects and
-therefore change certificate spellings. Isolated memory-resolution fuel keeps
+therefore change expansion spellings. Isolated memory-resolution fuel keeps
 a nested graph query from consuming the caller's bounded reasoning budget.
 
 `CLICK_DISABLE_MEMORY_DAG=1` disables recording and DAG consumers for an A/B
