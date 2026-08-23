@@ -2035,9 +2035,9 @@ fn add_have_case_assumptions(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
+pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
-    contexts: Vec<ProofReplayContext>,
+    units: Vec<OrderedProofUnit<'a>>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2057,14 +2057,15 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
     let mut captured_paths = Vec::new();
     let mut context_count = 0;
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
-    for context in contexts {
+    for unit in units {
         context_count += 1;
-        let path_choices = context.replay.deferred_expansion_path_choices.to_vec();
-        resume_deferred_tactic_expansion_capture(
-            expansion_capture.as_deref_mut(),
-            &context.replay,
-        )?;
-        let path_had_deferred_capture = context.replay.deferred_tactic_capture.is_some();
+        let replay = match &unit {
+            OrderedProofUnit::Checked(proof) => proof.finalization_view()?.replay,
+            OrderedProofUnit::Replay(context) => context.replay.as_ref(),
+        };
+        let path_choices = replay.deferred_expansion_path_choices.to_vec();
+        resume_deferred_tactic_expansion_capture(expansion_capture.as_deref_mut(), replay)?;
+        let path_had_deferred_capture = replay.deferred_tactic_capture.is_some();
         let result_before = expansion_capture
             .as_deref()
             .is_some_and(|capture| capture.result.is_some());
@@ -2076,7 +2077,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_contexts(
             || {
                 finish_ordered_proof_replay(
                     expansion_capture.as_deref_mut(),
-                    context,
+                    unit,
                     source_path,
                     function_block,
                     parsed_function,

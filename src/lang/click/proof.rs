@@ -5,6 +5,8 @@ use super::*;
 mod attempt;
 mod claim_proofs;
 pub(in crate::lang::click) use claim_proofs::clear_independent_execution_cache;
+#[cfg(test)]
+pub(in crate::lang::click) use claim_proofs::count_flat_proof_units;
 mod cursor_execution;
 mod execution_planning;
 pub(in crate::lang::click) mod fact_reasoning;
@@ -13,8 +15,8 @@ mod proof_object;
 
 #[cfg(test)]
 pub(in crate::lang::click) use proof_object::{
-    count_checked_execution_interface_joins, count_explicit_linear_fallbacks,
-    count_source_certificate_checks,
+    count_checked_execution_interface_joins, count_execution_context_exports,
+    count_explicit_linear_fallbacks, count_source_certificate_checks,
 };
 mod pure_theorems;
 mod replay_engine;
@@ -27,7 +29,7 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
-use claim_proofs::finish_ordered_proof_replay;
+use claim_proofs::{ClaimProofResult, OrderedProofUnit, finish_ordered_proof_replay};
 pub(super) use claim_proofs::{
     prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,
 };
@@ -64,6 +66,8 @@ use pure_theorems::{
 pub(super) use pure_theorems::{
     pure_theorem_array_refs, pure_theorem_parameter_values, verify_theorem_definitions,
 };
+#[cfg(test)]
+pub(in crate::lang::click) use replay_engine::count_internal_proof_executions;
 use replay_engine::*;
 use replay_state::*;
 pub(super) use replay_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
@@ -2414,10 +2418,10 @@ pub(super) fn prove_claim_by_auto(
                     loop_verification_error = Some(error);
                     continue;
                 }
-                for theorem in &mut theorems {
+                for theorem in &mut theorems.theorems {
                     theorem.proof_kind = ProofKind::LoopVerification;
                 }
-                return Ok(theorems);
+                return Ok(theorems.theorems);
             }
             Err(error) => loop_verification_error = Some(error),
         }
@@ -2461,7 +2465,7 @@ pub(super) fn prove_claim_by_auto(
                     bounded_certificate_error.get_or_insert(error);
                     continue;
                 }
-                return Ok(theorems);
+                return Ok(theorems.theorems);
             }
             Err(error) => bounded_error = Some(error),
         }
@@ -2500,10 +2504,14 @@ fn certify_claim_result(
     click_function_environment: &ClickFunctionEnvironment,
     resource_environment: &ResourceEnvironment,
     theorem_environment: &TheoremEnvironment,
-    verified: &mut [VerifiedCTheorem],
+    verified: &mut ClaimProofResult,
     proof_description: &str,
     replayed_tactics: &[ProofTactic],
 ) -> Result<(), ClickError> {
+    if verified.proof_owned {
+        return Ok(());
+    }
+    let verified = &mut verified.theorems;
     if let Ok(script) = ProofCertificate::from_proof_tactics(replayed_tactics) {
         for theorem in verified.iter_mut() {
             theorem.expanded_proof = Some(script.clone());
@@ -2568,6 +2576,7 @@ fn certify_claim_result(
     // must be proved again by the certificate replay.
     for theorem in verified.iter() {
         if !replayed
+            .theorems
             .iter()
             .any(|replayed| replayed.claim == theorem.claim)
         {
@@ -2630,10 +2639,10 @@ pub(super) fn prove_claim_by_frame(
         "frame",
         &tactics,
     )?;
-    for theorem in &mut theorems {
+    for theorem in &mut theorems.theorems {
         theorem.proof_kind = ProofKind::Frame;
     }
-    Ok(theorems)
+    Ok(theorems.theorems)
 }
 
 pub(super) fn prove_claim_by_simp(
@@ -2692,10 +2701,10 @@ pub(super) fn prove_claim_by_simp(
         "simp",
         &tactics,
     )?;
-    for theorem in &mut theorems {
+    for theorem in &mut theorems.theorems {
         theorem.proof_kind = ProofKind::Simp;
     }
-    Ok(theorems)
+    Ok(theorems.theorems)
 }
 
 /// An explicit per-claim proof script, followed by the whole-claim
@@ -2747,5 +2756,5 @@ pub(super) fn prove_claim_by_script(
         "explicit proof script",
         tactics,
     )?;
-    Ok(theorems)
+    Ok(theorems.theorems)
 }

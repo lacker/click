@@ -2,6 +2,26 @@ use super::*;
 use crate::kernel::apply_c_function_contract_resource_transition;
 use std::sync::Arc;
 
+#[cfg(test)]
+thread_local! {
+    static FLAT_PROOF_UNITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_flat_proof_units<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = FLAT_PROOF_UNITS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = FLAT_PROOF_UNITS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+pub(in crate::lang::click) struct ClaimProofResult {
+    pub(in crate::lang::click) theorems: Vec<VerifiedCTheorem>,
+    pub(in crate::lang::click) proof_owned: bool,
+}
+
 fn apply_checked_contract_resource_transition(
     outcome: &mut CFunctionOutcome,
     pre_state: &CState,
@@ -49,13 +69,17 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
     tactic_source: ProofTacticSource,
-) -> Result<Vec<VerifiedCTheorem>, ClickError> {
+) -> Result<ClaimProofResult, ClickError> {
     if tactics.is_empty() {
         return Err(ClickError::new(format!(
             "`{claim_label}` has an empty explicit proof script"
         )));
     }
     let program = build_internal_proof_with_source(tactics, claim_label, tactic_source)?;
+    let generated_by_source_index = match tactic_source {
+        ProofTacticSource::SourceSyntax => None,
+        ProofTacticSource::GeneratedBy { source_index } => Some(source_index),
+    };
     let (state, arguments, pure_facts, surface_propositions) = initial_claim_context(
         function_block,
         parsed_function,
@@ -109,14 +133,55 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         0,
         "proof entry",
     )?;
+    let initial = ProofReplayContext {
+        state,
+        pure_facts,
+        replay: Box::new(replay),
+        branch_path: PersistentSequence::default(),
+    };
+    if let Some(proof) = try_check_flat_function_proof(
+        &initial,
+        &program,
+        generated_by_source_index,
+        expansion_capture.as_deref_mut(),
+        function_block,
+        parsed_function,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        &function,
+        &arguments,
+    )? {
+        #[cfg(test)]
+        FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
+        let theorems = finish_ordered_proof_units(
+            expansion_capture,
+            vec![OrderedProofUnit::Checked(proof)],
+            source_path,
+            function_block,
+            parsed_function,
+            &proof_claims,
+            false,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            function_environment,
+            &function,
+            &arguments,
+            tactics,
+        )?;
+        return Ok(ClaimProofResult {
+            theorems,
+            proof_owned: true,
+        });
+    }
     let contexts = execute_internal_proof(
         &program,
-        ProofReplayContext {
-            state,
-            pure_facts,
-            replay: Box::new(replay),
-            branch_path: PersistentSequence::default(),
-        },
+        initial,
         expansion_capture.as_deref_mut(),
         function_block,
         parsed_function,
@@ -131,9 +196,9 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         &arguments,
     )?;
 
-    finish_ordered_proof_contexts(
+    let theorems = finish_ordered_proof_units(
         expansion_capture,
-        contexts,
+        contexts.into_iter().map(OrderedProofUnit::Replay).collect(),
         source_path,
         function_block,
         parsed_function,
@@ -147,7 +212,11 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         &function,
         &arguments,
         tactics,
-    )
+    )?;
+    Ok(ClaimProofResult {
+        theorems,
+        proof_owned: false,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -264,9 +333,9 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         &proof_label,
         "grouped proof finishing",
         || {
-            finish_ordered_proof_contexts(
+            finish_ordered_proof_units(
                 expansion_capture,
-                contexts,
+                contexts.into_iter().map(OrderedProofUnit::Replay).collect(),
                 source_path,
                 function_block,
                 parsed_function,
@@ -659,6 +728,60 @@ pub(in crate::lang::click) fn clear_independent_execution_cache() {
     INDEPENDENT_EXECUTION_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
+/// One completed source-proof unit entering claim finalization. Migrated flat
+/// functions retain their `Proof`; structural compatibility paths still
+/// supply the replay context they currently own.
+pub(super) enum OrderedProofUnit<'a> {
+    Checked(Proof<'a>),
+    Replay(ProofReplayContext),
+}
+
+/// Places a path-independent terminal frame on each explicit execution leaf.
+/// The retained Proof provenance records the frame after the joined execution
+/// branch; Surface Click must spell that same checked operation inside each
+/// branch so the rewritten source can reach the corresponding frontier before
+/// applying it. This is a structural serialization of retained provenance,
+/// not a semantic search or reconstruction.
+fn surface_steps_from_checked_proof(proof: &Proof<'_>) -> Result<Vec<SimpleProofStep>, ClickError> {
+    fn append_retained_tactics_to_leaves(tactics: &mut Vec<ProofTactic>, suffix: &[ProofTactic]) {
+        if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+            append_retained_tactics_to_leaves(&mut proof_if.then_tactics, suffix);
+            append_retained_tactics_to_leaves(&mut proof_if.else_tactics, suffix);
+        } else {
+            tactics.extend(suffix.iter().cloned());
+        }
+    }
+
+    let mut tactics = proof.certificate().to_proof_tactics();
+    let terminal_frame = matches!(
+        tactics.last(),
+        Some(ProofTactic::FrameUsing { region: None, .. })
+    )
+    .then(|| tactics.pop())
+    .flatten();
+    if let Some(frame) = terminal_frame {
+        if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
+            append_retained_tactics_to_leaves(
+                &mut proof_if.then_tactics,
+                std::slice::from_ref(&frame),
+            );
+            append_retained_tactics_to_leaves(
+                &mut proof_if.else_tactics,
+                std::slice::from_ref(&frame),
+            );
+        } else {
+            tactics.push(frame);
+        }
+    }
+    ProofCertificate::from_proof_tactics(&tactics)
+        .map(|certificate| certificate.steps().to_vec())
+        .map_err(|error| {
+            ClickError::new(format!(
+                "checked Proof provenance is not surface-expressible: {error:?}"
+            ))
+        })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn cached_independent_execution(
     pre_state: &CState,
@@ -718,9 +841,9 @@ fn proof_case_fact_conflicts(
     Ok(conflicts)
 }
 
-pub(super) fn finish_ordered_proof_replay(
+pub(super) fn finish_ordered_proof_replay<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
-    context: ProofReplayContext,
+    unit: OrderedProofUnit<'a>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -752,16 +875,23 @@ pub(super) fn finish_ordered_proof_replay(
     // Derivation is unconditional: every result-aware tactic kind consumes
     // goals now, and the working-set parity invariant below must hold for
     // every drain before the legacy vector retires.
-    let outcome_substrate = {
-        Proof::for_execution_frontier_with_effect_goals(
+    let direct_view = match &unit {
+        OrderedProofUnit::Checked(proof) => Some(proof.finalization_view()?),
+        OrderedProofUnit::Replay(_) => None,
+    };
+    let pure_facts = match (&unit, &direct_view) {
+        (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
+        (OrderedProofUnit::Replay(context), None) => context.pure_facts.clone(),
+        _ => unreachable!("ordered proof unit and finalization view must agree"),
+    };
+    let requirement_facts =
+        Arc::new(pure_facts[..function_block.requires().len().min(pure_facts.len())].to_vec());
+    let outcome_substrate = match &unit {
+        OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
+        OrderedProofUnit::Replay(context) => Proof::for_execution_frontier_with_effect_goals(
             &proof_label,
             0,
-            ProofReplayContext {
-                state: context.state.clone(),
-                pure_facts: context.pure_facts.clone(),
-                replay: context.replay.clone(),
-                branch_path: context.branch_path.clone(),
-            },
+            context.clone(),
             EffectGoalSelection::None,
             function_block,
             function,
@@ -773,22 +903,27 @@ pub(super) fn finish_ordered_proof_replay(
             click_function_environment,
             theorem_environment,
         )
-        .focus_function_outcomes(Arc::new(
-            context.pure_facts[..function_block
-                .requires()
-                .len()
-                .min(context.pure_facts.len())]
-                .to_vec(),
-        ))
-        .ok()
+        .focus_function_outcomes(requirement_facts)
+        .ok(),
     };
-    let ProofReplayContext {
-        state,
-        pure_facts,
-        replay,
-        branch_path,
-    } = context;
-    let pre_state = replay.execution_start_state(&state);
+    let (state, replay, branch_path) = match (&unit, &direct_view) {
+        (OrderedProofUnit::Checked(_), Some(view)) => (view.state, view.replay, view.branch_path),
+        (OrderedProofUnit::Replay(context), None) => (
+            &context.state,
+            context.replay.as_ref(),
+            &context.branch_path,
+        ),
+        _ => unreachable!("ordered proof unit and finalization view must agree"),
+    };
+    let retained_surface = match &unit {
+        OrderedProofUnit::Checked(proof) => {
+            let mut retained = replay.proof_certificate_builder.clone();
+            retained.steps = surface_steps_from_checked_proof(proof)?;
+            retained
+        }
+        OrderedProofUnit::Replay(_) => replay.proof_certificate_builder.clone(),
+    };
+    let pre_state = replay.execution_start_state(state);
     let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
         function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
     });
@@ -3594,16 +3729,10 @@ pub(super) fn finish_ordered_proof_replay(
                             claim: claim.verified_claim(),
                             proof_kind: ProofKind::TacticScript,
                             proof_tactics: Some(certificate_tactics.to_vec()),
-                            expanded_proof: replay
-                                .proof_certificate_builder
-                                .blocker
-                                .is_none()
-                                .then(|| {
-                                    ProofCertificate::from_steps(
-                                        replay.proof_certificate_builder.steps.clone(),
-                                    )
-                                }),
-                            expansion_blocker: replay.proof_certificate_builder.blocker.clone(),
+                            expanded_proof: retained_surface.blocker.is_none().then(|| {
+                                ProofCertificate::from_steps(retained_surface.steps.clone())
+                            }),
+                            expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),
                             theorem: theorem.clone(),
                             concrete_loop_execution: replay.concrete_loop_execution,
@@ -3671,14 +3800,14 @@ pub(super) fn finish_ordered_proof_replay(
         let append_surface_tactics = |steps: &mut Vec<SimpleProofStep>,
                                       path_tactics: &[Vec<ProofTactic>]|
          -> Result<(), String> {
-            if replay.proof_certificate_builder.path_choices.is_empty() {
+            if retained_surface.path_choices.is_empty() {
                 append_surface_tactics_by_leaf(steps, path_tactics)
             } else {
                 append_surface_tactics_flat(steps, path_tactics)
             }
         };
         if replay.grouped_contract {
-            let mut expanded = replay.proof_certificate_builder.clone();
+            let mut expanded = retained_surface.clone();
             if surface_post_tactics_by_path
                 .iter()
                 .any(|tactics| !tactics.is_empty())
@@ -3715,7 +3844,7 @@ pub(super) fn finish_ordered_proof_replay(
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {
-                let mut expanded = replay.proof_certificate_builder.clone();
+                let mut expanded = retained_surface.clone();
                 if surface_post_tactics_by_path
                     .iter()
                     .any(|tactics| !tactics.is_empty())
@@ -3839,7 +3968,7 @@ pub(super) fn finish_ordered_proof_replay(
         }
         Ok(verified)
     })();
-    result.map_err(|error| add_proof_branch_path(error, &branch_path))
+    result.map_err(|error| add_proof_branch_path(error, branch_path))
 }
 
 #[cfg(test)]

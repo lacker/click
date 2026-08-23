@@ -26,6 +26,92 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 }
 
 #[test]
+fn flat_function_proof_stays_on_proof_through_claim_acceptance() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("identity.c", c_source)])
+                    })
+                })
+            })
+        });
+    verified.expect("the flat function proof should verify");
+    assert_eq!(
+        flat_units, 1,
+        "the claim should finish from one retained Proof"
+    );
+    assert_eq!(
+        replay_executions, 0,
+        "flat verification must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the retained Proof must not export back into ProofReplayContext"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary flat verification must not check a source certificate"
+    );
+}
+
+#[test]
+fn flat_function_expansion_rewrites_and_rejects_tampering() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by {
+                    execute();
+                    simp();
+                }
+            }
+        "#;
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained flat Proof should expand");
+    assert!(!expanded.contains("execute();"), "{expanded}");
+    assert!(!expanded.contains("simp();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the rewritten source should verify normally");
+
+    let corrupted = expanded.replacen("have result == x", "have result != x", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose its checked have"
+    );
+    verify_c0_sources(&corrupted, &[("identity.c", c_source)])
+        .expect_err("tampering with an extracted operation must invalidate the source proof");
+}
+
+#[test]
 fn post_execution_frame_using_relowers_a_preceding_have_fact() {
     let c_source = r#"
             int32 clear_first(int32* data) {
@@ -717,8 +803,27 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("write_selected.c", c_source)])
-        .expect("branched contextual frame should verify");
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("write_selected.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("branched contextual frame should verify");
+    assert_eq!(flat_units, 1, "the effect claim should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the effect proof entered legacy replay"
+    );
+    assert_eq!(context_exports, 0, "the effect Proof exported its state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary effect verification replayed a certificate"
+    );
     let theorem = verified
         .iter()
         .find(|theorem| theorem.effect_clause().is_some())
@@ -736,14 +841,20 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
             _ => None,
         })
         .expect("branched frame expansion should retain the branch");
-    assert!(matches!(
-        proof_if.then_tactics.last(),
-        Some(ProofTactic::FrameUsing { region: None, .. })
-    ));
-    assert!(matches!(
-        proof_if.else_tactics.last(),
-        Some(ProofTactic::FrameUsing { region: None, .. })
-    ));
+    assert!(
+        matches!(
+            proof_if.then_tactics.last(),
+            Some(ProofTactic::FrameUsing { region: None, .. })
+        ),
+        "then branch lost its terminal frame: {expanded:#?}"
+    );
+    assert!(
+        matches!(
+            proof_if.else_tactics.last(),
+            Some(ProofTactic::FrameUsing { region: None, .. })
+        ),
+        "else branch lost its terminal frame: {expanded:#?}"
+    );
     ProofCertificate::from_proof_tactics(&expanded)
         .expect("branched frame expansion should be a surface certificate");
 }

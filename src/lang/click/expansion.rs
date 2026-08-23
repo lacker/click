@@ -911,7 +911,7 @@ fn find_claim_proof_edit(
 /// the capture being present. This replaces the old thread-local expansion
 /// probe and its abort-by-sentinel-error protocol: expansion is now one
 /// ordinary verification plus a lookup.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct ExpansionCapture {
     pub(super) site: ProofSite,
     /// `Some` selects one source tactic; `None` requests the whole proof at

@@ -1,5 +1,20 @@
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_internal_proof_executions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     // `frame()` is source sugar for the smart frame search even though the
     // surface certificate parser can represent its empty form as a
@@ -186,6 +201,63 @@ fn checked_terminal_effect_script(tactics: &[IndexedTactic]) -> bool {
         .all(|indexed| checked_linear_continuation_tactic(&indexed.tactic))
 }
 
+fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTactic> {
+    match tactic {
+        ProofTactic::FoldResource(resource) => Some(PostExecutionTactic::Fold(resource.clone())),
+        ProofTactic::UnfoldPredicate(name) => {
+            Some(PostExecutionTactic::UnfoldPredicate(name.clone()))
+        }
+        ProofTactic::ApplyTheorem(application) => {
+            Some(PostExecutionTactic::Apply(application.clone()))
+        }
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => Some(PostExecutionTactic::ApplyUsing {
+            application: application.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::Have(have) => Some(PostExecutionTactic::Have(have.clone())),
+        ProofTactic::Transport { source, target } => Some(PostExecutionTactic::Transport {
+            source: source.clone(),
+            target: target.clone(),
+            premises: None,
+        }),
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => Some(PostExecutionTactic::Transport {
+            source: source.clone(),
+            target: target.clone(),
+            premises: Some(premises.clone()),
+        }),
+        ProofTactic::Choose(choice) => Some(PostExecutionTactic::Choose(choice.clone())),
+        ProofTactic::Witness(witness) => Some(PostExecutionTactic::Witness(witness.clone())),
+        ProofTactic::Assumption => Some(PostExecutionTactic::Assumption),
+        ProofTactic::Normalize => Some(PostExecutionTactic::Normalize),
+        ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
+        ProofTactic::Simp => Some(PostExecutionTactic::Simp),
+        _ => None,
+    }
+}
+
+fn retained_surface_has_empty_branch_leaf(proof: &Proof<'_>) -> bool {
+    fn contains_empty_leaf(tactics: &[ProofTactic]) -> bool {
+        tactics.iter().any(|tactic| match tactic {
+            ProofTactic::If(proof_if) => {
+                proof_if.then_tactics.is_empty()
+                    || proof_if.else_tactics.is_empty()
+                    || contains_empty_leaf(&proof_if.then_tactics)
+                    || contains_empty_leaf(&proof_if.else_tactics)
+            }
+            _ => false,
+        })
+    }
+
+    contains_empty_leaf(&proof.certificate().to_proof_tactics())
+}
+
 fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTactic> {
     linear_execution_tactics(node)?.first().filter(|indexed| {
         matches!(
@@ -225,11 +297,30 @@ fn advance_checked_linear_continuation<'a>(
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     allow_contextual_frame: bool,
+    timing_claim_label: Option<&str>,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
     let Some(tactics) = linear_execution_tactics(continuation) else {
         return Ok(None);
     };
     for (offset, indexed) in tactics.iter().enumerate() {
+        if !checked_linear_continuation_tactic(&indexed.tactic) {
+            return Ok(Some((proof, tactics[offset..].to_vec())));
+        }
+        check_verification_deadline()?;
+        let statement_index = proof
+            .finalization_view()?
+            .replay
+            .frontier
+            .next_statement_index;
+        let _timing = timing_claim_label.and_then(|claim_label| {
+            TacticTiming::new(
+                claim_label,
+                indexed.index,
+                indexed.source_index,
+                &indexed.tactic,
+                statement_index,
+            )
+        });
         let terminal_frame = matches!(
             indexed.tactic,
             ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
@@ -303,12 +394,18 @@ fn advance_checked_linear_continuation<'a>(
         } else {
             return Ok(Some((proof, tactics[offset..].to_vec())));
         };
+        // Observe the source tactic's limit before its timing scope ends, so
+        // a completed checked operation cannot hand control to a later tactic
+        // after exhausting its own budget.
+        check_verification_deadline()?;
         // Generated certificates retain the source index of the smart
         // operation that produced them. Their nested steps are part of that
         // operation's already-recorded branch certificate, not independent
         // expansions of the same source occurrence.
         if indexed.source_index != owning_source_index
             && let Some(site) = proof_site
+            && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                == Some(indexed.source_index)
         {
             let certificate = next.certificate_since(&checkpoint)?;
             record_proof_site_tactic_expansion(
@@ -330,6 +427,95 @@ fn advance_checked_linear_continuation<'a>(
         }
     }
     Ok(Some((proof, Vec::new())))
+}
+
+/// Checks one flat function proof on a single persistent `Proof` lineage.
+/// The source shape excludes structural proof branches, resource scopes, and
+/// loop regions. Execution operations advance the frontier immediately;
+/// result-aware suffix operations are retained only as source-order metadata
+/// and are applied to the typed outcome goals during finalization.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
+    context: &ProofReplayContext,
+    program: &InternalProofNode,
+    generated_by_source_index: Option<usize>,
+    expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+) -> Result<Option<Proof<'a>>, ClickError> {
+    // A compatibility miss must leave the expansion cursor untouched just as
+    // it leaves the semantic root untouched. Only publish cursor metadata
+    // after the complete flat proof has been retained successfully.
+    let mut staged_expansion_capture = expansion_capture.as_deref().cloned();
+    let Some(tactics) = linear_execution_tactics(program) else {
+        return Ok(None);
+    };
+    if tactics.is_empty() {
+        return Ok(None);
+    }
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        tactics[0].index,
+        context.clone(),
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let Some((mut proof, remaining)) = advance_checked_linear_continuation(
+        root,
+        program,
+        staged_expansion_capture.as_mut(),
+        context.replay.proof_site.as_ref(),
+        generated_by_source_index.unwrap_or(usize::MAX),
+        true,
+        Some(claim_label),
+    )?
+    else {
+        return Ok(None);
+    };
+    check_verification_deadline()?;
+    if !proof.is_at_function_exit() {
+        return Ok(None);
+    }
+    // Some completed smart executions retain empty infeasible C-branch
+    // leaves. They are valid semantic Proofs, but they are not yet a
+    // standalone Surface Click execution script: a fresh source proof would
+    // have to synthesize explicit operations for a path the Proof never took.
+    // Keep that narrow shape on the compatibility path until expansion owns
+    // an explicit infeasible-leaf serialization rule.
+    if retained_surface_has_empty_branch_leaf(&proof) {
+        return Ok(None);
+    }
+    for indexed in remaining {
+        check_verification_deadline()?;
+        let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+            return Ok(None);
+        };
+        proof = proof.defer_post_execution_source_tactic(
+            indexed.index,
+            indexed.source_index,
+            post_tactic,
+            staged_expansion_capture.as_mut(),
+        )?;
+    }
+    if let (Some(expansion_capture), Some(staged)) = (expansion_capture, staged_expansion_capture) {
+        *expansion_capture = staged;
+    }
+    Ok(Some(proof))
 }
 
 /// Tries a complete flat execution/effect script on one immutable Proof.
@@ -358,42 +544,30 @@ fn try_execute_checked_terminal_effect_script<'a>(
     if !checked_terminal_effect_script(tactics) {
         return Ok(None);
     }
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactics[0].index,
-        context.clone(),
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    let checkpoint = root.checkpoint();
     let linear = InternalProofNode::Linear {
         tactics: tactics.to_vec(),
         continuation: Box::new(InternalProofNode::Done),
     };
-    let Some((proof, remaining)) = advance_checked_linear_continuation(
-        root,
+    let Some(proof) = try_check_flat_function_proof(
+        context,
         &linear,
+        None,
         expansion_capture,
-        context.replay.proof_site.as_ref(),
-        usize::MAX,
-        true,
+        function_block,
+        parsed_function,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
+        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
     )?
     else {
         return Ok(None);
     };
-    if !remaining.is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` checked terminal effect script left an unexpected source suffix"
-        )));
-    }
-    let certificate = proof.certificate_since(&checkpoint)?;
+    let certificate = proof.certificate();
     let mut checked = proof.into_execution_context()?;
     for step in certificate.steps() {
         checked
@@ -423,7 +597,13 @@ fn solve_nested_have<'a>(
         }
         SourceProof::Tactic(SmartTactic::Frame) => None,
     };
-    Ok(selected)
+    // A surface `have` may lower to more than the currently focused
+    // proposition goal (for example, a loadability assertion can carry an
+    // additional resource obligation). The linear body above advances only
+    // its focused goal, while joining requires the entire nested scope to be
+    // complete. Treat that unsupported multi-goal shape as a transactional
+    // miss so the unchanged compatibility interpreter can own it.
+    Ok(selected.filter(ProofScope::is_complete))
 }
 
 /// Advances one sibling arm of an in-`Proof` execution split through its
@@ -1054,6 +1234,8 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
     function: &CFunction,
     arguments: &[CExpression],
 ) -> Result<Vec<ProofReplayContext>, ClickError> {
+    #[cfg(test)]
+    INTERNAL_PROOF_EXECUTIONS.with(|executions| executions.set(executions.get() + 1));
     let _depth_guard = InternalProofReplayDepthGuard::enter(claim_label)?;
     execute_internal_proof_inner(
         node,
@@ -1478,6 +1660,7 @@ fn execute_internal_proof_inner(
                             context.replay.proof_site.as_ref(),
                             *source_index,
                             false,
+                            None,
                         )?
                         .map(|(proof, remaining)| {
                             let continuation = if remaining.is_empty() {

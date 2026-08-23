@@ -18,6 +18,9 @@ thread_local! {
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static EXECUTION_CONTEXT_EXPORTS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -47,6 +50,16 @@ pub(in crate::lang::click) fn count_explicit_linear_fallbacks<R>(
     let before = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
     let result = operation();
     let after = EXPLICIT_LINEAR_FALLBACKS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_execution_context_exports<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -930,6 +943,17 @@ struct ExecutionProofState {
     replay: TacticReplayState,
     branch_path: PersistentSequence<String>,
     last_step_delta: ExecutionProofStepDelta,
+}
+
+/// Read-only terminal data borrowed from an execution `Proof` by claim
+/// finalization. This view carries no transition methods and owns no semantic
+/// state; the `Proof` remains alive as the sole authority while finalization
+/// checks its typed outcome goals.
+pub(super) struct ProofFinalizationView<'p> {
+    pub(super) state: &'p CState,
+    pub(super) facts: Vec<Proposition>,
+    pub(super) replay: &'p TacticReplayState,
+    pub(super) branch_path: &'p PersistentSequence<String>,
 }
 
 #[derive(Clone, Default)]
@@ -6798,6 +6822,8 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn into_execution_context(self) -> Result<ProofReplayContext, ClickError> {
+        #[cfg(test)]
+        EXECUTION_CONTEXT_EXPORTS.with(|exports| exports.set(exports.get() + 1));
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("proof does not own an execution frontier"));
         }
@@ -6820,6 +6846,72 @@ impl<'a> Proof<'a> {
             pure_facts: self.facts().to_vec(),
             replay: Box::new(execution.replay),
             branch_path: execution.branch_path,
+        })
+    }
+
+    /// Borrows the terminal execution data needed by claim finalization
+    /// without exporting it into a mutable replay context.
+    pub(super) fn finalization_view(&self) -> Result<ProofFinalizationView<'_>, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("proof does not own an execution frontier"));
+        }
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
+        Ok(ProofFinalizationView {
+            state: &execution.state,
+            facts: self.facts().to_vec(),
+            replay: &execution.replay,
+            branch_path: &execution.branch_path,
+        })
+    }
+
+    /// Records one source-ordered outcome operation on this terminal Proof.
+    /// This is cursor metadata only: the operation's semantic transition is
+    /// applied later to each typed `FunctionOutcome` goal by finalization.
+    /// When expansion selected this source occurrence, the retained prefix is
+    /// serialized solely to seed that requested capture.
+    pub(super) fn defer_post_execution_source_tactic(
+        &self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+        expansion_capture: Option<&mut ExpansionCapture>,
+    ) -> Result<Self, ClickError> {
+        self.require_execution_frontier("post-execution tactic scheduling")?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
+        if !execution.replay.is_at_function_exit() {
+            return Err(
+                self.step_error("post-execution tactics can be scheduled only at function exit")
+            );
+        }
+        if begin_tactic_expansion_capture(expansion_capture, source_index, &execution.replay) {
+            execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                tactic_index,
+                source_index,
+                post_execution_index: execution.replay.post_execution_tactics.len(),
+                branch_skeleton: ProofCertificate::from_steps(surface_branch_skeleton(
+                    self.certificate().steps(),
+                ))
+                .to_proof_tactics(),
+            });
+        }
+        execution
+            .replay
+            .defer_post_execution(tactic_index, source_index, tactic);
+        let mut state = (*self.state).clone();
+        state.goals =
+            state
+                .goals
+                .replace_execution_at(self.focused, self.facts().clone(), execution);
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(state),
+            node: self.node.clone(),
+            focused: self.focused,
         })
     }
 
@@ -9407,6 +9499,25 @@ impl<'a> Proof<'a> {
                         .cloned()
                 })
         });
+        // Premises established across one statement use its entry snapshot
+        // as their stable Surface Click spelling. A retained Proof may carry
+        // the equivalent exit point as its most recent provenance marker;
+        // prefer the matching recorded entry without changing the kernel
+        // proposition or the outcome state being checked.
+        let frontier_anchor = frontier_anchor.map(|anchor| {
+            if anchor.kind != ProgramPointKind::Exit {
+                return anchor;
+            }
+            let entry = ProgramPointRef {
+                region: anchor.region.clone(),
+                kind: ProgramPointKind::Entry,
+            };
+            frontier_snapshot
+                .as_ref()
+                .is_some_and(|execution| execution.replay.program_point_states.contains_key(&entry))
+                .then_some(entry)
+                .unwrap_or(anchor)
+        });
         let requirement_surfaces = match self.context.as_ref() {
             ProofContext::Execution(context) => requirement_facts
                 .iter()
@@ -9729,9 +9840,9 @@ impl<'a> Proof<'a> {
             self.step_error("execution fact-transport search lost its semantic frontier")
         })?;
         if execution.replay.is_at_function_entry() {
-            return Err(
-                self.step_error("`transport` requires at least one completed execution step")
-            );
+            return Err(self.step_error(
+                "`transport` requires a current statement frontier after at least one execution step",
+            ));
         }
         if execution.replay.is_at_function_exit() {
             return Ok(None);
@@ -11465,6 +11576,10 @@ fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
 }
 
 impl<'a> ProofScope<'a> {
+    pub(super) fn is_complete(&self) -> bool {
+        self.body.is_complete()
+    }
+
     #[cfg(test)]
     pub(super) fn body(&self) -> &Proof<'a> {
         &self.body
