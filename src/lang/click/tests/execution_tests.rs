@@ -50,6 +50,32 @@ fn verifies_symbolic_increment_with_numeric_requirement() {
 }
 
 #[test]
+fn bounded_assignment_preserves_successor_definedness() {
+    let c_source = r#"
+            int32 add_twice(int32 x) {
+                int32 first;
+                first = x + 1;
+                return first + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "add_twice.c";
+
+            int32 add_twice(int32 x) {
+                requires x >= 0;
+                requires x <= 2147483645;
+                ensures result == (x + 1) + 1;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("add_twice.c", c_source)])
+        .expect("the bound on x should prove both additions defined");
+}
+
+#[test]
 fn symbolic_increment_without_numeric_requirement_fails() {
     let c_source = r#"
             int32 increment(int32 x) {

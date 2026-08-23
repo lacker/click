@@ -129,23 +129,27 @@ impl PureFactContext {
                     {
                         record_implicit_reasoning_provenance(self, provenance);
                     }
-                    return (strict_upper_bound.is_some()
+                    let direct_nonoverflow = strict_upper_bound.is_some()
                         || direct_nonoverflowing_upper_bound.is_some()
                         || self.has_condition_fact(
                             ConditionTerm::signed_less_than(left.clone(), int_max.clone()),
                             true,
                         )
-                        || self.has_upper_bound_below(&left, &int_max))
-                    .then_some(false);
+                        || self.has_upper_bound_below(&left, &int_max);
+                    if direct_nonoverflow {
+                        return Some(false);
+                    }
+                    // A materialized local may carry an expression such as
+                    // `(x + 1)` rather than a direct order fact. Reconstruct
+                    // its conservative interval before giving up on the fast
+                    // increment rule; nested additions are admitted only when
+                    // each inner range itself stays within int32.
+                    return self.signed_addition_interval_nonoverflow(
+                        &left,
+                        &Bitvector32Term::Constant(1),
+                    );
                 }
-                self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
-                    .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
-                    .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
-                        let lower = left_lower.checked_add(right_lower)?;
-                        let upper = left_upper.checked_add(right_upper)?;
-                        (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX))
-                            .then_some(false)
-                    })
+                self.signed_addition_interval_nonoverflow(left, right)
             }
             ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
                 if right.as_ref() == &Bitvector32Term::Constant(0)
@@ -272,6 +276,20 @@ impl PureFactContext {
             self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT)?;
         (left_lower == left_upper && right_lower == right_upper)
             .then_some(left_lower == right_lower)
+    }
+
+    fn signed_addition_interval_nonoverflow(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> Option<bool> {
+        self.signed_interval(left, SIGNED_INTERVAL_DEPTH_LIMIT)
+            .zip(self.signed_interval(right, SIGNED_INTERVAL_DEPTH_LIMIT))
+            .and_then(|((left_lower, left_upper), (right_lower, right_upper))| {
+                let lower = left_lower.checked_add(right_lower)?;
+                let upper = left_upper.checked_add(right_upper)?;
+                (lower >= i64::from(i32::MIN) && upper <= i64::from(i32::MAX)).then_some(false)
+            })
     }
 
     /// Returns a conservative signed range for `term`. Unknown endpoints use
@@ -446,5 +464,51 @@ mod tests {
             Some(false)
         );
         assert_eq!(PureFactContext::signed_interval_fallback_fact_visits(), 0);
+    }
+
+    #[test]
+    fn bounded_nested_increment_uses_reconstructed_interval() {
+        let x = Bitvector32Term::Variable(Variable(93_001));
+        let once = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
+        let assumptions = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(x, Bitvector32Term::Constant(2147483645)),
+                true,
+            );
+
+        assert_eq!(
+            assumptions.decide(&ConditionTerm::signed_add_overflows(
+                once,
+                Bitvector32Term::Constant(1),
+            )),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn insufficient_nested_increment_bound_does_not_rule_out_overflow() {
+        let x = Bitvector32Term::Variable(Variable(93_002));
+        let once = Bitvector32Term::add(x.clone(), Bitvector32Term::Constant(1));
+        let assumptions = PureFactContext::new()
+            .assume_condition(
+                ConditionTerm::signed_greater_equal(x.clone(), Bitvector32Term::Constant(0)),
+                true,
+            )
+            .assume_condition(
+                ConditionTerm::signed_less_equal(x, Bitvector32Term::Constant(2147483646)),
+                true,
+            );
+
+        assert_ne!(
+            assumptions.decide(&ConditionTerm::signed_add_overflows(
+                once,
+                Bitvector32Term::Constant(1),
+            )),
+            Some(false)
+        );
     }
 }
