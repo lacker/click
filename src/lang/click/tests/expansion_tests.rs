@@ -9661,10 +9661,43 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
                 simp();
             }
         "#;
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    let (
+        (
+            ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
+            replay_executions,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("identity.c", c_source)])
+                        })
+                    })
+                })
+            })
+        })
     });
     verified.expect("the unfold-then-simp have should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the leading predicate have entered execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the leading predicate have exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary predicate-have verification checked a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the explicit predicate proof used the compatibility driver"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,

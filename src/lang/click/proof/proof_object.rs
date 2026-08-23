@@ -6658,24 +6658,77 @@ impl<'a> Proof<'a> {
         for name in &checked.added_unfolded_predicates {
             unfolded_predicates.insert(name.clone());
         }
+        let refined_goal = match self.focused_goal() {
+            Some(Goal::Proposition(goal)) => {
+                let surface = goal
+                    .surface
+                    .as_deref()
+                    .map(|surface| {
+                        unfold_structural_invariant_proposition(
+                            context.predicate_environment,
+                            surface,
+                            std::slice::from_ref(name),
+                        )
+                        .map_err(|message| self.step_error(message))
+                    })
+                    .transpose()?;
+                let kernel = match &surface {
+                    Some(surface) => {
+                        let surface = self.substitute_point_locals_in_proposition(surface)?;
+                        let pre_state = execution.replay.old_reference_state(&execution.state);
+                        lower_point_proposition_with_assumptions(
+                            &surface,
+                            checked.facts.assumptions(),
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                            pre_state,
+                            &execution.state,
+                            None,
+                            &execution.replay.program_point_states,
+                            context.predicate_environment,
+                            context.click_function_environment,
+                        )
+                        .map_err(|message| {
+                            self.step_error(format!("could not unfold proposition goal: {message}"))
+                        })?
+                    }
+                    None => unfold_predicates_in_proposition(
+                        context.predicate_environment,
+                        context.click_function_environment,
+                        std::slice::from_ref(name),
+                        &goal.kernel,
+                        checked.facts.assumptions(),
+                    )
+                    .map_err(|message| self.step_error(message))?,
+                };
+                Some((kernel, surface))
+            }
+            _ => None,
+        };
         execution.last_step_delta = ExecutionProofStepDelta {
             function_entry_prerequisites: checked.added_function_entry_prerequisites,
             function_entry_derivations: checked.added_function_entry_derivations,
             unfolded_predicates: checked.added_unfolded_predicates,
         };
+        let goal_context = GoalContext {
+            facts: checked.facts,
+            unfolded_predicates,
+            execution: Some(Arc::new(execution)),
+        };
+        let goal = match refined_goal {
+            Some((kernel, surface)) => self.refined_proposition(goal_context, kernel, surface),
+            None => self
+                .focused_goal()
+                .expect("execution unfold requires an open goal")
+                .with_context(goal_context),
+        };
         Ok(ProofState {
             locals: self.state.locals.clone(),
-            // A nested proposition proof stated at this frontier may also
-            // unfold facts: the successor preserves the goal's kind while
-            // installing the updated snapshot and unfold delta.
-            goals: self.state.goals.with_context_at(
-                self.focused,
-                GoalContext {
-                    facts: checked.facts,
-                    unfolded_predicates,
-                    execution: Some(Arc::new(execution)),
-                },
-            ),
+            // A nested proposition proof stated at this frontier unfolds its
+            // own goal through the same checked operation. Other execution
+            // goals retain their kind while installing the updated snapshot
+            // and unfold delta.
+            goals: self.state.goals.replace_at(self.focused, goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })

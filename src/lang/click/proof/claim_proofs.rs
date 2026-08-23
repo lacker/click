@@ -233,9 +233,8 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         | ClickProposition::Implies(left, right) => {
             leading_point_proposition_supported(left) && leading_point_proposition_supported(right)
         }
-        ClickProposition::Separate { .. }
-        | ClickProposition::Contains { .. }
-        | ClickProposition::PredicateCall { .. } => false,
+        ClickProposition::PredicateCall { .. } => true,
+        ClickProposition::Separate { .. } | ClickProposition::Contains { .. } => false,
     }
 }
 
@@ -258,6 +257,7 @@ fn leading_point_tactics_supported(tactics: &[ProofTactic]) -> bool {
                 | ProofTactic::Left
                 | ProofTactic::Right
                 | ProofTactic::Enumerate
+                | ProofTactic::UnfoldPredicate(_)
                 | ProofTactic::Rewrite(_)
                 | ProofTactic::TransportUsing { .. } => true,
                 ProofTactic::Simp | ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
@@ -312,8 +312,9 @@ fn grouped_flat_proof_supported(
     predicate_environment: &PredicateEnvironment,
 ) -> bool {
     // The direct grouped slice owns one execution frontier with proposition
-    // claims, including value predicates, immutable opaque calls transferring
-    // unmixed declared composite resources, and all feasible successor paths.
+    // claims, including value-predicate contracts, immutable opaque calls
+    // transferring unmixed declared composite resources, and all feasible
+    // successor paths.
     // Heap/resource-observing predicate bodies, mixed raw-memory/composite
     // contracts, and explicit composite manipulation still depend on outcome
     // compatibility planning. The direct leading-point slice deliberately
@@ -324,8 +325,8 @@ fn grouped_flat_proof_supported(
     // cursor state. An exact empty mutable frame is checked here when it
     // immediately follows the execution operation. A post-execution logical
     // operation before that frame still needs the ordered compatibility
-    // driver. Loadability/resource obligations and top-level grouped choices
-    // preserve their compatibility prerequisites and cursor locations.
+    // driver. Explicit separation/containment goals and top-level grouped
+    // choices preserve their compatibility prerequisites and cursor locations.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
