@@ -12,10 +12,7 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// green gate. Run one with `MDTEST_FILTER=<name>`, or all of them with
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "opaque_call_scoped_composite_reallocation.md",
-    "conditional output ownership is checked before path-specific ensures; see issues/resource-tracking.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn mdtests() {

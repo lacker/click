@@ -533,7 +533,7 @@ fn synthesize_surface_resource_subject(
     }))
 }
 
-fn synthesize_surface_pointer_offset(
+pub(super) fn synthesize_surface_pointer_offset(
     term: &PointerOffsetTerm,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -549,6 +549,11 @@ fn synthesize_surface_pointer_offset(
                 parameter.name().to_string(),
             )));
         }
+    }
+    if let Some(field) =
+        synthesize_parameter_field_pointer_value(term, parameters, arguments, state)
+    {
+        return Some(field);
     }
     match term {
         PointerOffsetTerm::Int32Scaled {
@@ -641,6 +646,62 @@ fn synthesize_surface_pointer_offset(
         | PointerOffsetTerm::Variable(_)
         | PointerOffsetTerm::Int32Scaled { .. } => None,
     }
+}
+
+/// Names a canonical pointer value through a currently readable pointer field
+/// of a struct parameter. Allocation identity conditions compare canonical
+/// allocation offsets, not the memory-load syntax that produced them; this
+/// reverse lookup recovers stable source syntax at each recorded snapshot.
+fn synthesize_parameter_field_pointer_value(
+    term: &PointerOffsetTerm,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+) -> Option<ContractExpression> {
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let (Some(layout), CExpression::Value(CValue::Pointer(base))) =
+            (parameter.struct_layout(), argument)
+        else {
+            continue;
+        };
+        for (field_name, field) in layout.fields() {
+            let value_type = field.c_type().to_kernel_type();
+            if !matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) {
+                continue;
+            }
+            let field_pointer = base.offset_by_bytes(field.offset_bytes());
+            let loaded_offset = match state.memory().load(&field_pointer) {
+                CExpressionOutcome::Value(CValue::Pointer(value)) => value.offset,
+                // Struct pointer fields are represented in contract memory
+                // by their pointer-width scalar offset.
+                CExpressionOutcome::Value(CValue::Int32(value)) => {
+                    PointerOffsetTerm::scale_int32(value, 4)
+                }
+                _ => continue,
+            };
+            if !crate::kernel::offsets_have_same_canonical_form(&loaded_offset, term) {
+                continue;
+            }
+            let base_expression = CExpression::Variable(parameter.name().to_string());
+            let lowered_pointer = if field.offset_bytes() == 0 {
+                base_expression.clone()
+            } else {
+                CExpression::PointerOffsetBytes {
+                    pointer: Box::new(base_expression.clone()),
+                    bytes: field.offset_bytes(),
+                }
+            };
+            return Some(ContractExpression::Field {
+                base: Box::new(ContractExpression::CFragment(base_expression)),
+                field: field_name.clone(),
+                lowered: CExpression::TypedLoad {
+                    pointer: Box::new(lowered_pointer),
+                    value_type,
+                },
+            });
+        }
+    }
+    None
 }
 
 fn synthesize_surface_bitvector(

@@ -74,6 +74,7 @@ int32 replace_after_scoped_open(struct cell_owner* owner) {
     open(allocated_cell(owner)) {
     }
     execute();
+    frame();
     simp();
 }
 ```

@@ -131,13 +131,24 @@ facts while holding eight projections fixed. Retirement visits exactly those
 eight projections at every size. The ordinary heap regressions still reject an
 explicit persistent view at `free` and preserve a proved-separate view.
 
-This moves the focused scoped-open regression past the derived-view error. Its
-next failure is an owned post-state range on the allocation-retaining failure
-outcome. Opaque allocation lifetime effects currently run before function
-ensures are lowered into path-specific facts, so the rule cannot use
-`result == 0 implies owner->data == old(owner->data)` to keep the old allocation
-on only that outcome. The next chunk is therefore path-sensitive ordering of
-ensures and lifetime effects, not broader view revocation.
+The focused scoped-open regression now passes. Opaque allocation lifetime
+effects lower provisional ensures first, split only when returned and consumed
+allocation identities remain undecided, and retain one checked successor per
+identity case. Ordinary `step(); if ...` certificates own and replay those
+successor siblings; no new surface tactic was added. The generated identity
+condition is snapshot-qualified, and whole-function replay lowers it separately
+for each concrete outcome instead of reusing one branch's fresh kernel variables.
+
+Applying the same scoped proof repair to `owned-vector` exposes the next
+failure: the stale temporary `views` error disappears, but the retiring path
+rejects an `owns` range derived from the returned composite. That range has a
+dynamic base and length (`owner->data[0..owner->cap]`); its folded public
+successor context contains only `owns allocated_vector(owner)`, but lifetime
+checking still associates the returned range with the retired input allocation.
+The next experiment should reduce that returned dynamic-range association. It
+must not drop the range, weaken ownership, or restore the persistent `observe`
+workaround. If it is independent of support retirement and identity splitting,
+move it to its own focused issue before closing this one.
 
 ## Intended regressions
 

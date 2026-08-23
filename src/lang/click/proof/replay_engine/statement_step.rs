@@ -1,8 +1,11 @@
 use super::*;
 
 pub(in crate::lang::click::proof) struct CheckedStatementStep {
+    pub(in crate::lang::click::proof) replay: TacticReplayState,
+    pub(in crate::lang::click::proof) state: CState,
     pub(in crate::lang::click::proof) facts: ProofFacts,
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
+    pub(in crate::lang::click::proof) path: Option<(ConditionTerm, bool)>,
 }
 
 /// Checks one explicit statement transition from exactly the named surface
@@ -28,7 +31,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
-) -> Result<CheckedStatementStep, ClickError> {
+) -> Result<Vec<CheckedStatementStep>, ClickError> {
     let assumptions = requirement_pure_facts.assumptions();
     let tactic_name = "step() using";
     let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
@@ -260,16 +263,14 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
             explicit_premises.push(resource_fact);
         }
     }
-    let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
-    let introduced_facts = execute_step_from_execution_point(
+    let successors = execute_step_successors_from_execution_point(
         replay,
         state,
-        &mut explicit_premises,
+        &explicit_premises,
         function_block,
         function,
         parsed_function.parameters(),
         arguments,
-        &explicit_assumptions,
         function_environment,
         claim_label,
         tactic_index,
@@ -282,13 +283,17 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         // snapshots.
         StatementFactTransportPolicy::Selected,
         loop_step_policy,
-        None,
     )?;
-    let facts = requirement_pure_facts.with_statement_facts(explicit_premises);
-    Ok(CheckedStatementStep {
-        facts,
-        added_facts: introduced_facts,
-    })
+    Ok(successors
+        .into_iter()
+        .map(|successor| CheckedStatementStep {
+            replay: successor.replay,
+            state: successor.state,
+            facts: requirement_pure_facts.with_statement_facts(successor.pure_facts),
+            added_facts: successor.introduced_facts,
+            path: successor.path,
+        })
+        .collect())
 }
 
 /// Frame-lean adapter for the shared load-variable closure. Fact-vector

@@ -584,7 +584,38 @@ pub(in crate::lang::click::proof) fn path_condition_equivalent(
         }
     }
 
-    if condition_polarity_equivalent(left, right) || signed_order_equivalent(left, right) {
+    fn symmetric_equality_equivalent(left: &Proposition, right: &Proposition) -> bool {
+        let (
+            Proposition::ConditionIs(left_condition, left_value),
+            Proposition::ConditionIs(right_condition, right_value),
+        ) = (left, right)
+        else {
+            return false;
+        };
+        if left_value != right_value {
+            return false;
+        }
+        match (left_condition, right_condition) {
+            (
+                ConditionTerm::Bitvector32Equal(left, right),
+                ConditionTerm::Bitvector32Equal(other_left, other_right),
+            ) => left == other_right && right == other_left,
+            (
+                ConditionTerm::PointerOffsetEqual(left, right),
+                ConditionTerm::PointerOffsetEqual(other_left, other_right),
+            ) => left == other_right && right == other_left,
+            (
+                ConditionTerm::PointerEqual(left, right),
+                ConditionTerm::PointerEqual(other_left, other_right),
+            ) => left == other_right && right == other_left,
+            _ => false,
+        }
+    }
+
+    if condition_polarity_equivalent(left, right)
+        || signed_order_equivalent(left, right)
+        || symmetric_equality_equivalent(left, right)
+    {
         return true;
     }
     let (Some(left), Some(right)) = (
@@ -593,7 +624,36 @@ pub(in crate::lang::click::proof) fn path_condition_equivalent(
     ) else {
         return false;
     };
-    condition_polarity_equivalent(&left, &right) || signed_order_equivalent(&left, &right)
+    condition_polarity_equivalent(&left, &right)
+        || signed_order_equivalent(&left, &right)
+        || symmetric_equality_equivalent(&left, &right)
+}
+
+#[cfg(test)]
+mod path_condition_tests {
+    use super::*;
+
+    #[test]
+    fn pointer_offset_path_equality_accepts_reversed_operands() {
+        let left = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(41))),
+            byte_width: 4,
+        };
+        let right = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(42))),
+            byte_width: 4,
+        };
+        let forward = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(left.clone()), Box::new(right.clone())),
+            true,
+        );
+        let reversed = Proposition::ConditionIs(
+            ConditionTerm::PointerOffsetEqual(Box::new(right), Box::new(left)),
+            true,
+        );
+
+        assert!(path_condition_equivalent(&forward, &reversed));
+    }
 }
 
 /// The outermost memory snapshot a comparison proposition loads from, used

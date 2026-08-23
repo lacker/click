@@ -2044,6 +2044,22 @@ fn introduce_proof_case_assumption(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
 ) -> Result<bool, ClickError> {
+    if proof_case_is_statement_identity_condition(condition) {
+        // An opaque call's allocation-identity split owns several certified
+        // statement successors. Lowering this snapshot-qualified condition
+        // against one representative successor would bake that successor's
+        // fresh kernel variables into both proof arms. Retain the surface
+        // condition so final path routing lowers it independently for each
+        // concrete outcome.
+        context.replay.case_assumptions.push(ReplayCaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: None,
+            at_function_entry: false,
+        });
+        return Ok(true);
+    }
     if context.replay.is_at_function_exit()
         && context.replay.has_structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
@@ -2168,6 +2184,31 @@ fn introduce_proof_case_assumption(
         at_function_entry,
     });
     Ok(true)
+}
+
+fn proof_case_is_statement_identity_condition(condition: &ClickProposition) -> bool {
+    let ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    } = condition
+    else {
+        return false;
+    };
+    let is_statement_exit = |expression: &ContractExpression| {
+        matches!(
+            expression,
+            ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(ProgramPointRef {
+                    region: CodeRegionRef::Statement(_),
+                    kind: ProgramPointKind::Exit,
+                }),
+                ..
+            }
+        )
+    };
+    let is_old = |expression: &ContractExpression| matches!(expression, ContractExpression::Old(_));
+    (is_statement_exit(left) && is_old(right)) || (is_old(left) && is_statement_exit(right))
 }
 
 fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) -> bool {

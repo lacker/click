@@ -106,6 +106,13 @@ pub(super) struct ExecutionSplit<'a> {
     initial_continuation_depth: usize,
 }
 
+#[derive(Clone)]
+struct StatementSuccessorSplit {
+    split: SplitId,
+    ids: [GoalId; 2],
+    condition: ConditionTerm,
+}
+
 /// One checked branch arm's contribution to a checked execution join: the
 /// arm's structured certificate, final facts and execution snapshot,
 /// recorded condition theorem, and the introduction deltas the merge
@@ -1224,6 +1231,10 @@ struct ProofNode {
     /// recorded attribution; it never infers ownership from final states.
     focused: GoalId,
     depth: usize,
+    /// An exhaustive operational partition created by this exact statement
+    /// step. A following ordinary proof `if` may name its condition and
+    /// discharge the already-certified sibling frontiers.
+    statement_split: Option<StatementSuccessorSplit>,
 }
 
 /// Persistent semantic fact state shared by every `Proof` kind.
@@ -1405,6 +1416,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
+                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -1799,6 +1811,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
+                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -1914,6 +1927,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
+                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -2117,6 +2131,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
+                statement_split: None,
             }),
             focused: GoalId::ROOT,
         })
@@ -2235,14 +2250,19 @@ impl<'a> Proof<'a> {
             )));
         }
 
+        if let SimpleProofStep::Step = &step {
+            return self.apply_execution_statement_step(step, &[]);
+        }
+        if let SimpleProofStep::StepUsing(premises) = &step {
+            return self.apply_execution_statement_step(step.clone(), premises);
+        }
+
         let next_state = match &step {
             SimpleProofStep::Mark(name) => self.apply_execution_mark(name),
             SimpleProofStep::ApplyTheoremUsing {
                 application,
                 premises,
             } => self.apply_theorem_using(application, premises),
-            SimpleProofStep::Step => self.apply_execution_statement_using(&[]),
-            SimpleProofStep::StepUsing(premises) => self.apply_execution_statement_using(premises),
             SimpleProofStep::TransportUsing {
                 source,
                 target,
@@ -2291,6 +2311,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 focused: self.focused,
                 depth: self.node.depth + 1,
+                statement_split: None,
             }),
             focused: self.focused,
         })
@@ -3157,6 +3178,7 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused: self.focused,
                     depth: self.node.depth,
+                    statement_split: None,
                 }),
                 focused: ids[0],
             },
@@ -3213,12 +3235,65 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused: self.focused,
                     depth: self.node.depth,
+                    statement_split: None,
                 }),
                 focused: ids[0],
             },
             split,
             ids,
         ))
+    }
+
+    /// Enters an exhaustive operational partition already produced by the
+    /// immediately preceding statement step. The surface `if` supplies no
+    /// new hypothesis: both polarities must lower to the exact certified
+    /// successor facts before its arms may address those sibling frontiers.
+    fn enter_statement_successor_if(
+        &self,
+        condition: &ClickProposition,
+    ) -> Result<Option<(Self, SplitId, [GoalId; 2])>, ClickError> {
+        let Some(record) = self.node.statement_split.clone() else {
+            return Ok(None);
+        };
+        if self.focused != record.ids[0] {
+            return Err(
+                self.step_error("statement-successor `if` must begin at its first certified arm")
+            );
+        }
+        let then_fact = self.lower_surface_proposition(condition, "proof `if` condition")?;
+        let expected_then = Proposition::ConditionIs(record.condition.clone(), true);
+        if !path_condition_equivalent(&then_fact, &expected_then) {
+            return Err(self.step_error(format!(
+                "proof `if` condition does not name the preceding statement's certified partition: expected {expected_then:?}, got {then_fact:?}"
+            )));
+        }
+        let else_proof = self.focus(record.ids[1])?;
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let else_fact =
+            else_proof.lower_surface_proposition(&else_surface, "proof `if` negation")?;
+        let expected_else = Proposition::ConditionIs(record.condition.clone(), false);
+        if !path_condition_equivalent(&else_fact, &expected_else) {
+            return Err(self.step_error(format!(
+                "proof `if` negation does not name the preceding statement's certified partition: expected {expected_else:?}, got {else_fact:?}"
+            )));
+        }
+
+        Ok(Some((
+            Self {
+                context: self.context.clone(),
+                state: self.state.clone(),
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: None,
+                    focused: self.node.focused,
+                    depth: self.node.depth,
+                    statement_split: None,
+                }),
+                focused: record.ids[0],
+            },
+            record.split,
+            record.ids,
+        )))
     }
 
     /// Joins a completed in-`Proof` `if` split with one structured `If`
@@ -3332,6 +3407,7 @@ impl<'a> Proof<'a> {
                 ))),
                 focused: marker.node.focused,
                 depth: parent.depth + 1,
+                statement_split: None,
             }),
             focused: marker.node.focused,
         })
@@ -3511,6 +3587,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
+                statement_split: None,
             }),
             focused: ids[0],
         };
@@ -3674,6 +3751,7 @@ impl<'a> Proof<'a> {
                 })),
                 focused: parent_goal,
                 depth: parent_node.depth + 1,
+                statement_split: None,
             }),
             focused: parent_goal,
         })
@@ -3812,6 +3890,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
+                statement_split: None,
             }),
             focused: GoalId::ROOT,
         };
@@ -3880,6 +3959,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: 0,
+                statement_split: None,
             }),
             focused: self.focused,
         };
@@ -5515,6 +5595,7 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(parts.step)),
                 focused: parent_goal,
                 depth: parent_node.depth + 1,
+                statement_split: None,
             }),
             focused: parent_goal,
         })
@@ -5821,6 +5902,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
+                statement_split: None,
             }),
             focused,
         };
@@ -5935,8 +6017,13 @@ impl<'a> Proof<'a> {
                         then_proof,
                         else_proof,
                     } => {
-                        let (split_proof, split, ids) =
-                            proof.split_focused_if(condition.clone())?;
+                        let (split_proof, split, ids) = if let Some(existing) =
+                            proof.enter_statement_successor_if(condition)?
+                        {
+                            existing
+                        } else {
+                            proof.split_focused_if(condition.clone())?
+                        };
                         let marker = split_proof.checkpoint();
                         proof = split_proof;
                         frames.push(CheckFrame::Continue { steps, next });
@@ -9403,6 +9490,7 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
+                statement_split: None,
             }),
             focused: outcome_ids[0],
         };
@@ -11074,10 +11162,11 @@ impl<'a> Proof<'a> {
         })
     }
 
-    fn apply_execution_statement_using(
+    fn apply_execution_statement_step(
         &self,
+        step: SimpleProofStep,
         premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step using` requires an execution-frontier proof"));
         };
@@ -11102,15 +11191,116 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
-        Ok(ProofState {
-            locals: self.state.locals.clone(),
+        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+            unreachable!("the frontier requirement was checked above");
+        };
+        let make_goal = |checked: CheckedStatementStep| {
+            let mut successor_execution = execution.clone();
+            successor_execution.replay = checked.replay;
+            successor_execution.state = checked.state.into();
+            (
+                Goal::Frontier(FrontierGoal {
+                    selection: frontier.selection,
+                    context: GoalContext {
+                        facts: checked.facts,
+                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                        execution: Some(Arc::new(successor_execution)),
+                    },
+                }),
+                checked.added_facts,
+                checked.path,
+            )
+        };
 
-            goals: self
-                .state
-                .goals
-                .replace_frontier_at(self.focused, checked.facts, execution),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
+        let (goals, focused, statement_split, added_facts) = match checked.len() {
+            1 => {
+                let (goal, added, path) = make_goal(
+                    checked
+                        .into_iter()
+                        .next()
+                        .expect("one checked successor was required"),
+                );
+                debug_assert!(path.is_none());
+                (
+                    self.state.goals.replace_at(self.focused, goal),
+                    self.focused,
+                    None,
+                    added,
+                )
+            }
+            2 => {
+                let mut by_polarity = [None, None];
+                let mut condition = None;
+                let mut common_added: Option<Vec<Proposition>> = None;
+                for successor in checked {
+                    let (goal, added, path) = make_goal(successor);
+                    let Some((path_condition, value)) = path else {
+                        return Err(self
+                            .step_error("statement successors omitted their certified partition"));
+                    };
+                    if let Some(condition) = &condition {
+                        if condition != &path_condition {
+                            return Err(self.step_error(
+                                "statement successors used different partition conditions",
+                            ));
+                        }
+                    } else {
+                        condition = Some(path_condition);
+                    }
+                    let slot = usize::from(!value);
+                    if by_polarity[slot].replace(goal).is_some() {
+                        return Err(
+                            self.step_error("statement successors repeated one partition polarity")
+                        );
+                    }
+                    if let Some(common) = &mut common_added {
+                        common.retain(|fact| added.contains(fact));
+                    } else {
+                        common_added = Some(added);
+                    }
+                }
+                let [Some(then_goal), Some(else_goal)] = by_polarity else {
+                    return Err(self.step_error(
+                        "statement successors did not cover both partition polarities",
+                    ));
+                };
+                let (split, ids, goals) = self
+                    .state
+                    .goals
+                    .split_at(self.focused, [then_goal, else_goal]);
+                (
+                    goals,
+                    ids[0],
+                    Some(StatementSuccessorSplit {
+                        split,
+                        ids,
+                        condition: condition.expect("two successors recorded a condition"),
+                    }),
+                    common_added.unwrap_or_default(),
+                )
+            }
+            count => {
+                return Err(self.step_error(format!(
+                    "statement execution produced {count} certified successors; expected one successor or one binary partition"
+                )));
+            }
+        };
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals,
+                added_facts: Arc::new(added_facts.clone()),
+                checked_facts: Arc::new(added_facts),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: Some(Arc::new(step)),
+                focused: self.focused,
+                depth: self.node.depth + 1,
+                statement_split,
+            }),
+            focused,
         })
     }
 
@@ -11730,6 +11920,7 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused: self.root.focused,
                         depth: self.root.node.depth + 1,
+                        statement_split: None,
                     }),
                     focused: self.root.focused,
                 })
@@ -11807,6 +11998,7 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused,
                         depth: self.root.node.depth + 1,
+                        statement_split: None,
                     }),
                     focused,
                 })

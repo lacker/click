@@ -1372,6 +1372,159 @@ pub(super) fn execute_step_from_execution_point(
     loop_step_policy: LoopStepPolicy,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<Vec<Proposition>, ClickError> {
+    execute_step_from_execution_point_selecting_path(
+        replay,
+        state,
+        available_pure_facts,
+        function_block,
+        function,
+        parameters,
+        arguments,
+        _assumptions,
+        function_environment,
+        claim_label,
+        tactic_index,
+        tactic_name,
+        prerequisite_policy,
+        fact_transport_policy,
+        loop_step_policy,
+        construction,
+        None,
+    )
+}
+
+pub(super) struct ExecutionPointStepSuccessor {
+    pub(super) replay: TacticReplayState,
+    pub(super) state: CState,
+    pub(super) pure_facts: Vec<Proposition>,
+    pub(super) introduced_facts: Vec<Proposition>,
+    pub(super) path: Option<(ConditionTerm, bool)>,
+}
+
+/// Executes one source statement into every safe kernel-certified successor.
+///
+/// Most statements have one successor and retain the ordinary fast path. An
+/// opaque verified call may instead expose an exhaustive identity partition
+/// needed to decide allocation lifetime. In that case each polarity is
+/// replayed independently from the same entry snapshot; callers retain the
+/// resulting sibling frontiers rather than choosing one operational path.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn execute_step_successors_from_execution_point(
+    replay: &TacticReplayState,
+    state: &CState,
+    available_pure_facts: &[Proposition],
+    function_block: &FunctionBlock,
+    function: &CFunction,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    function_environment: &CExecutionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    tactic_name: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
+    loop_step_policy: LoopStepPolicy,
+) -> Result<Vec<ExecutionPointStepSuccessor>, ClickError> {
+    let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
+        replay,
+        state,
+        function,
+        arguments,
+        claim_label,
+        tactic_index,
+        tactic_name,
+    )?;
+    let mut preview_next_opaque_call = replay.next_opaque_call;
+    let mut preview_next_kernel_variable = replay.next_kernel_variable;
+    let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
+    let preview = certified_statement_transitions(
+        &current_state,
+        available_pure_facts,
+        &statement,
+        function_environment,
+        CExecutionSemantics::APPLY_VERIFIED_RULES,
+        &transition_label,
+        &mut preview_next_opaque_call,
+        &mut preview_next_kernel_variable,
+        prerequisite_policy,
+        fact_transport_policy,
+    )?
+    .0;
+    let safe_partition = (preview.len() > 1
+        && preview.iter().all(|transition| {
+            matches!(
+                transition.outcome,
+                CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
+            )
+        }))
+    .then(|| certified_transition_condition_partition(&preview))
+    .flatten();
+
+    let selected_paths = safe_partition.map_or_else(
+        || vec![(None, None)],
+        |(condition, paths)| {
+            paths
+                .into_iter()
+                .map(|(fact, value)| (Some(fact), Some((condition.clone(), value))))
+                .collect()
+        },
+    );
+    let mut successors = Vec::with_capacity(selected_paths.len());
+    for (selected, path) in selected_paths {
+        let mut successor_replay = replay.clone();
+        let mut successor_state = state.clone();
+        let mut successor_facts = available_pure_facts.to_vec();
+        let assumptions = assumptions_from_propositions(&successor_facts);
+        let introduced_facts = execute_step_from_execution_point_selecting_path(
+            &mut successor_replay,
+            &mut successor_state,
+            &mut successor_facts,
+            function_block,
+            function,
+            parameters,
+            arguments,
+            &assumptions,
+            function_environment,
+            claim_label,
+            tactic_index,
+            tactic_name,
+            prerequisite_policy,
+            fact_transport_policy,
+            loop_step_policy,
+            None,
+            selected.as_ref(),
+        )?;
+        successors.push(ExecutionPointStepSuccessor {
+            replay: successor_replay,
+            state: successor_state,
+            pure_facts: successor_facts,
+            introduced_facts,
+            path,
+        });
+    }
+    Ok(successors)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_step_from_execution_point_selecting_path(
+    replay: &mut TacticReplayState,
+    state: &mut CState,
+    available_pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    function: &CFunction,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    _assumptions: &PureFactContext,
+    function_environment: &CExecutionEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+    tactic_name: &str,
+    prerequisite_policy: StatementPrerequisitePolicy,
+    fact_transport_policy: StatementFactTransportPolicy,
+    loop_step_policy: LoopStepPolicy,
+    construction: Option<ConstructionEnvironments<'_>>,
+    selected_path_fact: Option<&Proposition>,
+) -> Result<Vec<Proposition>, ClickError> {
     #[cfg(test)]
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
         PLANNING_STATEMENT_TRANSITIONS.with(|transitions| {
@@ -1493,7 +1646,7 @@ pub(super) fn execute_step_from_execution_point(
     let construction_point_overrides = construction_point_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-    let transitions = certified_statement_transitions(
+    let mut transitions = certified_statement_transitions(
         &current_state,
         available_pure_facts,
         &step_statement,
@@ -1506,6 +1659,9 @@ pub(super) fn execute_step_from_execution_point(
         fact_transport_policy,
     )?
     .0;
+    if let Some(selected_path_fact) = selected_path_fact {
+        transitions.retain(|transition| transition.path_facts.contains(selected_path_fact));
+    }
     if transitions.len() > 1
         && transitions
             .iter()
@@ -2137,6 +2293,190 @@ pub(super) struct BoundedProofFrontier {
     pub(super) pure_facts: Vec<Proposition>,
 }
 
+fn certified_transition_condition_partition(
+    transitions: &[CertifiedStatementTransition],
+) -> Option<(ConditionTerm, Vec<(Proposition, bool)>)> {
+    let first = transitions.first()?;
+    for proposition in &first.path_facts {
+        let Proposition::ConditionIs(condition, _) = proposition else {
+            continue;
+        };
+        let mut selected = Vec::new();
+        let mut saw_true = false;
+        let mut saw_false = false;
+        for transition in transitions {
+            let Some(proposition) = transition.path_facts.iter().find(|proposition| {
+                matches!(
+                    proposition,
+                    Proposition::ConditionIs(candidate, _) if candidate == condition
+                )
+            }) else {
+                selected.clear();
+                break;
+            };
+            let Proposition::ConditionIs(_, value) = proposition else {
+                unreachable!("the selected proposition was a condition fact")
+            };
+            saw_true |= *value;
+            saw_false |= !*value;
+            selected.push((proposition.clone(), *value));
+        }
+        if selected.len() == transitions.len() && saw_true && saw_false {
+            return Some((condition.clone(), selected));
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_statement_identity_condition(
+    replay: &TacticReplayState,
+    condition: &ConditionTerm,
+    statement_index: usize,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    environments: ConstructionEnvironments<'_>,
+) -> Option<ClickProposition> {
+    let ConditionTerm::PointerOffsetEqual(left, right) = condition else {
+        return None;
+    };
+    let points = [
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        },
+        ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Exit,
+        },
+    ];
+    let bound_variables = BTreeMap::new();
+    let assumptions = assumptions_from_propositions(available);
+    let expected = Proposition::ConditionIs(condition.clone(), true);
+    let checked = |candidate: &ClickProposition| {
+        lower_point_proposition_with_assumptions(
+            candidate,
+            &assumptions,
+            parameters,
+            arguments,
+            replay.old_reference_state(state),
+            state,
+            None,
+            &replay.program_point_states,
+            environments.predicate_environment,
+            environments.click_function_environment,
+        )
+        .as_ref()
+        .is_ok_and(|lowered| path_condition_equivalent(lowered, &expected))
+    };
+
+    // A consumed and re-produced composite normally exposes the same pointer
+    // field at the statement's two boundaries. Try that direct, linear source
+    // association before reconstructing either canonical allocation offset.
+    for (parameter, argument) in parameters.iter().zip(arguments) {
+        let (Some(layout), CExpression::Value(CValue::Pointer(_))) =
+            (parameter.struct_layout(), argument)
+        else {
+            continue;
+        };
+        for (field_name, field) in layout.fields() {
+            let value_type = field.c_type().to_kernel_type();
+            if !matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) {
+                continue;
+            }
+            let base = CExpression::Variable(parameter.name().to_string());
+            let lowered_pointer = if field.offset_bytes() == 0 {
+                base.clone()
+            } else {
+                CExpression::PointerOffsetBytes {
+                    pointer: Box::new(base.clone()),
+                    bytes: field.offset_bytes(),
+                }
+            };
+            let surface = ContractExpression::Field {
+                base: Box::new(ContractExpression::CFragment(base)),
+                field: field_name.clone(),
+                lowered: CExpression::TypedLoad {
+                    pointer: Box::new(lowered_pointer),
+                    value_type,
+                },
+            };
+            let at = |point: &ProgramPointRef| ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(point.clone()),
+                expression: Box::new(surface.clone()),
+            };
+            let old = ContractExpression::Old(Box::new(surface.clone()));
+            for left in [at(&points[1]), surface.clone()] {
+                let candidate = ClickProposition::Comparison {
+                    left,
+                    operator: ComparisonOperator::Equal,
+                    right: old.clone(),
+                };
+                if checked(&candidate) {
+                    return Some(candidate);
+                }
+            }
+            for (left_point, right_point) in [(&points[1], &points[0]), (&points[0], &points[1])] {
+                let candidate = ClickProposition::Comparison {
+                    left: at(left_point),
+                    operator: ComparisonOperator::Equal,
+                    right: at(right_point),
+                };
+                if checked(&candidate) {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+    for left_point in &points {
+        let Some(left_state) = replay.program_point_states.get(left_point) else {
+            continue;
+        };
+        let left_candidate = super::surface_synthesis::synthesize_surface_pointer_offset(
+            left,
+            parameters,
+            arguments,
+            left_state,
+            &bound_variables,
+        );
+        let Some(left_surface) = left_candidate else {
+            continue;
+        };
+        for right_point in &points {
+            let Some(right_state) = replay.program_point_states.get(right_point) else {
+                continue;
+            };
+            let right_candidate = super::surface_synthesis::synthesize_surface_pointer_offset(
+                right,
+                parameters,
+                arguments,
+                right_state,
+                &bound_variables,
+            );
+            let Some(right_surface) = right_candidate else {
+                continue;
+            };
+            let candidate = ClickProposition::Comparison {
+                left: ContractExpression::At {
+                    selector: VisitSelector::ProgramPoint(left_point.clone()),
+                    expression: Box::new(left_surface.clone()),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ContractExpression::At {
+                    selector: VisitSelector::ProgramPoint(right_point.clone()),
+                    expression: Box::new(right_surface),
+                },
+            };
+            if checked(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bounded_execute_from_execution_point(
     replay: &mut TacticReplayState,
@@ -2184,10 +2524,11 @@ pub(super) fn bounded_execute_from_execution_point(
         }
         executed_steps += 1;
 
+        let statement_index = frontier.replay.frontier.next_statement_index;
         let source_region = frontier
             .replay
             .source_layout
-            .statement(frontier.replay.frontier.next_statement_index)
+            .statement(statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `execute` could not resolve source statement({})",
@@ -2217,6 +2558,124 @@ pub(super) fn bounded_execute_from_execution_point(
                 if entered {
                     pending.push(branch);
                 }
+            }
+            continue;
+        }
+
+        let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
+            &frontier.replay,
+            &frontier.state,
+            function,
+            arguments,
+            claim_label,
+            tactic_index,
+            "execute",
+        )?;
+        let mut preview_next_opaque_call = frontier.replay.next_opaque_call;
+        let mut preview_next_kernel_variable = frontier.replay.next_kernel_variable;
+        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `execute`");
+        let preview_transitions = certified_statement_transitions(
+            &current_state,
+            &frontier.pure_facts,
+            &statement,
+            function_environment,
+            CExecutionSemantics::APPLY_VERIFIED_RULES,
+            &transition_label,
+            &mut preview_next_opaque_call,
+            &mut preview_next_kernel_variable,
+            prerequisite_policy,
+            StatementFactTransportPolicy::Automatic,
+        )?
+        .0;
+        if preview_transitions.len() > 1
+            && preview_transitions.iter().all(|transition| {
+                matches!(
+                    transition.outcome,
+                    CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
+                )
+            })
+            && let Some((condition, selected_paths)) =
+                certified_transition_condition_partition(&preview_transitions)
+        {
+            let mut identity_branches = Vec::with_capacity(selected_paths.len());
+            for (selected_path_fact, value) in selected_paths {
+                let mut branch = frontier.clone();
+                let assumptions = assumptions_from_propositions(&branch.pure_facts);
+                execute_step_from_execution_point_selecting_path(
+                    &mut branch.replay,
+                    &mut branch.state,
+                    &mut branch.pure_facts,
+                    function_block,
+                    function,
+                    parameters,
+                    arguments,
+                    &assumptions,
+                    function_environment,
+                    claim_label,
+                    tactic_index,
+                    "execute",
+                    prerequisite_policy,
+                    StatementFactTransportPolicy::Automatic,
+                    LoopStepPolicy::EnterBody,
+                    construction,
+                    Some(&selected_path_fact),
+                )?;
+                identity_branches.push((branch, value));
+            }
+            if let Some(environments) = construction {
+                let kernel_condition = Proposition::ConditionIs(condition.clone(), true);
+                let (true_branch, _) = identity_branches
+                    .iter()
+                    .find(|(_, value)| *value)
+                    .expect("an identity partition contains its true arm");
+                let mut condition_available = true_branch.pure_facts.clone();
+                if !condition_available.contains(&kernel_condition) {
+                    condition_available.push(kernel_condition.clone());
+                }
+                let surface_condition = checked_surface_statement_identity_condition(
+                    &true_branch.replay,
+                    &condition,
+                    statement_index,
+                    &condition_available,
+                    parameters,
+                    arguments,
+                    &true_branch.state,
+                    environments,
+                )
+                .map(Ok)
+                .unwrap_or_else(|| checked_surface_comparison_fact_at_point(
+                    &true_branch.replay,
+                    &kernel_condition,
+                    SurfaceFactMatch::ReplayEquivalent,
+                    &condition_available,
+                    parameters,
+                    arguments,
+                    &true_branch.state,
+                    environments.predicate_environment,
+                    environments.click_function_environment,
+                ))
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `execute` could not synthesize the certified allocation-identity case {kernel_condition:?}: {}",
+                        error.message()
+                    ))
+                })?;
+                for (branch, value) in &mut identity_branches {
+                    let tactic_offset = branch.replay.proof_certificate_builder.steps.len();
+                    branch
+                        .replay
+                        .proof_certificate_builder
+                        .path_choices
+                        .push(SurfacePathChoice {
+                            occurrence: statement_index,
+                            condition: surface_condition.clone(),
+                            value: *value,
+                            tactic_offset,
+                        });
+                }
+            }
+            for (branch, _) in identity_branches {
+                pending.push(branch);
             }
             continue;
         }

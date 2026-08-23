@@ -6,8 +6,53 @@ struct CFunctionResourceTransfer {
     caller_resources_after_requirements: ResourceContext,
 }
 
+#[derive(Clone, Debug)]
+struct VerifiedCallLifetimePath {
+    facts: Vec<ExecutionPureFact>,
+    result: Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationLifetimeError>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingVerifiedCallLifetimePath {
+    facts: Vec<ExecutionPureFact>,
+    provisional_facts: Vec<ExecutionPureFact>,
+}
+
+#[derive(Clone, Debug)]
+enum VerifiedAllocationLifetimeError {
+    Runtime(CRuntimeError),
+    UndecidedAllocationIdentity(ConditionTerm),
+}
+
+enum OutputAllocationBacking {
+    Distinct,
+    Undecided(ConditionTerm),
+    None,
+}
+
 fn canonical_memory_range(range: CMemoryRange, assumptions: &PureFactContext) -> CMemoryRange {
     assumptions.canonical_memory_range(&range)
+}
+
+fn add_certified_outcome_path_fact(
+    facts: &mut Vec<ExecutionPureFact>,
+    assumptions: &PureFactContext,
+    proposition: Proposition,
+) -> Option<()> {
+    let previous_len = facts.len();
+    add_path_fact(facts, assumptions, proposition.clone())?;
+    if facts.len() > previous_len {
+        let fact = facts
+            .last_mut()
+            .expect("a newly added outcome fact should be present");
+        *fact = fact.clone().into_certified();
+    } else if let Some(fact) = facts
+        .iter_mut()
+        .find(|fact| fact.proposition() == &proposition)
+    {
+        *fact = fact.clone().into_certified();
+    }
+    Some(())
 }
 
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
@@ -900,106 +945,254 @@ fn execute_verified_function_rule(
             }
         };
         drop(return_resource_timing);
+        let return_resources =
+            activate_population_body_resources(return_resources, &population_transition);
+
+        // Lifetime effects sometimes depend on a certified outcome case. For
+        // example, a failed reallocation returns the input ownership with its
+        // old allocation, while success returns ownership of a new allocation.
+        // Lower the ensures against the pre-lifetime post-state only to decide
+        // that transition. The public postconditions are lowered again below
+        // against each final memory so their snapshots remain exact.
+        post_state.resources = return_resources.clone();
+        let provisional_post_contract_state =
+            with_contract_argument_views(&post_state, function, &arguments_path.values);
+        let mut provisional_facts = facts.clone();
+        let provisional_ensure_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call provisional ensure lowering",
+        );
+        add_verified_function_ensure_facts(
+            &mut provisional_facts,
+            &obligations,
+            &provisional_post_contract_state,
+            &entry_contract_state,
+            function,
+            &effective_assumptions,
+            budget,
+        )?;
+        drop(provisional_ensure_timing);
+
         let lifetime_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
             "verified call allocation lifetime effects",
         );
-        let (memory, lifetime_effects) = match apply_verified_allocation_lifetime_effects(
-            post_state.memory.clone(),
-            &transfer.callee_resources,
-            &return_resources,
-            function,
-            &effective_assumptions,
-        ) {
-            Ok(memory) => memory,
-            Err(error) => {
-                paths.push(CFunctionPath {
-                    outcome: CFunctionOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-                });
-                continue;
+        let mut pending_lifetime_paths = VecDeque::from([PendingVerifiedCallLifetimePath {
+            facts,
+            provisional_facts,
+        }]);
+        let mut lifetime_paths = Vec::new();
+        while let Some(pending) = pending_lifetime_paths.pop_front() {
+            let branch_assumptions = assumptions_with_path_context(
+                &effective_assumptions,
+                &pending.provisional_facts,
+                &obligations,
+            );
+            match apply_verified_allocation_lifetime_effects(
+                post_state.memory.clone(),
+                &transfer.callee_resources,
+                &return_resources,
+                function,
+                &branch_assumptions,
+            ) {
+                Err(VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(condition)) => {
+                    for value in [true, false] {
+                        let proposition = Proposition::ConditionIs(condition.clone(), value);
+                        let mut provisional_facts = pending.provisional_facts.clone();
+                        if add_certified_outcome_path_fact(
+                            &mut provisional_facts,
+                            &branch_assumptions,
+                            proposition.clone(),
+                        )
+                        .is_none()
+                        {
+                            continue;
+                        }
+                        let mut facts = pending.facts.clone();
+                        let public_branch_assumptions = assumptions_with_path_context(
+                            &effective_assumptions,
+                            &facts,
+                            &obligations,
+                        );
+                        add_certified_outcome_path_fact(
+                            &mut facts,
+                            &public_branch_assumptions,
+                            proposition,
+                        )
+                        .expect("a consistent lifetime case must remain consistent publicly");
+                        pending_lifetime_paths.push_back(PendingVerifiedCallLifetimePath {
+                            facts,
+                            provisional_facts,
+                        });
+                    }
+                }
+                result => lifetime_paths.push(VerifiedCallLifetimePath {
+                    facts: pending.facts,
+                    result,
+                }),
             }
-        };
+        }
         drop(lifetime_timing);
-        facts.extend(lifetime_effects);
-        let return_resources =
-            activate_population_body_resources(return_resources, &population_transition);
-        post_state.memory = memory;
-        post_state.resources = return_resources.clone();
-        let post_contract_state =
-            with_contract_argument_views(&post_state, function, &arguments_path.values);
+        for lifetime_path in lifetime_paths {
+            let mut facts = lifetime_path.facts;
+            let (memory, lifetime_effects) = match lifetime_path.result {
+                Ok(result) => result,
+                Err(VerifiedAllocationLifetimeError::Runtime(error)) => {
+                    paths.push(CFunctionPath {
+                        outcome: CFunctionOutcome::RuntimeError(error),
+                        facts,
+                        obligations: obligations.clone(),
+                    });
+                    continue;
+                }
+                Err(VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(_)) => {
+                    unreachable!("undecided allocation identities are split above")
+                }
+            };
+            facts.extend(lifetime_effects);
+            let mut branch_post_state = post_state.clone();
+            branch_post_state.memory = memory;
+            let post_contract_state =
+                with_contract_argument_views(&branch_post_state, function, &arguments_path.values);
 
-        let ensure_timing = crate::instrumentation::OperationTiming::new(
-            function.name(),
-            "verified function rule application",
-            "verified call ensure lowering",
-        );
-        for ensure in function.contract_ensures() {
-            let ensure_assumptions =
-                assumptions_with_path_context(&effective_assumptions, &facts, &obligations);
-            let lowering_assumptions = ensure_assumptions.clone().allow_symbolic_contract_loads();
-            let ensure_paths = lower_spec_proposition_at_state_with_loop_entry(
+            let ensure_timing = crate::instrumentation::OperationTiming::new(
+                function.name(),
+                "verified function rule application",
+                "verified call ensure lowering",
+            );
+            add_verified_function_ensure_facts(
+                &mut facts,
+                &obligations,
                 &post_contract_state,
-                ensure,
-                Some(&entry_contract_state),
-                &lowering_assumptions,
+                &entry_contract_state,
+                function,
+                &effective_assumptions,
                 budget,
             )?;
-            for ensure_path in ensure_paths {
-                for path_obligation in &ensure_path.obligations {
-                    facts.push(ExecutionPureFact::certified(wrap_path_context(
-                        path_obligation.proposition().clone(),
-                        &ensure_path.facts,
-                        &[],
-                    )));
-                }
+            drop(ensure_timing);
+
+            let mut return_state = caller_state.clone();
+            return_state.memory = branch_post_state.memory;
+            return_state.resources = return_resources.clone();
+            return_state.counted_populations = branch_post_state.counted_populations;
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::Return {
+                    value: result.clone(),
+                    state: return_state,
+                },
+                facts,
+                obligations: obligations.clone(),
+            });
+        }
+    }
+    budget.consume_paths(paths.len())?;
+    Ok(paths)
+}
+
+fn add_verified_function_ensure_facts(
+    facts: &mut Vec<ExecutionPureFact>,
+    obligations: &[ProofObligation],
+    post_contract_state: &CState,
+    entry_contract_state: &CState,
+    function: &CFunction,
+    effective_assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<()> {
+    for ensure in function.contract_ensures() {
+        let ensure_assumptions =
+            assumptions_with_path_context(effective_assumptions, facts, obligations);
+        let lowering_assumptions = ensure_assumptions.clone().allow_symbolic_contract_loads();
+        let ensure_paths = lower_spec_proposition_at_state_with_loop_entry(
+            post_contract_state,
+            ensure,
+            Some(entry_contract_state),
+            &lowering_assumptions,
+            budget,
+        )?;
+        for ensure_path in ensure_paths {
+            for path_obligation in &ensure_path.obligations {
                 facts.push(ExecutionPureFact::certified(wrap_path_context(
-                    ensure_path.proposition,
+                    path_obligation.proposition().clone(),
                     &ensure_path.facts,
                     &[],
                 )));
             }
-            // Preserve the source identity of a named predicate ensure. The
-            // expanded `ensure` above is the operational authority; this
-            // exact registered pair is its definitional surface identity.
-            if let Some(unfolding) = function
-                .predicate_unfoldings()
-                .iter()
-                .find(|unfolding| unfolding.body() == ensure)
-            {
-                let predicate_paths = lower_spec_proposition_at_state_with_loop_entry(
-                    &post_contract_state,
-                    unfolding.predicate(),
-                    Some(&entry_contract_state),
-                    &lowering_assumptions,
-                    budget,
-                )?;
-                for predicate_path in predicate_paths {
-                    if predicate_path.obligations.is_empty() {
-                        facts.push(ExecutionPureFact::certified(predicate_path.proposition));
-                    }
+            facts.push(ExecutionPureFact::certified(wrap_path_context(
+                ensure_path.proposition,
+                &ensure_path.facts,
+                &[],
+            )));
+        }
+        // Preserve the source identity of a named predicate ensure. The
+        // expanded `ensure` above is the operational authority; this exact
+        // registered pair is its definitional surface identity.
+        if let Some(unfolding) = function
+            .predicate_unfoldings()
+            .iter()
+            .find(|unfolding| unfolding.body() == ensure)
+        {
+            let predicate_paths = lower_spec_proposition_at_state_with_loop_entry(
+                post_contract_state,
+                unfolding.predicate(),
+                Some(entry_contract_state),
+                &lowering_assumptions,
+                budget,
+            )?;
+            for predicate_path in predicate_paths {
+                if predicate_path.obligations.is_empty() {
+                    facts.push(ExecutionPureFact::certified(predicate_path.proposition));
                 }
             }
         }
-        drop(ensure_timing);
-
-        let mut return_state = caller_state.clone();
-        return_state.memory = post_state.memory;
-        return_state.resources = return_resources;
-        return_state.counted_populations = post_state.counted_populations;
-        paths.push(CFunctionPath {
-            outcome: CFunctionOutcome::Return {
-                value: result,
-                state: return_state,
-            },
-            facts,
-            obligations,
-        });
     }
-    budget.consume_paths(paths.len())?;
-    Ok(paths)
+    Ok(())
+}
+
+fn output_allocation_backing_for_resource(
+    resource: &CResourceFact,
+    retired_base: &Pointer,
+    output_allocations_by_base: &BTreeMap<Pointer, Vec<(Pointer, Bitvector32Term)>>,
+    assumptions: &PureFactContext,
+) -> OutputAllocationBacking {
+    let range = match resource {
+        CResourceFact::Own(CResource::Memory(range), _)
+        | CResourceFact::View(CResource::Memory(range)) => range,
+        _ => return OutputAllocationBacking::None,
+    };
+    let canonical_base = assumptions.canonical_pointer(range.base());
+    let Some(allocations) = output_allocations_by_base.get(&canonical_base) else {
+        return OutputAllocationBacking::None;
+    };
+    let mut undecided = None;
+    for (base, bytes) in allocations {
+        let Some(element_count) = int32_element_count_from_bytes(bytes) else {
+            continue;
+        };
+        let allocation_range =
+            CMemoryRange::new(base.clone(), Bitvector32Term::Constant(0), element_count);
+        if !super::assumptions::memory_range_contained_for_memory_resolution(
+            range,
+            &allocation_range,
+            assumptions,
+        ) {
+            continue;
+        }
+        if pointers_proven_distinct_for_memory_resolution(retired_base, base, assumptions) {
+            return OutputAllocationBacking::Distinct;
+        }
+        if !pointers_proven_equal_for_memory_resolution(retired_base, base, assumptions) {
+            undecided = Some(ConditionTerm::pointer_equal(
+                retired_base.clone(),
+                base.clone(),
+            ));
+        }
+    }
+    undecided.map_or(
+        OutputAllocationBacking::None,
+        OutputAllocationBacking::Undecided,
+    )
 }
 
 fn apply_verified_allocation_lifetime_effects(
@@ -1008,7 +1201,7 @@ fn apply_verified_allocation_lifetime_effects(
     output_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &PureFactContext,
-) -> Result<(CMemory, Vec<ExecutionPureFact>), CRuntimeError> {
+) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationLifetimeError> {
     let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
         input_resources,
@@ -1017,9 +1210,9 @@ fn apply_verified_allocation_lifetime_effects(
         assumptions,
     )
     .ok_or_else(|| {
-        CRuntimeError::FunctionContract(
+        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
             "could not inspect input allocation effects at call".to_string(),
-        )
+        ))
     })?;
     let output = expand_all_composite_resource_facts(
         output_resources,
@@ -1028,9 +1221,9 @@ fn apply_verified_allocation_lifetime_effects(
         assumptions,
     )
     .ok_or_else(|| {
-        CRuntimeError::FunctionContract(
+        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
             "could not inspect output allocation effects at call".to_string(),
-        )
+        ))
     })?;
     let lifetime_assumptions = input
         .observable_facts_assuming_valid(assumptions)
@@ -1038,6 +1231,14 @@ fn apply_verified_allocation_lifetime_effects(
         .fold(assumptions.clone(), |assumptions, fact| {
             assumptions.assume_proposition(fact)
         });
+    let mut output_allocations_by_base =
+        BTreeMap::<Pointer, Vec<(Pointer, Bitvector32Term)>>::new();
+    for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
+        output_allocations_by_base
+            .entry(lifetime_assumptions.canonical_pointer(base))
+            .or_default()
+            .push((base.clone(), bytes.clone()));
+    }
 
     for allocation in input.facts().iter().filter_map(|fact| {
         fact.allocation()
@@ -1055,27 +1256,44 @@ fn apply_verified_allocation_lifetime_effects(
         {
             continue;
         }
-        if let Some(stale) = output.facts().iter().find(|resource| {
-            resource.may_refer_to_memory_block(&base.block)
-                && !resource.is_proven_separate_from_allocation(
-                    &base,
-                    &bytes,
-                    &lifetime_assumptions,
-                )
-        }) {
-            return Err(CRuntimeError::StaleResourceAfterFree {
-                resource: stale.clone(),
-            });
+        for resource in output.facts() {
+            if !resource.may_refer_to_memory_block(&base.block)
+                || resource.is_proven_separate_from_allocation(&base, &bytes, &lifetime_assumptions)
+            {
+                continue;
+            }
+            match output_allocation_backing_for_resource(
+                resource,
+                &base,
+                &output_allocations_by_base,
+                &lifetime_assumptions,
+            ) {
+                OutputAllocationBacking::Distinct => continue,
+                OutputAllocationBacking::Undecided(condition) => {
+                    return Err(
+                        VerifiedAllocationLifetimeError::UndecidedAllocationIdentity(condition),
+                    );
+                }
+                OutputAllocationBacking::None => {
+                    return Err(VerifiedAllocationLifetimeError::Runtime(
+                        CRuntimeError::StaleResourceAfterFree {
+                            resource: resource.clone(),
+                        },
+                    ));
+                }
+            }
         }
         let lifetime_before = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory
                 .with_heap_allocation_claim(base.clone(), bytes.clone())
-                .ok_or(CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer))?;
+                .ok_or(VerifiedAllocationLifetimeError::Runtime(
+                    CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer),
+                ))?;
         }
-        memory = memory
-            .free_heap_block(&base)
-            .map_err(CRuntimeError::InvalidFree)?;
+        memory = memory.free_heap_block(&base).map_err(|error| {
+            VerifiedAllocationLifetimeError::Runtime(CRuntimeError::InvalidFree(error))
+        })?;
         effects.push(ExecutionPureFact::internal(
             Proposition::CHeapLifetimeRetired {
                 before: lifetime_before,
@@ -1086,21 +1304,22 @@ fn apply_verified_allocation_lifetime_effects(
         ));
     }
 
-    for (base, bytes) in output.facts().iter().filter_map(CResourceFact::allocation) {
-        if input.facts().iter().any(|fact| {
-            fact.allocation()
-                .is_some_and(|(input_base, input_bytes)| input_base == base && input_bytes == bytes)
-        }) || memory.live_heap_block_size(base).is_some()
+    for fact in output.facts() {
+        let Some((base, bytes)) = fact.allocation() else {
+            continue;
+        };
+        if input.satisfies_fact(fact, &lifetime_assumptions)
+            || memory.live_heap_block_size(base).is_some()
         {
             continue;
         }
         memory = memory
             .with_heap_allocation_claim(base.clone(), bytes.clone())
             .ok_or_else(|| {
-                CRuntimeError::FunctionContract(
+                VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
                     "returned allocation conflicts with an existing or retired lifetime"
                         .to_string(),
-                )
+                ))
             })?;
     }
     Ok((memory, effects))
@@ -2611,24 +2830,8 @@ pub(super) fn expose_composite_resource_fact(
     memory: &CMemory,
     assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
-    let target_is_available = |context: &ResourceContext| {
-        context.facts().iter().any(|available| {
-            let access_compatible = match (available, target) {
-                (
-                    CResourceFact::Own(_, available_quantity),
-                    CResourceFact::Own(_, target_quantity),
-                ) => available_quantity >= target_quantity,
-                (CResourceFact::Own(..), CResourceFact::View(_))
-                | (CResourceFact::View(_), CResourceFact::View(_)) => true,
-                _ => false,
-            };
-            access_compatible
-                && super::assumptions::resources_equal_ignoring_memories(
-                    available.resource(),
-                    target.resource(),
-                )
-        })
-    };
+    let target_is_available =
+        |context: &ResourceContext| context.satisfies_fact(target, assumptions);
     if target_is_available(context) {
         return Some(context.clone());
     }
