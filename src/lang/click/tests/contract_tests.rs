@@ -348,6 +348,110 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 }
 
 #[test]
+fn grouped_opaque_calls_keep_declared_composite_resources_on_proof() {
+    let borrow_source = r#"
+            int32 borrow_token(int32 key) {
+                return key;
+            }
+        "#;
+    let caller_source = r#"
+            int32 borrow_token_twice(int32 key) {
+                int32 value;
+                value = borrow_token(key);
+                value = borrow_token(key);
+                return value;
+            }
+        "#;
+    let click_source = r#"
+            abstract resource token(key: int32);
+
+            resource token_bundle(key: int32) {
+                contains token(key);
+            }
+
+            verifying "borrow_token.c";
+            verifying "borrow_token_twice.c";
+
+            int32 borrow_token(int32 key) {
+                consumes token_bundle(key);
+                produces token_bundle(key);
+                ensures result == key;
+            } by {
+                execute();
+                simp();
+            }
+
+            int32 borrow_token_twice(int32 key) {
+                consumes token_bundle(key);
+                produces token_bundle(key);
+                ensures result == key;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+    let sources = &[
+        ("borrow_token.c", borrow_source),
+        ("borrow_token_twice.c", caller_source),
+    ];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    verified.expect("declared composite resources should cross both checked calls");
+    assert_eq!(flat_units, 2, "both functions should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "declared-resource calls must not replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "declared-resource calls must not export replay state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        sources,
+        "borrow_token_twice",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained declared-resource call Proof should expand");
+    let caller_expansion = expanded
+        .split("int32 borrow_token_twice")
+        .nth(1)
+        .expect("the expanded source should retain the selected caller");
+    assert!(!caller_expansion.contains("execute();"), "{expanded}");
+    assert!(!caller_expansion.contains("simp();"), "{expanded}");
+    assert_eq!(
+        caller_expansion.matches("step() using {").count(),
+        4,
+        "each caller statement should retain one checked step: {expanded}"
+    );
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten declared-resource call proof should verify normally");
+
+    let checked_step = "                step() using {\n                }\n";
+    let corrupted = expanded.replacen(checked_step, "", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose checked call steps"
+    );
+    verify_c0_sources(&corrupted, sources)
+        .expect_err("removing an extracted resource-bearing step must invalidate the proof");
+}
+
+#[test]
 fn grouped_predicate_contracts_stay_on_one_proof() {
     let c_source = r#"
             int32 identity(int32 x) {

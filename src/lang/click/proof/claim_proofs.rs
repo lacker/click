@@ -22,21 +22,19 @@ pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) proof_owned: bool,
 }
 
-fn resource_clause_contains_declared(resource: &ResourceClause) -> bool {
+fn resource_clause_is_declared(resource: &ResourceClause) -> bool {
     match resource {
         ResourceClause::Declared { .. } => true,
-        ResourceClause::Quantified { resource, .. } => resource_clause_contains_declared(resource),
+        ResourceClause::Quantified { resource, .. } => resource_clause_is_declared(resource),
         ResourceClause::Read(_) | ResourceClause::Write(_) => false,
     }
 }
 
-fn requirement_contains_declared_resource(requirement: &Requirement) -> bool {
+fn requirement_resource(requirement: &Requirement) -> Option<&ResourceClause> {
     match requirement {
-        Requirement::Labeled { requirement, .. } => {
-            requirement_contains_declared_resource(requirement)
-        }
-        Requirement::Resource(resource) => resource_clause_contains_declared(resource),
-        Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => false,
+        Requirement::Labeled { requirement, .. } => requirement_resource(requirement),
+        Requirement::Resource(resource) => Some(resource),
+        Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => None,
     }
 }
 
@@ -75,11 +73,13 @@ fn grouped_flat_proof_supported(
     predicate_environment: &PredicateEnvironment,
 ) -> bool {
     // The direct grouped slice owns one execution frontier with proposition
-    // claims, including value predicates, checked calls, and all feasible
-    // successor paths. Heap/resource-observing predicate bodies still depend
-    // on outcome compatibility planning. Declared composite contract
-    // resources, leading point scopes, and grouped choice scopes likewise
-    // preserve their compatibility prerequisites and cursor locations.
+    // claims, including value predicates, immutable opaque calls transferring
+    // unmixed declared composite resources, and all feasible successor paths.
+    // Heap/resource-observing predicate bodies, mixed raw-memory/composite
+    // contracts, and explicit composite manipulation still depend on outcome
+    // compatibility planning. Leading point scopes, grouped choice scopes, and
+    // empty mutable exact-frame boundaries likewise preserve their
+    // compatibility prerequisites and cursor locations.
     let leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -97,6 +97,39 @@ fn grouped_flat_proof_supported(
     let grouped_choice_scope = tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
+    let contract_resources = function_block
+        .requires()
+        .iter()
+        .filter_map(requirement_resource)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Resource(resource) = clause.ensure() else {
+                return None;
+            };
+            Some(resource)
+        }))
+        .collect::<Vec<_>>();
+    let has_declared_contract_resource = contract_resources
+        .iter()
+        .any(|resource| resource_clause_is_declared(resource));
+    let declared_resources_are_unmixed = contract_resources
+        .iter()
+        .all(|resource| resource_clause_is_declared(resource));
+    let declared_resource_call_shape = declared_resources_are_unmixed
+        && function_block
+            .effects()
+            .iter()
+            .all(|clause| matches!(clause.effect(), Effect::Immutable))
+        && tactics.iter().all(|tactic| {
+            !matches!(
+                tactic,
+                ProofTactic::SmartFrame(_)
+                    | ProofTactic::FrameUsing { .. }
+                    | ProofTactic::UnfoldResource(_)
+                    | ProofTactic::FoldResource(_)
+                    | ProofTactic::ObserveResource(_)
+                    | ProofTactic::Open(_)
+            )
+        });
     let compatibility_empty_mutable_frame = function_block
         .effects()
         .iter()
@@ -112,16 +145,6 @@ fn grouped_flat_proof_supported(
         });
     let owns_one_execution_frontier =
         !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
-    let no_declared_contract_resources = function_block
-        .requires()
-        .iter()
-        .all(|requirement| !requirement_contains_declared_resource(requirement))
-        && function_block.ensures().iter().all(|clause| {
-            !matches!(
-                clause.ensure(),
-                Ensure::Resource(resource) if resource_clause_contains_declared(resource)
-            )
-        });
     let pointer_parameters = function_block
         .signature()
         .parameters()
@@ -156,7 +179,9 @@ fn grouped_flat_proof_supported(
                     )
                 })
         });
-    owns_one_execution_frontier && no_declared_contract_resources && value_predicate_contract
+    owns_one_execution_frontier
+        && value_predicate_contract
+        && (!has_declared_contract_resource || declared_resource_call_shape)
 }
 
 fn apply_checked_contract_resource_transition(
