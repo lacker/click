@@ -222,6 +222,7 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
             leading_point_proposition_supported(proposition)
         }
+        ClickProposition::Exists { .. } | ClickProposition::RangeAny { .. } => true,
         ClickProposition::Separate { .. }
         | ClickProposition::Contains { .. }
         | ClickProposition::Loadable { .. }
@@ -229,9 +230,7 @@ fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
         | ClickProposition::Or(_, _)
         | ClickProposition::Implies(_, _)
         | ClickProposition::ForAll { .. }
-        | ClickProposition::Exists { .. }
         | ClickProposition::RangeAll { .. }
-        | ClickProposition::RangeAny { .. }
         | ClickProposition::PredicateCall { .. } => false,
     }
 }
@@ -242,6 +241,8 @@ fn leading_point_source_proof_supported(proof: &SourceProof) -> bool {
         SourceProof::Script(tactics) => tactics.iter().all(|tactic| match tactic {
             ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
+            | ProofTactic::Choose(_)
+            | ProofTactic::Witness(_)
             | ProofTactic::Assumption
             | ProofTactic::Normalize
             | ProofTactic::Rewrite(_)
@@ -272,8 +273,8 @@ fn grouped_flat_proof_supported(
     // contracts, and explicit composite manipulation still depend on outcome
     // compatibility planning. The direct leading-point slice deliberately
     // starts with proposition-only goals and the linear operations already
-    // checked by Proof. Logical decomposition, quantified choices,
-    // loadability/resource obligations, grouped choice scopes, and empty
+    // checked by Proof. Logical decomposition, universal binders,
+    // loadability/resource obligations, top-level grouped choices, and empty
     // mutable exact-frame boundaries preserve their compatibility
     // prerequisites and cursor locations.
     let unsupported_leading_have = tactics

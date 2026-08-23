@@ -10571,6 +10571,9 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
                 .outcome_point_view()
                 .expect("a focused outcome judgment resolves its point view"),
+            ProofContext::Execution(_) => self
+                .execution_proposition_point_view()
+                .ok_or_else(|| self.step_error("`choose` requires a point proposition proof"))?,
             _ => return Err(self.step_error("`choose` requires a point proposition proof")),
         };
         self.proposition_goal("`choose` requires a proposition goal")?;
@@ -10654,6 +10657,9 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
                 .outcome_point_view()
                 .expect("a focused outcome judgment resolves its point view"),
+            ProofContext::Execution(_) => self
+                .execution_proposition_point_view()
+                .ok_or_else(|| self.step_error("`witness` requires a point proposition proof"))?,
             _ => return Err(self.step_error("`witness` requires a point proposition proof")),
         };
         let goal = self
@@ -11059,6 +11065,42 @@ impl<'a> Proof<'a> {
     /// remaining program-point data.
     fn outcome_point_view(&self) -> Option<PointOperationView<'_>> {
         self.outcome_point_view_with_effects(OutcomeEffectContext::Path)
+    }
+
+    /// Point-operation data for a proposition scope opened on an execution
+    /// frontier before a function outcome exists. The nested goal borrows the
+    /// frontier snapshot solely for lowering and requirement selection;
+    /// checked point steps can refine only that proposition and proof-local
+    /// bindings.
+    fn execution_proposition_point_view(&self) -> Option<PointOperationView<'_>> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return None;
+        };
+        let Goal::Proposition(goal) = self.focused_goal()? else {
+            return None;
+        };
+        if goal.outcome.is_some() {
+            return None;
+        }
+        let execution = goal.context.execution.as_deref()?;
+        Some(PointOperationView {
+            claim_label: context.claim_label,
+            tactic_index: context.tactic_index,
+            effect_facts: &execution.replay.effect_facts,
+            parameters: context.parsed_function.parameters(),
+            arguments: context.arguments,
+            pre_state: execution.replay.execution_start_state(&execution.state),
+            state: &execution.state,
+            result: None,
+            program_point_states: &execution.replay.program_point_states,
+            surface_propositions: &execution.replay.surface_propositions,
+            predicate_environment: context.predicate_environment,
+            click_function_environment: context.click_function_environment,
+            theorem_environment: context.theorem_environment,
+            original_requirements: context.function_block.requires(),
+            requirement_label_indices: Some(context.function_block.requirement_label_indices()),
+            requirement_facts: &execution.replay.execution_start_facts,
+        })
     }
 
     /// The focused judgment's result-aware point data: a function-outcome
