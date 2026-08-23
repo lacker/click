@@ -38,6 +38,166 @@ fn requirement_resource(requirement: &Requirement) -> Option<&ResourceClause> {
     }
 }
 
+fn grouped_contract_resource_shape(function_block: &FunctionBlock) -> (bool, bool) {
+    let contract_resources = function_block
+        .requires()
+        .iter()
+        .filter_map(requirement_resource)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Resource(resource) = clause.ensure() else {
+                return None;
+            };
+            Some(resource)
+        }))
+        .collect::<Vec<_>>();
+    (
+        contract_resources
+            .iter()
+            .any(|resource| resource_clause_is_declared(resource)),
+        contract_resources
+            .iter()
+            .all(|resource| resource_clause_is_declared(resource)),
+    )
+}
+
+fn grouped_value_predicate_contract_supported(
+    function_block: &FunctionBlock,
+    predicate_environment: &PredicateEnvironment,
+) -> bool {
+    let pointer_parameters = function_block
+        .signature()
+        .parameters()
+        .iter()
+        .filter(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
+        .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    function_block
+        .requires()
+        .iter()
+        .filter_map(Requirement::proposition)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Proposition(proposition) = clause.ensure() else {
+                return None;
+            };
+            Some(proposition)
+        }))
+        .all(|proposition| {
+            let mut predicates = BTreeSet::new();
+            collect_called_predicates(proposition, &mut predicates);
+            if predicates.is_empty() {
+                return true;
+            }
+            let mut referenced = BTreeSet::new();
+            collect_click_proposition_referenced_names(proposition, &mut referenced);
+            referenced.is_disjoint(&pointer_parameters)
+                && predicates.into_iter().all(|name| {
+                    value_predicate_definition_supported(
+                        &name,
+                        predicate_environment,
+                        &mut BTreeSet::new(),
+                    )
+                })
+        })
+}
+
+fn grouped_scoped_resource_call_supported(
+    function_block: &FunctionBlock,
+    tactics: &[ProofTactic],
+    predicate_environment: &PredicateEnvironment,
+    resource_environment: &ResourceEnvironment,
+) -> bool {
+    let [ProofTactic::Open(open), continuation @ ..] = tactics else {
+        return false;
+    };
+    let (has_declared_contract_resource, declared_resources_are_unmixed) =
+        grouped_contract_resource_shape(function_block);
+    let single_declared_contract_resources = function_block
+        .requires()
+        .iter()
+        .filter_map(requirement_resource)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Resource(resource) = clause.ensure() else {
+                return None;
+            };
+            Some(resource)
+        }))
+        .all(|resource| matches!(resource, ResourceClause::Declared { .. }));
+    let scope_definition_is_nonpopulation = match &open.resource {
+        ResourceClause::Declared { name, .. } => {
+            resource_environment.get(name).is_some_and(|definition| {
+                definition.composite_body().is_some_and(|body| {
+                    body.condition().is_none_or(|condition| {
+                        !crate::lang::click::validation::proposition_contains_resource_count(
+                            condition,
+                        )
+                    }) && body.facts().iter().all(|fact| {
+                        !crate::lang::click::validation::proposition_contains_resource_count(fact)
+                    }) && body
+                        .contains()
+                        .iter()
+                        .all(|resource| !matches!(resource, ResourceClause::Quantified { .. }))
+                })
+            })
+        }
+        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Quantified { .. } => {
+            false
+        }
+    };
+    let mutable_contract = function_block
+        .effects()
+        .iter()
+        .any(|clause| !matches!(clause.effect(), Effect::Immutable));
+    let body_executes = open.tactics.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        )
+    });
+    let body_frames = open.tactics.iter().any(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
+        )
+    });
+    let linear_body = open.tactics.iter().all(|tactic| {
+        !matches!(
+            tactic,
+            ProofTactic::Open(_)
+                | ProofTactic::If(_)
+                | ProofTactic::Cases(_)
+                | ProofTactic::Branch(_)
+                | ProofTactic::Loop(_)
+                | ProofTactic::Choose(_)
+                | ProofTactic::Witness(_)
+        )
+    });
+    let outcome_only_continuation = continuation.iter().all(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::Have(_)
+                | ProofTactic::ApplyTheorem(_)
+                | ProofTactic::ApplyTheoremUsing { .. }
+                | ProofTactic::Assumption
+                | ProofTactic::Normalize
+                | ProofTactic::Rewrite(_)
+                | ProofTactic::Simp
+                | ProofTactic::SimpUsing(_)
+                | ProofTactic::Transport { .. }
+                | ProofTactic::TransportUsing { .. }
+        )
+    });
+    has_declared_contract_resource
+        && declared_resources_are_unmixed
+        && single_declared_contract_resources
+        && scope_definition_is_nonpopulation
+        && mutable_contract
+        && body_executes
+        && body_frames
+        && linear_body
+        && outcome_only_continuation
+        && grouped_value_predicate_contract_supported(function_block, predicate_environment)
+}
+
 fn value_predicate_definition_supported(
     name: &str,
     predicate_environment: &PredicateEnvironment,
@@ -97,23 +257,8 @@ fn grouped_flat_proof_supported(
     let grouped_choice_scope = tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
-    let contract_resources = function_block
-        .requires()
-        .iter()
-        .filter_map(requirement_resource)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Resource(resource) = clause.ensure() else {
-                return None;
-            };
-            Some(resource)
-        }))
-        .collect::<Vec<_>>();
-    let has_declared_contract_resource = contract_resources
-        .iter()
-        .any(|resource| resource_clause_is_declared(resource));
-    let declared_resources_are_unmixed = contract_resources
-        .iter()
-        .all(|resource| resource_clause_is_declared(resource));
+    let (has_declared_contract_resource, declared_resources_are_unmixed) =
+        grouped_contract_resource_shape(function_block);
     let declared_resource_call_shape = declared_resources_are_unmixed
         && function_block
             .effects()
@@ -145,42 +290,8 @@ fn grouped_flat_proof_supported(
         });
     let owns_one_execution_frontier =
         !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
-    let pointer_parameters = function_block
-        .signature()
-        .parameters()
-        .iter()
-        .filter(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
-        .map(|parameter| parameter.name().to_string())
-        .collect::<BTreeSet<_>>();
-    let value_predicate_contract = function_block
-        .requires()
-        .iter()
-        .filter_map(Requirement::proposition)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Proposition(proposition) = clause.ensure() else {
-                return None;
-            };
-            Some(proposition)
-        }))
-        .all(|proposition| {
-            let mut predicates = BTreeSet::new();
-            collect_called_predicates(proposition, &mut predicates);
-            if predicates.is_empty() {
-                return true;
-            }
-            let mut referenced = BTreeSet::new();
-            collect_click_proposition_referenced_names(proposition, &mut referenced);
-            referenced.is_disjoint(&pointer_parameters)
-                && predicates.into_iter().all(|name| {
-                    value_predicate_definition_supported(
-                        &name,
-                        predicate_environment,
-                        &mut BTreeSet::new(),
-                    )
-                })
-        });
     owns_one_execution_frontier
-        && value_predicate_contract
+        && grouped_value_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)
 }
 
@@ -473,9 +584,13 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     };
     let grouped_direct_supported =
         grouped_flat_proof_supported(function_block, tactics, predicate_environment);
-    let direct_proof = if !grouped_direct_supported {
-        None
-    } else {
+    let grouped_scoped_supported = grouped_scoped_resource_call_supported(
+        function_block,
+        tactics,
+        predicate_environment,
+        resource_environment,
+    );
+    let direct_proof = if grouped_direct_supported {
         try_check_flat_function_proof(
             &initial,
             &program,
@@ -492,6 +607,25 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &function,
             &arguments,
         )?
+    } else if grouped_scoped_supported {
+        try_check_scoped_function_proof(
+            &initial,
+            &program,
+            generated_by_source_index,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            &proof_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+        )?
+    } else {
+        None
     };
     if let Some(proof) = direct_proof {
         #[cfg(test)]

@@ -518,6 +518,103 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     Ok(Some(proof))
 }
 
+/// Checks one linear `open(resource) { ... }` function proof without exporting
+/// the checked scope back into replay-owned semantic state. The scope entry,
+/// mutable body, frame, close, and outcome suffix remain one persistent Proof
+/// lineage; a miss publishes neither semantic state nor expansion metadata.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
+    context: &ProofReplayContext,
+    program: &InternalProofNode,
+    generated_by_source_index: Option<usize>,
+    expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+) -> Result<Option<Proof<'a>>, ClickError> {
+    let InternalProofNode::Open {
+        index,
+        source_index,
+        resource,
+        body,
+        continuation,
+    } = program
+    else {
+        return Ok(None);
+    };
+    if linear_execution_tactics(body).is_none() || linear_execution_tactics(continuation).is_none()
+    {
+        return Ok(None);
+    }
+
+    let mut staged_expansion_capture = expansion_capture.as_deref().cloned();
+    let proof_site = context.replay.proof_site.clone();
+    let root = Proof::for_execution_frontier(
+        claim_label,
+        *index,
+        context.clone(),
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    let scope = root.begin_open(resource.clone(), *source_index)?;
+    let Some(scope) = advance_checked_open_scope(
+        scope,
+        body,
+        staged_expansion_capture.as_mut(),
+        proof_site.as_ref(),
+    )?
+    else {
+        return Ok(None);
+    };
+    let proof = scope.join()?;
+    let Some((mut proof, remaining)) = advance_checked_linear_continuation(
+        proof,
+        continuation,
+        staged_expansion_capture.as_mut(),
+        proof_site.as_ref(),
+        generated_by_source_index.unwrap_or(usize::MAX),
+        true,
+        Some(claim_label),
+    )?
+    else {
+        return Ok(None);
+    };
+    check_verification_deadline()?;
+    if !proof.is_at_function_exit() || retained_surface_has_empty_branch_leaf(&proof) {
+        return Ok(None);
+    }
+    for indexed in remaining {
+        check_verification_deadline()?;
+        let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+            return Ok(None);
+        };
+        proof = proof.defer_post_execution_source_tactic(
+            indexed.index,
+            indexed.source_index,
+            post_tactic,
+            staged_expansion_capture.as_mut(),
+        )?;
+    }
+    if let (Some(expansion_capture), Some(staged)) = (expansion_capture, staged_expansion_capture) {
+        *expansion_capture = staged;
+    }
+    Ok(Some(proof))
+}
+
 /// Tries a complete flat execution/effect script on one immutable Proof.
 ///
 /// Search may inspect and fork the Proof, but every accepted statement and
