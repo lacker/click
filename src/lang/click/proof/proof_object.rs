@@ -12,6 +12,9 @@ thread_local! {
     static CHECKED_EXECUTION_INTERFACE_JOINS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -21,6 +24,16 @@ pub(in crate::lang::click) fn count_checked_execution_interface_joins<R>(
     let before = CHECKED_EXECUTION_INTERFACE_JOINS.with(std::cell::Cell::get);
     let result = operation();
     let after = CHECKED_EXECUTION_INTERFACE_JOINS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_source_certificate_checks<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -262,30 +275,49 @@ enum ProofBranchStructure {
 }
 
 fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
-    let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
-    let [step] = certificate.steps() else {
-        return None;
-    };
-    matches!(
-        step,
-        SimpleProofStep::ApplyTheoremUsing { .. }
-            | SimpleProofStep::UnfoldPredicate(_)
-            | SimpleProofStep::Witness(_)
-            | SimpleProofStep::Choose(_)
-            | SimpleProofStep::Assumption
-            | SimpleProofStep::Extract(_)
-            | SimpleProofStep::Normalize
-            | SimpleProofStep::Intro
-            | SimpleProofStep::Split
-            | SimpleProofStep::Left
-            | SimpleProofStep::Right
-            | SimpleProofStep::Enumerate
-            | SimpleProofStep::Contradiction(_)
-            | SimpleProofStep::Rewrite(_)
-            | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::InstantiateUsing { .. }
-    )
-    .then(|| step.clone())
+    match tactic {
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => Some(SimpleProofStep::ApplyTheoremUsing {
+            application: application.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::UnfoldPredicate(name) => Some(SimpleProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::Witness(witness) => Some(SimpleProofStep::Witness(witness.clone())),
+        ProofTactic::Choose(choice) => Some(SimpleProofStep::Choose(choice.clone())),
+        ProofTactic::Assumption => Some(SimpleProofStep::Assumption),
+        ProofTactic::Extract(proposition) => Some(SimpleProofStep::Extract(proposition.clone())),
+        ProofTactic::Normalize => Some(SimpleProofStep::Normalize),
+        ProofTactic::Intro => Some(SimpleProofStep::Intro),
+        ProofTactic::Split => Some(SimpleProofStep::Split),
+        ProofTactic::Left => Some(SimpleProofStep::Left),
+        ProofTactic::Right => Some(SimpleProofStep::Right),
+        ProofTactic::Enumerate => Some(SimpleProofStep::Enumerate),
+        ProofTactic::Contradiction(proposition) => {
+            Some(SimpleProofStep::Contradiction(proposition.clone()))
+        }
+        ProofTactic::Rewrite(proposition) => Some(SimpleProofStep::Rewrite(proposition.clone())),
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => Some(SimpleProofStep::TransportUsing {
+            source: source.clone(),
+            target: target.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::InstantiateUsing {
+            quantified,
+            argument,
+            premises,
+        } => Some(SimpleProofStep::InstantiateUsing {
+            quantified: quantified.clone(),
+            argument: argument.clone(),
+            premises: premises.clone(),
+        }),
+        _ => None,
+    }
 }
 
 fn source_proof_contains_linear_search(proof: &SourceProof) -> bool {
@@ -406,23 +438,13 @@ pub(super) fn script_contains_linear_search(tactics: &[ProofTactic]) -> bool {
 }
 
 fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
-    if script_contains_linear_search(tactics) {
-        linear_script_is_supported(tactics)
-    } else {
-        ProofCertificate::from_proof_tactics(tactics).is_ok()
-    }
+    linear_script_is_supported(tactics)
 }
 
 fn source_proof_is_supported(proof: &SourceProof) -> bool {
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        SourceProof::Script(tactics) => {
-            if script_contains_linear_search(tactics) {
-                linear_script_is_supported(tactics)
-            } else {
-                ProofCertificate::from_proof_tactics(tactics).is_ok()
-            }
-        }
+        SourceProof::Script(tactics) => linear_script_is_supported(tactics),
         SourceProof::Tactic(SmartTactic::Frame) => false,
     }
 }
@@ -5797,15 +5819,19 @@ impl<'a> Proof<'a> {
         Ok((successor, record))
     }
 
-    /// Independently checks an already-serialized simple certificate.
+    /// Checks an already-serialized simple certificate.
     ///
-    /// This is for explicit source verification and expansion/audit, where
-    /// replay is intentional. Smart tactics instead search with `apply_step`
-    /// and the structural branch operations directly.
+    /// This remains a transitional fallback for source operations not yet
+    /// admitted by the typed Proof surface, and a boundary for untrusted
+    /// planner candidates. Ordinary admitted source scripts use
+    /// `try_linear_script`; smart tactics search with `apply_step` and the
+    /// structural branch operations directly.
     pub(super) fn check_certificate(
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
+        #[cfg(test)]
+        SOURCE_CERTIFICATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         self.check_certificate_with_origin(certificate, None, false)
     }
 
@@ -8701,34 +8727,38 @@ impl<'a> Proof<'a> {
         proof.is_complete().then_some(proof)
     }
 
-    /// Runs the linear proposition-script subset already represented by
-    /// checked `Proof` transitions.
-    ///
-    /// Bare `apply` and `simp` remain untrusted search operations: they may
-    /// inspect the current proof, but each selected simple step advances only
-    /// through `apply_step`. Explicit simple tactics in the same script use
-    /// that identical path, so a successful search already owns its complete
-    /// expandable derivation rather than reconstructing one afterward.
-    /// Runs one branch arm of the linear script driver on the focused
-    /// sibling goal: smart bodies search through the shared drivers and
-    /// already-simple bodies check their exact certificate.
+    /// Runs one branch arm of the linear script driver on the focused sibling
+    /// goal. Both smart and explicit bodies apply their operations directly to
+    /// this `Proof`; ordinary source interpretation does not first construct a
+    /// certificate.
     fn try_focused_script_arm(&self, tactics: &[ProofTactic]) -> Result<Option<Self>, ClickError> {
-        if script_contains_linear_search(tactics) {
-            self.try_linear_smart_script(tactics)
-        } else {
-            let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
-                return Ok(None);
-            };
-            Ok(self.check_certificate(&certificate).ok())
-        }
+        self.try_linear_script(tactics)
     }
 
-    pub(super) fn try_linear_smart_script(
+    /// Interprets one supported source script directly on this proof.
+    ///
+    /// Smart tactics search for checked descendants while explicit tactics
+    /// apply their named operation. The returned proof already owns both the
+    /// semantic result and its exact provenance; no certificate is constructed
+    /// or replayed to establish acceptance.
+    pub(super) fn try_linear_script(
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
         let contains_search = script_contains_linear_search(tactics);
-        if !contains_search || tactics.is_empty() {
+        match self.try_linear_script_inner(tactics) {
+            // Before this migration, an explicit-only script was checked by
+            // the established source interpreter whenever the typed Proof
+            // surface did not yet admit it. Preserve that transactional
+            // fallback while successful explicit scripts take the direct
+            // path. Smart-script failures retain their checked diagnostic.
+            Err(_) if !contains_search && !crate::instrumentation::deadline_exceeded() => Ok(None),
+            result => result,
+        }
+    }
+
+    fn try_linear_script_inner(&self, tactics: &[ProofTactic]) -> Result<Option<Self>, ClickError> {
+        if tactics.is_empty() {
             return Ok(None);
         }
 
@@ -8779,15 +8809,7 @@ impl<'a> Proof<'a> {
                         | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                             scope.try_simp_closure()?
                         }
-                        SourceProof::Script(body) if script_contains_linear_search(body) => {
-                            scope.try_linear_smart_script(body)?
-                        }
-                        SourceProof::Script(body) => {
-                            let Ok(certificate) = ProofCertificate::from_proof_tactics(body) else {
-                                return Ok(None);
-                            };
-                            scope.check_certificate(&certificate).ok()
-                        }
+                        SourceProof::Script(body) => scope.try_linear_script(body)?,
                         SourceProof::Tactic(SmartTactic::Frame) => None,
                     };
                     let Some(selected) = selected else {
@@ -8852,11 +8874,22 @@ impl<'a> Proof<'a> {
         Ok(proof.focused_discharged().then_some(proof))
     }
 
-    /// Whether this source proof is a smart script wholly represented by the
-    /// recursive proposition driver. This is a syntax-only capability query;
-    /// it does not inspect facts, lower propositions, or advance a proof.
-    pub(super) fn supports_linear_smart_source(proof: &SourceProof) -> bool {
-        source_proof_contains_linear_search(proof) && source_proof_is_supported(proof)
+    /// Smart-only compatibility wrapper retained for focused regressions.
+    #[cfg(test)]
+    pub(super) fn try_linear_smart_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        if !script_contains_linear_search(tactics) {
+            return Ok(None);
+        }
+        self.try_linear_script(tactics)
+    }
+
+    /// Whether this source proof is wholly represented by the recursive
+    /// proposition driver. This is a syntax-only capability query.
+    pub(super) fn supports_linear_source(proof: &SourceProof) -> bool {
+        source_proof_is_supported(proof)
     }
 
     /// Tries a bounded linear statement candidate whose explicit dependencies
@@ -11578,8 +11611,22 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
-    /// Runs one supported smart script inside the owned nested body and
+    /// Runs one supported source script inside the owned nested body and
     /// retains its already-checked descendant.
+    pub(super) fn try_linear_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_linear_script(tactics)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
+    /// Smart-only compatibility wrapper retained for focused regressions.
+    #[cfg(test)]
     pub(super) fn try_linear_smart_script(
         &self,
         tactics: &[ProofTactic],

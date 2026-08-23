@@ -1899,7 +1899,7 @@ pub(super) fn finish_ordered_proof_replay(
                                                 SmartTactic::Auto | SmartTactic::Simp,
                                             ) => scope.try_simp_closure()?,
                                             SourceProof::Script(tactics) => {
-                                                match scope.try_linear_smart_script(tactics)? {
+                                                match scope.try_linear_script(tactics)? {
                                                     Some(selected) => Some(selected),
                                                     None => {
                                                         let Ok(certificate) =

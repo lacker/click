@@ -413,7 +413,7 @@ fn solve_nested_have<'a>(
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
-            if let Some(selected) = nested.try_linear_smart_script(body)? {
+            if let Some(selected) = nested.try_linear_script(body)? {
                 Some(selected)
             } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
                 nested.apply_candidate_certificate(&certificate).ok()

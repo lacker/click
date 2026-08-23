@@ -12,7 +12,9 @@ mod point_proofs;
 mod proof_object;
 
 #[cfg(test)]
-pub(in crate::lang::click) use proof_object::count_checked_execution_interface_joins;
+pub(in crate::lang::click) use proof_object::{
+    count_checked_execution_interface_joins, count_source_certificate_checks,
+};
 mod pure_theorems;
 mod replay_engine;
 mod replay_state;

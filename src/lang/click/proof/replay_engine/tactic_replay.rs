@@ -533,7 +533,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     );
     let (proof, append_certificate) = match plan {
         Plan::Script(tactics) => {
-            if let Some(checked) = proof.try_linear_smart_script(tactics)? {
+            if let Some(checked) = proof.try_linear_script(tactics)? {
                 (checked, true)
             } else {
                 let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {

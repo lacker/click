@@ -320,7 +320,13 @@ fn pure_bare_apply_builds_a_checked_proof_object_certificate() {
         "apply(equality_symmetric(first, second));",
         "apply(equality_symmetric(first, second)) using { first == second; }",
     );
-    verify_click_theorems(&explicit).expect("exported explicit steps should verify independently");
+    let (explicit_result, certificate_checks) =
+        proof::count_source_certificate_checks(|| verify_click_theorems(&explicit));
+    explicit_result.expect("exported explicit steps should verify independently");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary explicit source should apply its operations directly to Proof"
+    );
 
     let corrupted = source.replace(
         "apply(equality_symmetric(first, second));",

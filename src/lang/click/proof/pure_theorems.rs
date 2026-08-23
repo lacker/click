@@ -958,7 +958,7 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
-    if let Some(proof) = root.try_linear_smart_script(tactics)? {
+    if let Some(proof) = root.try_linear_script(tactics)? {
         return Ok(Some(proof.certificate()));
     }
 

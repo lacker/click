@@ -516,12 +516,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         })?
     };
 
-    // Structural point goals use the same checked smart-script seam as
+    // Structural point goals use the same checked source-script seam as
     // ordinary point `have` proofs. Search may select a theorem application,
     // but only `Proof::apply_step` installs its conclusion and provenance.
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
-    if Proof::supports_linear_smart_source(proof) {
+    if Proof::supports_linear_source(proof) {
         let root = Proof::for_point_goal(
             claim_label,
             proof_index,
@@ -543,7 +543,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => {
                 root.try_simp_closure()?
             }
-            SourceProof::Script(tactics) => root.try_linear_smart_script(tactics)?,
+            SourceProof::Script(tactics) => root.try_linear_script(tactics)?,
             SourceProof::Tactic(SmartTactic::Frame) => None,
         };
         if let Some(checked) = checked {

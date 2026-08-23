@@ -8053,8 +8053,14 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
             }
         "#;
 
-    verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect("explicit point have should advance through its checked simple step");
+    let (verified, certificate_checks) = proof::count_source_certificate_checks(|| {
+        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    });
+    verified.expect("explicit point have should advance through its checked simple step");
+    assert_eq!(
+        certificate_checks, 0,
+        "the admitted explicit point have should apply directly to Proof"
+    );
     let expanded = expand_c0_claim_source(
         click_source,
         &[("identity.c", c_source)],
@@ -8090,10 +8096,16 @@ fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    let ((verified, events), certificate_checks) = proof::count_source_certificate_checks(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("identity.c", c_source)])
+        })
     });
     verified.expect("explicit post-execution have should advance through its outcome Proof");
+    assert_eq!(
+        certificate_checks, 0,
+        "the admitted explicit outcome have should apply directly to Proof"
+    );
     let source_verification_events = events.iter().take_while(|event| {
         !matches!(
             event,
