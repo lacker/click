@@ -2183,6 +2183,72 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
 }
 
 #[test]
+fn grouped_top_level_existential_operations_reject_without_replay() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let cases = [
+        (
+            "witness",
+            r#"
+                verifying "identity.c";
+
+                int32 identity(int32 x) {
+                    ensures exists (k: int32) { k == result };
+                } by {
+                    execute();
+                    witness(k = result);
+                    simp();
+                }
+            "#,
+            "top-level `witness` is not available in a grouped proof",
+        ),
+        (
+            "choose",
+            r#"
+                verifying "identity.c";
+
+                int32 identity(int32 x) {
+                    requires has_k: exists (k: int32) { k == x };
+                    ensures result == x;
+                } by {
+                    choose(k from requirement has_k);
+                    execute();
+                    simp();
+                }
+            "#,
+            "top-level `choose` is not available in a grouped proof",
+        ),
+    ];
+
+    for (operation, click_source, expected) in cases {
+        let (((result, certificate_checks), context_exports), replay_executions) =
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("identity.c", c_source)])
+                    })
+                })
+            });
+        let error = result.expect_err("a grouped top-level existential operation must be rejected");
+        assert!(
+            error.message().contains(expected),
+            "unexpected grouped {operation} error: {error:?}"
+        );
+        assert_eq!(
+            replay_executions, 0,
+            "grouped top-level {operation} rejection must not enter execute_internal_proof"
+        );
+        assert_eq!(
+            context_exports, 0,
+            "grouped top-level {operation} rejection must not export semantic state"
+        );
+        assert_eq!(
+            certificate_checks, 0,
+            "grouped top-level {operation} rejection must not check a certificate"
+        );
+    }
+}
+
+#[test]
 fn smart_pure_if_retains_checked_arm_proofs_directly() {
     let click_source = r#"
         theorem equality_case(x: int32) {

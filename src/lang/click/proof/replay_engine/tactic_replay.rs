@@ -2881,11 +2881,6 @@ fn replay_linear_tactics_without_frontier_loops(
                 unreachable!("frontier-local loops are replayed between linear tactic chunks")
             }
             ProofTactic::Witness(_) => {
-                if replay.grouped_contract {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: top-level `witness` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
-                    )));
-                }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
                     let ProofTactic::Witness(witness) = tactic else {
                         unreachable!()
@@ -2904,11 +2899,6 @@ fn replay_linear_tactics_without_frontier_loops(
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
             }
             ProofTactic::Choose(_) => {
-                if replay.grouped_contract {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: top-level `choose` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
-                    )));
-                }
                 if replay.ordered_finalization && replay.is_at_function_exit() {
                     let ProofTactic::Choose(choice) = tactic else {
                         unreachable!()

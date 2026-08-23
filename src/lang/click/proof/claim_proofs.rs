@@ -288,6 +288,23 @@ fn leading_point_have_supported(have: &ProofHave) -> bool {
         && leading_point_source_proof_supported(&have.proof)
 }
 
+fn reject_grouped_top_level_existential_operations(
+    proof_label: &str,
+    tactics: &[ProofTactic],
+) -> Result<(), ClickError> {
+    for (tactic_index, tactic) in tactics.iter().enumerate() {
+        let operation = match tactic {
+            ProofTactic::Witness(_) => "witness",
+            ProofTactic::Choose(_) => "choose",
+            _ => continue,
+        };
+        return Err(ClickError::new(format!(
+            "`{proof_label}` tactic {tactic_index}: top-level `{operation}` is not available in a grouped proof; use it inside `have proposition by {{ ... }}`"
+        )));
+    }
+    Ok(())
+}
+
 fn grouped_flat_proof_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -322,9 +339,6 @@ fn grouped_flat_proof_supported(
         .any(|tactic| {
             matches!(tactic, ProofTactic::Have(have) if !leading_point_have_supported(have))
         });
-    let grouped_choice_scope = tactics
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::Choose(_) | ProofTactic::Witness(_)));
     let (has_declared_contract_resource, declared_resources_are_unmixed) =
         grouped_contract_resource_shape(function_block);
     let declared_resource_call_shape = declared_resources_are_unmixed
@@ -357,7 +371,7 @@ fn grouped_flat_proof_supported(
             )
         });
     let owns_one_execution_frontier =
-        !unsupported_leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
+        !unsupported_leading_have && !compatibility_empty_mutable_frame;
     owns_one_execution_frontier
         && value_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)
@@ -612,6 +626,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             "`{proof_label}` has an empty grouped explicit proof script"
         )));
     }
+    reject_grouped_top_level_existential_operations(&proof_label, tactics)?;
     let program = build_internal_proof_with_source(tactics, &proof_label, tactic_source)?;
     let generated_by_source_index = match tactic_source {
         ProofTacticSource::SourceSyntax => None,
