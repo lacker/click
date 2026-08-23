@@ -73,6 +73,72 @@ fn flat_function_proof_stays_on_proof_through_claim_acceptance() {
 }
 
 #[test]
+fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
+    let c_source = r#"
+            int32 identity(int32 x) {
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            resource marker(x: int32) {
+                fact x == x;
+            }
+
+            verifying "identity.c";
+
+            int32 identity(int32 x) {
+                consumes marker(x);
+                ensures returns_x: result == x by {
+                    open(marker(x)) {
+                        execute();
+                    }
+                    simp();
+                }
+            }
+        "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("identity.c", c_source)])
+                    })
+                })
+            })
+        });
+    verified.expect("the individual open proof should verify");
+    assert_eq!(flat_units, 1, "the open claim should finish from one Proof");
+    assert_eq!(replay_executions, 0, "the open claim entered legacy replay");
+    assert_eq!(context_exports, 0, "the open claim exported semantic state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("identity.c", c_source)],
+        "identity",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the individual open proof should expand");
+    assert!(expanded.contains("open(marker(x))"), "{expanded}");
+    assert!(!expanded.contains("execute();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the rewritten individual open proof should verify normally");
+
+    let checked_step = "                        step() using {\n                        }\n";
+    let corrupted = expanded.replacen(checked_step, "", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose the return step"
+    );
+    verify_c0_sources(&corrupted, &[("identity.c", c_source)])
+        .expect_err("removing the scoped return step must invalidate the rewritten proof");
+}
+
+#[test]
 fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
     let c_source = r#"
             int32 identity(int32 x) {

@@ -60,7 +60,7 @@ fn grouped_contract_resource_shape(function_block: &FunctionBlock) -> (bool, boo
     )
 }
 
-fn grouped_value_predicate_contract_supported(
+fn value_predicate_contract_supported(
     function_block: &FunctionBlock,
     predicate_environment: &PredicateEnvironment,
 ) -> bool {
@@ -100,18 +100,33 @@ fn grouped_value_predicate_contract_supported(
         })
 }
 
-fn grouped_scoped_resource_call_supported(
+/// Selects the complete-proof route for one top-level composite scope with
+/// only linear tactics before, inside, and after it. Counted populations,
+/// quantified resources, heap-backed contract predicates, nested scopes, and
+/// structural proof branches retain their separately audited compatibility
+/// paths until those semantic joins are owned by the same Proof driver.
+fn single_top_level_linear_scope_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
     resource_environment: &ResourceEnvironment,
 ) -> bool {
-    let [ProofTactic::Open(open), continuation @ ..] = tactics else {
+    let Some(open_index) = tactics
+        .iter()
+        .position(|tactic| matches!(tactic, ProofTactic::Open(_)))
+    else {
         return false;
     };
-    let (has_declared_contract_resource, declared_resources_are_unmixed) =
-        grouped_contract_resource_shape(function_block);
-    let single_declared_contract_resources = function_block
+    if tactics[open_index + 1..]
+        .iter()
+        .any(|tactic| matches!(tactic, ProofTactic::Open(_)))
+    {
+        return false;
+    }
+    let ProofTactic::Open(open) = &tactics[open_index] else {
+        unreachable!("the selected tactic is an open scope")
+    };
+    let has_quantified_contract_resource = function_block
         .requires()
         .iter()
         .filter_map(requirement_resource)
@@ -121,7 +136,18 @@ fn grouped_scoped_resource_call_supported(
             };
             Some(resource)
         }))
-        .all(|resource| matches!(resource, ResourceClause::Declared { .. }));
+        .any(|resource| matches!(resource, ResourceClause::Quantified { .. }));
+    let contract_observes_population = function_block
+        .requires()
+        .iter()
+        .filter_map(Requirement::proposition)
+        .chain(function_block.ensures().iter().filter_map(|clause| {
+            let Ensure::Proposition(proposition) = clause.ensure() else {
+                return None;
+            };
+            Some(proposition)
+        }))
+        .any(crate::lang::click::validation::proposition_contains_resource_count);
     let scope_definition_is_nonpopulation = match &open.resource {
         ResourceClause::Declared { name, .. } => {
             resource_environment.get(name).is_some_and(|definition| {
@@ -143,72 +169,27 @@ fn grouped_scoped_resource_call_supported(
             false
         }
     };
-    let mutable_contract = function_block
-        .effects()
+    let linear_tactics = tactics[..open_index]
         .iter()
-        .any(|clause| !matches!(clause.effect(), Effect::Immutable));
-    let body_executes = open.tactics.iter().any(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
-        )
-    });
-    let body_frames = open.tactics.iter().any(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-        )
-    });
-    let continuation_executes = continuation.iter().any(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
-        )
-    });
-    let continuation_frames = continuation.iter().any(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-        )
-    });
-    let linear_body = open.tactics.iter().all(|tactic| {
-        !matches!(
-            tactic,
-            ProofTactic::Open(_)
-                | ProofTactic::If(_)
-                | ProofTactic::Cases(_)
-                | ProofTactic::Branch(_)
-                | ProofTactic::Loop(_)
-                | ProofTactic::Choose(_)
-                | ProofTactic::Witness(_)
-        )
-    });
-    let outcome_only_continuation = continuation.iter().all(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::Have(_)
-                | ProofTactic::ApplyTheorem(_)
-                | ProofTactic::ApplyTheoremUsing { .. }
-                | ProofTactic::Assumption
-                | ProofTactic::Normalize
-                | ProofTactic::Rewrite(_)
-                | ProofTactic::Simp
-                | ProofTactic::SimpUsing(_)
-                | ProofTactic::Transport { .. }
-                | ProofTactic::TransportUsing { .. }
-        )
-    });
-    let scoped_execution_shape = body_executes && body_frames && outcome_only_continuation;
-    let preparatory_scope_shape =
-        !body_executes && !body_frames && continuation_executes && continuation_frames;
-    has_declared_contract_resource
-        && declared_resources_are_unmixed
-        && single_declared_contract_resources
+        .chain(&open.tactics)
+        .chain(&tactics[open_index + 1..])
+        .all(|tactic| {
+            !matches!(
+                tactic,
+                ProofTactic::Open(_)
+                    | ProofTactic::If(_)
+                    | ProofTactic::Cases(_)
+                    | ProofTactic::Branch(_)
+                    | ProofTactic::Loop(_)
+                    | ProofTactic::Choose(_)
+                    | ProofTactic::Witness(_)
+            )
+        });
+    !has_quantified_contract_resource
+        && !contract_observes_population
         && scope_definition_is_nonpopulation
-        && mutable_contract
-        && linear_body
-        && (scoped_execution_shape || preparatory_scope_shape)
-        && grouped_value_predicate_contract_supported(function_block, predicate_environment)
+        && linear_tactics
+        && value_predicate_contract_supported(function_block, predicate_environment)
 }
 
 fn value_predicate_definition_supported(
@@ -304,7 +285,7 @@ fn grouped_flat_proof_supported(
     let owns_one_execution_frontier =
         !leading_have && !grouped_choice_scope && !compatibility_empty_mutable_frame;
     owns_one_execution_frontier
-        && grouped_value_predicate_contract_supported(function_block, predicate_environment)
+        && value_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)
 }
 
@@ -425,22 +406,47 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    if let Some(proof) = try_check_flat_function_proof(
-        &initial,
-        &program,
-        generated_by_source_index,
-        expansion_capture.as_deref_mut(),
+    let direct_proof = if single_top_level_linear_scope_supported(
         function_block,
-        parsed_function,
-        claim_label,
-        function_environment,
+        tactics,
         predicate_environment,
-        click_function_environment,
         resource_environment,
-        theorem_environment,
-        &function,
-        &arguments,
-    )? {
+    ) {
+        try_check_scoped_function_proof(
+            &initial,
+            &program,
+            generated_by_source_index,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+        )?
+    } else {
+        try_check_flat_function_proof(
+            &initial,
+            &program,
+            generated_by_source_index,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+        )?
+    };
+    if let Some(proof) = direct_proof {
         #[cfg(test)]
         FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
         let theorems = finish_ordered_proof_units(
@@ -597,7 +603,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     };
     let grouped_direct_supported =
         grouped_flat_proof_supported(function_block, tactics, predicate_environment);
-    let grouped_scoped_supported = grouped_scoped_resource_call_supported(
+    let grouped_scoped_supported = single_top_level_linear_scope_supported(
         function_block,
         tactics,
         predicate_environment,

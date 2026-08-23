@@ -296,6 +296,7 @@ fn advance_checked_linear_continuation<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
+    allow_unrelated_statement_context: bool,
     allow_contextual_frame: bool,
     timing_claim_label: Option<&str>,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
@@ -342,7 +343,17 @@ fn advance_checked_linear_continuation<'a>(
             }
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            let Some(stepped) = proof.try_smart_step()? else {
+            // A complete top-level resource scope owns its linear suffix, so
+            // statement selection may retain unrelated resources and facts
+            // just as it does inside the scope. Flat partial migration keeps
+            // the narrower standalone-step policy until its continuation is
+            // owned transactionally too.
+            let stepped = if allow_unrelated_statement_context {
+                proof.try_indexed_execute_step()?
+            } else {
+                proof.try_smart_step()?
+            };
+            let Some(stepped) = stepped else {
                 return Ok(None);
             };
             stepped
@@ -481,6 +492,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
         staged_expansion_capture.as_mut(),
         context.replay.proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
+        false,
         true,
         Some(claim_label),
     )?
@@ -518,9 +530,10 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     Ok(Some(proof))
 }
 
-/// Checks one linear `open(resource) { ... }` function proof without exporting
-/// the checked scope back into replay-owned semantic state. The scope entry,
-/// mutable body, frame, close, and outcome suffix remain one persistent Proof
+/// Checks one function proof containing a single top-level linear
+/// `open(resource) { ... }` without exporting the checked scope back into
+/// replay-owned semantic state. A linear prefix, scope entry and body, close,
+/// continuation, frame, and outcome suffix remain one persistent Proof
 /// lineage; a miss publishes neither semantic state nor expansion metadata.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
@@ -539,15 +552,25 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     function: &'a CFunction,
     arguments: &'a [CExpression],
 ) -> Result<Option<Proof<'a>>, ClickError> {
+    let (prefix, open_node) = match program {
+        InternalProofNode::Open { .. } => (&[][..], program),
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } if matches!(continuation.as_ref(), InternalProofNode::Open { .. }) => {
+            (tactics.as_slice(), continuation.as_ref())
+        }
+        _ => return Ok(None),
+    };
     let InternalProofNode::Open {
         index,
         source_index,
         resource,
         body,
         continuation,
-    } = program
+    } = open_node
     else {
-        return Ok(None);
+        unreachable!("the scoped proof shape selected an open node")
     };
     if linear_execution_tactics(body).is_none() || linear_execution_tactics(continuation).is_none()
     {
@@ -556,9 +579,9 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
 
     let mut staged_expansion_capture = expansion_capture.as_deref().cloned();
     let proof_site = context.replay.proof_site.clone();
-    let root = Proof::for_execution_frontier(
+    let mut proof = Proof::for_execution_frontier(
         claim_label,
-        *index,
+        prefix.first().map_or(*index, |indexed| indexed.index),
         context.clone(),
         function_block,
         function,
@@ -570,7 +593,30 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
         click_function_environment,
         theorem_environment,
     );
-    let scope = root.begin_open(resource.clone(), *source_index)?;
+    if !prefix.is_empty() {
+        let prefix_node = InternalProofNode::Linear {
+            tactics: prefix.to_vec(),
+            continuation: Box::new(InternalProofNode::Done),
+        };
+        let Some((advanced, remaining)) = advance_checked_linear_continuation(
+            proof,
+            &prefix_node,
+            staged_expansion_capture.as_mut(),
+            proof_site.as_ref(),
+            generated_by_source_index.unwrap_or(usize::MAX),
+            true,
+            true,
+            Some(claim_label),
+        )?
+        else {
+            return Ok(None);
+        };
+        if !remaining.is_empty() || advanced.is_at_function_exit() {
+            return Ok(None);
+        }
+        proof = advanced;
+    }
+    let scope = proof.begin_open(resource.clone(), *source_index)?;
     let Some(scope) = advance_checked_open_scope(
         scope,
         body,
@@ -587,6 +633,7 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
         staged_expansion_capture.as_mut(),
         proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
+        true,
         true,
         Some(claim_label),
     )?
@@ -1756,6 +1803,7 @@ fn execute_internal_proof_inner(
                             expansion_capture.as_deref_mut(),
                             context.replay.proof_site.as_ref(),
                             *source_index,
+                            false,
                             false,
                             None,
                         )?

@@ -5249,10 +5249,31 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the linear open scope should verify through Proof");
+    assert_eq!(
+        flat_units, 1,
+        "the complete open proof should retain one Proof"
+    );
+    assert_eq!(replay_executions, 0, "the open proof entered legacy replay");
+    assert_eq!(context_exports, 0, "the open Proof exported semantic state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -5281,6 +5302,70 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
     .expect("the grouped open proof should expand");
     verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
         .expect("the retained open scope should independently replay");
+}
+
+#[test]
+fn linear_execution_open_retains_checked_prefix_on_one_proof() {
+    let c_source = r#"
+        int32 add_once(int32 x, int32 y) {
+            x = x + y;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        verifying "add_once.c";
+
+        int32 add_once(int32 x, int32 y) {
+            requires defined(x + y);
+            owns marker(x);
+            immutable;
+            ensures result == x + y;
+        } by {
+            step();
+            open(marker(x)) {
+                step();
+            }
+            frame();
+            simp();
+        }
+    "#;
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("add_once.c", c_source)])
+                    })
+                })
+            })
+        });
+    verified.expect("the leading statement and open scope should verify on one Proof");
+    assert_eq!(flat_units, 1, "the scoped prefix should retain one Proof");
+    assert_eq!(replay_executions, 0, "the scoped prefix entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the scoped prefix exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("add_once.c", c_source)],
+        "add_once",
+        CProofClaim::Grouped,
+    )
+    .expect("the prefixed open proof should expand");
+    assert!(!expanded.contains("step();"), "{expanded}");
+    verify_c0_sources(&expanded, &[("add_once.c", c_source)])
+        .expect("the rewritten prefixed open proof should verify normally");
 }
 
 #[test]
@@ -5594,10 +5679,37 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("contextual frame should submit its selected Proof candidate");
+    assert_eq!(
+        flat_units, 1,
+        "the mixed scoped contract should retain one Proof"
+    );
+    assert_eq!(
+        replay_executions, 0,
+        "the mixed scoped contract entered replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the mixed scoped Proof exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -5996,8 +6108,8 @@ fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
         })
         .count();
     assert_eq!(
-        resource_transitions, 4,
-        "source verification and the independent expansion gate must each transition both original outcomes once"
+        resource_transitions, 2,
+        "ordinary source verification should transition each original outcome exactly once"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
