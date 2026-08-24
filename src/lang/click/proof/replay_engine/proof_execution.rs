@@ -763,17 +763,10 @@ fn solve_nested_have<'a>(
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
-            let selected = if authoritative {
+            if authoritative {
                 nested.try_authoritative_linear_script(body)?
             } else {
                 nested.try_linear_script(body)?
-            };
-            if let Some(selected) = selected {
-                Some(selected)
-            } else if let Ok(certificate) = ProofCertificate::from_proof_tactics(body) {
-                nested.apply_candidate_certificate(&certificate).ok()
-            } else {
-                None
             }
         }
         SourceProof::Tactic(SmartTactic::Frame) => None,

@@ -15,9 +15,6 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
-    static CANDIDATE_CERTIFICATE_APPLICATIONS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -43,16 +40,6 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
     let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::lang::click) fn count_candidate_certificate_applications<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = CANDIDATE_CERTIFICATE_APPLICATIONS.with(std::cell::Cell::get);
-    let result = operation();
-    let after = CANDIDATE_CERTIFICATE_APPLICATIONS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -12400,35 +12387,6 @@ impl<'a> ProofScope<'a> {
         let mut next = self.clone();
         next.body = body;
         Ok(Some(next))
-    }
-
-    /// Checks an already-simple nested body through the same Proof API. This
-    /// is used only when a surrounding smart script also owns search steps.
-    pub(super) fn check_certificate(
-        &self,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        next.body = self.body.check_certificate(certificate)?;
-        Ok(next)
-    }
-
-    /// Applies one planner-selected candidate derivation inside this scope.
-    ///
-    /// The planner is untrusted and may synthesize any supported simple or
-    /// structured certificate. This operation checks that candidate exactly
-    /// once through the ordinary Proof transitions and retains the accepted
-    /// descendant; it does not compare against separately mutated semantic
-    /// aftermath or rerun an accepted candidate.
-    pub(super) fn apply_candidate_certificate(
-        &self,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        #[cfg(test)]
-        CANDIDATE_CERTIFICATE_APPLICATIONS.with(|applications| {
-            applications.set(applications.get() + 1);
-        });
-        self.check_certificate(certificate)
     }
 
     /// Closes a completed nested proof and makes its checked proposition
