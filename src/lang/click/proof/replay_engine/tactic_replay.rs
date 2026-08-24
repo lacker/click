@@ -1785,6 +1785,74 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                     continue;
                 }
+                // The compatibility planner may select a whole-function C
+                // branch after the exact Proof search declines. Treat that
+                // structure only as generated Surface input: the recursive
+                // Proof script driver checks the split and every arm, and the
+                // accepted descendant owns the resulting provenance. A miss
+                // leaves the immutable root available for the remaining
+                // transitional fallback.
+                if construction.blocker.is_none()
+                    && construction
+                        .steps
+                        .iter()
+                        .any(|step| matches!(step, SimpleProofStep::If { .. }))
+                {
+                    let root = Proof::for_execution_frontier(
+                        claim_label,
+                        tactic_index,
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        function_block,
+                        function,
+                        parsed_function,
+                        arguments,
+                        function_environment,
+                        resource_environment,
+                        predicate_environment,
+                        click_function_environment,
+                        theorem_environment,
+                    );
+                    let checkpoint = root.checkpoint();
+                    let planned = ProofCertificate::from_steps(construction.steps.clone());
+                    if let Some(proof) =
+                        root.try_planned_linear_script(&planned.to_proof_tactics())?
+                    {
+                        let certificate = proof.certificate_since(&checkpoint)?;
+                        let result = proof.into_execution_context()?;
+                        state = result.state;
+                        requirement_pure_facts = result.pure_facts;
+                        replay = result.replay;
+                        branch_path = result.branch_path;
+                        for step in certificate.steps() {
+                            replay.proof_certificate_builder.push_step(step.clone());
+                        }
+                        replay.proof_certificate_builder.last_step_entry =
+                            construction.last_step_entry;
+                        assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                        let slice = end_tactic_surface_scope(
+                            &mut replay,
+                            scope.take().expect("tactic scope is open"),
+                        );
+                        if capture_this_tactic {
+                            finish_tactic_expansion_capture(
+                                expansion_capture.as_deref_mut(),
+                                &slice,
+                                false,
+                            );
+                        }
+                        continue;
+                    }
+                    let result = root.into_execution_context()?;
+                    state = result.state;
+                    requirement_pure_facts = result.pure_facts;
+                    replay = result.replay;
+                    branch_path = result.branch_path;
+                }
                 let result = complete_smart_tactic(
                     ProofReplayContext {
                         state,

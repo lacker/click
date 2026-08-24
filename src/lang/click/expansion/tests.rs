@@ -1465,6 +1465,38 @@ int32 compare_swap2(int32 p[2]) {
         simp();
     }
 }"#;
+    let (expanded_execute, events) = crate::instrumentation::collect(|| {
+        expand_top_level_tactic_for_test(
+            click_source,
+            &[("compare_swap2.c", c_source)],
+            "compare_swap2",
+            CProofClaim::Ensure(0),
+            0,
+        )
+    });
+    let expanded_execute =
+        expanded_execute.expect("branch-shaped execute should expand from retained Proof steps");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "compare_swap2.ensures_0"
+                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
+        )),
+        "branch-shaped execute entered compatibility replay: {events:#?}"
+    );
+    verify_c0_sources(&expanded_execute, &[("compare_swap2.c", c_source)])
+        .expect("expanded branch-shaped execute should verify normally");
+    let original_condition = "if at(statement(1).entry, p[1]) < at(statement(1).entry, p[0]) {";
+    let corrupted_condition = "if at(statement(1).entry, p[1]) >= at(statement(1).entry, p[0]) {";
+    let corrupted_execute = expanded_execute.replacen(original_condition, corrupted_condition, 1);
+    assert_ne!(
+        corrupted_execute, expanded_execute,
+        "the retained execute branch condition should be present"
+    );
+    verify_c0_sources(&corrupted_execute, &[("compare_swap2.c", c_source)])
+        .expect_err("ordinary verification should reject a corrupted execute branch");
+
     let offset = click_source.rfind("simp").expect("simp should be present");
     let position = position_at_offset(click_source, offset);
     let expanded = expand_c0_tactic_source_at(
