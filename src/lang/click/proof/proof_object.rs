@@ -3180,6 +3180,11 @@ impl<'a> Proof<'a> {
             }
             let mut path_facts = available.clone();
             path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
+            let implicit_path_facts = path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
             let mut combined = Vec::new();
             for effect_index in &effect_indices {
                 for derivation in plan_effect_clause_derivations(
@@ -3187,6 +3192,7 @@ impl<'a> Proof<'a> {
                     path_index,
                     path.effect_facts(),
                     &path_facts,
+                    &implicit_path_facts,
                     context.function_block.effects()[*effect_index].effect(),
                     context.parsed_function.parameters(),
                     context.arguments,

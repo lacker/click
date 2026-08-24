@@ -84,6 +84,7 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
     path_index: usize,
     execution_pure_facts: &[crate::kernel::ExecutionPureFact],
     available_pure_facts: &[Proposition],
+    implicit_pure_facts: &[Proposition],
     effect: &Effect,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -154,12 +155,13 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
         // unnecessary in that overwhelmingly common case.
         if segments
             .iter()
-            .any(|segment| segment_contains_pointer_exact(segment, pointer, &direct_facts))
+            .any(|segment| segment_contains_pointer_exact(segment, pointer, implicit_pure_facts))
         {
             continue;
         }
         if let Some(selected) = segments.iter().find_map(|segment| {
-            let goals = pointer_containment_goals_with_exact_base(segment, pointer, &direct_facts)?;
+            let goals =
+                pointer_containment_goals_with_exact_base(segment, pointer, implicit_pure_facts)?;
             derive_goals_from_individual_facts(goals, &direct_facts)
         }) {
             append_unique_derivations(&mut derivations, selected);
@@ -230,12 +232,13 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
         check_effect_planning_deadline()?;
         if segments
             .iter()
-            .any(|segment| segment_contains_range_exact(segment, range, &direct_facts))
+            .any(|segment| segment_contains_range_exact(segment, range, implicit_pure_facts))
         {
             continue;
         }
         if let Some(selected) = segments.iter().find_map(|segment| {
-            let goals = range_containment_goals_with_exact_base(segment, range, &direct_facts)?;
+            let goals =
+                range_containment_goals_with_exact_base(segment, range, implicit_pure_facts)?;
             derive_goals_from_individual_facts(goals, &direct_facts)
         }) {
             append_unique_derivations(&mut derivations, selected);

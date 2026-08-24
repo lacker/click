@@ -224,6 +224,45 @@ fn checked_surface_fact_at_point_with_assumptions(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn checked_surface_frame_premise_at_point(
+    replay: &TacticReplayState,
+    kernel: &Proposition,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickProposition, ClickError> {
+    checked_surface_fact_at_point(
+        replay,
+        kernel,
+        available,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+    )
+    .or_else(|_| {
+        // The exact kernel footprint fact can be a snapshot-normalized form
+        // of an earlier recorded `old(...)` comparison. The snapshot-blind
+        // index recovers only forms in that structural bucket.
+        checked_surface_comparison_fact_for_typed_derivation(
+            replay,
+            kernel,
+            SurfaceFactMatch::CanonicalExact,
+            available,
+            parameters,
+            arguments,
+            state,
+            predicate_environment,
+            click_function_environment,
+        )
+    })
+}
+
 fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<CMemory> {
     if !matches!(
         proposition,
@@ -792,6 +831,7 @@ pub(super) fn lower_certified_frame_path_tactics(
             check_verification_deadline()?;
             let mut tactics = Vec::new();
             let mut premises = Vec::new();
+            let mut surfaced_premise_facts = Vec::new();
             let mut path_available = available.to_vec();
             for fact in derivations
                 .iter()
@@ -809,7 +849,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                 .flat_map(PropositionDerivation::context_premises)
             {
                 check_verification_deadline()?;
-                if let Ok(surface) = checked_surface_fact_at_point(
+                if let Ok(surface) = checked_surface_frame_premise_at_point(
                     replay,
                     &fact,
                     &path_available,
@@ -818,13 +858,29 @@ pub(super) fn lower_certified_frame_path_tactics(
                     state,
                     predicate_environment,
                     click_function_environment,
-                ) && !premises.contains(&surface)
-                {
-                    premises.push(surface);
+                ) {
+                    if !premises.contains(&surface) {
+                        premises.push(surface);
+                    }
+                    if !surfaced_premise_facts.contains(&fact) {
+                        surfaced_premise_facts.push(fact);
+                    }
                 }
             }
             for derivation in derivations {
                 check_verification_deadline()?;
+                let canonical_conclusion =
+                    crate::kernel::canonical_condition_fact(derivation.conclusion());
+                // An exact context fact may already be the frame checker's
+                // canonical spelling of this planning goal. Naming that
+                // Surface premise is sufficient; synthesizing a redundant
+                // `have` can erase the old/current snapshot distinction while
+                // pretty-printing the canonical kernel form.
+                if surfaced_premise_facts.iter().any(|premise| {
+                    crate::kernel::canonical_condition_fact(premise) == canonical_conclusion
+                }) {
+                    continue;
+                }
                 // Kernel-minted load-variable bridges are deterministic
                 // bookkeeping and have no Surface premise to emit.
                 let resolved = crate::kernel::resolve_minted_load_variables(

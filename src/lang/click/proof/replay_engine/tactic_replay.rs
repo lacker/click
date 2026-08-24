@@ -2161,11 +2161,17 @@ fn replay_linear_tactics_without_frontier_loops(
                         // execution outcomes compatible with that branch.
                         continue;
                     }
+                    let implicit_path_facts = path
+                        .facts()
+                        .iter()
+                        .map(|fact| fact.proposition().clone())
+                        .collect::<Vec<_>>();
                     path_derivations.push(plan_effect_clause_derivations(
                         claim_label,
                         path_index,
                         path.effect_facts(),
                         &path_facts,
+                        &implicit_path_facts,
                         effect_clause.effect(),
                         parsed_function.parameters(),
                         arguments,

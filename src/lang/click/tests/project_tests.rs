@@ -1178,9 +1178,20 @@ fn perpetual_service_example_verifies_stably_across_repeated_runs() {
         let c_sources = crate::cli::read_verifying_sources(click_path, &click_source)
             .expect("the example C sources should resolve");
         let sources = crate::cli::source_refs(&c_sources);
-        verify_c0_sources(&click_source, &sources).unwrap_or_else(|error| {
+        let (verified, events) =
+            crate::instrumentation::collect(|| verify_c0_sources(&click_source, &sources));
+        verified.unwrap_or_else(|error| {
             panic!("`{}` failed: {}", click_path.display(), error.message())
         });
+        assert!(
+            events.iter().all(|event| !matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                    if claim == "service_step.contract"
+                        && name.starts_with("smart tactic compatibility replay")
+            )),
+            "the service frame must apply its selected premises directly to Proof: {events:#?}"
+        );
         // The flaky fold lives in `service_step`; repeat its verification to
         // pin cross-run determinism of the shared caches and interners.
         for round in 0..4 {
