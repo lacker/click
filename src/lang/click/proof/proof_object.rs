@@ -6088,13 +6088,10 @@ impl<'a> Proof<'a> {
         Ok((successor, record))
     }
 
-    /// Checks an already-serialized simple certificate.
-    ///
-    /// This remains a transitional fallback for already-serialized source and
-    /// contextual-frame compatibility inputs not yet admitted by the typed
-    /// Proof surface. Planner candidates apply their selected operations
-    /// directly; smart tactics search with `apply_step` and the structural
-    /// branch operations.
+    /// Checks an already-serialized simple certificate as a migration oracle
+    /// for transactional unit tests. Ordinary production verification has no
+    /// caller: source and generated tactics use the checked Proof drivers.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn check_certificate(
         &self,
         certificate: &ProofCertificate,

@@ -1499,7 +1499,11 @@ fn lower_pure_induction_tactics(
     Ok(lowered)
 }
 
-/// Replay a validated certificate through the ordinary pure-tactic executor.
+/// Applies a validated surface proof through the checked pure-tactic driver.
+///
+/// The certificate is serialization input only. Its tactics advance the same
+/// persistent `Proof` operations used by ordinary source scripts; no parallel
+/// certificate interpreter participates in acceptance.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay_pure_theorem_certificate(
     claim_label: &str,
@@ -1522,12 +1526,13 @@ pub(super) fn replay_pure_theorem_certificate(
             click_function_environment,
             theorem_environment,
         );
-        let proof = root.check_certificate(certificate)?;
-        if !proof.is_complete() {
+        let tactics = certificate.to_proof_tactics();
+        let Some(proof) = root.try_planned_linear_script(&tactics)? else {
             return Err(ClickError::new(format!(
                 "pure goal `{claim_label}` certificate ended before closing its goal"
             )));
-        }
+        };
+        debug_assert!(proof.is_complete());
         return Ok(());
     }
     prove_pure_theorem_script(
