@@ -711,8 +711,18 @@ int32 buffer_pipeline(
         ("buffer_pipeline.c", pipeline_c),
     ];
 
-    verify_c0_sources(click_source, &sources)
-        .expect("the original vector-shaped proof should verify");
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the original vector-shaped proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "buffer_push.contract"
+                    && name == "smart tactic compatibility replay (tactic 3, source 3)"
+        )),
+        "the snapshot-qualified contextual frame entered compatibility replay: {events:#?}"
+    );
 
     let selected = click_source.rfind("execute_until").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -722,6 +732,35 @@ int32 buffer_pipeline(
     assert!(!expanded.contains("execute_until(statement(3));"));
     verify_c0_sources(&expanded, &sources)
         .expect("the vector-shaped mixed-snapshot expansion should replay");
+
+    let buffer_push = click_source.find("int32 buffer_push").unwrap();
+    let frame = buffer_push + click_source[buffer_push..].find("frame();").unwrap();
+    let frame_position = expansion::position_at_offset(click_source, frame);
+    let frame_expanded = expand_c0_tactic_source_at(
+        click_source,
+        &sources,
+        frame_position.line,
+        frame_position.column,
+    )
+    .expect("the snapshot-qualified contextual frame should expand");
+    let leading_have =
+        "have at(statement(0).entry, owner->len) <= at(statement(0).entry, owner->len)";
+    let leading_have_offset = frame_expanded
+        .find(leading_have)
+        .expect("the contextual frame should retain its checked leading have");
+    let frame_offset = frame_expanded[leading_have_offset..]
+        .find("frame() using")
+        .map(|offset| leading_have_offset + offset)
+        .expect("the contextual frame should retain its explicit frame");
+    assert!(leading_have_offset < frame_offset);
+    verify_c0_sources(&frame_expanded, &sources)
+        .expect("the contextual frame expansion should verify normally");
+
+    let corrupted = frame_expanded.replacen(leading_have, "have 1 == 0", 1);
+    assert!(
+        verify_c0_sources(&corrupted, &sources).is_err(),
+        "ordinary verification should reject a corrupted leading frame scope"
+    );
 }
 
 #[test]

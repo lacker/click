@@ -582,12 +582,6 @@ impl ContextualFrameLeafPlan {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self { haves, premises })
     }
-
-    fn needs_snapshot_legacy(&self) -> bool {
-        self.haves
-            .iter()
-            .any(|have| surface_tactics_need_snapshot_legacy(&have.tactics))
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -598,19 +592,6 @@ enum ContextualFramePlan {
         then_plan: Box<Self>,
         else_plan: Box<Self>,
     },
-}
-
-impl ContextualFramePlan {
-    fn needs_snapshot_legacy(&self) -> bool {
-        match self {
-            Self::Leaf(leaf) => leaf.needs_snapshot_legacy(),
-            Self::If {
-                then_plan,
-                else_plan,
-                ..
-            } => then_plan.needs_snapshot_legacy() || else_plan.needs_snapshot_legacy(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -715,41 +696,31 @@ fn contextual_frame_plan(
 }
 
 fn surface_tactics_need_snapshot_legacy(tactics: &[ProofTactic]) -> bool {
-    let ambiguous_snapshot_theorem_suffix = matches!(
-        tactics,
-        [
-            ..,
-            ProofTactic::ApplyTheoremUsing { application, .. },
-            ProofTactic::Assumption
-        ] if application.arguments.iter().any(contains_at_expression)
-            && !matches!(
-                application.name.as_str(),
-                "int32_ge_implies_reversed_le" | "int32_le_implies_reversed_ge"
-            )
-    );
-    ambiguous_snapshot_theorem_suffix
-        || tactics.iter().any(|tactic| match tactic {
-            ProofTactic::Have(ProofHave { proof, .. }) => {
-                let SourceProof::Script(body) = proof else {
-                    return true;
-                };
-                surface_tactics_need_snapshot_legacy(body)
-            }
-            ProofTactic::Open(open) => surface_tactics_need_snapshot_legacy(&open.tactics),
-            ProofTactic::If(proof_if) => {
-                surface_tactics_need_snapshot_legacy(&proof_if.then_tactics)
-                    || surface_tactics_need_snapshot_legacy(&proof_if.else_tactics)
-            }
-            ProofTactic::Cases(proof_cases) => {
-                surface_tactics_need_snapshot_legacy(&proof_cases.left_tactics)
-                    || surface_tactics_need_snapshot_legacy(&proof_cases.right_tactics)
-            }
-            ProofTactic::Branch(branch) => {
-                surface_tactics_need_snapshot_legacy(&branch.then_tactics)
-                    || surface_tactics_need_snapshot_legacy(&branch.else_tactics)
-            }
-            _ => false,
-        })
+    tactics.iter().any(|tactic| match tactic {
+        ProofTactic::ApplyTheoremUsing { application, .. } => {
+            application.arguments.iter().any(contains_at_expression)
+        }
+        ProofTactic::Have(ProofHave { proof, .. }) => {
+            let SourceProof::Script(body) = proof else {
+                return true;
+            };
+            surface_tactics_need_snapshot_legacy(body)
+        }
+        ProofTactic::Open(open) => surface_tactics_need_snapshot_legacy(&open.tactics),
+        ProofTactic::If(proof_if) => {
+            surface_tactics_need_snapshot_legacy(&proof_if.then_tactics)
+                || surface_tactics_need_snapshot_legacy(&proof_if.else_tactics)
+        }
+        ProofTactic::Cases(proof_cases) => {
+            surface_tactics_need_snapshot_legacy(&proof_cases.left_tactics)
+                || surface_tactics_need_snapshot_legacy(&proof_cases.right_tactics)
+        }
+        ProofTactic::Branch(branch) => {
+            surface_tactics_need_snapshot_legacy(&branch.then_tactics)
+                || surface_tactics_need_snapshot_legacy(&branch.else_tactics)
+        }
+        _ => false,
+    })
 }
 
 fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
@@ -3107,6 +3078,7 @@ impl<'a> Proof<'a> {
                 authority: CheckedFrameAuthority::new(effect_indices),
                 region: region.cloned(),
                 premises: premises.to_vec(),
+                surface_tactics: None,
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();
@@ -3413,12 +3385,30 @@ impl<'a> Proof<'a> {
         let Some(candidate) = self.select_contextual_frame_candidate()? else {
             return Ok(None);
         };
-        if candidate.needs_snapshot_legacy() {
-            // Snapshot-qualified theorem forms can add a kernel fact that
-            // is exact in this recorded lowering context but still require a
-            // trailing `assumption` when replayed from fresh source. Until
-            // Proof owns that stable surface identity, leave this candidate
-            // to the compatibility path rather than retain an ambiguous node.
+        if let ContextualFramePlan::Leaf(leaf) = &candidate
+            && leaf.haves.iter().any(|have| {
+                surface_tactics_need_snapshot_legacy(&have.tactics)
+                    && self.execution().is_some_and(|execution| {
+                        execution
+                            .replay
+                            .post_execution_tactics
+                            .iter()
+                            .any(|deferred| {
+                                matches!(
+                                    &deferred.tactic,
+                                    PostExecutionTactic::Have(prior)
+                                        if prior.proposition == have.proposition
+                                )
+                            })
+                    })
+            })
+        {
+            // A preceding source `have` can make a same-written snapshot
+            // proposition available under a different lowering identity.
+            // Re-emitting its contextual theorem does not repair that earlier
+            // source contribution. Leave this flat case on the compatibility
+            // path until the leading scope itself retains a source-stable
+            // proof; new frame-local leading scopes proceed on Proof below.
             return Ok(None);
         }
         let origin = Some(ProofStepOrigin {
@@ -4776,6 +4766,7 @@ impl<'a> Proof<'a> {
                 // forms. This deferral is semantic authority only.
                 region: None,
                 premises: Vec::new(),
+                surface_tactics: None,
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();

@@ -896,17 +896,20 @@ fn try_smart_frame_on_proof<'a>(
                     })?;
                 ordered_region_frame =
                     matches!(deferred.tactic, PostExecutionTactic::FrameRegion(_));
-                if !ordered_region_frame
-                    && !matches!(
-                        deferred.tactic,
-                        PostExecutionTactic::CheckedFrameUsing { .. }
-                    )
-                {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
-                    )));
-                }
                 if !ordered_region_frame {
+                    let PostExecutionTactic::CheckedFrameUsing {
+                        surface_tactics, ..
+                    } = &mut deferred.tactic
+                    else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
+                        )));
+                    };
+                    // Finalization still owns the outcome transition, but it
+                    // must print this complete checked contribution at the
+                    // deferred source position. Contextual frame premises can
+                    // be established by leading `have` scopes.
+                    *surface_tactics = Some(certificate.to_proof_tactics());
                     deferred.surface_recorded = false;
                 }
                 context.replay.post_execution_tactics.push(deferred);

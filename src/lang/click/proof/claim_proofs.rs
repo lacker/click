@@ -3920,6 +3920,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 authority,
                                 region,
                                 premises,
+                                surface_tactics,
                             } => {
                                 if authority.is_empty() {
                                     return Err(ClickError::new(format!(
@@ -3968,18 +3969,32 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             .with_checked_outcome_facts(&path_requirements)?,
                                     );
                                 }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::FrameUsing {
-                                        region: region.clone(),
-                                        premises: premises.clone(),
-                                    },
-                                );
+                                if let Some(surface_tactics) = surface_tactics {
+                                    for tactic in surface_tactics {
+                                        record_post_execution_surface_tactic(
+                                            deferred.surface_recorded,
+                                            &mut path_surface_post_tactics,
+                                            &mut path_deferred_capture_tactics,
+                                            replay.deferred_tactic_capture.as_ref(),
+                                            post_execution_index,
+                                            *tactic_index,
+                                            tactic.clone(),
+                                        );
+                                    }
+                                } else {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        ProofTactic::FrameUsing {
+                                            region: region.clone(),
+                                            premises: premises.clone(),
+                                        },
+                                    );
+                                }
                             }
                             PostExecutionTactic::If { .. } => unreachable!(
                                 "post-execution branch selection must flatten control nodes before checking leaf tactics"

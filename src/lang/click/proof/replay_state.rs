@@ -1442,6 +1442,10 @@ pub(super) enum PostExecutionTactic {
         authority: CheckedFrameAuthority,
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
+        /// Exact checked Surface contribution retained until ordered
+        /// finalization reaches this source operation. This is expansion
+        /// provenance only; the other fields are the complete semantic input.
+        surface_tactics: Option<Vec<ProofTactic>>,
     },
     /// Surface-only control structure scheduled after terminal execution.
     /// The arms contain no semantic state: ordered finalization asks the
