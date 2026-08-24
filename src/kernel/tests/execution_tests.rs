@@ -86,6 +86,34 @@ fn join_state_fresh_variables_do_not_collide_with_symbolic_pointer_blocks() {
 }
 
 #[test]
+fn sibling_join_abstraction_is_deterministic_after_a_nested_join() {
+    let nested_source = CState::new().with_local("y", int32(0));
+    let nested = abstract_c_state_for_join(&nested_source, &BTreeMap::new())
+        .expect("nested join abstraction");
+    let sibling = CState::new().with_local("y", int32(1));
+    let states = [&nested, &sibling];
+
+    let abstract_nested = abstract_c_state_for_join_across(&nested, &states, &BTreeMap::new())
+        .expect("outer nested-arm abstraction");
+    let abstract_sibling = abstract_c_state_for_join_across(&sibling, &states, &BTreeMap::new())
+        .expect("outer sibling abstraction");
+
+    assert_eq!(abstract_nested, abstract_sibling);
+
+    let inner_empty = abstract_c_state_for_join(&CState::new(), &BTreeMap::new())
+        .expect("inner empty-state abstraction");
+    let raw_empty = CState::new();
+    let empty_states = [&inner_empty, &raw_empty];
+    let outer_nested =
+        abstract_c_state_for_join_across(&inner_empty, &empty_states, &BTreeMap::new())
+            .expect("outer nested empty-state abstraction");
+    let outer_raw = abstract_c_state_for_join_across(&raw_empty, &empty_states, &BTreeMap::new())
+        .expect("outer raw empty-state abstraction");
+    assert_eq!(outer_nested, outer_raw);
+    assert_ne!(outer_nested, inner_empty);
+}
+
+#[test]
 fn symbolic_pointer_blocks_do_not_imply_non_aliasing() {
     let symbolic = Pointer::symbolic(Variable(21_000));
     let concrete = Pointer {

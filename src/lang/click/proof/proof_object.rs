@@ -1502,6 +1502,41 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Restores an ancestor's exact execution diagnostic context after a
+    /// nested structural operation. The descendant check is provenance-based;
+    /// this changes no goals, facts, execution state, or proof nodes.
+    pub(super) fn restore_execution_tactic_attribution(
+        &self,
+        ancestor: &Self,
+    ) -> Result<Self, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_))
+            || !matches!(ancestor.context.as_ref(), ProofContext::Execution(_))
+        {
+            return Err(self.step_error(
+                "execution tactic attribution can only be restored on execution proofs",
+            ));
+        }
+        let mut node = Some(self.node.clone());
+        let mut is_descendant = false;
+        while let Some(current) = node {
+            if Arc::ptr_eq(&current, &ancestor.node) {
+                is_descendant = true;
+                break;
+            }
+            node = current.parent.clone();
+        }
+        if !is_descendant {
+            return Err(self
+                .step_error("execution tactic attribution can only be restored from an ancestor"));
+        }
+        Ok(Self {
+            context: ancestor.context.clone(),
+            state: self.state.clone(),
+            node: self.node.clone(),
+            focused: self.focused,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn for_pure_goal(
         claim_label: &'a str,
@@ -4467,6 +4502,7 @@ impl<'a> Proof<'a> {
             context.resource_environment,
             context.claim_label,
             &BTreeMap::new(),
+            None,
             false,
         )
         .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
@@ -4752,6 +4788,8 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Statement(join_continuation.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
+        let sibling_join_states: [&CState; 2] =
+            [&arms[0].execution.state, &arms[1].execution.state];
 
         let abstract_arm = |arm: &CheckedExecutionJoinArm<'_>| -> Result<
             (ExecutionProofState, ProofFacts),
@@ -4777,6 +4815,7 @@ impl<'a> Proof<'a> {
                 context.resource_environment,
                 context.claim_label,
                 &stable_join_locals,
+                Some(&sibling_join_states),
                 true,
             )
             .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;

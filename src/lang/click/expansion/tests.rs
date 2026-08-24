@@ -432,10 +432,31 @@ int32 nested_nonnegative(int32 x, int32 flag) {
     }
 }
 "#;
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("nested.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = super::super::proof::count_flat_proof_units(|| {
+        super::super::proof::count_internal_proof_executions(|| {
+            super::super::proof::count_execution_context_exports(|| {
+                super::super::proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("nested.c", c_source)])
+                    })
+                })
+            })
+        })
     });
-    verified.expect("nested end-of-arm interfaces should verify through retained Proofs");
+    let verified = verified.expect("nested end-of-arm interfaces should verify through Proof");
+    assert_eq!(flat_units, 1, "the nested script should retain one Proof");
+    assert_eq!(replay_executions, 0, "nested verification must not replay");
+    assert_eq!(
+        context_exports, 0,
+        "nested verification must not export state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "nested verification must not check a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -445,22 +466,89 @@ int32 nested_nonnegative(int32 x, int32 flag) {
         )),
         "nested end-of-arm interfaces must retain their checked Proof successors: {events:#?}"
     );
+    let retained = verified[0]
+        .expanded_proof_tactics()
+        .expect("the nested proof should retain surface provenance");
+    fn count_branches(tactics: &[ProofTactic]) -> usize {
+        tactics
+            .iter()
+            .map(|tactic| match tactic {
+                ProofTactic::Branch(branch) => {
+                    1 + count_branches(&branch.then_tactics) + count_branches(&branch.else_tactics)
+                }
+                ProofTactic::If(proof_if) => {
+                    count_branches(&proof_if.then_tactics) + count_branches(&proof_if.else_tactics)
+                }
+                ProofTactic::Open(open) => count_branches(&open.tactics),
+                _ => 0,
+            })
+            .sum()
+    }
+    assert_eq!(count_branches(&retained), 2, "{retained:#?}");
 
     let selected_offset = click_source
         .find("        simp();")
         .expect("common simp should exist")
         + 8;
     let position = position_at_offset(click_source, selected_offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("nested.c", c_source)],
-        position.line,
-        position.column,
-    )
-    .expect("nested deferred simp should expand");
+    let (((expanded, expansion_checks), expansion_exports), expansion_replays) =
+        super::super::proof::count_internal_proof_executions(|| {
+            super::super::proof::count_execution_context_exports(|| {
+                super::super::proof::count_source_certificate_checks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &[("nested.c", c_source)],
+                        position.line,
+                        position.column,
+                    )
+                })
+            })
+        });
+    let expanded = expanded.expect("nested deferred simp should expand");
+    assert_eq!(expansion_replays, 0, "nested expansion must not replay");
+    assert_eq!(
+        expansion_exports, 0,
+        "nested expansion must not export state"
+    );
+    assert_eq!(
+        expansion_checks, 0,
+        "nested expansion must not check a certificate"
+    );
 
     verify_c0_sources(&expanded, &[("nested.c", c_source)]).unwrap_or_else(|error| {
         panic!("nested deferred expansion should replay:\n{error:?}\n{expanded}")
+    });
+
+    let inner_offset = click_source
+        .find("                branch {")
+        .expect("inner branch should exist")
+        + 16;
+    let inner_position = position_at_offset(click_source, inner_offset);
+    let (((inner, inner_checks), inner_exports), inner_replays) =
+        super::super::proof::count_internal_proof_executions(|| {
+            super::super::proof::count_execution_context_exports(|| {
+                super::super::proof::count_source_certificate_checks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &[("nested.c", c_source)],
+                        inner_position.line,
+                        inner_position.column,
+                    )
+                })
+            })
+        });
+    let inner = inner.expect("the retained inner branch should expand");
+    assert_eq!(inner_replays, 0, "inner branch expansion must not replay");
+    assert_eq!(
+        inner_exports, 0,
+        "inner branch expansion must not export state"
+    );
+    assert_eq!(
+        inner_checks, 0,
+        "inner branch expansion must not check a certificate"
+    );
+    verify_c0_sources(&inner, &[("nested.c", c_source)]).unwrap_or_else(|error| {
+        panic!("inner branch expansion should reverify:\n{error:?}\n{inner}")
     });
 }
 

@@ -366,13 +366,47 @@ pub fn abstract_c_state_for_join(
     state: &CState,
     stable_entry_locals: &BTreeMap<String, CValue>,
 ) -> Result<CState, String> {
+    abstract_c_state_for_join_across(state, std::slice::from_ref(&state), stable_entry_locals)
+}
+
+/// Builds one arm's abstract join state using a variable reservation shared
+/// by every sibling arm. Nested joins may already contain abstract variables;
+/// reserving the union makes the next abstraction fresh and deterministic
+/// across all siblings rather than dependent on which arm was abstracted
+/// earlier.
+pub fn abstract_c_state_for_join_across(
+    state: &CState,
+    sibling_states: &[&CState],
+    stable_entry_locals: &BTreeMap<String, CValue>,
+) -> Result<CState, String> {
     let mut existing_variables = BTreeSet::new();
-    collect_c_state_bitvector_variables(state, &mut existing_variables);
+    for sibling in sibling_states {
+        collect_c_state_bitvector_variables(sibling, &mut existing_variables);
+        for block in sibling.memory.blocks.keys() {
+            if let Some(index) = block
+                .strip_prefix("havoc:")
+                .and_then(|index| index.parse::<u64>().ok())
+            {
+                existing_variables.insert(Variable(index));
+            }
+        }
+    }
     for value in stable_entry_locals.values() {
         collect_c_value_bitvector_variables(value, &mut existing_variables);
     }
     let mut variables = KernelVariableGenerator::fresh_for(1_000_000, existing_variables);
     let mut abstract_state = state.clone();
+    // A nested arm may already carry a memory-havoc marker from an inner
+    // join. Retain the union on every sibling so the enclosing abstraction is
+    // deterministic without discarding any memory-distinction history.
+    for sibling in sibling_states {
+        for (block, contents) in sibling.memory.blocks.iter() {
+            if block.starts_with("havoc:") {
+                std::sync::Arc::make_mut(&mut abstract_state.memory.blocks)
+                    .insert(block.clone(), contents.clone());
+            }
+        }
+    }
     let mut abstract_objects = Vec::new();
     let mut preserved_blocks = BTreeSet::new();
 

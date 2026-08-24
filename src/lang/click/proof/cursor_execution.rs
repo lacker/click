@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::abstract_c_state_for_join_across;
 use std::sync::Arc;
 
 pub(super) fn apply_branch_interface(
@@ -32,6 +33,7 @@ pub(super) fn apply_branch_interface(
         resource_environment,
         claim_label,
         stable_join_locals,
+        None,
         needs_abstraction,
     )?;
     *available_pure_facts = indexed_facts.to_vec();
@@ -59,6 +61,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     resource_environment: &ResourceEnvironment,
     claim_label: &str,
     stable_join_locals: &BTreeMap<String, CValue>,
+    sibling_join_states: Option<&[&CState]>,
     needs_abstraction: bool,
 ) -> Result<(), ClickError> {
     let mut concrete_facts = available_pure_facts.clone();
@@ -141,12 +144,15 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         return Ok(());
     }
     let entry_state = replay.execution_start_state(state).clone();
-    let mut abstract_state =
-        abstract_c_state_for_join(state, stable_join_locals).map_err(|message| {
-            ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: could not abstract `branch` target state: {message}"
-            ))
-        })?;
+    let abstraction = match sibling_join_states {
+        Some(states) => abstract_c_state_for_join_across(state, states, stable_join_locals),
+        None => abstract_c_state_for_join(state, stable_join_locals),
+    };
+    let mut abstract_state = abstraction.map_err(|message| {
+        ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: could not abstract `branch` target state: {message}"
+        ))
+    })?;
 
     // Branch abstraction discards incidental source-boundary snapshots, but
     // an explicit proof mark is a deliberate historical dependency. Preserve
