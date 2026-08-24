@@ -1561,6 +1561,119 @@ fn loop_structural_effect_frame_stays_on_proof() {
 }
 
 #[test]
+fn explicit_loop_effect_have_stays_on_proof() {
+    let c_source = r#"
+            int32 count_once(int32* p) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once(int32* p) {
+                requires loadable(p[0..1]);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        have 0 == 0 by {
+                            normalize();
+                        }
+                        frame() using {};
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        have 0 == 0 by {
+                            normalize();
+                        }
+                        frame() using {};
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the explicit loop-effect have should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the structural effect added a compatibility replay execution"
+    );
+    assert_eq!(
+        replay_labels, baseline_labels,
+        "the structural effect changed the compatibility replay path"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked loop effect should retain expandable provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some([ProofTactic::Have(_), ProofTactic::FrameUsing { .. }]) = effect_tactics else {
+        panic!("the checked effect did not retain its have and frame operations");
+    };
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the complete proof should expand from retained provenance");
+    let ((reverified, rewritten_replay_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten source should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "rewritten-source verification added a compatibility replay execution"
+    );
+    assert_eq!(
+        rewritten_replay_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {

@@ -53,6 +53,10 @@ ordinary verification no longer synthesizes a completed proof's surface form
 and verifies the claim again. Leading proposition scopes, including quantified
 goals, now use the recursive `Proof` source capability directly rather than a
 second admission list that could route supported checked operations to replay.
+Loop structural-effect checking likewise applies every recursively simple
+operation, including nested `have` scopes, to the preservation path's typed
+effect `Proof`; only effect scripts containing structural scopes or induction
+still cross that compatibility boundary.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
 preserve.

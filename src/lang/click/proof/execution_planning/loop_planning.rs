@@ -562,28 +562,60 @@ fn verify_structural_effect_proof(
         &source_certificate.to_proof_tactics(),
         case_path,
     )?;
-    // The exact linear subset is checked transactionally on one Proof. Smart
-    // frame syntax selects its bounded explicit premises from that Proof;
-    // explicit scripts are authoritative, including an empty `using` block.
-    // Only structurally unsupported scripts retain compatibility replay.
-    let proof_steps_supported = certificate.steps().iter().all(|step| {
-        matches!(
-            step,
+    // Every recursively simple operation supported by `Proof::apply_step`
+    // is authoritative here. Keep the capability boundary recursive so a
+    // nested `have` cannot hide a structural operation that still needs its
+    // own typed scope driver. Smart frame syntax selects its bounded explicit
+    // premises from this Proof; a search miss is a checked failure rather
+    // than permission to replay the same candidate elsewhere.
+    fn step_supported(step: &SimpleProofStep) -> bool {
+        match step {
             SimpleProofStep::Mark(_)
-                | SimpleProofStep::ApplyTheoremUsing { .. }
-                | SimpleProofStep::TransportUsing { .. }
-                | SimpleProofStep::UnfoldPredicate(_)
-                | SimpleProofStep::UnfoldResource(_)
-                | SimpleProofStep::FoldResource(_)
-                | SimpleProofStep::ObserveResource(_)
-                | SimpleProofStep::FrameUsing { .. }
-        )
-    });
+            | SimpleProofStep::Step
+            | SimpleProofStep::StepUsing(_)
+            | SimpleProofStep::ApplyTheoremUsing { .. }
+            | SimpleProofStep::TransportUsing { .. }
+            | SimpleProofStep::UnfoldPredicate(_)
+            | SimpleProofStep::UnfoldResource(_)
+            | SimpleProofStep::FoldResource(_)
+            | SimpleProofStep::ObserveResource(_)
+            | SimpleProofStep::Choose(_)
+            | SimpleProofStep::Witness(_)
+            | SimpleProofStep::InstantiateUsing { .. }
+            | SimpleProofStep::Extract(_)
+            | SimpleProofStep::Rewrite(_)
+            | SimpleProofStep::Assumption
+            | SimpleProofStep::Normalize
+            | SimpleProofStep::Intro
+            | SimpleProofStep::Split
+            | SimpleProofStep::Left
+            | SimpleProofStep::Right
+            | SimpleProofStep::Enumerate
+            | SimpleProofStep::Contradiction(_)
+            | SimpleProofStep::CloseInvariants
+            | SimpleProofStep::FrameUsing { .. } => true,
+            SimpleProofStep::Have { proof, .. } => proof.steps().iter().all(step_supported),
+            SimpleProofStep::Induct { .. }
+            | SimpleProofStep::ApplyInduction { .. }
+            | SimpleProofStep::CloseInduction
+            | SimpleProofStep::Open { .. }
+            | SimpleProofStep::If { .. }
+            | SimpleProofStep::Cases { .. }
+            | SimpleProofStep::Branch { .. }
+            | SimpleProofStep::Loop(_) => false,
+        }
+    }
+    let proof_steps_supported = certificate.steps().iter().all(step_supported);
     if proof_steps_supported {
         let root =
             preservation.start_loop_effect_goal(&claim_label, site.clone(), before_state, check)?;
         let checked = if smart_frame {
             root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
+                .ok_or_else(|| {
+                    ClickError::new(format!(
+                        "`{claim_label}` smart structural-effect frame found no checked Proof descendant"
+                    ))
+                })?
         } else {
             let mut checked = root;
             for (tactic_index, step) in certificate.steps().iter().enumerate() {
@@ -593,16 +625,14 @@ fn verify_structural_effect_proof(
                     effect_source_index + tactic_index,
                 )?;
             }
-            Some(checked)
+            checked
         };
-        if let Some(checked) = checked {
-            if !checked.is_complete() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` structural-effect proof did not close its checked Proof goal"
-                )));
-            }
-            return Ok(checked.certificate());
+        if !checked.is_complete() {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` structural-effect proof did not close its checked Proof goal"
+            )));
         }
+        return Ok(checked.certificate());
     }
     let program = build_internal_proof_from_source_index(
         &certificate.to_proof_tactics(),
