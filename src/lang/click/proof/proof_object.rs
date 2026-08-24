@@ -5772,7 +5772,7 @@ impl<'a> Proof<'a> {
         let mut paths = Vec::new();
         let mut path_branch_decisions: Vec<PersistentSequence<ExecutionBranchDecision>> =
             Vec::new();
-        for arm in &arms {
+        for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
                 .replay
@@ -5796,13 +5796,19 @@ impl<'a> Proof<'a> {
                     })
                 {
                     paths.push((path.outcome().clone(), path_facts, obligations));
-                    path_branch_decisions.push(
-                        arm.execution
-                            .outcome_branch_decisions
-                            .get(arm_path_index)
-                            .cloned()
-                            .unwrap_or_else(|| arm.execution.branch_decisions.clone()),
-                    );
+                    let mut decisions = arm
+                        .execution
+                        .outcome_branch_decisions
+                        .get(arm_path_index)
+                        .cloned()
+                        .unwrap_or_else(|| arm.execution.branch_decisions.clone());
+                    if proof_case_split {
+                        decisions.push(ExecutionBranchDecision {
+                            condition: surface_condition.clone(),
+                            value: arm_index == 0,
+                        });
+                    }
+                    path_branch_decisions.push(decisions);
                 }
             }
         }
@@ -5894,6 +5900,90 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+
+        // A selected-site capture is attribution metadata for one source
+        // occurrence. It may be inherited unchanged by both arms, or begin
+        // in exactly one arm. Retain that cursor across the audited join, but
+        // reject two different captures rather than guessing which source
+        // occurrence owns the eventual expansion.
+        let parent_capture = parent_execution.replay.deferred_tactic_capture.as_ref();
+        let then_capture = then_replay.deferred_tactic_capture.as_ref();
+        let else_capture = else_replay.deferred_tactic_capture.as_ref();
+        if parent_capture.is_some()
+            && (then_capture != parent_capture || else_capture != parent_capture)
+        {
+            return Err(
+                self.step_error("terminal execution arm lost its inherited selected-tactic cursor")
+            );
+        }
+        execution.replay.deferred_tactic_capture = match (then_capture, else_capture) {
+            (Some(then_capture), Some(else_capture)) if then_capture == else_capture => {
+                Some(then_capture.clone())
+            }
+            (Some(capture), None) if parent_capture.is_none() => {
+                let mut capture = capture.clone();
+                capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
+                    condition: surface_condition.clone(),
+                    then_tactics: capture.branch_skeleton,
+                    else_tactics: Vec::new(),
+                })];
+                Some(capture)
+            }
+            (None, Some(capture)) if parent_capture.is_none() => {
+                let mut capture = capture.clone();
+                capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
+                    condition: surface_condition.clone(),
+                    then_tactics: Vec::new(),
+                    else_tactics: capture.branch_skeleton,
+                })];
+                Some(capture)
+            }
+            (None, None) => None,
+            _ => {
+                return Err(self.step_error(
+                    "terminal execution arms retained different selected-tactic cursors",
+                ));
+            }
+        };
+
+        // Terminal arm tactics are source-order cursors, not semantic state.
+        // Preserve only the append-only suffix each checked arm added after
+        // the split root, nested under the exact condition this audited join
+        // retained in its `If` provenance. Ordered finalization later asks
+        // each focused outcome Proof to select one arm and apply those
+        // ordinary operations; the joined execution frontier gains no facts,
+        // C state, resources, or successor authority from this tree.
+        let then_post_execution = then_replay
+            .post_execution_tactics
+            .suffix_since(&parent_execution.replay.post_execution_tactics)
+            .ok_or_else(|| {
+                self.step_error(
+                    "terminal then-arm finalization cursor does not descend from the split root",
+                )
+            })?;
+        let else_post_execution = else_replay
+            .post_execution_tactics
+            .suffix_since(&parent_execution.replay.post_execution_tactics)
+            .ok_or_else(|| {
+                self.step_error(
+                    "terminal else-arm finalization cursor does not descend from the split root",
+                )
+            })?;
+        if !then_post_execution.is_empty() || !else_post_execution.is_empty() {
+            let attribution = then_post_execution
+                .first()
+                .or_else(|| else_post_execution.first())
+                .expect("a nonempty terminal cursor has one attributed operation");
+            execution.replay.defer_post_execution(
+                attribution.tactic_index,
+                attribution.source_index,
+                PostExecutionTactic::If {
+                    condition: surface_condition.clone(),
+                    then_tactics: then_post_execution,
+                    else_tactics: else_post_execution,
+                },
+            );
+        }
 
         let mut facts = parent_facts.clone();
         let mut common_added_facts = Vec::new();
@@ -12239,6 +12329,51 @@ impl<'a> Proof<'a> {
                 "focused outcome proves both sides of the post-execution `if` condition",
             )),
         }
+    }
+
+    /// Reports whether every checked execution path already decides a
+    /// post-execution condition. Such an `if` is a cursor over an existing
+    /// path partition and may be deferred until each outcome Proof is
+    /// focused. An undecided logical case split must stay with the general
+    /// proof driver, which introduces the two assumptions explicitly.
+    pub(super) fn post_execution_if_is_path_decided(
+        &self,
+        condition: &ClickProposition,
+    ) -> Result<bool, ClickError> {
+        self.require_execution_frontier("post-execution `if`")?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("post-execution `if` lost its execution frontier"))?;
+        if !execution.replay.is_at_function_exit() {
+            return Err(self.step_error("post-execution `if` requires function exit"));
+        }
+        let checked = execution
+            .replay
+            .execution()
+            .ok_or_else(|| self.step_error("post-execution `if` has no checked execution paths"))?;
+        for path_index in 0..checked.paths().len() {
+            check_verification_deadline()?;
+            let decisions = execution
+                .outcome_branch_decisions
+                .get(path_index)
+                .unwrap_or(&execution.branch_decisions);
+            let mut recorded = None;
+            for decision in decisions.iter() {
+                if &decision.condition != condition {
+                    continue;
+                }
+                if recorded.is_some_and(|value| value != decision.value) {
+                    return Err(self.step_error(
+                        "checked execution path records both sides of the post-execution `if` condition",
+                    ));
+                }
+                recorded = Some(decision.value);
+            }
+            if recorded.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Resolves the view with the caller's effect-availability context: the

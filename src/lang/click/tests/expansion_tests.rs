@@ -7765,6 +7765,180 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
 }
 
 #[test]
+fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
+    let c_source = r#"
+        int32 choose_x_or_zero(int32 x, int32 flag) {
+            if (flag) {
+                return x;
+            } else {
+                return 0;
+            }
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_x_or_zero.c";
+
+        int32 choose_x_or_zero(int32 x, int32 flag) {
+            ensures result == x or result == 0;
+        } by {
+            branch {
+                then {
+                    if x >= 0 {
+                        execute();
+                        simp();
+                    } else {
+                        execute();
+                        simp();
+                    }
+                }
+                else {
+                    execute();
+                    simp();
+                }
+            }
+        }
+    "#;
+    let sources = [("choose_x_or_zero.c", c_source)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the nested terminal proof if should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the nested terminal proof if entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the nested terminal proof if exported state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the nested terminal proof if fell back"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the nested terminal proof if should retain provenance");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::If(outer))
+                if outer.then_tactics.iter().any(|tactic| matches!(
+                    tactic,
+                    ProofTactic::If(inner) if inner.condition == ClickProposition::Comparison {
+                        left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+                        operator: ComparisonOperator::GreaterEqual,
+                        right: ContractExpression::CFragment(CExpression::Value(CValue::Int32(Bitvector32Term::Constant(0)))),
+                    }
+                ))
+        ),
+        "the retained execution branch lost its nested logical split: {tactics:#?}"
+    );
+
+    let rewritten = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "choose_x_or_zero",
+        CProofClaim::Grouped,
+    )
+    .expect("the nested terminal proof if should serialize");
+    let ((reverified, rewritten_replays), rewritten_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(&rewritten, &sources))
+        });
+    reverified.expect("the serialized nested terminal proof if should independently reverify");
+    assert_eq!(
+        rewritten_flat_units, 1,
+        "the rewritten nested proof if should retain one Proof"
+    );
+    assert_eq!(
+        rewritten_replays, 0,
+        "the rewritten nested proof if entered execute_internal_proof"
+    );
+
+    let nested_if = click_source
+        .find("if x >= 0")
+        .expect("the nested proof if should be present");
+    let selected_simp = click_source[nested_if..]
+        .find("simp();")
+        .map(|offset| nested_if + offset)
+        .expect("the nested then arm should contain a simp");
+    let position = expansion::position_at_offset(click_source, selected_simp);
+    let (((selected_expansion, selected_fallbacks), selected_replays), selected_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &sources,
+                        position.line,
+                        position.column,
+                    )
+                })
+            })
+        });
+    let selected_expansion = selected_expansion
+        .expect("the selected terminal-arm simp should expand from retained provenance");
+    assert_eq!(
+        selected_flat_units, 1,
+        "selected expansion should retain one Proof"
+    );
+    assert_eq!(
+        selected_fallbacks, 0,
+        "selected nested-arm expansion fell back from a checked operation"
+    );
+    assert_eq!(
+        selected_expansion.matches("simp();").count(),
+        2,
+        "selected expansion should replace only the attributed nested-arm simp"
+    );
+    assert_eq!(
+        selected_replays, 0,
+        "selected nested-arm expansion entered execute_internal_proof"
+    );
+    let (selected_reverified, selected_reverify_replays) =
+        proof::count_internal_proof_executions(|| verify_c0_sources(&selected_expansion, &sources));
+    selected_reverified
+        .expect("the selected terminal-arm simp expansion should independently reverify");
+    assert_eq!(
+        selected_reverify_replays, 0,
+        "the selected nested-arm expansion entered execute_internal_proof when reverified:\n{selected_expansion}"
+    );
+
+    let corrupted = rewritten.replacen("if x >= 0 {", "if result >= 0 {", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the nested proof-if condition"
+    );
+    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+    });
+    result.expect_err("an unavailable result condition must invalidate the nested proof if");
+    assert_eq!(
+        fallbacks, 0,
+        "an invalid nested proof if must not fall back"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "an invalid nested proof if must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn branch_interface_retains_its_checked_abstract_join() {
     let c_source = r#"
         int32 nonnegative(int32 x) {

@@ -788,7 +788,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         predicate_environment,
         resource_environment,
     ) {
-        try_check_structural_function_proof(
+        match try_check_structural_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -803,7 +803,19 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             theorem_environment,
             &function,
             &arguments,
-        )?
+        ) {
+            Ok(proof) => proof,
+            Err(_) if generated_by_source_index.is_some() => {
+                // Generated certificates may use a broader surface shape
+                // than the currently migrated structural Proof driver owns.
+                // Its immutable attempt and staged expansion cursor make a
+                // bounded rejection transactional; preserve deadline errors,
+                // then let the compatibility checker remain authoritative.
+                check_verification_deadline()?;
+                None
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         let owns_empty_predicate_branches =
             heap_predicate_explicit_unfold_supported(function_block, tactics);
@@ -992,7 +1004,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         resource_environment,
     );
     let direct_proof = if grouped_structural_supported {
-        try_check_structural_function_proof(
+        match try_check_structural_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -1007,7 +1019,17 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             theorem_environment,
             &function,
             &arguments,
-        )?
+        ) {
+            Ok(proof) => proof,
+            Err(_) if generated_by_source_index.is_some() => {
+                // As in individual claim checking, generated structural
+                // proofs are a speculative migration route. Compatibility
+                // remains the semantic fallback for unsupported shapes.
+                check_verification_deadline()?;
+                None
+            }
+            Err(error) => return Err(error),
+        }
     } else if grouped_direct_supported {
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         let owns_empty_predicate_branches =

@@ -157,9 +157,61 @@ pub(in crate::lang::click::proof) fn mid_execution_proof_if_tactic_supported(
     {
         return false;
     }
+    if ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).is_ok()
+        || (checked_execution_proof_if_arm_is_resource_neutral(&proof_if.then_tactics, 0)
+            && checked_execution_proof_if_arm_is_resource_neutral(&proof_if.else_tactics, 0))
+    {
+        return checked_execution_proof_if_arm_supported(&proof_if.then_tactics, 0)
+            && checked_execution_proof_if_arm_supported(&proof_if.else_tactics, 0);
+    }
     let arm_is_checked_linear =
         |arm: &[ProofTactic]| !arm.is_empty() && arm.iter().all(checked_linear_continuation_tactic);
     arm_is_checked_linear(&proof_if.then_tactics) && arm_is_checked_linear(&proof_if.else_tactics)
+}
+
+fn checked_execution_proof_if_arm_is_resource_neutral(
+    tactics: &[ProofTactic],
+    depth: usize,
+) -> bool {
+    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
+        && tactics.iter().all(|tactic| match tactic {
+            ProofTactic::If(nested) => {
+                checked_execution_proof_if_arm_is_resource_neutral(&nested.then_tactics, depth + 1)
+                    && checked_execution_proof_if_arm_is_resource_neutral(
+                        &nested.else_tactics,
+                        depth + 1,
+                    )
+            }
+            ProofTactic::Open(_)
+            | ProofTactic::UnfoldResource(_)
+            | ProofTactic::FoldResource(_)
+            | ProofTactic::ObserveResource(_) => false,
+            _ => true,
+        })
+}
+
+/// Complete surface certificates may retain terminal logical decomposition
+/// and ordered outcome closers in either arm. Smart source scripts keep the
+/// narrower admission rule above until their search operations themselves
+/// stay on the same Proof lineage.
+fn checked_execution_proof_if_arm_supported(tactics: &[ProofTactic], depth: usize) -> bool {
+    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
+        && !tactics.is_empty()
+        && tactics
+            .iter()
+            .enumerate()
+            .all(|(index, tactic)| match tactic {
+                ProofTactic::If(nested) => {
+                    index + 1 == tactics.len()
+                        && checked_execution_proof_if_arm_supported(&nested.then_tactics, depth + 1)
+                        && checked_execution_proof_if_arm_supported(&nested.else_tactics, depth + 1)
+                }
+                ProofTactic::Open(_) | ProofTactic::Branch(_) | ProofTactic::Loop(_) => false,
+                tactic => {
+                    checked_linear_continuation_tactic(tactic)
+                        || flat_post_execution_tactic(tactic).is_some()
+                }
+            })
 }
 
 fn expanded_execution_tree_arm_supported(
@@ -283,34 +335,38 @@ const MAX_CHECKED_EXECUTION_REGION_DEPTH: usize = 12;
 
 fn checked_execution_arm_tactics_end(
     tactics: &[IndexedTactic],
+    initial: CheckedExecutionRegionEnd,
 ) -> Option<CheckedExecutionRegionEnd> {
-    tactics
-        .iter()
-        .enumerate()
-        .all(|(index, indexed)| {
-            let is_execute = matches!(
+    let mut at_function_exit = initial == CheckedExecutionRegionEnd::FunctionExit;
+    for indexed in tactics {
+        if at_function_exit {
+            flat_post_execution_tactic(&indexed.tactic)?;
+            continue;
+        }
+        if matches!(
+            indexed.tactic,
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
+        ) {
+            at_function_exit = true;
+            continue;
+        }
+        if linear_execution_simple_step(&indexed.tactic).is_none()
+            && !matches!(
                 indexed.tactic,
-                ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
-            );
-            (!is_execute || index + 1 == tactics.len())
-                && (linear_execution_simple_step(&indexed.tactic).is_some()
-                    || matches!(
-                        indexed.tactic,
-                        ProofTactic::SmartStep
-                            | ProofTactic::ApplyTheorem(_)
-                            | ProofTactic::Transport { .. }
-                            | ProofTactic::Have(_)
-                            | ProofTactic::SmartExecute
-                            | ProofTactic::SmartExecuteAllPaths
-                    ))
-        })
-        .then(|| {
-            if execution_branch_tactics_end_at_exit(tactics) {
-                CheckedExecutionRegionEnd::FunctionExit
-            } else {
-                CheckedExecutionRegionEnd::SharedContinuation
-            }
-        })
+                ProofTactic::SmartStep
+                    | ProofTactic::ApplyTheorem(_)
+                    | ProofTactic::Transport { .. }
+                    | ProofTactic::Have(_)
+            )
+        {
+            return None;
+        }
+    }
+    Some(if at_function_exit {
+        CheckedExecutionRegionEnd::FunctionExit
+    } else {
+        CheckedExecutionRegionEnd::SharedContinuation
+    })
 }
 
 /// Classifies the supported execution-region grammar used inside a checked
@@ -318,63 +374,65 @@ fn checked_execution_arm_tactics_end(
 /// every sibling pair must agree on whether it returns to a shared frontier
 /// or completes at function exit.
 fn checked_execution_region_end(node: &InternalProofNode) -> Option<CheckedExecutionRegionEnd> {
-    checked_execution_region_end_at(node, 0)
+    checked_execution_region_end_at(node, 0, CheckedExecutionRegionEnd::SharedContinuation)
 }
 
 fn checked_execution_region_end_at(
     node: &InternalProofNode,
     depth: usize,
+    initial: CheckedExecutionRegionEnd,
 ) -> Option<CheckedExecutionRegionEnd> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return None;
     }
     match node {
-        InternalProofNode::Done => Some(CheckedExecutionRegionEnd::SharedContinuation),
+        InternalProofNode::Done => Some(initial),
         InternalProofNode::Linear {
             tactics,
             continuation,
-        } => match checked_execution_arm_tactics_end(tactics)? {
-            CheckedExecutionRegionEnd::FunctionExit => {
-                matches!(continuation.as_ref(), InternalProofNode::Done)
-                    .then_some(CheckedExecutionRegionEnd::FunctionExit)
-            }
-            CheckedExecutionRegionEnd::SharedContinuation => {
-                checked_execution_region_end_at(continuation, depth + 1)
-            }
-        },
+        } => checked_execution_region_end_at(
+            continuation,
+            depth + 1,
+            checked_execution_arm_tactics_end(tactics, initial)?,
+        ),
         InternalProofNode::Branch {
             then_branch,
             else_branch,
             continuation,
             ..
         } => {
-            let then_end = checked_execution_region_end_at(then_branch, depth + 1)?;
-            let else_end = checked_execution_region_end_at(else_branch, depth + 1)?;
+            if initial == CheckedExecutionRegionEnd::FunctionExit {
+                return None;
+            }
+            let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
+            let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
             if then_end != else_end {
                 return None;
             }
-            match then_end {
-                CheckedExecutionRegionEnd::FunctionExit => {
-                    matches!(continuation.as_ref(), InternalProofNode::Done)
-                        .then_some(CheckedExecutionRegionEnd::FunctionExit)
-                }
-                CheckedExecutionRegionEnd::SharedContinuation => {
-                    checked_execution_region_end_at(continuation, depth + 1)
-                }
-            }
+            checked_execution_region_end_at(continuation, depth + 1, then_end)
         }
         InternalProofNode::Open {
             body, continuation, ..
-        } => match checked_execution_region_end_at(body, depth + 1)? {
-            CheckedExecutionRegionEnd::FunctionExit => {
-                matches!(continuation.as_ref(), InternalProofNode::Done)
-                    .then_some(CheckedExecutionRegionEnd::FunctionExit)
+        } => {
+            if initial == CheckedExecutionRegionEnd::FunctionExit {
+                return None;
             }
-            CheckedExecutionRegionEnd::SharedContinuation => {
-                checked_execution_region_end_at(continuation, depth + 1)
-            }
-        },
-        InternalProofNode::If { .. } => None,
+            let body_end = checked_execution_region_end_at(body, depth + 1, initial)?;
+            checked_execution_region_end_at(continuation, depth + 1, body_end)
+        }
+        InternalProofNode::If {
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            let then_end = checked_execution_region_end_at(then_branch, depth + 1, initial)?;
+            let else_end = checked_execution_region_end_at(else_branch, depth + 1, initial)?;
+            (then_end == CheckedExecutionRegionEnd::FunctionExit
+                && else_end == CheckedExecutionRegionEnd::FunctionExit
+                && matches!(continuation.as_ref(), InternalProofNode::Done))
+            .then_some(CheckedExecutionRegionEnd::FunctionExit)
+        }
     }
 }
 
@@ -397,14 +455,11 @@ fn checked_execution_region_is_empty(node: &InternalProofNode) -> bool {
     }
 }
 
-fn checked_execution_region_contains_branch_source(
-    node: &InternalProofNode,
-    source_index: usize,
-) -> bool {
-    checked_execution_region_contains_branch_source_at(node, source_index, 0)
+fn checked_execution_region_contains_source(node: &InternalProofNode, source_index: usize) -> bool {
+    checked_execution_region_contains_source_at(node, source_index, 0)
 }
 
-fn checked_execution_region_contains_branch_source_at(
+fn checked_execution_region_contains_source_at(
     node: &InternalProofNode,
     source_index: usize,
     depth: usize,
@@ -414,12 +469,18 @@ fn checked_execution_region_contains_branch_source_at(
     }
     match node {
         InternalProofNode::Done => false,
-        InternalProofNode::Linear { continuation, .. } => {
-            checked_execution_region_contains_branch_source_at(
-                continuation,
-                source_index,
-                depth + 1,
-            )
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            tactics
+                .iter()
+                .any(|indexed| indexed.source_index == source_index)
+                || checked_execution_region_contains_source_at(
+                    continuation,
+                    source_index,
+                    depth + 1,
+                )
         }
         InternalProofNode::Branch {
             source_index: branch_source_index,
@@ -429,43 +490,45 @@ fn checked_execution_region_contains_branch_source_at(
             ..
         } => {
             *branch_source_index == source_index
-                || checked_execution_region_contains_branch_source_at(
-                    then_branch,
-                    source_index,
-                    depth + 1,
-                )
-                || checked_execution_region_contains_branch_source_at(
-                    else_branch,
-                    source_index,
-                    depth + 1,
-                )
-                || checked_execution_region_contains_branch_source_at(
+                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(
                     continuation,
                     source_index,
                     depth + 1,
                 )
         }
         InternalProofNode::Open {
-            body, continuation, ..
+            source_index: open_source_index,
+            body,
+            continuation,
+            ..
         } => {
-            checked_execution_region_contains_branch_source_at(body, source_index, depth + 1)
-                || checked_execution_region_contains_branch_source_at(
+            *open_source_index == source_index
+                || checked_execution_region_contains_source_at(body, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(
                     continuation,
                     source_index,
                     depth + 1,
                 )
         }
-        InternalProofNode::If { .. } => false,
+        InternalProofNode::If {
+            source_index: if_source_index,
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            *if_source_index == source_index
+                || checked_execution_region_contains_source_at(then_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(else_branch, source_index, depth + 1)
+                || checked_execution_region_contains_source_at(
+                    continuation,
+                    source_index,
+                    depth + 1,
+                )
+        }
     }
-}
-
-fn execution_branch_tactics_end_at_exit(tactics: &[IndexedTactic]) -> bool {
-    tactics.last().is_some_and(|indexed| {
-        matches!(
-            indexed.tactic,
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
-        )
-    })
 }
 
 fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
@@ -636,6 +699,20 @@ fn deferred_post_execution_region(
         }
         InternalProofNode::Open { .. } | InternalProofNode::Branch { .. } => None,
     }
+}
+
+fn deferred_post_execution_if_is_explicit_path_cursor(
+    condition: &ClickProposition,
+    then_tactics: &[DeferredPostExecutionTactic],
+    else_tactics: &[DeferredPostExecutionTactic],
+) -> bool {
+    proof_case_is_stable_program_point_condition(condition)
+        && then_tactics.iter().chain(else_tactics).all(|deferred| {
+            !matches!(
+                deferred.tactic,
+                PostExecutionTactic::Simp | PostExecutionTactic::If { .. }
+            )
+        })
 }
 
 fn checked_structural_execution_branch_supported(
@@ -923,6 +1000,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
 ) -> Result<Option<Proof<'a>>, ClickError> {
     let mut staged_expansion_capture = expansion_capture.as_deref().cloned();
     let proof_site = context.replay.proof_site.clone();
+    let owning_source_index = generated_by_source_index.unwrap_or(usize::MAX);
     let mut proof = Proof::for_execution_frontier(
         claim_label,
         internal_proof_first_index(program).ok_or_else(|| {
@@ -995,6 +1073,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     body,
                     staged_expansion_capture.as_mut(),
                     proof_site.as_ref(),
+                    owning_source_index,
                 )?
                 else {
                     return Ok(None);
@@ -1017,8 +1096,8 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     internal_proof_contains_source_index(continuation, wanted)
                 });
                 let capture_in_nested_branch = selected_source_index.is_some_and(|wanted| {
-                    checked_execution_region_contains_branch_source(then_branch, wanted)
-                        || checked_execution_region_contains_branch_source(else_branch, wanted)
+                    checked_execution_region_contains_source(then_branch, wanted)
+                        || checked_execution_region_contains_source(else_branch, wanted)
                 });
                 if !selected_source_index.is_none_or(|wanted| {
                     wanted == *source_index || capture_in_continuation || capture_in_nested_branch
@@ -1040,6 +1119,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     else_branch,
                     staged_expansion_capture.as_mut(),
                     proof_site.as_ref(),
+                    owning_source_index,
                     0,
                 )?
                 else {
@@ -1078,6 +1158,14 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
                         return Ok(None);
                     };
+                    if !deferred_post_execution_if_is_explicit_path_cursor(
+                        condition,
+                        &then_tactics,
+                        &else_tactics,
+                    ) && !proof.post_execution_if_is_path_decided(condition)?
+                    {
+                        return Ok(None);
+                    }
                     proof = proof.defer_post_execution_source_tactic(
                         *index,
                         *source_index,
@@ -1172,21 +1260,19 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     } else {
                         branch
                     };
-                    let Some((next, remaining)) = advance_checked_linear_continuation(
+                    let Some(next) = advance_focused_execution_region(
                         focused,
+                        None,
                         branch,
                         staged_expansion_capture.as_mut(),
                         proof_site.as_ref(),
-                        generated_by_source_index.unwrap_or(usize::MAX),
-                        true,
-                        true,
-                        false,
-                        Some(claim_label),
+                        owning_source_index,
+                        1,
                     )?
                     else {
                         return Ok(None);
                     };
-                    if !remaining.is_empty() || !next.is_at_function_exit() {
+                    if !next.is_at_function_exit() {
                         return Ok(None);
                     }
                     advanced = next;
@@ -1255,19 +1341,39 @@ fn solve_nested_have<'a>(
 /// supplies only the stop-at-continuation boundary for source steps.
 fn advance_focused_execution_arm<'a>(
     mut proof: Proof<'a>,
-    record: &ExecutionSplit<'a>,
+    record: Option<&ExecutionSplit<'a>>,
     tactics: &[IndexedTactic],
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
-        if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
-            proof.ensure_focused_arm_step(record, &step)?;
-            proof = proof.apply_step(step)?;
+        if proof.is_at_function_exit() {
+            let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+                return Ok(None);
+            };
+            proof = proof.defer_post_execution_source_tactic(
+                indexed.index,
+                indexed.source_index,
+                post_tactic,
+                expansion_capture.as_deref_mut(),
+            )?;
+            continue;
+        }
+        let checkpoint = proof.checkpoint();
+        let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+            if let Some(record) = record {
+                proof.ensure_focused_arm_step(record, &step)?;
+            }
+            proof.apply_step(step)?
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            proof.ensure_focused_arm_can_advance(record)?;
+            if let Some(record) = record {
+                proof.ensure_focused_arm_can_advance(record)?;
+            }
             let Some(next) = proof.try_indexed_execute_step()? else {
                 return Ok(None);
             };
-            proof = next;
+            next
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
                 // Exit applications need one point proof per concrete
@@ -1278,7 +1384,7 @@ fn advance_focused_execution_arm<'a>(
             let Some(next) = proof.try_theorem_application(application)? else {
                 return Ok(None);
             };
-            proof = next;
+            next
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
             if proof.is_at_function_exit() {
                 return Ok(None);
@@ -1286,13 +1392,13 @@ fn advance_focused_execution_arm<'a>(
             let Some(next) = proof.try_execution_fact_transport(source, target)? else {
                 return Ok(None);
             };
-            proof = next;
+            next
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
             let Some(nested) = solve_nested_have(nested, have, false)? else {
                 return Ok(None);
             };
-            proof = nested.join()?;
+            nested.join()?
         } else if matches!(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
@@ -1300,10 +1406,25 @@ fn advance_focused_execution_arm<'a>(
             let Some(next) = proof.try_focused_execute_to_exit()? else {
                 return Ok(None);
             };
-            proof = next;
+            next
         } else {
             return Ok(None);
+        };
+        check_verification_deadline()?;
+        if indexed.source_index != owning_source_index
+            && let Some(site) = proof_site
+            && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                == Some(indexed.source_index)
+        {
+            let certificate = next.certificate_since(&checkpoint)?;
+            record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
+                site,
+                indexed.source_index,
+                &certificate.to_proof_tactics(),
+            );
         }
+        proof = next;
     }
     Ok(Some(proof))
 }
@@ -1314,10 +1435,11 @@ fn advance_focused_execution_arm<'a>(
 /// source steps.
 fn advance_focused_execution_region<'a>(
     mut proof: Proof<'a>,
-    enclosing_record: &ExecutionSplit<'a>,
+    enclosing_record: Option<&ExecutionSplit<'a>>,
     region: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
     depth: usize,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
@@ -1329,7 +1451,14 @@ fn advance_focused_execution_region<'a>(
             tactics,
             continuation,
         } => {
-            let Some(advanced) = advance_focused_execution_arm(proof, enclosing_record, tactics)?
+            let Some(advanced) = advance_focused_execution_arm(
+                proof,
+                enclosing_record,
+                tactics,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+            )?
             else {
                 return Ok(None);
             };
@@ -1339,6 +1468,7 @@ fn advance_focused_execution_region<'a>(
                 continuation,
                 expansion_capture,
                 proof_site,
+                owning_source_index,
                 depth + 1,
             )
         }
@@ -1350,7 +1480,9 @@ fn advance_focused_execution_region<'a>(
             else_branch,
             continuation,
         } => {
-            proof.ensure_focused_arm_can_advance(enclosing_record)?;
+            if let Some(record) = enclosing_record {
+                proof.ensure_focused_arm_can_advance(record)?;
+            }
             let owner = proof.clone();
             let Some((nested, _, certificate)) = try_advance_checked_execution_branch(
                 proof,
@@ -1360,6 +1492,7 @@ fn advance_focused_execution_region<'a>(
                 else_branch,
                 expansion_capture.as_deref_mut(),
                 proof_site,
+                owning_source_index,
                 depth,
             )?
             else {
@@ -1387,6 +1520,7 @@ fn advance_focused_execution_region<'a>(
                 continuation,
                 expansion_capture,
                 proof_site,
+                owning_source_index,
                 depth + 1,
             )
         }
@@ -1397,7 +1531,9 @@ fn advance_focused_execution_region<'a>(
             body,
             continuation,
         } => {
-            proof.ensure_focused_arm_can_advance(enclosing_record)?;
+            if let Some(record) = enclosing_record {
+                proof.ensure_focused_arm_can_advance(record)?;
+            }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
             let scope = proof.begin_open(resource.clone(), *source_index)?;
@@ -1406,6 +1542,7 @@ fn advance_focused_execution_region<'a>(
                 body,
                 expansion_capture.as_deref_mut(),
                 proof_site,
+                owning_source_index,
             )?
             else {
                 return Ok(None);
@@ -1417,10 +1554,102 @@ fn advance_focused_execution_region<'a>(
                 continuation,
                 expansion_capture,
                 proof_site,
+                owning_source_index,
                 depth + 1,
             )
         }
-        InternalProofNode::If { .. } => Ok(None),
+        InternalProofNode::If {
+            index,
+            source_index,
+            condition,
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            if !matches!(continuation.as_ref(), InternalProofNode::Done) {
+                return Ok(None);
+            }
+            if proof.is_at_function_exit() {
+                let Some(then_tactics) = deferred_post_execution_region(then_branch) else {
+                    return Ok(None);
+                };
+                let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
+                    return Ok(None);
+                };
+                if !deferred_post_execution_if_is_explicit_path_cursor(
+                    condition,
+                    &then_tactics,
+                    &else_tactics,
+                ) && !proof.post_execution_if_is_path_decided(condition)?
+                {
+                    return Ok(None);
+                }
+                let proof = proof.defer_post_execution_source_tactic(
+                    *index,
+                    *source_index,
+                    PostExecutionTactic::If {
+                        condition: condition.clone(),
+                        then_tactics,
+                        else_tactics,
+                    },
+                    expansion_capture.as_deref_mut(),
+                )?;
+                return advance_focused_execution_region(
+                    proof,
+                    enclosing_record,
+                    continuation,
+                    expansion_capture,
+                    proof_site,
+                    owning_source_index,
+                    depth + 1,
+                );
+            }
+            if let Some(record) = enclosing_record {
+                proof.ensure_focused_arm_can_advance(record)?;
+            }
+            let owner = proof.clone();
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let (split, record) =
+                if let Some(existing) = proof.enter_statement_successor_if(condition)? {
+                    existing
+                } else {
+                    proof.split_focused_execution_if(condition.clone())?
+                };
+            let mut advanced = split;
+            for (take_then, branch) in [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
+            {
+                let focused = advanced.focus_execution_if_arm(&record, take_then)?;
+                let Some(next) = advance_focused_execution_region(
+                    focused,
+                    enclosing_record,
+                    branch,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                    depth + 1,
+                )?
+                else {
+                    return Ok(None);
+                };
+                if !next.is_at_function_exit() {
+                    return Ok(None);
+                }
+                advanced = next;
+            }
+            let proof = advanced
+                .join_focused_execution_if_terminal(&record)?
+                .restore_execution_tactic_attribution(&owner)?;
+            advance_focused_execution_region(
+                proof,
+                enclosing_record,
+                continuation,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                depth + 1,
+            )
+        }
     }
 }
 
@@ -1436,6 +1665,7 @@ fn try_advance_checked_execution_branch<'a>(
     else_branch: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
     depth: usize,
 ) -> Result<Option<(Proof<'a>, bool, Option<ProofCertificate>)>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
@@ -1458,10 +1688,11 @@ fn try_advance_checked_execution_branch<'a>(
         }
         let Some(next) = advance_focused_execution_region(
             advanced.focus_split_arm(&record, take_then)?,
-            &record,
+            Some(&record),
             region,
             expansion_capture.as_deref_mut(),
             proof_site,
+            owning_source_index,
             depth + 1,
         )?
         else {
@@ -1762,6 +1993,7 @@ fn advance_linear_open_scope<'a>(
     tactics: &[IndexedTactic],
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
@@ -1781,7 +2013,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = stepped;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1798,7 +2032,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = applied;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1815,7 +2051,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = transported;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1835,7 +2073,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = executed;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1854,7 +2094,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = framed;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1871,7 +2113,9 @@ fn advance_linear_open_scope<'a>(
                 return Ok(None);
             };
             scope = executed;
-            if let Some(site) = proof_site {
+            if indexed.source_index != owning_source_index
+                && let Some(site) = proof_site
+            {
                 let certificate = scope.certificate_since(&checkpoint)?;
                 record_proof_site_tactic_expansion(
                     expansion_capture.as_deref_mut(),
@@ -1900,12 +2144,19 @@ fn advance_checked_open_scope<'a>(
     body: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     if matches!(body, InternalProofNode::Done) {
         return Ok(Some(scope));
     }
     if let Some(tactics) = linear_execution_tactics(body) {
-        return advance_linear_open_scope(scope, tactics, expansion_capture, proof_site);
+        return advance_linear_open_scope(
+            scope,
+            tactics,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
     }
     if let InternalProofNode::Linear {
         tactics,
@@ -1917,11 +2168,18 @@ fn advance_checked_open_scope<'a>(
             tactics,
             expansion_capture.as_deref_mut(),
             proof_site,
+            owning_source_index,
         )?
         else {
             return Ok(None);
         };
-        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+        return advance_checked_open_scope(
+            scope,
+            continuation,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
     }
     if let InternalProofNode::Open {
         index,
@@ -1938,12 +2196,19 @@ fn advance_checked_open_scope<'a>(
             nested_body,
             expansion_capture.as_deref_mut(),
             proof_site,
+            owning_source_index,
         )?
         else {
             return Ok(None);
         };
         let scope = scope.join_nested(nested)?;
-        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+        return advance_checked_open_scope(
+            scope,
+            continuation,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
     }
     if let InternalProofNode::If {
         condition,
@@ -1956,7 +2221,13 @@ fn advance_checked_open_scope<'a>(
             expanded_execution_if_steps(condition, then_branch, else_branch)
     {
         let scope = scope.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
-        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+        return advance_checked_open_scope(
+            scope,
+            continuation,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
     }
     if let InternalProofNode::If {
         index,
@@ -1993,7 +2264,13 @@ fn advance_checked_open_scope<'a>(
         else {
             return Ok(None);
         };
-        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+        return advance_checked_open_scope(
+            scope,
+            continuation,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
     }
     let InternalProofNode::Branch {
         ensuring,
@@ -2024,10 +2301,11 @@ fn advance_checked_open_scope<'a>(
         }
         let Some(next) = advance_focused_execution_region(
             advanced.focus_split_arm(&record, take_then)?,
-            &record,
+            Some(&record),
             region,
             expansion_capture.as_deref_mut(),
             proof_site,
+            owning_source_index,
             0,
         )?
         else {
@@ -2036,7 +2314,13 @@ fn advance_checked_open_scope<'a>(
         advanced = next;
     }
     let scope = scope.join_execution_split(&advanced, &record, empty, ensuring.clone())?;
-    advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
+    advance_checked_open_scope(
+        scope,
+        continuation,
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+    )
 }
 
 // The complete mdtest and example gates both reach depth 9. Keep a modest

@@ -123,21 +123,41 @@ int32 identity(int32 x) {
         .expect("then tactic should exist")
         + 8;
     let position = position_at_offset(click_source, then_offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("identity.c", c_source)],
-        position.line,
-        position.column,
-    )
-    .expect("the nested then tactic should expand");
+    let ((expanded, capture_replays), capture_flat_units) =
+        super::super::proof::count_flat_proof_units(|| {
+            super::super::proof::count_internal_proof_executions(|| {
+                expand_c0_tactic_source_at(
+                    click_source,
+                    &[("identity.c", c_source)],
+                    position.line,
+                    position.column,
+                )
+            })
+        });
+    let expanded = expanded.expect("the nested then tactic should expand");
+    assert_eq!(capture_flat_units, 1, "capture should retain one Proof");
+    assert_eq!(capture_replays, 0, "nested capture entered replay");
 
     assert_eq!(expanded.matches("execute();").count(), 1);
     assert!(
         expanded.contains("    if x == x {\n        step() using {"),
         "{expanded}"
     );
-    verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the source with one nested expansion should re-verify");
+    let ((reverified, reverify_replays), reverify_flat_units) =
+        super::super::proof::count_flat_proof_units(|| {
+            super::super::proof::count_internal_proof_executions(|| {
+                verify_c0_sources(&expanded, &[("identity.c", c_source)])
+            })
+        });
+    reverified.expect("the source with one nested expansion should re-verify");
+    assert_eq!(
+        reverify_flat_units, 1,
+        "the rewritten nested tactic should retain one Proof"
+    );
+    assert_eq!(
+        reverify_replays, 0,
+        "the rewritten nested tactic entered replay"
+    );
 }
 
 #[test]

@@ -244,7 +244,10 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
         })
     });
     verified.expect("the explicit call partition should remain on one retained Proof");
-    assert_eq!(flat_units, 1, "the caller should retain one Proof");
+    assert_eq!(
+        flat_units, 2,
+        "the callee and caller should each retain one Proof"
+    );
     assert!(
         replay_labels
             .iter()

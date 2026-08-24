@@ -574,7 +574,7 @@ pub(super) struct ConstructionEnvironments<'a> {
     pub(super) click_function_environment: &'a ClickFunctionEnvironment,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct DeferredTacticCapture {
     pub(super) tactic_index: usize,
     pub(super) source_index: usize,
