@@ -962,21 +962,6 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
-    if let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics)
-        && proof_supports_pure_certificate(&certificate)
-    {
-        let Ok(proof) = root.check_certificate(&certificate) else {
-            // Until every pure simple step uses `Proof`, retain the legacy
-            // verifier's established failure diagnostics for rejected source
-            // scripts. Successful migrated scripts still return directly.
-            return Ok(None);
-        };
-        if !proof.is_complete() {
-            return Ok(None);
-        }
-        return Ok(Some(proof.certificate()));
-    }
-
     Ok(None)
 }
 
