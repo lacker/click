@@ -1090,8 +1090,23 @@ struct ExecutionProofState {
     state: SharedValue<CState>,
     replay: TacticReplayState,
     branch_path: PersistentSequence<String>,
+    /// Kernel facts whose checked C-branch Surface spellings must survive a
+    /// join for extraction and explicit historical premises.
+    branch_surface_facts: PersistentOrderedSet<Proposition>,
+    /// Decisions on the currently focused execution lineage. Forks append
+    /// one entry in constant time.
+    branch_decisions: PersistentSequence<ExecutionBranchDecision>,
+    /// Path-local lineages aligned with terminal execution candidates. This
+    /// is output-sized Proof provenance, never semantic state in a cursor.
+    outcome_branch_decisions: Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
     last_step_delta: ExecutionProofStepDelta,
     has_empty_execution_branch_leaf: bool,
+}
+
+#[derive(Clone)]
+struct ExecutionBranchDecision {
+    condition: ClickProposition,
+    value: bool,
 }
 
 /// Read-only terminal data borrowed from an execution `Proof` by claim
@@ -1250,6 +1265,7 @@ struct OutcomePointData {
     /// Typed outcome evidence uses this persistent index to recover an exact
     /// function-entry Surface premise without scanning unrelated facts.
     requirement_surfaces: Arc<PersistentMap<Proposition, ClickProposition>>,
+    branch_decisions: PersistentSequence<ExecutionBranchDecision>,
 }
 
 /// The path-local semantic context owned by one goal.
@@ -2186,6 +2202,9 @@ impl<'a> Proof<'a> {
                             state: state.into(),
                             replay: *replay,
                             branch_path,
+                            branch_surface_facts: PersistentOrderedSet::default(),
+                            branch_decisions: PersistentSequence::default(),
+                            outcome_branch_decisions: Arc::new(Vec::new()),
                             last_step_delta: ExecutionProofStepDelta::default(),
                             has_empty_execution_branch_leaf: false,
                         })),
@@ -4591,6 +4610,15 @@ impl<'a> Proof<'a> {
                 .replay
                 .surface_propositions
                 .record_lowering(&surface_path_fact, &kernel_path_fact)?;
+            arm_execution
+                .branch_surface_facts
+                .insert(kernel_path_fact.clone());
+            arm_execution
+                .branch_decisions
+                .push(ExecutionBranchDecision {
+                    condition: surface_condition.clone(),
+                    value: take_then,
+                });
             arm_execution.replay.has_structured_branch_history = true;
             arm_execution.branch_path.push(format!(
                 "{} arm of C `if` at statement({statement_index})",
@@ -5116,6 +5144,11 @@ impl<'a> Proof<'a> {
         let mut execution = parent_execution.clone();
         execution.has_empty_execution_branch_leaf |= then_abstract.has_empty_execution_branch_leaf
             || else_abstract.has_empty_execution_branch_leaf;
+        self.merge_branch_surface_facts(
+            &mut execution,
+            parent_execution,
+            [&then_abstract, &else_abstract],
+        )?;
         execution.state = abstract_state.clone().into();
         execution.replay.program_point_states = common_program_points;
         execution
@@ -5308,6 +5341,38 @@ impl<'a> Proof<'a> {
         self.resume_parent_after_sibling_join(record, ids, selection, parts)
     }
 
+    /// Carries only checked C-branch anchor spellings across a structural
+    /// join. The persistent fact set is owned by `Proof`; it retains exact
+    /// historical premises and extraction spellings without publishing
+    /// unrelated arm-local predicate or resource provenance.
+    fn merge_branch_surface_facts(
+        &self,
+        execution: &mut ExecutionProofState,
+        parent: &ExecutionProofState,
+        arms: [&ExecutionProofState; 2],
+    ) -> Result<(), ClickError> {
+        for arm in arms {
+            let introduced = arm
+                .branch_surface_facts
+                .introduced_since(&parent.branch_surface_facts)
+                .ok_or_else(|| {
+                    self.step_error(
+                        "execution branch surface facts do not descend from the split root",
+                    )
+                })?;
+            for fact in introduced {
+                for surface in arm.replay.surface_propositions.surfaces(&fact) {
+                    execution
+                        .replay
+                        .surface_propositions
+                        .record_lowering(surface, &fact)?;
+                }
+                execution.branch_surface_facts.insert(fact);
+            }
+        }
+        Ok(())
+    }
+
     /// The merge law for a terminal two-arm execution join: both arms
     /// completed at function exit, so distinct return outcomes remain as
     /// separate paths instead of requiring one equal C state. Produces the
@@ -5443,13 +5508,15 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
+        let mut path_branch_decisions: Vec<PersistentSequence<ExecutionBranchDecision>> =
+            Vec::new();
         for arm in &arms {
             let completed = arm
                 .execution
                 .replay
                 .execution()
                 .expect("validated terminal arm is at function exit");
-            for path in completed.paths() {
+            for (arm_path_index, path) in completed.paths().iter().enumerate() {
                 let mut path_facts = path.execution_facts();
                 for proposition in &arm.introduced_facts {
                     let fact = ExecutionPureFact::new(proposition.clone());
@@ -5467,6 +5534,13 @@ impl<'a> Proof<'a> {
                     })
                 {
                     paths.push((path.outcome().clone(), path_facts, obligations));
+                    path_branch_decisions.push(
+                        arm.execution
+                            .outcome_branch_decisions
+                            .get(arm_path_index)
+                            .cloned()
+                            .unwrap_or_else(|| arm.execution.branch_decisions.clone()),
+                    );
                 }
             }
         }
@@ -5481,6 +5555,11 @@ impl<'a> Proof<'a> {
         execution.has_empty_execution_branch_leaf |= arms
             .iter()
             .any(|arm| arm.execution.has_empty_execution_branch_leaf);
+        self.merge_branch_surface_facts(
+            &mut execution,
+            parent_execution,
+            [arms[0].execution, arms[1].execution],
+        )?;
         execution.state = execution_start_state.clone().into();
         execution.replay.program_point_states = common_program_points;
         if !proof_case_split {
@@ -5502,6 +5581,8 @@ impl<'a> Proof<'a> {
         execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
             execution: outcomes,
         };
+        execution.branch_decisions = parent_execution.branch_decisions.clone();
+        execution.outcome_branch_decisions = Arc::new(path_branch_decisions);
         execution.replay.has_structured_branch_history = true;
         execution.replay.next_opaque_call = then_replay
             .next_opaque_call
@@ -5551,39 +5632,6 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
-
-        // Terminal arms remain distinct execution outcomes. Preserve only the
-        // two branch-anchor Surface identities in the joined read-only index;
-        // copying every arm-local lowering would also publish predicate-unfold
-        // provenance that is intentionally scoped to that arm. Outcome goals
-        // later filter these anchors through their own exact fact set. This
-        // slice owns one terminal split; a branch whose arms already completed
-        // nested splits keeps their richer provenance on the compatibility
-        // path until that whole tree can migrate together.
-        if then_replay.completed_branch_regions.len() == 0
-            && else_replay.completed_branch_regions.len() == 0
-        {
-            let arm_surfaces = [
-                surface_condition.clone(),
-                negate_click_proposition(&surface_condition),
-            ];
-            for (arm, surface_condition) in arms.iter().zip(&arm_surfaces) {
-                for fact in &arm.introduced_facts {
-                    if arm
-                        .execution
-                        .replay
-                        .surface_propositions
-                        .surfaces(fact)
-                        .any(|surface| surface == surface_condition)
-                    {
-                        execution
-                            .replay
-                            .surface_propositions
-                            .record_lowering(surface_condition, fact)?;
-                    }
-                }
-            }
-        }
 
         let mut facts = parent_facts.clone();
         let mut common_added_facts = Vec::new();
@@ -5683,6 +5731,11 @@ impl<'a> Proof<'a> {
         execution.has_empty_execution_branch_leaf |= arms
             .iter()
             .any(|arm| arm.execution.has_empty_execution_branch_leaf);
+        self.merge_branch_surface_facts(
+            &mut execution,
+            parent_execution,
+            [arms[0].execution, arms[1].execution],
+        )?;
         execution.state = (**then_state).clone().into();
         execution.replay.completed_branch_regions.clear();
         execution
@@ -6289,13 +6342,13 @@ impl<'a> Proof<'a> {
     /// those transitions, so this checks the exact Surface operations against
     /// the C branch and applies only the remaining body steps to the focused
     /// sibling. No certificate is constructed or interpreted.
-    fn apply_focused_expanded_execution_arm(
+    pub(super) fn focus_expanded_execution_arm_entry(
         &self,
         record: &ExecutionSplit<'a>,
         take_then: bool,
         surface_condition: &ClickProposition,
         steps: &[SimpleProofStep],
-    ) -> Result<Self, ClickError> {
+    ) -> Result<Option<(Self, usize)>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
@@ -6341,13 +6394,44 @@ impl<'a> Proof<'a> {
         };
         let mut expected = vec![SimpleProofStep::StepUsing(vec![path_condition])];
         expected.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        if record.arm_id(take_then).is_none() {
+            // A common extracted surface tree may retain the checked entry
+            // prefix for an arm that earlier path facts make unreachable on
+            // this particular outcome. Validate that prefix exactly before
+            // declining to apply the remaining, structurally classified
+            // syntax: there is no successor Proof on which it could act.
+            if !steps.is_empty() && steps.get(..entry_steps) != Some(expected.as_slice()) {
+                return Err(self.step_error(format!(
+                    "expanded execution infeasible {} arm does not begin with its {entry_steps} checked branch-entry step(s)",
+                    if take_then { "then" } else { "else" },
+                )));
+            }
+            return Ok(None);
+        }
         if steps.get(..entry_steps) != Some(expected.as_slice()) {
             return Err(self.step_error(format!(
                 "expanded execution {} arm does not begin with its {entry_steps} checked branch-entry step(s)",
                 if take_then { "then" } else { "else" },
             )));
         }
-        let mut proof = self.focus_split_arm(record, take_then)?;
+        Ok(Some((
+            self.focus_split_arm(record, take_then)?,
+            entry_steps,
+        )))
+    }
+
+    fn apply_focused_expanded_execution_arm(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+        surface_condition: &ClickProposition,
+        steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let Some((mut proof, entry_steps)) =
+            self.focus_expanded_execution_arm_entry(record, take_then, surface_condition, steps)?
+        else {
+            return Err(self.step_error("cannot advance an infeasible expanded execution arm"));
+        };
         for step in &steps[entry_steps..] {
             proof = proof.apply_step(step.clone())?;
         }
@@ -9991,9 +10075,8 @@ impl<'a> Proof<'a> {
     }
 
     /// Whether checked execution retained an infeasible sibling as an empty
-    /// logical branch. The surface driver uses this read-only Proof metadata
-    /// to keep that not-yet-expressible expansion shape on its compatibility
-    /// path without constructing a certificate during ordinary verification.
+    /// logical branch. Direct drivers use this Proof-owned structural fact to
+    /// keep unsupported empty-leaf shapes on their compatibility routes.
     pub(super) fn has_empty_execution_branch_leaf(&self) -> bool {
         self.execution()
             .is_some_and(|execution| execution.has_empty_execution_branch_leaf)
@@ -10307,6 +10390,11 @@ impl<'a> Proof<'a> {
                             premise_anchor: frontier_anchor.clone(),
                             requirement_facts: requirement_facts.clone(),
                             requirement_surfaces: requirement_surfaces.clone(),
+                            branch_decisions: execution
+                                .outcome_branch_decisions
+                                .get(path_index)
+                                .cloned()
+                                .unwrap_or_else(|| execution.branch_decisions.clone()),
                         }),
                         context: GoalContext {
                             facts,
@@ -11852,9 +11940,27 @@ impl<'a> Proof<'a> {
         if !matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) {
             return Err(self.step_error("post-execution `if` requires a focused outcome goal"));
         }
+        let point = self
+            .focused_outcome_point()
+            .expect("a focused outcome judgment resolves its point data");
+        let mut recorded_value = None;
+        for decision in point.branch_decisions.iter() {
+            if &decision.condition != condition {
+                continue;
+            }
+            if recorded_value.is_some_and(|value| value != decision.value) {
+                return Err(self.step_error(
+                    "focused outcome records both sides of the post-execution `if` condition",
+                ));
+            }
+            recorded_value = Some(decision.value);
+        }
+        if let Some(value) = recorded_value {
+            return Ok(value);
+        }
+        let negative_surface = ClickProposition::Not(Box::new(condition.clone()));
         let positive =
             self.lower_surface_proposition(condition, "post-execution `if` condition")?;
-        let negative_surface = ClickProposition::Not(Box::new(condition.clone()));
         let negative =
             self.lower_surface_proposition(&negative_surface, "post-execution `if` negation")?;
         let assumptions = self.facts().assumptions();

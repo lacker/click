@@ -160,6 +160,20 @@ fn grouped_heap_predicate_execute_simp_supported(
     grouped_heap_predicate_contract_supported(function_block)
 }
 
+fn heap_predicate_explicit_unfold_supported(
+    function_block: &FunctionBlock,
+    tactics: &[ProofTactic],
+) -> bool {
+    matches!(
+        tactics,
+        [
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths,
+            ProofTactic::UnfoldPredicate(_),
+            ProofTactic::Simp
+        ]
+    ) && grouped_heap_predicate_contract_supported(function_block)
+}
+
 fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
     tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
@@ -241,25 +255,25 @@ fn top_level_structural_proof_supported(
         tactics.iter().any(expanded_execution_if_tactic_supported);
     let has_top_level_mid_execution_if =
         tactics.iter().any(mid_execution_proof_if_tactic_supported);
+    let has_top_level_expanded_execution_tree =
+        tactics.iter().any(expanded_execution_tree_tactic_supported);
     let top_level_post_execution_if_count = tactics
         .iter()
         .filter(|tactic| post_execution_if_tactic_supported(tactic))
         .count();
-    // This slice owns one terminal outcome split. Multiple successive
-    // outcome splits still rely on predicate-unfold provenance accumulated
-    // between their selected arms, so leave that larger migration on its
-    // audited compatibility path.
     if top_level_post_execution_if_count > 1 {
         return false;
     }
     let has_top_level_post_execution_if = top_level_post_execution_if_count == 1;
-    // Likewise, an outcome split following earlier execution splits still
-    // needs their inter-branch provenance threaded into its leaf operations.
-    if has_top_level_post_execution_if && has_top_level_expanded_execution_if {
+    if has_top_level_post_execution_if
+        && has_top_level_expanded_execution_if
+        && !has_top_level_expanded_execution_tree
+    {
         return false;
     }
     let has_top_level_direct_if = has_top_level_expanded_execution_if
         || has_top_level_mid_execution_if
+        || has_top_level_expanded_execution_tree
         || has_top_level_post_execution_if;
     if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
         return false;
@@ -310,6 +324,7 @@ fn top_level_structural_proof_supported(
         tactic @ ProofTactic::If(_) => {
             expanded_execution_if_tactic_supported(tactic)
                 || mid_execution_proof_if_tactic_supported(tactic)
+                || expanded_execution_tree_tactic_supported(tactic)
                 || post_execution_if_tactic_supported(tactic)
         }
         tactic => is_linear(tactic),
@@ -318,6 +333,8 @@ fn top_level_structural_proof_supported(
         && structural_tactics
         && (grouped_predicate_contract_supported(function_block, predicate_environment)
             || (has_top_level_post_execution_if
+                && grouped_heap_predicate_contract_supported(function_block))
+            || (has_top_level_expanded_execution_tree
                 && grouped_heap_predicate_contract_supported(function_block)))
 }
 
@@ -772,6 +789,8 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &arguments,
         )?
     } else {
+        let owns_empty_predicate_branches =
+            heap_predicate_explicit_unfold_supported(function_block, tactics);
         try_check_flat_function_proof(
             &initial,
             &program,
@@ -789,6 +808,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &arguments,
             false,
             false,
+            owns_empty_predicate_branches,
         )?
     };
     if let Some(proof) = direct_proof {
@@ -974,6 +994,8 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         )?
     } else if grouped_direct_supported {
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
+        let owns_empty_predicate_branches =
+            heap_predicate_explicit_unfold_supported(function_block, tactics);
         try_check_flat_function_proof(
             &initial,
             &program,
@@ -991,6 +1013,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &arguments,
             true,
             owns_post_execution_transport,
+            owns_empty_predicate_branches,
         )?
     } else {
         None

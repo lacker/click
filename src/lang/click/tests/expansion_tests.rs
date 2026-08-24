@@ -9532,9 +9532,21 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     "#;
     let sources = [("sort_three_cells.c", c_source)];
 
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    let (((verified, events), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources))
+            })
+        });
     verified.expect("the surviving unfold-owned universal should close through Proof");
+    assert_eq!(
+        flat_units, 1,
+        "the nested outcome tree should retain one Proof"
+    );
+    assert_eq!(
+        replay_executions, 0,
+        "the nested outcome tree entered compatibility replay"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -9558,8 +9570,45 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     );
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(expanded.contains("unfold(permutation);"), "{expanded}");
-    verify_c0_sources(&expanded, &sources)
-        .expect("the retained nested predicate proof should replay independently");
+    let ((reverified, expanded_replays), expanded_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
+        });
+    assert_eq!(
+        expanded_flat_units, 1,
+        "the rewritten nested proof should retain one Proof"
+    );
+    assert_eq!(
+        expanded_replays, 0,
+        "the rewritten nested proof entered compatibility replay"
+    );
+    reverified.expect("the retained nested predicate proof should replay independently");
+
+    let corrupted = expanded.replace("statement(1).entry", "statement(6).entry");
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its checked root branch anchor"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+        });
+    let error = corrupted_result
+        .expect_err("tampering with the nested execution branch anchor must invalidate the proof");
+    assert!(
+        error
+            .message()
+            .contains("expanded execution branch condition does not match the checked C branch"),
+        "the checked Proof split should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "an invalid nested branch anchor must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "an invalid nested branch anchor must not enter execute_internal_proof"
+    );
 }
 
 #[test]

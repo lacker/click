@@ -162,6 +162,87 @@ pub(in crate::lang::click::proof) fn mid_execution_proof_if_tactic_supported(
     arm_is_checked_linear(&proof_if.then_tactics) && arm_is_checked_linear(&proof_if.else_tactics)
 }
 
+fn expanded_execution_tree_arm_supported(
+    condition: &ClickProposition,
+    take_then: bool,
+    tactics: &[ProofTactic],
+    depth: usize,
+) -> bool {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH || tactics.is_empty() {
+        return tactics.is_empty();
+    }
+    let post_only = tactics
+        .iter()
+        .all(|tactic| flat_post_execution_tactic(tactic).is_some())
+        && tactics
+            .iter()
+            .any(|tactic| !matches!(tactic, ProofTactic::Simp));
+    if post_only {
+        return true;
+    }
+    let expected = if take_then {
+        condition.clone()
+    } else {
+        negate_click_proposition(condition)
+    };
+    if !matches!(
+        tactics.first(),
+        Some(ProofTactic::StepUsing(premises))
+            if premises.as_slice() == std::slice::from_ref(&expected)
+    ) {
+        return false;
+    }
+    let nested = tactics
+        .iter()
+        .enumerate()
+        .filter_map(|(index, tactic)| matches!(tactic, ProofTactic::If(_)).then_some(index))
+        .collect::<Vec<_>>();
+    match nested.as_slice() {
+        [] => {
+            tactics.iter().all(|tactic| {
+                linear_execution_simple_step(tactic).is_some()
+                    || (!matches!(tactic, ProofTactic::Simp)
+                        && flat_post_execution_tactic(tactic).is_some())
+            }) && tactics.iter().any(|tactic| {
+                !matches!(tactic, ProofTactic::Simp) && flat_post_execution_tactic(tactic).is_some()
+            })
+        }
+        [index] if *index + 1 == tactics.len() => {
+            tactics[..*index]
+                .iter()
+                .all(|tactic| linear_execution_simple_step(tactic).is_some())
+                && expanded_execution_tree_tactic_supported_at(&tactics[*index], depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn expanded_execution_tree_tactic_supported_at(tactic: &ProofTactic, depth: usize) -> bool {
+    let ProofTactic::If(proof_if) = tactic else {
+        return false;
+    };
+    proof_case_is_stable_program_point_condition(&proof_if.condition)
+        && expanded_execution_tree_arm_supported(
+            &proof_if.condition,
+            true,
+            &proof_if.then_tactics,
+            depth,
+        )
+        && expanded_execution_tree_arm_supported(
+            &proof_if.condition,
+            false,
+            &proof_if.else_tactics,
+            depth,
+        )
+        && !(proof_if.then_tactics.is_empty() && proof_if.else_tactics.is_empty())
+}
+
+pub(in crate::lang::click::proof) fn expanded_execution_tree_tactic_supported(
+    tactic: &ProofTactic,
+) -> bool {
+    expanded_execution_tree_tactic_supported_at(tactic, 0)
+}
+
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
     match node {
         InternalProofNode::Done => Some(&[]),
@@ -503,6 +584,25 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
 /// Converts a supported post-execution syntax region into cursor metadata.
 /// This performs no proof transition and stores no semantic state; each leaf
 /// operation is checked later against the focused outcome `Proof`.
+fn deferred_post_execution_linear_region(
+    tactics: &[IndexedTactic],
+    continuation: &InternalProofNode,
+) -> Option<Vec<DeferredPostExecutionTactic>> {
+    let mut deferred = tactics
+        .iter()
+        .map(|indexed| {
+            Some(DeferredPostExecutionTactic {
+                tactic_index: indexed.index,
+                source_index: indexed.source_index,
+                tactic: flat_post_execution_tactic(&indexed.tactic)?,
+                surface_recorded: false,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    deferred.extend(deferred_post_execution_region(continuation)?);
+    Some(deferred)
+}
+
 fn deferred_post_execution_region(
     node: &InternalProofNode,
 ) -> Option<Vec<DeferredPostExecutionTactic>> {
@@ -511,21 +611,7 @@ fn deferred_post_execution_region(
         InternalProofNode::Linear {
             tactics,
             continuation,
-        } => {
-            let mut deferred = tactics
-                .iter()
-                .map(|indexed| {
-                    Some(DeferredPostExecutionTactic {
-                        tactic_index: indexed.index,
-                        source_index: indexed.source_index,
-                        tactic: flat_post_execution_tactic(&indexed.tactic)?,
-                        surface_recorded: false,
-                    })
-                })
-                .collect::<Option<Vec<_>>>()?;
-            deferred.extend(deferred_post_execution_region(continuation)?);
-            Some(deferred)
-        }
+        } => deferred_post_execution_linear_region(tactics, continuation),
         InternalProofNode::If {
             index,
             source_index,
@@ -746,6 +832,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     arguments: &'a [CExpression],
     complete_grouped_authority: bool,
     allow_indexed_smart_step: bool,
+    allow_empty_execution_branch_leaf: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     // A compatibility miss must leave the expansion cursor untouched just as
     // it leaves the semantic root untouched. Only publish cursor metadata
@@ -789,10 +876,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     if !proof.is_at_function_exit() {
         return Ok(None);
     }
-    // An infeasible sibling has no surface operations to reapply yet. Keep
-    // that exact shape on compatibility replay, using Proof-owned structural
-    // metadata rather than extracting and inspecting a certificate here.
-    if proof.has_empty_execution_branch_leaf() {
+    if proof.has_empty_execution_branch_leaf() && !allow_empty_execution_branch_leaf {
         return Ok(None);
     }
     for indexed in remaining {
@@ -1006,6 +1090,22 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     saw_structure = true;
                     current = continuation;
                     continue;
+                }
+                if expanded_execution_internal_if_supported(current, 0) {
+                    let Some(result) = advance_expanded_execution_region(proof, current, 0)? else {
+                        return Ok(None);
+                    };
+                    proof = result.proof;
+                    for deferred in result.post_execution {
+                        proof = proof.defer_post_execution_source_tactic(
+                            deferred.tactic_index,
+                            deferred.source_index,
+                            deferred.tactic,
+                            staged_expansion_capture.as_mut(),
+                        )?;
+                    }
+                    saw_structure = true;
+                    break;
                 }
                 proof = proof.with_execution_tactic_index(*index)?;
                 if let Some((then_steps, else_steps)) =
@@ -1323,6 +1423,261 @@ fn expanded_execution_if_steps(
         && expanded_execution_arm_supported(condition, false, &else_steps)
         && !(then_steps.is_empty() && else_steps.is_empty()))
     .then_some((then_steps, else_steps))
+}
+
+struct ExpandedExecutionRegionAdvance<'a> {
+    proof: Proof<'a>,
+    post_execution: Vec<DeferredPostExecutionTactic>,
+}
+
+fn expanded_execution_internal_arm_supported(
+    condition: &ClickProposition,
+    take_then: bool,
+    region: &InternalProofNode,
+    depth: usize,
+) -> bool {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return false;
+    }
+    if matches!(region, InternalProofNode::Done) {
+        return true;
+    }
+    let InternalProofNode::Linear {
+        tactics,
+        continuation,
+    } = region
+    else {
+        return false;
+    };
+    let post_only = matches!(continuation.as_ref(), InternalProofNode::Done)
+        && tactics
+            .iter()
+            .all(|indexed| flat_post_execution_tactic(&indexed.tactic).is_some())
+        && tactics
+            .iter()
+            .any(|indexed| !matches!(indexed.tactic, ProofTactic::Simp));
+    if post_only {
+        return true;
+    }
+    let expected = if take_then {
+        condition.clone()
+    } else {
+        negate_click_proposition(condition)
+    };
+    if !matches!(
+        tactics.first().map(|indexed| &indexed.tactic),
+        Some(ProofTactic::StepUsing(premises))
+            if premises.as_slice() == std::slice::from_ref(&expected)
+    ) {
+        return false;
+    }
+    match continuation.as_ref() {
+        InternalProofNode::Done => {
+            tactics.iter().all(|indexed| {
+                linear_execution_simple_step(&indexed.tactic).is_some()
+                    || (!matches!(indexed.tactic, ProofTactic::Simp)
+                        && flat_post_execution_tactic(&indexed.tactic).is_some())
+            }) && tactics.iter().any(|indexed| {
+                !matches!(indexed.tactic, ProofTactic::Simp)
+                    && flat_post_execution_tactic(&indexed.tactic).is_some()
+            })
+        }
+        nested @ InternalProofNode::If { .. } => {
+            tactics
+                .iter()
+                .all(|indexed| linear_execution_simple_step(&indexed.tactic).is_some())
+                && expanded_execution_internal_if_supported(nested, depth + 1)
+        }
+        InternalProofNode::Linear { .. }
+        | InternalProofNode::Open { .. }
+        | InternalProofNode::Branch { .. } => false,
+    }
+}
+
+fn expanded_execution_internal_if_supported(node: &InternalProofNode, depth: usize) -> bool {
+    let InternalProofNode::If {
+        condition,
+        then_branch,
+        else_branch,
+        continuation,
+        ..
+    } = node
+    else {
+        return false;
+    };
+    proof_case_is_stable_program_point_condition(condition)
+        && expanded_execution_internal_arm_supported(condition, true, then_branch, depth)
+        && expanded_execution_internal_arm_supported(condition, false, else_branch, depth)
+        && matches!(continuation.as_ref(), InternalProofNode::Done)
+}
+
+fn advance_expanded_execution_linear_region<'a>(
+    mut proof: Proof<'a>,
+    tactics: &[IndexedTactic],
+    continuation: &InternalProofNode,
+    depth: usize,
+) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return Ok(None);
+    }
+    for (offset, indexed) in tactics.iter().enumerate() {
+        if proof.is_at_function_exit() {
+            let Some(post_execution) =
+                deferred_post_execution_linear_region(&tactics[offset..], continuation)
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(ExpandedExecutionRegionAdvance {
+                proof,
+                post_execution,
+            }));
+        }
+        let Some(step) = linear_execution_simple_step(&indexed.tactic) else {
+            return Ok(None);
+        };
+        proof = proof.with_execution_tactic_index(indexed.index)?;
+        proof = proof.apply_step(step)?;
+    }
+    advance_expanded_execution_region(proof, continuation, depth + 1)
+}
+
+fn expanded_execution_region_leading_steps(
+    region: &InternalProofNode,
+) -> Option<(&[IndexedTactic], &InternalProofNode, Vec<SimpleProofStep>)> {
+    let InternalProofNode::Linear {
+        tactics,
+        continuation,
+    } = region
+    else {
+        return None;
+    };
+    let steps = tactics
+        .iter()
+        .map_while(|indexed| {
+            flat_post_execution_tactic(&indexed.tactic)
+                .is_none()
+                .then(|| linear_execution_simple_step(&indexed.tactic))
+                .flatten()
+        })
+        .collect();
+    Some((tactics, continuation, steps))
+}
+
+fn advance_expanded_execution_if_region<'a>(
+    proof: Proof<'a>,
+    index: usize,
+    source_index: usize,
+    condition: &ClickProposition,
+    then_branch: &InternalProofNode,
+    else_branch: &InternalProofNode,
+    continuation: &InternalProofNode,
+    depth: usize,
+) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return Ok(None);
+    }
+    let proof = proof.with_execution_tactic_index(index)?;
+    let (split, record) = proof.split_focused_execution_branch()?;
+    let mut advanced = split;
+    let mut post_arms = [Vec::new(), Vec::new()];
+    for (arm_index, take_then, region) in
+        [(0usize, true, then_branch), (1usize, false, else_branch)]
+    {
+        let leading = expanded_execution_region_leading_steps(region);
+        let leading_steps = leading
+            .as_ref()
+            .map(|(_, _, steps)| steps.as_slice())
+            .unwrap_or(&[]);
+        let focused = advanced.focus_expanded_execution_arm_entry(
+            &record,
+            take_then,
+            condition,
+            leading_steps,
+        )?;
+        let Some((focused, consumed)) = focused else {
+            if !checked_execution_region_is_empty(region)
+                && deferred_post_execution_region(region).is_none()
+            {
+                return Ok(None);
+            }
+            continue;
+        };
+        let Some((tactics, arm_continuation, _)) = leading else {
+            return Ok(None);
+        };
+        let Some(result) = advance_expanded_execution_linear_region(
+            focused,
+            &tactics[consumed..],
+            arm_continuation,
+            depth + 1,
+        )?
+        else {
+            return Ok(None);
+        };
+        advanced = result.proof;
+        post_arms[arm_index] = result.post_execution;
+    }
+    let joined = advanced.join_focused_execution_split(&record, false, None)?;
+    let Some(mut continued) = advance_expanded_execution_region(joined, continuation, depth + 1)?
+    else {
+        return Ok(None);
+    };
+    let branch = DeferredPostExecutionTactic {
+        tactic_index: index,
+        source_index,
+        tactic: PostExecutionTactic::If {
+            condition: condition.clone(),
+            then_tactics: std::mem::take(&mut post_arms[0]),
+            else_tactics: std::mem::take(&mut post_arms[1]),
+        },
+        surface_recorded: false,
+    };
+    continued.post_execution.insert(0, branch);
+    Ok(Some(continued))
+}
+
+fn advance_expanded_execution_region<'a>(
+    proof: Proof<'a>,
+    region: &InternalProofNode,
+    depth: usize,
+) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
+    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
+        return Ok(None);
+    }
+    match region {
+        InternalProofNode::Done => {
+            if proof.is_at_function_exit() {
+                Ok(Some(ExpandedExecutionRegionAdvance {
+                    proof,
+                    post_execution: Vec::new(),
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => advance_expanded_execution_linear_region(proof, tactics, continuation, depth + 1),
+        InternalProofNode::If {
+            index,
+            source_index,
+            condition,
+            then_branch,
+            else_branch,
+            continuation,
+        } => advance_expanded_execution_if_region(
+            proof,
+            *index,
+            *source_index,
+            condition,
+            then_branch,
+            else_branch,
+            continuation,
+            depth + 1,
+        ),
+        InternalProofNode::Open { .. } | InternalProofNode::Branch { .. } => Ok(None),
+    }
 }
 
 /// Advances a linear resource scope one checked node at a time. A nested
