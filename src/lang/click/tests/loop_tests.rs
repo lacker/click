@@ -1988,6 +1988,190 @@ fn loop_effect_open_scope_stays_on_proof() {
 }
 
 #[test]
+fn loop_effect_if_after_leading_open_scopes_stays_on_proof() {
+    let c_source = r#"
+            struct box { int32 value; int32 other; int32 third; };
+
+            int32 count_once(struct box* owner, int32 flag) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource box_value(owner: struct box*) {
+                owns owner->value;
+            }
+
+            resource box_other(owner: struct box*) {
+                owns owner->other;
+            }
+
+            resource box_third(owner: struct box*) {
+                owns owner->third;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct box* owner, int32 flag) {
+                owns box_value(owner);
+                owns box_other(owner);
+                owns box_third(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        open(box_value(owner)) {
+                            open(box_other(owner)) {
+                                if flag == 0 {
+                                    open(box_third(owner)) {
+                                        frame() using {};
+                                    }
+                                } else {
+                                    open(box_third(owner)) {
+                                        frame() using {};
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        open(box_value(owner)) {
+                            open(box_other(owner)) {
+                                if flag == 0 {
+                                    open(box_third(owner)) {
+                                        frame() using {};
+                                    }
+                                } else {
+                                    open(box_third(owner)) {
+                                        frame() using {};
+                                    }
+                                }
+                            }
+                        }
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the loop-effect if after leading opens should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the leading-open effect if added a compatibility replay execution"
+    );
+    assert_eq!(
+        replay_labels, baseline_labels,
+        "the leading-open effect if changed the compatibility replay path"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked open effect if should retain expandable provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some([ProofTactic::Open(open)]) = effect_tactics else {
+        panic!("the checked effect did not retain its open scope");
+    };
+    let [ProofTactic::Open(second)] = open.tactics.as_slice() else {
+        panic!("the checked effect did not retain its second leading open scope");
+    };
+    assert!(matches!(
+        second.tactics.as_slice(),
+        [ProofTactic::If(proof_if)]
+            if matches!(
+                proof_if.then_tactics.as_slice(),
+                [ProofTactic::Open(nested)]
+                    if matches!(nested.tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+            ) && matches!(
+                proof_if.else_tactics.as_slice(),
+                [ProofTactic::Open(nested)]
+                    if matches!(nested.tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+            )
+    ));
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the complete proof should expand from retained provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten source should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "rewritten-source verification replayed the leading-open effect if"
+    );
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
+    );
+
+    let invalid_arm = click_source.replacen(
+        "                                        frame() using {};",
+        "                                        frame() using {\n                                            0 == 1;\n                                        };",
+        1,
+    );
+    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&invalid_arm, &sources)
+            .expect_err("an unavailable branch-local frame premise must be rejected")
+    });
+    assert!(
+        error
+            .message()
+            .contains("requires an exact available premise"),
+        "unexpected checked branch-arm diagnostic: {}",
+        error.message()
+    );
+    assert!(
+        invalid_replays <= baseline_replays,
+        "the invalid checked branch entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {

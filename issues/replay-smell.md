@@ -60,9 +60,14 @@ resource scopes stays on that `Proof` while the checked representations close;
 it is discharged only by the outer scope and is never replayed. Proposition
 proofs inside those `have` scopes use the same recursive authoritative driver,
 including nested proof `if` and `cases`, whether the `have` is top-level or
-inside an open resource. Only execution-level branching nested under a resource
-scope, nested loop structure, or induction still crosses that compatibility
-boundary.
+inside an open resource. A terminal proof `if` below any number of leading open
+resources also stays on one sibling-goal `Proof`: each arm may open further
+resources, checks and closes every representation from inner to outer, and the
+scope retains exact nested `Open(...Open(If(...))...)` provenance before
+discharging the effect. Recursively nested execution `if` trees still cross
+that compatibility boundary.
+The induction and nested-loop certificate variants are rejected in loop-effect
+proofs and are defensive unsupported forms, not valid migration targets.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
 preserve.

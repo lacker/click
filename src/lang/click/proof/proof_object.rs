@@ -13831,6 +13831,225 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    /// Checks a terminal proof-level `if` below any nonempty chain of open
+    /// resource scopes. Each arm remains a sibling goal on the same Proof,
+    /// closes the effect through the scope-aware frame operation, and then
+    /// closes every resource representation from inner to outer before it is
+    /// discharged. The returned proof records the exact nested
+    /// `Open(...Open(If(...))...)` node; neither the source driver nor an
+    /// expansion cursor owns either arm's facts, resources, or execution
+    /// state.
+    pub(super) fn apply_terminal_loop_effect_if<Then, Else>(
+        scopes: Vec<Self>,
+        condition: ClickProposition,
+        apply_then: Then,
+        apply_else: Else,
+    ) -> Result<Proof<'a>, ClickError>
+    where
+        Then: FnOnce(Self) -> Result<Self, ClickError>,
+        Else: FnOnce(Self) -> Result<Self, ClickError>,
+    {
+        let Some(outer) = scopes.first() else {
+            return Err(ClickError::new(
+                "a terminal loop-effect `if` requires at least one open resource scope",
+            ));
+        };
+        if scopes
+            .iter()
+            .any(|scope| !matches!(scope.structure.as_ref(), ProofScopeStructure::Open { .. }))
+        {
+            return Err(outer
+                .root
+                .step_error("a terminal loop-effect `if` requires open resource scopes"));
+        }
+        for pair in scopes.windows(2) {
+            let [parent, child] = pair else {
+                unreachable!("a two-element scope window has two entries")
+            };
+            if !Arc::ptr_eq(&child.root.context, &parent.body.context)
+                || !Arc::ptr_eq(&child.root.state, &parent.body.state)
+                || !Arc::ptr_eq(&child.root.node, &parent.body.node)
+            {
+                return Err(outer
+                    .root
+                    .step_error("leading open scopes do not form one checked Proof chain"));
+            }
+        }
+        let inner = scopes
+            .last()
+            .expect("the nonempty leading scope chain has an inner scope");
+        let (split, record) = inner.body.split_focused_execution_if(condition.clone())?;
+
+        let mut then_scope = inner.clone();
+        then_scope.body = split.focus_execution_if_arm(&record, true)?;
+        let then_scope = apply_then(then_scope)?;
+        let mut then_body = then_scope.body;
+        for scope in scopes.iter().rev() {
+            then_body = scope.close_open_resource_on_focused_branch(then_body)?;
+        }
+        let then_body = outer.discharge_closed_loop_effect_branch(then_body)?;
+
+        let mut else_scope = inner.clone();
+        else_scope.body = then_body.focus_execution_if_arm(&record, false)?;
+        let else_scope = apply_else(else_scope)?;
+        let mut else_body = else_scope.body;
+        for scope in scopes.iter().rev() {
+            else_body = scope.close_open_resource_on_focused_branch(else_body)?;
+        }
+        let else_body = outer.discharge_closed_loop_effect_branch(else_body)?;
+
+        let joined =
+            else_body.join_focused_if(&record.marker, record.split, record.ids, condition)?;
+        let mut body = joined.certificate();
+        for scope in scopes[1..].iter().rev() {
+            let ProofScopeStructure::Open { resource, .. } = scope.structure.as_ref() else {
+                unreachable!("the scope kinds were checked above")
+            };
+            body = ProofCertificate::from_steps(vec![SimpleProofStep::Open {
+                resource: resource.clone(),
+                proof: Box::new(body),
+            }]);
+        }
+        let ProofScopeStructure::Open { resource, .. } = outer.structure.as_ref() else {
+            unreachable!("the scope kind was checked above")
+        };
+        let mut introduced_facts = PersistentOrderedSet::default();
+        for scope in &scopes {
+            for fact in &scope.introduced_facts {
+                introduced_facts.insert(fact.clone());
+            }
+        }
+        let introduced_facts = introduced_facts.to_vec();
+        let mut state = Arc::unwrap_or_clone(joined.state.clone());
+        state.added_facts = Arc::new(introduced_facts.clone());
+        state.checked_facts = Arc::new(introduced_facts);
+        Ok(Proof {
+            context: outer.root.context.clone(),
+            state: Arc::new(state),
+            node: Arc::new(ProofNode {
+                parent: Some(outer.root.node.clone()),
+                step: Some(Arc::new(SimpleProofStep::Open {
+                    resource: resource.clone(),
+                    proof: Box::new(body),
+                })),
+                focused: outer.root.focused,
+                depth: outer.root.node.depth + 1,
+            }),
+            focused: outer.root.focused,
+        })
+    }
+
+    /// Closes this open resource on the currently focused terminal branch
+    /// without yet retiring the branch goal. This is the per-arm half of
+    /// `apply_terminal_loop_effect_if`; the logical join is allowed only after
+    /// both independently checked representations have closed.
+    fn close_open_resource_on_focused_branch(
+        &self,
+        body: Proof<'a>,
+    ) -> Result<Proof<'a>, ClickError> {
+        let ProofScopeStructure::Open {
+            resource,
+            source_index,
+            preserve_exposed_body,
+        } = self.structure.as_ref()
+        else {
+            unreachable!("only an open scope closes a resource representation")
+        };
+        let ProofContext::Execution(context) = self.root.context.as_ref() else {
+            unreachable!("an open scope can only be created from an execution Proof")
+        };
+        if !body.focused_loop_effect_closed() {
+            return Err(self.root.step_error(
+                "cannot close an open resource branch before its loop-effect goal is proved",
+            ));
+        }
+        let mut execution = body
+            .goal_execution()
+            .cloned()
+            .map(Arc::unwrap_or_clone)
+            .ok_or_else(|| {
+                self.root
+                    .step_error("open resource branch lost its execution frontier")
+            })?;
+        let mut facts = body.facts().clone();
+        execution.replay.open_scopes = execution.replay.open_scopes.saturating_sub(1);
+        if execution.replay.is_at_function_exit() {
+            execution.replay.defer_post_execution(
+                context.tactic_index,
+                *source_index,
+                PostExecutionTactic::CloseOpen {
+                    resource: resource.clone(),
+                    preserve_exposed_body: *preserve_exposed_body,
+                },
+            );
+        } else {
+            let pre_state = execution
+                .replay
+                .old_reference_state(&execution.state)
+                .clone();
+            let checked = close_open_resource_for_proof(
+                context.resource_environment,
+                resource,
+                context.claim_label,
+                context.tactic_index,
+                facts,
+                context.parsed_function.parameters(),
+                context.arguments,
+                &pre_state,
+                execution.state.into_value(),
+                context.predicate_environment,
+                context.click_function_environment,
+                &execution.replay.unfolded_predicates,
+                *preserve_exposed_body,
+            )?;
+            facts = checked.facts;
+            execution.state = checked.state.into();
+        }
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+        let mut state = Arc::unwrap_or_clone(body.state.clone());
+        state.goals = state
+            .goals
+            .replace_frontier_at(body.focused, facts, execution);
+        Ok(Proof {
+            context: body.context.clone(),
+            state: Arc::new(state),
+            node: Arc::new(ProofNode {
+                parent: Some(body.node.clone()),
+                step: None,
+                focused: body.focused,
+                depth: body.node.depth,
+            }),
+            focused: body.focused,
+        })
+    }
+
+    /// Retires one sealed effect arm only after its resource representation
+    /// has closed. The marker carries no surface step: closure and discharge
+    /// are the audited exit semantics of the enclosing `open` and `if`.
+    fn discharge_closed_loop_effect_branch(
+        &self,
+        body: Proof<'a>,
+    ) -> Result<Proof<'a>, ClickError> {
+        if !body.focused_loop_effect_closed() {
+            return Err(self
+                .root
+                .step_error("cannot discharge an unfinished loop-effect branch"));
+        }
+        let mut state = Arc::unwrap_or_clone(body.state.clone());
+        state.goals = state.goals.discharge_at(body.focused);
+        Ok(Proof {
+            context: body.context.clone(),
+            state: Arc::new(state),
+            node: Arc::new(ProofNode {
+                parent: Some(body.node.clone()),
+                step: None,
+                focused: body.focused,
+                depth: body.node.depth,
+            }),
+            focused: body.focused,
+        })
+    }
+
     /// Reports whether a terminal frame step can use the checked Proof-owned
     /// operation. Unsupported forms leave this scope untouched so a larger
     /// transactional Proof attempt can decline without observing a partial
