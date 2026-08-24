@@ -32,19 +32,23 @@ authority.
 
 ## Transitional implementation
 
-`Proof` already owns persistent typed goals, facts, execution state, and the
-private provenance nodes connecting every accepted successor to its checked
-operation. Its focus, split records, and ancestry checkpoints are typed
-cursors into that state rather than alternate semantic representations.
+`Proof` owns persistent typed goals and the private provenance nodes connecting
+accepted successors to checked operations. However, its execution model is not
+yet an independent replacement for replay. `Proof::for_execution_frontier`
+still consumes a `ProofReplayContext`, and its internal `ExecutionProofState`
+embeds almost the complete `TacticReplayState`. That payload still contains the
+execution frontier, program-point states, branch-completion markers, loop
+rules, effect facts, planned transitions, freshness counters, deferred source
+operations, and a parallel certificate builder.
 
-`ProofReplayContext` remains a parallel representation around this completed
-model. Explicit function-proof verification constructs it and threads it by
-value through `execute_internal_proof`. `TacticReplayState` owns an execution
-frontier and substantial logical, branch, scope, outcome, effect, deferral,
-and proof-construction bookkeeping while `ProofReplayContext` separately owns
-`CState`, a fact vector, and branch history. Several operations construct a
-temporary `Proof` from this context and then export the checked result back
-into replay-owned state.
+Explicit function-proof verification also constructs `ProofReplayContext`
+directly and threads it by value through `execute_internal_proof`.
+`ProofReplayContext` separately owns `CState`, a fact vector, and branch
+history. Several operations construct a temporary `Proof` from this context
+and then export the checked result back into replay-owned state. Consequently,
+putting an operation behind a `Proof` method does not by itself establish sole
+state ownership while that method reads and rewrites the embedded replay
+payload.
 
 Legacy smart paths also construct `ProofCertificate` values, replay them
 through `execute_internal_proof`, and merge the resulting replay contexts.
@@ -79,10 +83,91 @@ back-edge effect goal, and nested-loop certificate variants are rejected as
 invalid effect operations rather than treated as migration targets.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
-preserve.
+preserve. The completed shape-specific paths above remain useful regressions,
+but they are evidence for the replacement architecture rather than a queue of
+more shapes to migrate one at a time.
 
 This is not a canonicalization issue. It concerns proof-state ownership and
 the final removal of adapters left by the proof-object migration.
+
+## Architecture correction after the shape-by-shape migration
+
+The first migration strategy moved individual surface shapes onto `Proof`:
+flat functions, grouped functions, calls, resource scopes, structural effects,
+and selected branch forms each acquired a direct `try_check_*` path while
+`execute_internal_proof` remained as a fallback. This produced local checked
+paths, but it did not converge on deletion. Every combination of proof unit,
+scope, branch shape, loop phase, smart tactic, and expanded tactic required a
+new admission grammar and another fallback boundary.
+
+The reverted `Keep linear loop preservation on Proof` experiment made the
+problem concrete. Its regression inferred preservation replay from a claim
+label ending in `.loop(0).preserve`; a frontier-local loop uses the enclosing
+label such as `count_to_three.contract`, so the test was a false negative. An
+exact counter at the preservation fallback showed that the supposedly direct
+linear proof still called `execute_internal_proof` once. A recursive branch
+variant then verified only through that fallback, while its expanded explicit
+branch failed with `then branch arm has not reached its shared continuation`.
+The commit and its inaccurate issue claim were reverted rather than retained
+as an unused speculative adapter.
+
+The root missing operation is a first-class execution region on `Proof`.
+Whole-function execution has a distinguished exit, but loop preservation must
+execute an arbitrary nested C region and stop at one exact back-edge. Today
+that boundary is represented by a synthetic sentinel plus replay-owned
+continuation and `completed_branch_regions` bookkeeping. Nested branch joins
+therefore cannot compose solely by typed goal and split identity. Adding more
+loop- or branch-specific syntax drivers would preserve this defect.
+
+### Corrected migration order
+
+1. Introduce a typed Proof-owned execution-region goal and boundary identity.
+   Function exit, branch join, loop back-edge, and nested-region return must be
+   instances of the same checked boundary mechanism.
+2. Move semantic frontier, region, branch, loop, effect, and freshness state
+   out of `TacticReplayState` into that typed Proof state. Leave source
+   locations, expansion selection, and diagnostics in a non-semantic cursor.
+3. Drive `InternalProofNode` through one compositional source interpreter.
+   Linear operations, scopes, branches, nested loops, and continuations must
+   return a `Proof` at a typed boundary rather than export a replay context.
+4. Move provenance construction entirely to `ProofNode` ancestry and source
+   attribution, then remove `proof_certificate_builder` and semantic path
+   reconstruction from replay state.
+5. Migrate and delete whole compatibility boundaries. A chunk counts as
+   architectural progress only when it deletes a fallback, semantic replay
+   field, or parallel interpreter path; adding another guarded `try_check_*`
+   path while retaining its fallback is not completion.
+6. Instrument exact compatibility call sites. Claim labels, total execution
+   counts, or baseline comparisons are supporting diagnostics, not proof that
+   a particular fallback was avoided.
+
+## Scoped composite population is a replay-state witness
+
+The scoped composite population reproduction formerly tracked separately
+belongs to this issue because it is not a separate resource-language defect.
+Opening and closing an allocation-bearing composite is a checked
+representation change. After the scope closes, the subsequent opaque-call
+transition must begin from the same live resources and counted populations as
+the Proof-owned state and fresh kernel certification.
+
+In `examples/owned-vector/vector.click`, replacing the persistent
+`observe(allocated_vector(owner))` in the full-capacity branch of
+`allocated_vector_push` with an `open(allocated_vector(owner)) { ... }` scope
+allows the preparatory steps to finish and closes the representation before
+the existing multi-successor-aware call step. The successful `vector_grow`
+path then exposes the mismatch: parallel replay retains both the consumed and
+returned allocations, plus stale populations for `allocation`,
+`vector_storage`, and `allocated_vector`, while fresh kernel certification
+retires the consumed allocation. The paths disagree before final resource
+representation checking.
+
+The intended reduced regression uses a small allocation-bearing composite,
+opens and closes it before a verified call with failure and success outcomes,
+and has success return a distinct allocation while retiring the input. The
+Proof-owned successor and fresh certification must agree on live and retired
+allocations and counted populations on every outcome. This reproduction must
+be repaired by removing the parallel state transition, not by adding a scoped
+population patch to replay or weakening the C or contract.
 
 ## Evidence exposed by the stack issue
 
@@ -100,6 +185,9 @@ oversized stacks during the migration.
 
 ## Migration constraints
 
+- Establish the typed execution-region boundary before migrating more loop,
+  branch, or scope shapes. Do not encode region completion with a synthetic C
+  sentinel, source-statement indices, or mutable completed-region sets.
 - Start each ordinary proof unit with one checker-owned `Proof`. Interpret
   explicit simple tactics by applying their corresponding checked operation to
   that value.
@@ -122,6 +210,10 @@ oversized stacks during the migration.
 - Keep diagnostic context and source locations sufficient to preserve useful
   failures. Compatibility wording is not a reason to retain semantic replay
   state.
+- Measure each migration chunk at the exact fallback it intends to delete and
+  retain a source-expansion-reverification canary for the same shape. A green
+  general suite does not compensate for an ambiguous or mislabeled ownership
+  assertion.
 
 If a source tactic currently performs semantic work that cannot be expressed
 as a `Proof` operation, add the missing named audited operation. Do not keep a
@@ -178,6 +270,16 @@ proportional to the source, retained proof delta, and emitted surface output,
 up to the documented indexing factors. The replacement must not clone complete
 proof states or histories per step.
 
+### Scoped population agreement
+
+Open and close an allocation-bearing composite before an opaque call that has
+failure and allocation-replacing success outcomes. Assert that the completed
+Proof and fresh kernel certification agree on live allocations, retired
+allocations, and every counted composite population. The failure outcome keeps
+the original allocation; the success outcome retires it and retains only the
+returned allocation. Expansion and deliberately corrupted explicit source
+must pass and fail through the same Proof-owned transitions.
+
 ## Acceptance criteria
 
 - Ordinary explicit and smart verification advance one `Proof` through checked
@@ -198,6 +300,12 @@ proof states or histories per step.
   by the corresponding audited `Proof` operation.
 - Representative pure, execution, branch, scope, loop, outcome, and effect
   regressions pass without compatibility replay.
+- A typed execution-region boundary composes through nested branches and loops;
+  no semantic completion decision depends on a synthetic sentinel or replay
+  `completed_branch_regions` bookkeeping.
+- Closing an allocation-bearing composite before an opaque retiring call
+  produces exactly the live/retired allocation sets and counted populations
+  produced by fresh kernel certification on every outcome.
 - Multi-size regressions satisfy the repository's verification-efficiency
   contract, and `scripts/check.sh` is green.
 - User and internal documentation describes checked `Proof` transitions and

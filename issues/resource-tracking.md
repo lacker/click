@@ -159,25 +159,25 @@ the general contextual prover for every load. A deterministic multi-size
 regression holds the affected ensure fixed while growing unrelated facts from
 16 through 1,024 and requires bounded work.
 
-The repaired call step finishes promptly and exposes the next independent
-failure: proof replay retains the consumed allocation and counted composite
-populations after the preparatory `open` scope closes, while fresh kernel
-certification retires that allocation. The focused reproduction and acceptance
-criteria are in `scoped-composite-population-replay.md`; the incomplete
-owned-vector proof edit remains out of the green scaling checkpoint.
+The repaired call step finishes promptly and exposes another symptom of the
+replay defect: proof replay retains the consumed allocation and counted
+composite populations after the preparatory `open` scope closes, while fresh
+kernel certification retires that allocation. This is evidence for the same
+parallel state-ownership defect tracked in `replay-smell.md`, not a separate
+scoped resource operation. Its focused reproduction and acceptance criteria
+are now part of that issue; the incomplete owned-vector proof edit remains out
+of the green scaling checkpoint.
 
 ## Remaining roadmap
 
-1. Complete the ordinary statement-step handoff in `replay-smell.md`, so a
-   plain `step()` retains the kernel-certified successor partition through
-   `Proof` without a parallel exactly-one replay rule. Do not add resource
-   semantics or require different surface syntax for this adapter gap.
-2. Repair the scoped composite counted-population mismatch in
-   `scoped-composite-population-replay.md`, preserving exact replay and
-   independent-certification allocation state on every call outcome.
-3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
+1. Complete the Proof-owned execution-region and state-authority migration in
+   `replay-smell.md`. The ordinary multi-successor handoff and the scoped
+   population mismatch are two witnesses of that one architectural defect,
+   not separate replay repairs. Do not add resource semantics, different
+   surface syntax, or compatibility-state patches for either witness.
+2. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
-4. Close this issue only after the focused lifetime regressions, resource and
+3. Close this issue only after the focused lifetime regressions, resource and
    ensure-lowering scaling regressions, scoped population regression, and
    owned-vector end-to-end case are all green. File a new issue only if that
    completed path exposes another independent invariant.
