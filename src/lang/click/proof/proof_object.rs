@@ -469,113 +469,218 @@ fn source_proof_is_supported(proof: &SourceProof) -> bool {
     }
 }
 
-fn certificate_leaves_end_in_frame(certificate: &ProofCertificate) -> bool {
-    match certificate.steps().last() {
-        Some(SimpleProofStep::FrameUsing { region: None, .. }) => true,
-        Some(SimpleProofStep::If {
-            then_proof,
-            else_proof,
-            ..
-        }) => {
-            certificate_leaves_end_in_frame(then_proof)
-                && certificate_leaves_end_in_frame(else_proof)
-        }
-        _ => false,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ContextualFrameHavePlan {
+    proposition: ClickProposition,
+    tactics: Vec<ProofTactic>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ContextualFrameLeafPlan {
+    haves: Vec<ContextualFrameHavePlan>,
+    premises: Vec<ClickProposition>,
+}
+
+impl ContextualFrameLeafPlan {
+    fn from_surface_tactics(mut tactics: Vec<ProofTactic>) -> Result<Self, String> {
+        let Some(ProofTactic::FrameUsing {
+            region: None,
+            premises,
+        }) = tactics.pop()
+        else {
+            return Err("contextual frame path did not end in `frame using`".to_string());
+        };
+        let haves = tactics
+            .into_iter()
+            .map(|tactic| {
+                let ProofTactic::Have(ProofHave { proposition, proof }) = tactic else {
+                    return Err(
+                        "contextual frame path contained an operation other than `have` before its frame"
+                            .to_string(),
+                    );
+                };
+                let SourceProof::Script(tactics) = proof else {
+                    return Err(
+                        "contextual frame `have` did not lower to explicit Surface operations"
+                            .to_string(),
+                    );
+                };
+                Ok(ContextualFrameHavePlan {
+                    proposition,
+                    tactics,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self { haves, premises })
+    }
+
+    fn needs_snapshot_legacy(&self) -> bool {
+        self.haves
+            .iter()
+            .any(|have| surface_tactics_need_snapshot_legacy(&have.tactics))
     }
 }
 
-fn certificate_branch_conditions(
-    certificate: &ProofCertificate,
-    conditions: &mut Vec<ClickProposition>,
-) {
-    for step in certificate.steps() {
-        if let SimpleProofStep::If {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContextualFramePlan {
+    Leaf(ContextualFrameLeafPlan),
+    If {
+        condition: ClickProposition,
+        then_plan: Box<Self>,
+        else_plan: Box<Self>,
+    },
+}
+
+impl ContextualFramePlan {
+    fn needs_snapshot_legacy(&self) -> bool {
+        match self {
+            Self::Leaf(leaf) => leaf.needs_snapshot_legacy(),
+            Self::If {
+                then_plan,
+                else_plan,
+                ..
+            } => then_plan.needs_snapshot_legacy() || else_plan.needs_snapshot_legacy(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContextualFrameSkeleton {
+    Leaf,
+    If {
+        condition: ClickProposition,
+        then_skeleton: Box<Self>,
+        else_skeleton: Box<Self>,
+    },
+}
+
+impl ContextualFrameSkeleton {
+    fn from_steps(steps: &[SimpleProofStep]) -> Self {
+        let Some((condition, then_proof, else_proof)) =
+            steps.iter().rev().find_map(|step| match step {
+                SimpleProofStep::If {
+                    condition,
+                    then_proof,
+                    else_proof,
+                } => Some((condition, then_proof, else_proof)),
+                _ => None,
+            })
+        else {
+            return Self::Leaf;
+        };
+        Self::If {
+            condition: condition.clone(),
+            then_skeleton: Box::new(Self::from_steps(then_proof.steps())),
+            else_skeleton: Box::new(Self::from_steps(else_proof.steps())),
+        }
+    }
+
+    fn collect_conditions(&self, conditions: &mut Vec<ClickProposition>) {
+        let Self::If {
             condition,
-            then_proof,
-            else_proof,
-        } = step
-        {
-            if !conditions.contains(condition) {
-                conditions.push(condition.clone());
+            then_skeleton,
+            else_skeleton,
+        } = self
+        else {
+            return;
+        };
+        if !conditions.contains(condition) {
+            conditions.push(condition.clone());
+        }
+        then_skeleton.collect_conditions(conditions);
+        else_skeleton.collect_conditions(conditions);
+    }
+
+    fn fill(
+        self,
+        leaves: &[ContextualFrameLeafPlan],
+        next: &mut usize,
+    ) -> Result<ContextualFramePlan, String> {
+        match self {
+            Self::Leaf => {
+                let Some(leaf) = leaves.get(*next) else {
+                    return Err(format!(
+                        "surface/frame path coverage diverged at p{}: the Proof has more leaves than the frame plan",
+                        *next
+                    ));
+                };
+                *next += 1;
+                Ok(ContextualFramePlan::Leaf(leaf.clone()))
             }
-            certificate_branch_conditions(then_proof, conditions);
-            certificate_branch_conditions(else_proof, conditions);
+            Self::If {
+                condition,
+                then_skeleton,
+                else_skeleton,
+            } => Ok(ContextualFramePlan::If {
+                condition,
+                then_plan: Box::new(then_skeleton.fill(leaves, next)?),
+                else_plan: Box::new(else_skeleton.fill(leaves, next)?),
+            }),
         }
     }
 }
 
-fn contextual_frame_leaf_certificates(
-    certificate: &ProofCertificate,
-    leaves: &mut Vec<ProofCertificate>,
-) {
-    if let [
-        SimpleProofStep::If {
-            then_proof,
-            else_proof,
-            ..
-        },
-    ] = certificate.steps()
-    {
-        contextual_frame_leaf_certificates(then_proof, leaves);
-        contextual_frame_leaf_certificates(else_proof, leaves);
-    } else {
-        leaves.push(certificate.clone());
+fn contextual_frame_plan(
+    skeleton: ContextualFrameSkeleton,
+    path_tactics: Vec<Vec<ProofTactic>>,
+) -> Result<Option<ContextualFramePlan>, String> {
+    if path_tactics.is_empty() {
+        return Ok(None);
     }
+    let leaves = path_tactics
+        .into_iter()
+        .map(ContextualFrameLeafPlan::from_surface_tactics)
+        .collect::<Result<Vec<_>, _>>()?;
+    if leaves.iter().all(|leaf| leaf == &leaves[0]) {
+        return Ok(Some(ContextualFramePlan::Leaf(leaves[0].clone())));
+    }
+    let mut next = 0;
+    let plan = skeleton.fill(&leaves, &mut next)?;
+    if next != leaves.len() {
+        return Err(format!(
+            "surface/frame path coverage diverged at p{next}: the Proof has {next} leaves but the frame plan has {}",
+            leaves.len()
+        ));
+    }
+    Ok(Some(plan))
 }
 
-fn flatten_path_independent_frame_candidate(candidate: ProofCertificate) -> ProofCertificate {
-    let mut leaves = Vec::new();
-    contextual_frame_leaf_certificates(&candidate, &mut leaves);
-    match leaves.first() {
-        Some(first) if leaves.iter().all(|leaf| leaf.steps() == first.steps()) => first.clone(),
-        _ => candidate,
-    }
-}
-
-fn frame_candidate_needs_snapshot_legacy(certificate: &ProofCertificate) -> bool {
-    certificate.steps().iter().any(|step| match step {
-        SimpleProofStep::Have { proof, .. } => {
-            let ambiguous_snapshot_theorem_suffix = matches!(
-                proof.steps(),
-                [
-                    ..,
-                    SimpleProofStep::ApplyTheoremUsing { application, .. },
-                    SimpleProofStep::Assumption
-                ] if application.arguments.iter().any(contains_at_expression)
-                    && !matches!(
-                        application.name.as_str(),
-                        "int32_ge_implies_reversed_le" | "int32_le_implies_reversed_ge"
-                    )
-            );
-            ambiguous_snapshot_theorem_suffix || frame_candidate_needs_snapshot_legacy(proof)
-        }
-        SimpleProofStep::Open { proof, .. } => frame_candidate_needs_snapshot_legacy(proof),
-        SimpleProofStep::If {
-            then_proof,
-            else_proof,
-            ..
-        } => {
-            frame_candidate_needs_snapshot_legacy(then_proof)
-                || frame_candidate_needs_snapshot_legacy(else_proof)
-        }
-        SimpleProofStep::Cases {
-            left_proof,
-            right_proof,
-            ..
-        } => {
-            frame_candidate_needs_snapshot_legacy(left_proof)
-                || frame_candidate_needs_snapshot_legacy(right_proof)
-        }
-        SimpleProofStep::Branch {
-            then_proof,
-            else_proof,
-            ..
-        } => {
-            frame_candidate_needs_snapshot_legacy(then_proof)
-                || frame_candidate_needs_snapshot_legacy(else_proof)
-        }
-        _ => false,
-    })
+fn surface_tactics_need_snapshot_legacy(tactics: &[ProofTactic]) -> bool {
+    let ambiguous_snapshot_theorem_suffix = matches!(
+        tactics,
+        [
+            ..,
+            ProofTactic::ApplyTheoremUsing { application, .. },
+            ProofTactic::Assumption
+        ] if application.arguments.iter().any(contains_at_expression)
+            && !matches!(
+                application.name.as_str(),
+                "int32_ge_implies_reversed_le" | "int32_le_implies_reversed_ge"
+            )
+    );
+    ambiguous_snapshot_theorem_suffix
+        || tactics.iter().any(|tactic| match tactic {
+            ProofTactic::Have(ProofHave { proof, .. }) => {
+                let SourceProof::Script(body) = proof else {
+                    return true;
+                };
+                surface_tactics_need_snapshot_legacy(body)
+            }
+            ProofTactic::Open(open) => surface_tactics_need_snapshot_legacy(&open.tactics),
+            ProofTactic::If(proof_if) => {
+                surface_tactics_need_snapshot_legacy(&proof_if.then_tactics)
+                    || surface_tactics_need_snapshot_legacy(&proof_if.else_tactics)
+            }
+            ProofTactic::Cases(proof_cases) => {
+                surface_tactics_need_snapshot_legacy(&proof_cases.left_tactics)
+                    || surface_tactics_need_snapshot_legacy(&proof_cases.right_tactics)
+            }
+            ProofTactic::Branch(branch) => {
+                surface_tactics_need_snapshot_legacy(&branch.then_tactics)
+                    || surface_tactics_need_snapshot_legacy(&branch.else_tactics)
+            }
+            _ => false,
+        })
 }
 
 fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
@@ -2712,6 +2817,61 @@ impl<'a> Proof<'a> {
         advanced.join_focused_outcome_if(&record)
     }
 
+    /// Applies a planner-selected contextual frame tree directly to this
+    /// Proof. The plan carries only Surface operations and branch shape; it
+    /// owns no facts, execution state, or semantic successor authority.
+    fn apply_contextual_frame_plan(
+        &self,
+        plan: &ContextualFramePlan,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
+        let ContextualFramePlan::If {
+            condition,
+            then_plan,
+            else_plan,
+        } = plan
+        else {
+            let ContextualFramePlan::Leaf(leaf) = plan else {
+                unreachable!()
+            };
+            let checkpoint = self.checkpoint();
+            let checked = self.apply_contextual_frame_leaf_plan(leaf, origin)?;
+            let retained = checked.certificate_since(&checkpoint)?;
+            return checked.with_deferred_frame_surface_certificate(retained);
+        };
+        let (split, record) = self.split_focused_outcome_if(condition.clone())?;
+        let advanced = split
+            .focus_outcome_arm(&record, 0)?
+            .apply_contextual_frame_plan(then_plan, origin)?
+            .focus_outcome_arm(&record, 1)?
+            .apply_contextual_frame_plan(else_plan, origin)?;
+        advanced.join_focused_outcome_if(&record)
+    }
+
+    fn apply_contextual_frame_leaf_plan(
+        &self,
+        plan: &ContextualFrameLeafPlan,
+        origin: Option<ProofStepOrigin>,
+    ) -> Result<Self, ClickError> {
+        let mut checked = self.clone();
+        for have in &plan.haves {
+            let scope = checked.begin_have(have.proposition.clone())?;
+            let Some(scope) = scope.try_planned_linear_script(&have.tactics)? else {
+                return Err(checked.step_error(
+                    "contextual frame `have` plan did not complete through checked Proof operations",
+                ));
+            };
+            checked = scope.join()?;
+        }
+        checked.apply_step_with_origin(
+            SimpleProofStep::FrameUsing {
+                region: None,
+                premises: plan.premises.clone(),
+            },
+            origin,
+        )
+    }
+
     /// Applies one flat contextual-frame plan through its checked operations.
     /// Generated `have` bodies use the same planner-aware Proof script driver
     /// as other smart candidates, including its narrow treatment of a final
@@ -2775,11 +2935,26 @@ impl<'a> Proof<'a> {
         Ok(self)
     }
 
-    /// Uses the existing contextual footprint planner only to select Surface
-    /// simple steps. The returned certificate has performed no semantic
-    /// transition; its flat or branch-shaped candidate still has to advance
-    /// through the checked `Proof` operations above.
-    fn select_contextual_frame_candidate(&self) -> Result<Option<ProofCertificate>, ClickError> {
+    /// Recovers only the latest checked branch shape from persistent Proof
+    /// provenance. Contextual-frame search needs this path partition, not a
+    /// materialized certificate for the complete derivation.
+    fn contextual_frame_skeleton(&self) -> ContextualFrameSkeleton {
+        let mut node = Some(self.node.as_ref());
+        while let Some(current) = node {
+            if let Some(step) = current.step.as_deref() {
+                if matches!(step, SimpleProofStep::If { .. }) {
+                    return ContextualFrameSkeleton::from_steps(std::slice::from_ref(step));
+                }
+            }
+            node = current.parent.as_deref();
+        }
+        ContextualFrameSkeleton::Leaf
+    }
+
+    /// Uses the contextual footprint planner only to select a typed tree of
+    /// Surface operations. The plan has performed no semantic transition and
+    /// contains no certificate builder or replay-owned proof state.
+    fn select_contextual_frame_candidate(&self) -> Result<Option<ContextualFramePlan>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
@@ -2837,13 +3012,10 @@ impl<'a> Proof<'a> {
             }
             path_derivations.push(combined);
         }
-        let skeleton = surface_branch_skeleton(self.certificate().steps());
+        let skeleton = self.contextual_frame_skeleton();
         let mut construction_replay = execution_state.replay.clone();
         let mut branch_conditions = Vec::new();
-        certificate_branch_conditions(
-            &ProofCertificate::from_steps(skeleton.clone()),
-            &mut branch_conditions,
-        );
+        skeleton.collect_conditions(&mut branch_conditions);
         for condition in &branch_conditions {
             let negated = ClickProposition::Not(Box::new(condition.clone()));
             let mut surface_forms = vec![condition.clone(), negated.clone()];
@@ -2894,43 +3066,27 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        construction_replay.proof_certificate_builder = ProofCertificateBuilder {
-            steps: skeleton,
-            certificate_facts: ProofFactStore::from_ordered(available),
-            last_step_entry: execution_state
-                .replay
-                .proof_certificate_builder
-                .last_step_entry
-                .clone(),
-            ..ProofCertificateBuilder::default()
-        }
-        .into();
-        construct_simple_step_for_planned_operation(
+        let path_tactics = lower_certified_frame_path_tactics(
             &mut construction_replay,
             &execution_state.state,
-            context.function_block,
+            &available,
             context.parsed_function.parameters(),
             context.arguments,
-            ConstructionEnvironments {
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
-            },
-            &ConstructionEvidence::CertifiedFrame(path_derivations),
-        );
-        let construction =
-            std::mem::take(&mut construction_replay.proof_certificate_builder).into_value();
-        if let Some(blocker) = construction.blocker {
-            return Err(self.step_error(format!(
-                "smart frame candidate construction failed: {blocker}"
-            )));
-        }
-        let candidate = flatten_path_independent_frame_candidate(ProofCertificate::from_steps(
-            construction.steps,
-        ));
-        if candidate.steps().is_empty() || !certificate_leaves_end_in_frame(&candidate) {
-            return Ok(None);
-        }
-        Ok(Some(candidate))
+            context.predicate_environment,
+            context.click_function_environment,
+            &path_derivations,
+        )
+        .map_err(|error| {
+            self.step_error(format!(
+                "smart frame candidate construction failed: could not lower contextual frame plan: {}",
+                error.message()
+            ))
+        })?;
+        contextual_frame_plan(skeleton, path_tactics).map_err(|message| {
+            self.step_error(format!(
+                "smart frame candidate construction failed: {message}"
+            ))
+        })
     }
 
     /// Reports whether a source-owned terminal frame can advance this exact
@@ -2963,7 +3119,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Searches for a terminal frame candidate and submits the selected
-    /// simple certificate directly to this Proof. Successful search returns
+    /// Surface-operation plan directly to this Proof. Successful search returns
     /// the already-checked descendant; it does not export outcomes or replay
     /// the candidate through a second semantic representation.
     pub(super) fn try_smart_frame_at(
@@ -3011,7 +3167,7 @@ impl<'a> Proof<'a> {
         let Some(candidate) = self.select_contextual_frame_candidate()? else {
             return Ok(None);
         };
-        if frame_candidate_needs_snapshot_legacy(&candidate) {
+        if candidate.needs_snapshot_legacy() {
             // Snapshot-qualified theorem forms can add a kernel fact that
             // is exact in this recorded lowering context but still require a
             // trailing `assumption` when replayed from fresh source. Until
@@ -3023,7 +3179,7 @@ impl<'a> Proof<'a> {
             tactic_index,
             source_index,
         });
-        match self.apply_contextual_frame_candidate_certificate(&candidate, origin) {
+        match self.apply_contextual_frame_plan(&candidate, origin) {
             Ok(checked) => Ok(Some(checked)),
             Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
             Err(_) => Ok(None),

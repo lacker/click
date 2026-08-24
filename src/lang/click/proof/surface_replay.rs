@@ -769,6 +769,131 @@ impl std::ops::DerefMut for ProofCertificateConstructionContext<'_> {
     }
 }
 
+/// Lowers checked per-path frame derivations into their exact Surface plans.
+///
+/// This operation records stable Surface identities in the planning cursor,
+/// but it does not build or interpret a certificate. Callers choose whether
+/// the returned path-local tactics feed legacy serialization or a typed
+/// Proof-owned plan.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_certified_frame_path_tactics(
+    replay: &mut TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    path_derivations: &[Vec<PropositionDerivation>],
+) -> Result<Vec<Vec<ProofTactic>>, ClickError> {
+    path_derivations
+        .iter()
+        .map(|derivations| {
+            check_verification_deadline()?;
+            let mut tactics = Vec::new();
+            let mut premises = Vec::new();
+            let mut path_available = available.to_vec();
+            for fact in derivations
+                .iter()
+                .flat_map(PropositionDerivation::context_premises)
+            {
+                if !path_available.contains(&fact) {
+                    path_available.push(fact);
+                }
+            }
+            // A certified frame's derivation contexts are its exact per-path
+            // dependency boundary. A branch fact may be named only in the
+            // leaf whose derivation selected it.
+            for fact in derivations
+                .iter()
+                .flat_map(PropositionDerivation::context_premises)
+            {
+                check_verification_deadline()?;
+                if let Ok(surface) = checked_surface_fact_at_point(
+                    replay,
+                    &fact,
+                    &path_available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                ) && !premises.contains(&surface)
+                {
+                    premises.push(surface);
+                }
+            }
+            for derivation in derivations {
+                check_verification_deadline()?;
+                // Kernel-minted load-variable bridges are deterministic
+                // bookkeeping and have no Surface premise to emit.
+                let resolved = crate::kernel::resolve_minted_load_variables(
+                    derivation.conclusion(),
+                    &replay.effect_facts,
+                );
+                if resolved != *derivation.conclusion()
+                    && proposition_is_reflexive_equality(&resolved)
+                {
+                    continue;
+                }
+                let memories = c_condition_fact_memories(derivation.conclusion());
+                // Prefer the stable function-entry selector. Statement-entry
+                // states are transient planning artifacts.
+                let mut candidate_points = Vec::new();
+                if let Some(entry_state) = &replay.function_entry_state {
+                    candidate_points.push((
+                        ProgramPointRef {
+                            region: CodeRegionRef::Function,
+                            kind: ProgramPointKind::Entry,
+                        },
+                        entry_state.clone(),
+                    ));
+                }
+                candidate_points.extend(
+                    replay
+                        .program_point_states
+                        .iter()
+                        .rev()
+                        .map(|(point, state)| (point.clone(), state.clone())),
+                );
+                let anchor_point = candidate_points
+                    .into_iter()
+                    .find(|(_, point_state)| {
+                        !memories.is_empty()
+                            && memories.iter().any(|memory| {
+                                memory.has_same_snapshot_markers(point_state.memory())
+                            })
+                    })
+                    .map(|(point, _)| point);
+                let (conclusion, proof) = lower_surface_atomic_derivation(
+                    replay,
+                    derivation,
+                    None,
+                    anchor_point.as_ref(),
+                    &path_available,
+                    parameters,
+                    arguments,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+                if !premises.contains(&conclusion) {
+                    premises.push(conclusion.clone());
+                    tactics.push(ProofTactic::Have(ProofHave {
+                        proposition: conclusion,
+                        proof,
+                    }));
+                }
+            }
+            tactics.push(ProofTactic::FrameUsing {
+                region: None,
+                premises,
+            });
+            Ok(tactics)
+        })
+        .collect()
+}
+
 /// Constructs the surface step(s) for one planned operation directly into the
 /// planning replay's own [`ProofCertificateBuilder`]. This is the plan-time
 /// counterpart of the old plan-lowering replay: search commits to a move and
@@ -2107,122 +2232,16 @@ pub(super) fn append_simple_proof_step_for_operation(
             }
         }
         (None, Some(ConstructionEvidence::CertifiedFrame(path_derivations))) => {
-            let lowered = path_derivations
-                .iter()
-                .map(|derivations| {
-                    check_verification_deadline()?;
-                    let mut tactics = Vec::new();
-                    let mut premises = Vec::new();
-                    let mut path_available = available.to_vec();
-                    for fact in derivations
-                        .iter()
-                        .flat_map(PropositionDerivation::context_premises)
-                    {
-                        if !path_available.contains(&fact) {
-                            path_available.push(fact);
-                        }
-                    }
-                    // A certified frame's derivation contexts are its exact
-                    // per-path dependency boundary. Lower against that
-                    // boundary rather than the global proof facts: a branch
-                    // fact may be named only in the leaf whose derivation
-                    // selected it, while unrelated ambient history remains
-                    // invisible.
-                    for fact in derivations
-                        .iter()
-                        .flat_map(PropositionDerivation::context_premises)
-                    {
-                        check_verification_deadline()?;
-                        if let Ok(surface) = checked_surface_fact_at_point(
-                            replay,
-                            &fact,
-                            &path_available,
-                            parameters,
-                            arguments,
-                            state,
-                            predicate_environment,
-                            click_function_environment,
-                        ) && !premises.contains(&surface)
-                        {
-                            premises.push(surface);
-                        }
-                    }
-                    for derivation in derivations {
-                        check_verification_deadline()?;
-                        // A derivation that merely bridges a kernel-minted
-                        // load variable to its defining load term is
-                        // certified bookkeeping: replay re-mints the same
-                        // variable and equation deterministically, so the
-                        // generated certificate neither needs nor can name
-                        // it as a Click-visible premise.
-                        let resolved = crate::kernel::resolve_minted_load_variables(
-                            derivation.conclusion(),
-                            &replay.effect_facts,
-                        );
-                        if resolved != *derivation.conclusion()
-                            && proposition_is_reflexive_equality(&resolved)
-                        {
-                            continue;
-                        }
-                        let memories = c_condition_fact_memories(derivation.conclusion());
-                        // Prefer the stable function-entry selector when it
-                        // names the certified snapshot. Statement-entry
-                        // states are replay artifacts and a generated
-                        // certificate must not depend on an ephemeral
-                        // lowering map to reconstruct one of them.
-                        let mut candidate_points = Vec::new();
-                        if let Some(entry_state) = &replay.function_entry_state {
-                            candidate_points.push((
-                                ProgramPointRef {
-                                    region: CodeRegionRef::Function,
-                                    kind: ProgramPointKind::Entry,
-                                },
-                                entry_state.clone(),
-                            ));
-                        }
-                        candidate_points.extend(
-                            replay
-                                .program_point_states
-                                .iter()
-                                .rev()
-                                .map(|(point, state)| (point.clone(), state.clone())),
-                        );
-                        let anchor_point = candidate_points
-                            .into_iter()
-                            .find(|(_, point_state)| {
-                                !memories.is_empty()
-                                    && memories.iter().any(|memory| {
-                                        memory.has_same_snapshot_markers(point_state.memory())
-                                    })
-                            })
-                            .map(|(point, _)| point);
-                        let (conclusion, proof) = lower_surface_atomic_derivation(
-                            replay,
-                            derivation,
-                            None,
-                            anchor_point.as_ref(),
-                            &path_available,
-                            parameters,
-                            arguments,
-                            state,
-                            predicate_environment,
-                            click_function_environment,
-                        )?;
-                        if !premises.contains(&conclusion) {
-                            premises.push(conclusion.clone());
-                            tactics.push(ProofTactic::Have(ProofHave {
-                                proposition: conclusion,
-                                proof,
-                            }));
-                        }
-                    }
-                    tactics.push(ProofTactic::FrameUsing {
-                        region: None,
-                        premises,
-                    });
-                    Ok::<_, ClickError>(tactics)
-                })
-                .collect::<Result<Vec<_>, _>>();
+            let lowered = lower_certified_frame_path_tactics(
+                replay,
+                state,
+                available,
+                parameters,
+                arguments,
+                predicate_environment,
+                click_function_environment,
+                path_derivations,
+            );
             match lowered {
                 Ok(path_tactics) => {
                     if let Err(message) = append_surface_tactics_by_leaf(
