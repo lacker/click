@@ -306,14 +306,21 @@ Shape:
   cursor attribution describing where a region sits in source; they no
   longer decide completion.
 
-Validation order, per the corrected migration order: first re-express
-function exit — the already-green distinguished boundary — as a function
-region goal with an exact counter proving `focus_function_outcomes`
-consumes the typed boundary rather than replay's `FunctionExit` variant.
-Then the loop back-edge, deleting the sentinel and the `at_back_edge`
-check. Then branch joins, deleting `completed_branch_regions`. Each chunk
-scores by the replay field or fallback it deletes, never by adding a
-guarded path beside a retained fallback.
+Validation order, per the corrected migration order: the loop back-edge
+landed first, because the census showed function exit already has a typed
+variant while the back-edge was the boundary encoded as synthetic C. The
+frontier now carries a typed `ExecutionRegionKind`; exhausting a
+`LoopBody` region's own statement tree installs the typed
+`ProofExecutionPoint::RegionBoundary`, and the sentinel plus its
+structural-equality `at_back_edge` check are deleted. The regression
+`body_final_branch_preservation_completes_at_typed_back_edge_boundary`
+pins the shape the sentinel was masking: a body-final C `if` whose arms
+and join complete at the boundary with no code behind it. Next: unify
+function exit and the back-edge as instances of one boundary mechanism
+when the frontier migrates onto `Proof` (step 2), then branch joins,
+deleting `completed_branch_regions`. Each chunk scores by the replay
+field or fallback it deletes, never by adding a guarded path beside a
+retained fallback.
 
 ## Scoped composite population is a replay-state witness
 

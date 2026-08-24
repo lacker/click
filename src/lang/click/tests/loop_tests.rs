@@ -3278,3 +3278,80 @@ fn frame_loop_region_without_effect_clause_reports_missing_clause() {
         error.message()
     );
 }
+#[test]
+fn body_final_branch_preservation_completes_at_typed_back_edge_boundary() {
+    // The loop body ends with a C `if` whose arms fall through directly to
+    // the back-edge. The preservation frontier owns exactly the body's
+    // statement tree, so both arms and their join complete at the typed
+    // region boundary; no synthetic statement after the branch exists for a
+    // join continuation to rest on. Explicit-branch, automatic-planner, and
+    // deliberately broken variants all exercise that boundary.
+    let c_source = r#"
+            int32 flip_to_n(int32 n) {
+                int32 i;
+                int32 parity;
+                i = 0;
+                parity = 0;
+                while (i < n) {
+                    i = i + 1;
+                    if (parity < 1) {
+                        parity = 1;
+                    } else {
+                        parity = 0;
+                    }
+                }
+                return parity;
+            }
+        "#;
+    let template = r#"
+            verifying "flip_to_n.c";
+
+            int32 flip_to_n(int32 n) {
+                ensures result >= 0;
+            } by {
+                step();
+                step();
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant parity >= 0 and parity <= 1;
+                    initialize by simp;
+                    {preserve}
+                }
+                step();
+                simp();
+            }
+        "#;
+    let explicit = template.replace(
+        "{preserve}",
+        r#"preserve by {
+                        step();
+                        branch {
+                            ensuring { fact parity >= 0 and parity <= 1; }
+                            then { step(); }
+                            else { step(); }
+                        }
+                        close_invariants();
+                    }"#,
+    );
+    let sources = [("flip_to_n.c", c_source)];
+    verify_c0_sources(&explicit, &sources).expect(
+        "explicit body-final branch preservation should complete at the typed back-edge boundary",
+    );
+
+    let automatic = template.replace("{preserve}", "");
+    verify_c0_sources(&automatic, &sources)
+        .expect("automatic preservation should plan through the body-final branch to the boundary");
+
+    let broken = automatic.replace(
+        "invariant parity >= 0 and parity <= 1;",
+        "invariant parity <= 0;",
+    );
+    let error = verify_c0_sources(&broken, &sources)
+        .expect_err("an invariant violated through one body-final arm must fail preservation");
+    assert!(
+        format!("{error:?}").contains("invariant"),
+        "the failure should name the invariant bundle: {error:?}"
+    );
+}

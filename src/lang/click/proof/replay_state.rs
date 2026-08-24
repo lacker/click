@@ -1872,9 +1872,22 @@ pub(super) fn post_execution_tactic_timing(
     }
 }
 
+/// The typed identity of the execution region a frontier executes. A
+/// whole-function frontier must end at a `return`; a loop-preservation
+/// frontier owns exactly the loop body's statement tree, so exhausting that
+/// tree reaches the typed back-edge boundary instead of erring. The region
+/// kind is declared at frontier construction and never changes.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum ExecutionRegionKind {
+    #[default]
+    Function,
+    LoopBody,
+}
+
 #[derive(Clone, Default)]
 pub(super) struct ExecutionFrontier {
     pub(super) point: ProofExecutionPoint,
+    pub(super) region: ExecutionRegionKind,
     pub(super) execution_start_state: Option<CState>,
     pub(super) next_statement_index: usize,
     pub(super) continuations: PersistentSequence<ProofExecutionContinuation>,
@@ -1903,6 +1916,11 @@ pub(super) enum ProofExecutionPoint {
     FunctionExit {
         execution: CFunctionExecutionCandidates,
     },
+    /// Execution exhausted a bounded region's own statement tree with no
+    /// enclosing continuation: the typed loop back-edge boundary. The
+    /// frontier owns no code at this point, so executing past the boundary
+    /// is unrepresentable rather than detected after the fact.
+    RegionBoundary,
 }
 
 #[derive(Clone)]
@@ -1925,9 +1943,18 @@ impl TacticReplayState {
         matches!(self.frontier.point, ProofExecutionPoint::FunctionEntry)
     }
 
+    /// Execution reached the typed back-edge boundary of a bounded region:
+    /// the region's own statement tree is exhausted and no enclosing
+    /// continuation remains.
+    pub(super) fn is_at_region_boundary(&self) -> bool {
+        matches!(self.frontier.point, ProofExecutionPoint::RegionBoundary)
+    }
+
     pub(super) fn execution(&self) -> Option<&CFunctionExecutionCandidates> {
         match &self.frontier.point {
-            ProofExecutionPoint::FunctionEntry | ProofExecutionPoint::StatementEntry { .. } => None,
+            ProofExecutionPoint::FunctionEntry
+            | ProofExecutionPoint::StatementEntry { .. }
+            | ProofExecutionPoint::RegionBoundary => None,
             ProofExecutionPoint::FunctionExit { execution, .. } => Some(execution),
         }
     }

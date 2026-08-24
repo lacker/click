@@ -125,16 +125,23 @@ impl<'a> Proof<'a> {
                 Some(execution_start_state.clone());
             arm_execution.state = resolved_state.into();
             if matches!(selected_branch, CStatement::Skip) {
-                let Some(remaining) = resume_after_completed_region(
+                match resume_after_completed_region(
                     &mut arm_execution.replay,
                     context.function_block,
                     &arm_execution.state,
-                ) else {
-                    return Err(self.step_error("`branch` reached function end without a return"));
-                };
-                arm_execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
-                    remaining: remaining.into(),
-                };
+                ) {
+                    Some(remaining) => {
+                        arm_execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                            remaining: remaining.into(),
+                        };
+                    }
+                    None if finish_exhausted_region(&mut arm_execution.replay) => {}
+                    None => {
+                        return Err(
+                            self.step_error("`branch` reached function end without a return")
+                        );
+                    }
+                }
             } else {
                 arm_execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
                     remaining: Arc::new(selected_branch.clone()),

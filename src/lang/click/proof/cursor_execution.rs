@@ -681,14 +681,19 @@ pub(super) fn execute_branch_step_from_execution_point(
     replay.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state;
     if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
-        let Some(remaining) = resume_after_completed_region(replay, function_block, state) else {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
-            )));
-        };
-        replay.frontier.point = ProofExecutionPoint::StatementEntry {
-            remaining: remaining.into(),
-        };
+        match resume_after_completed_region(replay, function_block, state) {
+            Some(remaining) => {
+                replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                    remaining: remaining.into(),
+                };
+            }
+            None if finish_exhausted_region(replay) => {}
+            None => {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
+                )));
+            }
+        }
     } else {
         replay.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: selected_branch.into(),
@@ -865,6 +870,9 @@ fn execute_concrete_loop_head_step(
         resume_after_completed_region(replay, function_block, &current_state)
     };
     let Some(remaining) = next else {
+        if finish_exhausted_region(replay) {
+            return Ok(());
+        }
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
@@ -929,6 +937,9 @@ pub(super) fn next_top_level_statement_from_execution_point(
         }
         ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
+        ))),
+        ProofExecutionPoint::RegionBoundary => Err(ClickError::new(format!(
+            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run past the loop back-edge boundary"
         ))),
     }
 }
@@ -2081,29 +2092,33 @@ fn execute_step_from_execution_point_selecting_path(
         CStatementOutcome::Normal(next_state) => {
             let remaining = if let Some(remaining) = remaining {
                 replay.frontier.next_statement_index = source_region.continuation_node;
-                remaining
-            } else if let Some(remaining) =
-                resume_after_completed_region(replay, function_block, &next_state)
-            {
-                remaining
+                Some(remaining)
             } else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
-                )));
+                resume_after_completed_region(replay, function_block, &next_state)
             };
             *available_pure_facts = successor_pure_facts;
             replay.frontier.execution_start_state = Some(execution_start_state);
-            replay.frontier.point = ProofExecutionPoint::StatementEntry {
-                remaining: remaining.into(),
-            };
             *state = next_state.clone();
-            record_statement_program_point_state(
-                replay,
-                function_block,
-                replay.frontier.next_statement_index,
-                ProgramPointKind::Entry,
-                next_state,
-            );
+            match remaining {
+                Some(remaining) => {
+                    replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                        remaining: remaining.into(),
+                    };
+                    record_statement_program_point_state(
+                        replay,
+                        function_block,
+                        replay.frontier.next_statement_index,
+                        ProgramPointKind::Entry,
+                        next_state,
+                    );
+                }
+                None if finish_exhausted_region(replay) => {}
+                None => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
+                    )));
+                }
+            }
         }
         CStatementOutcome::Return { .. } => {
             if let CStatementOutcome::Return {
@@ -2234,6 +2249,20 @@ fn execute_step_from_execution_point_selecting_path(
     Ok(introduced_facts)
 }
 
+/// Execution exhausted the frontier's own statement tree with no enclosing
+/// continuation. A bounded region reaches its typed back-edge boundary; a
+/// whole-function region has no boundary short of `return`, so the caller
+/// keeps its end-of-function error.
+pub(super) fn finish_exhausted_region(replay: &mut TacticReplayState) -> bool {
+    if replay.frontier.region == ExecutionRegionKind::LoopBody {
+        debug_assert!(replay.frontier.continuations.is_empty());
+        replay.frontier.point = ProofExecutionPoint::RegionBoundary;
+        true
+    } else {
+        false
+    }
+}
+
 pub(super) fn resume_after_completed_region(
     replay: &mut TacticReplayState,
     function_block: &FunctionBlock,
@@ -2296,7 +2325,9 @@ pub(super) fn record_current_statement_entry(
                 ))
             })?,
         ProofExecutionPoint::StatementEntry { .. } => state.clone(),
-        ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
+        ProofExecutionPoint::FunctionExit { .. } | ProofExecutionPoint::RegionBoundary => {
+            return Ok(())
+        }
     };
     record_statement_program_point_state(
         replay,
@@ -2909,7 +2940,9 @@ pub(super) fn execute_rest_from_execution_point(
             ProofExecutionPoint::StatementEntry { remaining } => {
                 split_next_execution_step(remaining).is_ok()
             }
-            ProofExecutionPoint::FunctionExit { .. } => return Ok(()),
+            ProofExecutionPoint::FunctionExit { .. } | ProofExecutionPoint::RegionBoundary => {
+                return Ok(());
+            }
         };
         if !can_execute_one_step {
             break;
