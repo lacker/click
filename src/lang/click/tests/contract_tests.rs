@@ -139,6 +139,200 @@ fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
 }
 
 #[test]
+fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
+    let replace_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                int32* old_data;
+                int32* new_data;
+
+                old_data = owner->data;
+                new_data = malloc(4);
+                if (new_data == 0) {
+                    return 0;
+                }
+                new_data[0] = 7;
+                owner->data = new_data;
+                free(old_data);
+                return 1;
+            }
+        "#;
+    let caller_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_after_scoped_open(struct cell_owner* owner) {
+                int32 replaced;
+
+                replaced = replace_allocated_cell(owner);
+                return replaced;
+            }
+        "#;
+    let click_source = r#"
+            resource allocated_cell(owner: struct cell_owner*) {
+                owns owner->data;
+                contains allocation(owner->data, 4);
+                owns owner->data[0..1];
+            }
+
+            verifying "replace_allocated_cell.c";
+            verifying "replace_after_scoped_open.c";
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+                ensures result == 0 implies owner->data == old(owner->data);
+            } by {
+                unfold(allocated_cell(owner));
+                execute();
+                fold(allocated_cell(owner));
+                frame();
+                simp();
+            }
+
+            int32 replace_after_scoped_open(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+            } by {
+                open(allocated_cell(owner)) {
+                }
+                step() using {
+                }
+                step() using {
+                }
+                if at(statement(1).exit, owner->data) == old(owner->data) {
+                    step();
+                } else {
+                    step();
+                }
+                frame();
+                simp();
+            }
+        "#;
+    let sources = &[
+        ("replace_allocated_cell.c", replace_source),
+        ("replace_after_scoped_open.c", caller_source),
+    ];
+
+    let (
+        (
+            ((((verified, certificate_checks), _context_exports), _replay_executions), flat_units),
+            replay_labels,
+        ),
+        export_labels,
+    ) = proof::collect_execution_context_export_labels(|| {
+        proof::collect_internal_proof_execution_labels(|| {
+            proof::count_flat_proof_units(|| {
+                proof::count_internal_proof_executions(|| {
+                    proof::count_execution_context_exports(|| {
+                        proof::count_source_certificate_checks(|| {
+                            verify_c0_sources(click_source, sources)
+                        })
+                    })
+                })
+            })
+        })
+    });
+    verified.expect("the explicit call partition should remain on one retained Proof");
+    assert_eq!(flat_units, 1, "the caller should retain one Proof");
+    assert!(
+        replay_labels
+            .iter()
+            .all(|label| label != "replace_after_scoped_open.contract"),
+        "the caller entered legacy replay: {replay_labels:?}"
+    );
+    assert!(
+        export_labels
+            .iter()
+            .all(|label| label != "replace_after_scoped_open.contract"),
+        "the caller exported semantic state: {export_labels:?}"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a stitched certificate"
+    );
+}
+
+#[test]
+fn proof_if_splits_one_frontier_after_execution_has_started() {
+    let c_source = r#"
+            int32 identity_after_prefix(int32 x) {
+                int32 copied;
+
+                copied = x;
+                return copied;
+            }
+        "#;
+    let click_source = r#"
+            verifying "identity_after_prefix.c";
+
+            int32 identity_after_prefix(int32 x) {
+                immutable;
+                ensures result == x;
+            } by {
+                step() using {
+                }
+                if x >= 0 {
+                    step();
+                    step();
+                } else {
+                    step();
+                    step();
+                }
+                frame();
+                simp();
+            }
+        "#;
+    let sources = &[("identity_after_prefix.c", c_source)];
+
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        });
+    verified.expect("the mid-execution proof case split should remain on one retained Proof");
+    assert_eq!(flat_units, 1, "the contract should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the split must not enter legacy replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the split must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification must not check a stitched certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        sources,
+        "identity_after_prefix",
+        CProofClaim::Grouped,
+    )
+    .expect("the retained mid-execution case split should expand");
+    assert!(expanded.contains("if x >= 0"), "{expanded}");
+    verify_c0_sources(&expanded, sources)
+        .expect("the expanded mid-execution case split should verify independently");
+}
+
+#[test]
 fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
     let c_source = r#"
             int32 identity(int32 x) {

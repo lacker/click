@@ -239,6 +239,8 @@ fn top_level_structural_proof_supported(
         .any(|tactic| matches!(tactic, ProofTactic::Branch(_)));
     let has_top_level_expanded_execution_if =
         tactics.iter().any(expanded_execution_if_tactic_supported);
+    let has_top_level_mid_execution_if =
+        tactics.iter().any(mid_execution_proof_if_tactic_supported);
     let top_level_post_execution_if_count = tactics
         .iter()
         .filter(|tactic| post_execution_if_tactic_supported(tactic))
@@ -256,8 +258,9 @@ fn top_level_structural_proof_supported(
     if has_top_level_post_execution_if && has_top_level_expanded_execution_if {
         return false;
     }
-    let has_top_level_direct_if =
-        has_top_level_expanded_execution_if || has_top_level_post_execution_if;
+    let has_top_level_direct_if = has_top_level_expanded_execution_if
+        || has_top_level_mid_execution_if
+        || has_top_level_post_execution_if;
     if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
         return false;
     }
@@ -306,6 +309,7 @@ fn top_level_structural_proof_supported(
         ProofTactic::Branch(_) => true,
         tactic @ ProofTactic::If(_) => {
             expanded_execution_if_tactic_supported(tactic)
+                || mid_execution_proof_if_tactic_supported(tactic)
                 || post_execution_if_tactic_supported(tactic)
         }
         tactic => is_linear(tactic),

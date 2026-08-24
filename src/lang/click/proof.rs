@@ -59,6 +59,8 @@ pub(super) use fact_reasoning::{
     search_condition_derivation, snapshot_blind_proposition_key,
 };
 use point_proofs::*;
+#[cfg(test)]
+pub(in crate::lang::click) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;
 #[cfg(test)]
 use pure_theorems::{
@@ -67,6 +69,8 @@ use pure_theorems::{
 pub(super) use pure_theorems::{
     pure_theorem_array_refs, pure_theorem_parameter_values, verify_theorem_definitions,
 };
+#[cfg(test)]
+pub(in crate::lang::click) use replay_engine::collect_internal_proof_execution_labels;
 #[cfg(test)]
 pub(in crate::lang::click) use replay_engine::count_internal_proof_executions;
 use replay_engine::*;

@@ -3,6 +3,9 @@ use super::*;
 #[cfg(test)]
 thread_local! {
     static INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static COLLECTED_INTERNAL_PROOF_LABELS: std::cell::RefCell<Option<Vec<String>>> = const {
+        std::cell::RefCell::new(None)
+    };
 }
 
 #[cfg(test)]
@@ -13,6 +16,27 @@ pub(in crate::lang::click) fn count_internal_proof_executions<R>(
     let result = operation();
     let after = INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
     (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn collect_internal_proof_execution_labels<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, Vec<String>) {
+    COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
+        assert!(
+            labels.borrow().is_none(),
+            "internal-proof label collectors cannot nest"
+        );
+        *labels.borrow_mut() = Some(Vec::new());
+    });
+    let result = operation();
+    let labels = COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
+        labels
+            .borrow_mut()
+            .take()
+            .expect("the active internal-proof label collector was retained")
+    });
+    (result, labels)
 }
 
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
@@ -121,6 +145,21 @@ pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
             .all(|tactic| {
                 !matches!(tactic, ProofTactic::Simp) && flat_post_execution_tactic(tactic).is_some()
             })
+}
+
+pub(in crate::lang::click::proof) fn mid_execution_proof_if_tactic_supported(
+    tactic: &ProofTactic,
+) -> bool {
+    let ProofTactic::If(proof_if) = tactic else {
+        return false;
+    };
+    if expanded_execution_if_tactic_supported(tactic) || post_execution_if_tactic_supported(tactic)
+    {
+        return false;
+    }
+    let arm_is_checked_linear =
+        |arm: &[ProofTactic]| !arm.is_empty() && arm.iter().all(checked_linear_continuation_tactic);
+    arm_is_checked_linear(&proof_if.then_tactics) && arm_is_checked_linear(&proof_if.else_tactics)
 }
 
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
@@ -968,13 +1007,47 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     current = continuation;
                     continue;
                 }
-                let Some((then_steps, else_steps)) =
-                    expanded_execution_if_steps(condition, then_branch, else_branch)
-                else {
-                    return Ok(None);
-                };
                 proof = proof.with_execution_tactic_index(*index)?;
-                proof = proof.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
+                if let Some((then_steps, else_steps)) =
+                    expanded_execution_if_steps(condition, then_branch, else_branch)
+                {
+                    proof =
+                        proof.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
+                    saw_structure = true;
+                    current = continuation;
+                    continue;
+                }
+                let (split, record) =
+                    if let Some(existing) = proof.enter_statement_successor_if(condition)? {
+                        existing
+                    } else {
+                        proof.split_focused_execution_if(condition.clone())?
+                    };
+                let mut advanced = split;
+                for (take_then, branch) in
+                    [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
+                {
+                    let focused = advanced.focus_execution_if_arm(&record, take_then)?;
+                    let Some((next, remaining)) = advance_checked_linear_continuation(
+                        focused,
+                        branch,
+                        staged_expansion_capture.as_mut(),
+                        proof_site.as_ref(),
+                        generated_by_source_index.unwrap_or(usize::MAX),
+                        true,
+                        true,
+                        false,
+                        Some(claim_label),
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    if !remaining.is_empty() || !next.is_at_function_exit() {
+                        return Ok(None);
+                    }
+                    advanced = next;
+                }
+                proof = advanced.join_focused_execution_if_terminal(&record)?;
                 saw_structure = true;
                 current = continuation;
             }
@@ -1573,6 +1646,12 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
 ) -> Result<Vec<ProofReplayContext>, ClickError> {
     #[cfg(test)]
     INTERNAL_PROOF_EXECUTIONS.with(|executions| executions.set(executions.get() + 1));
+    #[cfg(test)]
+    COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
+        if let Some(labels) = labels.borrow_mut().as_mut() {
+            labels.push(claim_label.to_string());
+        }
+    });
     let _depth_guard = InternalProofReplayDepthGuard::enter(claim_label)?;
     execute_internal_proof_inner(
         node,

@@ -21,6 +21,9 @@ thread_local! {
     static EXECUTION_CONTEXT_EXPORTS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static COLLECTED_EXECUTION_CONTEXT_EXPORT_LABELS: std::cell::RefCell<Option<Vec<String>>> = const {
+        std::cell::RefCell::new(None)
+    };
     static CHECKED_EXPANDED_EXECUTION_IFS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -64,6 +67,27 @@ pub(in crate::lang::click) fn count_execution_context_exports<R>(
     let result = operation();
     let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn collect_execution_context_export_labels<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, Vec<String>) {
+    COLLECTED_EXECUTION_CONTEXT_EXPORT_LABELS.with(|labels| {
+        assert!(
+            labels.borrow().is_none(),
+            "execution-export label collectors cannot nest"
+        );
+        *labels.borrow_mut() = Some(Vec::new());
+    });
+    let result = operation();
+    let labels = COLLECTED_EXECUTION_CONTEXT_EXPORT_LABELS.with(|labels| {
+        labels
+            .borrow_mut()
+            .take()
+            .expect("the active execution-export label collector was retained")
+    });
+    (result, labels)
 }
 
 #[cfg(test)]
@@ -132,6 +156,25 @@ pub(super) struct ExecutionSplit<'a> {
     initial_continuation_depth: usize,
 }
 
+/// Bookkeeping for an exhaustive proof-level case split over execution
+/// frontiers. The arms may be created from one shared frontier or may focus
+/// the exhaustive successor partition already certified by the preceding
+/// statement; either way, the `if` itself is logical rather than a C branch.
+pub(super) struct ExecutionProofCaseSplit<'a> {
+    marker: ProofCheckpoint<'a>,
+    split: SplitId,
+    ids: [GoalId; 2],
+    surface_condition: ClickProposition,
+    base_facts: [ProofFacts; 2],
+    base_executions: [Arc<ExecutionProofState>; 2],
+    path_facts: [Vec<Proposition>; 2],
+    common_facts: ProofFacts,
+    parent_unfolds: PersistentOrderedSet<String>,
+    parent_execution: Arc<ExecutionProofState>,
+    execution_start_state: CState,
+    initial_continuation_depth: usize,
+}
+
 /// One checked branch arm's contribution to a checked execution join: the
 /// arm's structured certificate, final facts and execution snapshot,
 /// recorded condition theorem, and the introduction deltas the merge
@@ -142,7 +185,7 @@ struct CheckedExecutionJoinArm<'v> {
     certificate: ProofCertificate,
     facts: &'v ProofFacts,
     execution: &'v ExecutionProofState,
-    condition_theorem: &'v Theorem,
+    condition_theorem: Option<&'v Theorem>,
     introduced_facts: Vec<Proposition>,
     introduced_effect_facts: Vec<ExecutionPureFact>,
     introduced_prerequisites: Vec<Proposition>,
@@ -1067,6 +1110,26 @@ struct ExecutionProofStepDelta {
     function_entry_prerequisites: Vec<Proposition>,
     function_entry_derivations: Vec<Theorem>,
     unfolded_predicates: Vec<String>,
+    statement_partition: Option<Arc<StatementSuccessorPartition>>,
+}
+
+/// Partition metadata attached only to the immediate successor of a checked
+/// statement step. It is proof bookkeeping, not semantic authority: both arm
+/// states and their polarity facts were already returned by the kernel-owned
+/// transition checker.
+#[derive(Clone)]
+struct StatementSuccessorPartition {
+    split: SplitId,
+    ids: [GoalId; 2],
+    condition: ConditionTerm,
+    base_facts: [ProofFacts; 2],
+    base_executions: [Arc<ExecutionProofState>; 2],
+    path_facts: [Vec<Proposition>; 2],
+    common_facts: ProofFacts,
+    parent_unfolds: PersistentOrderedSet<String>,
+    parent_execution: Arc<ExecutionProofState>,
+    execution_start_state: CState,
+    initial_continuation_depth: usize,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -3508,6 +3571,177 @@ impl<'a> Proof<'a> {
         ))
     }
 
+    /// Enters the exhaustive operational partition produced by the
+    /// immediately preceding statement step. The proof `if` introduces no
+    /// hypothesis of its own: both Surface polarities must lower to the exact
+    /// condition already certified for the two successor frontiers.
+    pub(super) fn enter_statement_successor_if(
+        &self,
+        condition: &ClickProposition,
+    ) -> Result<Option<(Self, ExecutionProofCaseSplit<'a>)>, ClickError> {
+        let Some(partition) = self
+            .execution()
+            .and_then(|execution| execution.last_step_delta.statement_partition.clone())
+        else {
+            return Ok(None);
+        };
+        if self.focused != partition.ids[0]
+            || !matches!(
+                self.node.step.as_deref(),
+                Some(SimpleProofStep::Step | SimpleProofStep::StepUsing(_))
+            )
+        {
+            return Err(self
+                .step_error("statement-successor `if` must immediately follow its checked step"));
+        }
+        let then_fact = self.lower_surface_proposition(condition, "proof `if` condition")?;
+        let expected_then = Proposition::ConditionIs(partition.condition.clone(), true);
+        if !path_condition_equivalent(&then_fact, &expected_then) {
+            return Err(self.step_error(format!(
+                "proof `if` condition does not name the preceding statement's certified partition: expected {expected_then:?}, got {then_fact:?}"
+            )));
+        }
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        // Lower both polarities against one semantic snapshot. Independent
+        // lowering in the sibling successor can allocate different fresh
+        // names for the same snapshot-qualified load, making an exact
+        // certified partition appear different across its two arms.
+        let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
+        let expected_else = Proposition::ConditionIs(partition.condition.clone(), false);
+        if !path_condition_equivalent(&else_fact, &expected_else) {
+            return Err(self.step_error(format!(
+                "proof `if` negation does not name the preceding statement's certified partition: expected {expected_else:?}, got {else_fact:?}"
+            )));
+        }
+
+        let successor = Self {
+            context: self.context.clone(),
+            state: self.state.clone(),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.node.focused,
+                depth: self.node.depth,
+            }),
+            focused: partition.ids[0],
+        };
+        let record = ExecutionProofCaseSplit {
+            marker: successor.checkpoint(),
+            split: partition.split,
+            ids: partition.ids,
+            surface_condition: condition.clone(),
+            base_facts: partition.base_facts.clone(),
+            base_executions: partition.base_executions.clone(),
+            path_facts: partition.path_facts.clone(),
+            common_facts: partition.common_facts.clone(),
+            parent_unfolds: partition.parent_unfolds.clone(),
+            parent_execution: partition.parent_execution.clone(),
+            execution_start_state: partition.execution_start_state.clone(),
+            initial_continuation_depth: partition.initial_continuation_depth,
+        };
+        Ok(Some((successor, record)))
+    }
+
+    /// Splits one retained execution frontier under an exhaustive proof-level
+    /// condition. Both arms share the already-checked C state and receive only
+    /// their respective logical polarity; subsequent statement steps remain
+    /// independently checked on each sibling.
+    pub(super) fn split_focused_execution_if(
+        &self,
+        condition: ClickProposition,
+    ) -> Result<(Self, ExecutionProofCaseSplit<'a>), ClickError> {
+        self.require_execution_frontier("proof `if`")?;
+        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+            unreachable!("the frontier requirement was checked above")
+        };
+        let parent_execution = frontier
+            .context
+            .execution
+            .clone()
+            .expect("an execution frontier owns its checked state");
+        let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("an execution frontier has an execution context")
+        };
+        let at_function_entry = parent_execution.replay.is_at_function_entry();
+        let arm = |surface_fact: ClickProposition, fact: Proposition, value: bool| {
+            let facts = frontier.context.facts.with_fact(fact.clone());
+            let mut execution = (*parent_execution).clone();
+            execution
+                .replay
+                .surface_propositions
+                .record_lowering(&surface_fact, &fact)?;
+            execution
+                .replay
+                .case_assumptions
+                .push(ReplayCaseAssumption {
+                    tactic_index: context.tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(fact.clone()),
+                    at_function_entry,
+                });
+            Ok((
+                Goal::Frontier(FrontierGoal {
+                    selection: frontier.selection,
+                    context: GoalContext {
+                        facts: facts.clone(),
+                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                        execution: Some(Arc::new(execution.clone())),
+                    },
+                }),
+                facts,
+                vec![fact],
+                Arc::new(execution),
+            ))
+        };
+        let (then_goal, then_facts, then_path, then_execution) =
+            arm(condition.clone(), then_fact, true)?;
+        let (else_goal, else_facts, else_path, else_execution) =
+            arm(else_surface, else_fact, false)?;
+        let (split, ids, goals) = self
+            .state
+            .goals
+            .split_at(self.focused, [then_goal, else_goal]);
+        let first_path = then_path.clone();
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals,
+                added_facts: Arc::new(first_path.clone()),
+                checked_facts: Arc::new(first_path),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
+            focused: ids[0],
+        };
+        let record = ExecutionProofCaseSplit {
+            marker: successor.checkpoint(),
+            split,
+            ids,
+            surface_condition: condition,
+            base_facts: [then_facts, else_facts],
+            base_executions: [then_execution, else_execution],
+            path_facts: [then_path, else_path],
+            common_facts: frontier.context.facts.clone(),
+            parent_unfolds: frontier.context.unfolded_predicates.clone(),
+            parent_execution: parent_execution.clone(),
+            execution_start_state: parent_execution
+                .replay
+                .execution_start_state(&parent_execution.state)
+                .clone(),
+            initial_continuation_depth: parent_execution.replay.frontier.continuations.len(),
+        };
+        Ok((successor, record))
+    }
+
     /// Joins a completed in-`Proof` `if` split with one structured `If`
     /// step, under the same rules as [`Self::join_focused_cases`].
     pub(super) fn join_focused_if(
@@ -4406,13 +4640,15 @@ impl<'a> Proof<'a> {
         arm: &CheckedExecutionJoinArm<'_>,
         parent_execution: &ExecutionProofState,
     ) -> Result<(), ClickError> {
-        if !matches!(
-            implication_body(arm.condition_theorem.proposition()),
-            Proposition::CConditionEvaluates {
-                outcome: CConditionOutcome::Value(actual),
-                ..
-            } if *actual == expected
-        ) {
+        if let Some(condition_theorem) = arm.condition_theorem
+            && !matches!(
+                implication_body(condition_theorem.proposition()),
+                Proposition::CConditionEvaluates {
+                    outcome: CConditionOutcome::Value(actual),
+                    ..
+                } if *actual == expected
+            )
+        {
             return Err(self.step_error(format!("{name} arm retained the wrong condition theorem")));
         }
         let replay = &arm.execution.replay;
@@ -5087,6 +5323,7 @@ impl<'a> Proof<'a> {
         statement_index: usize,
         execution_start_state: CState,
         initial_continuation_depth: usize,
+        proof_case_condition: Option<ClickProposition>,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
         if !arms[0]
@@ -5100,38 +5337,45 @@ impl<'a> Proof<'a> {
             ));
         }
         let ProofContext::Execution(context) = self.context.as_ref() else {
-            unreachable!("execution branch retained a non-execution context")
+            unreachable!("terminal execution join retained a non-execution context")
         };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &parent_execution.replay,
-            &parent_execution.state,
-            context.function,
-            context.arguments,
-            context.claim_label,
-            context.tactic_index,
-            "terminal branch join",
-        )?;
-        let CStatement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } = statement
-        else {
-            return Err(
-                self.step_error("terminal execution branch root no longer points at a C `if`")
-            );
+        let proof_case_split = proof_case_condition.is_some();
+        let (surface_condition, empty_source_arms) = if let Some(condition) = proof_case_condition {
+            (condition, [false, false])
+        } else {
+            let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+                &parent_execution.replay,
+                &parent_execution.state,
+                context.function,
+                context.arguments,
+                context.claim_label,
+                context.tactic_index,
+                "terminal branch join",
+            )?;
+            let CStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } = statement
+            else {
+                return Err(
+                    self.step_error("terminal execution branch root no longer points at a C `if`")
+                );
+            };
+            (
+                surface_with_source_site(
+                    &surface_c_condition(&condition),
+                    &ProgramPointRef {
+                        region: CodeRegionRef::Statement(statement_index),
+                        kind: ProgramPointKind::Entry,
+                    },
+                )?,
+                [
+                    matches!(then_branch.as_ref(), CStatement::Skip),
+                    matches!(else_branch.as_ref(), CStatement::Skip),
+                ],
+            )
         };
-        let surface_condition = surface_with_source_site(
-            &surface_c_condition(&condition),
-            &ProgramPointRef {
-                region: CodeRegionRef::Statement(statement_index),
-                kind: ProgramPointKind::Entry,
-            },
-        )?;
-        let empty_source_arms = [
-            matches!(then_branch.as_ref(), CStatement::Skip),
-            matches!(else_branch.as_ref(), CStatement::Skip),
-        ];
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
             let replay = &arm.execution.replay;
             if !replay.is_at_function_exit()
@@ -5162,16 +5406,24 @@ impl<'a> Proof<'a> {
                 steps.extend_from_slice(body.steps());
                 ProofCertificate::from_steps(steps)
             };
-        let then_proof = terminal_certificate(
-            &arms[0].certificate,
-            empty_source_arms[0],
-            surface_condition.clone(),
-        );
-        let else_proof = terminal_certificate(
-            &arms[1].certificate,
-            empty_source_arms[1],
-            negate_click_proposition(&surface_condition),
-        );
+        let then_proof = if proof_case_split {
+            arms[0].certificate.clone()
+        } else {
+            terminal_certificate(
+                &arms[0].certificate,
+                empty_source_arms[0],
+                surface_condition.clone(),
+            )
+        };
+        let else_proof = if proof_case_split {
+            arms[1].certificate.clone()
+        } else {
+            terminal_certificate(
+                &arms[1].certificate,
+                empty_source_arms[1],
+                negate_click_proposition(&surface_condition),
+            )
+        };
         let then_replay = &arms[0].execution.replay;
         let else_replay = &arms[1].execution.replay;
         let common_program_points = then_replay
@@ -5231,10 +5483,12 @@ impl<'a> Proof<'a> {
             .any(|arm| arm.execution.has_empty_execution_branch_leaf);
         execution.state = execution_start_state.clone().into();
         execution.replay.program_point_states = common_program_points;
-        execution
-            .replay
-            .completed_branch_regions
-            .insert(statement_index);
+        if !proof_case_split {
+            execution
+                .replay
+                .completed_branch_regions
+                .insert(statement_index);
+        }
         for continuation in &parent_execution.replay.frontier.continuations {
             if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
                 execution
@@ -5612,9 +5866,58 @@ impl<'a> Proof<'a> {
             record.statement_index,
             record.execution_start_state.clone(),
             record.initial_continuation_depth,
+            None,
             arms,
         )?;
         self.resume_parent_after_sibling_join(record, ids, selection, parts)
+    }
+
+    /// Joins the two terminal arms of a proof-level execution `if`. For a
+    /// preceding multi-successor call, the call remains the parent provenance
+    /// node; for a fresh logical split, both arms retain the same checked C
+    /// root. In either case this adds only the proof `if` and its arm bodies.
+    pub(super) fn join_focused_execution_if_terminal(
+        &self,
+        record: &ExecutionProofCaseSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        let [then_steps, else_steps] =
+            self.partition_steps_since(&record.marker, record.split, record.ids)?;
+        let (selection, then_view) = self.sibling_execution_arm_view_from_bases(
+            "then",
+            record.split,
+            record.ids[0],
+            then_steps,
+            &record.base_facts[0],
+            &record.common_facts,
+            &record.base_executions[0],
+            None,
+        )?;
+        let (_, else_view) = self.sibling_execution_arm_view_from_bases(
+            "else",
+            record.split,
+            record.ids[1],
+            else_steps,
+            &record.base_facts[1],
+            &record.common_facts,
+            &record.base_executions[1],
+            None,
+        )?;
+        let parts = self.merge_terminal_execution_join(
+            &record.common_facts,
+            &record.parent_unfolds,
+            &record.parent_execution,
+            record.parent_execution.replay.frontier.next_statement_index,
+            record.execution_start_state.clone(),
+            record.initial_continuation_depth,
+            Some(record.surface_condition.clone()),
+            [then_view, else_view],
+        )?;
+        self.resume_parent_after_sibling_join_from_marker(
+            &record.marker,
+            record.ids,
+            selection,
+            parts,
+        )
     }
 
     /// Reduces the two sibling arms of an in-`Proof` execution split to the
@@ -5662,14 +5965,6 @@ impl<'a> Proof<'a> {
         id: GoalId,
         steps: Vec<SimpleProofStep>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
-        let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
-            return Err(self.step_error(format!(
-                "cannot join `branch`: the {name} arm is not an open execution frontier"
-            )));
-        };
-        let execution = frontier.context.execution.as_deref().ok_or_else(|| {
-            self.step_error(format!("{name} branch arm lost its execution state"))
-        })?;
         let base_facts = record.base_facts[arm_index]
             .as_ref()
             .expect("a recorded arm id has a recorded fact base");
@@ -5679,10 +5974,42 @@ impl<'a> Proof<'a> {
         let condition_theorem = record.condition_theorems[arm_index]
             .as_ref()
             .expect("a recorded arm id has a recorded condition theorem");
+        self.sibling_execution_arm_view_from_bases(
+            name,
+            record.split,
+            id,
+            steps,
+            base_facts,
+            &record.parent_facts,
+            base_execution,
+            Some(condition_theorem),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sibling_execution_arm_view_from_bases<'v>(
+        &'v self,
+        name: &str,
+        split: SplitId,
+        id: GoalId,
+        steps: Vec<SimpleProofStep>,
+        ancestry_facts: &'v ProofFacts,
+        delta_facts: &'v ProofFacts,
+        delta_execution: &'v ExecutionProofState,
+        condition_theorem: Option<&'v Theorem>,
+    ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
+        let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
+            return Err(self.step_error(format!(
+                "cannot join `branch`: the {name} arm is not an open execution frontier"
+            )));
+        };
+        let execution = frontier.context.execution.as_deref().ok_or_else(|| {
+            self.step_error(format!("{name} branch arm lost its execution state"))
+        })?;
         let not_descended = || {
             self.step_error(format!(
                 "cannot join `branch`: the {name} arm does not descend from split {:?}",
-                record.split
+                split
             ))
         };
         // Fact introductions are measured against the PARENT facts, not the
@@ -5695,7 +6022,7 @@ impl<'a> Proof<'a> {
         if frontier
             .context
             .facts
-            .introduced_since(base_facts)
+            .introduced_since(ancestry_facts)
             .is_none()
         {
             return Err(not_descended());
@@ -5703,28 +6030,32 @@ impl<'a> Proof<'a> {
         let introduced_facts = frontier
             .context
             .facts
-            .introduced_since(&record.parent_facts)
+            .introduced_since(delta_facts)
             .ok_or_else(not_descended)?;
         let introduced_effect_facts = execution
             .replay
             .effect_facts
-            .suffix_since(&base_execution.replay.effect_facts)
+            .suffix_since(&delta_execution.replay.effect_facts)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_prerequisites = execution
             .replay
             .function_entry_execution_prerequisites
-            .introduced_since(&base_execution.replay.function_entry_execution_prerequisites)
+            .introduced_since(
+                &delta_execution
+                    .replay
+                    .function_entry_execution_prerequisites,
+            )
             .ok_or_else(not_descended)?;
         let introduced_derivations = execution
             .replay
             .function_entry_derivations
-            .introduced_since(&base_execution.replay.function_entry_derivations)
+            .introduced_since(&delta_execution.replay.function_entry_derivations)
             .ok_or_else(not_descended)?;
         let introduced_unfolds = execution
             .replay
             .unfolded_predicates
-            .suffix_since(&base_execution.replay.unfolded_predicates)
+            .suffix_since(&delta_execution.replay.unfolded_predicates)
             .ok_or_else(not_descended)?
             .to_vec();
         Ok((
@@ -5810,8 +6141,18 @@ impl<'a> Proof<'a> {
         selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
-        let parent_goal = record.marker.node.focused;
-        let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
+        self.resume_parent_after_sibling_join_from_marker(&record.marker, ids, selection, parts)
+    }
+
+    fn resume_parent_after_sibling_join_from_marker(
+        &self,
+        marker: &ProofCheckpoint<'a>,
+        ids: [GoalId; 2],
+        selection: EffectGoalSelection,
+        parts: CheckedExecutionJoinParts,
+    ) -> Result<Self, ClickError> {
+        let parent_goal = marker.node.focused;
+        let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
         let open = self
@@ -5873,6 +6214,26 @@ impl<'a> Proof<'a> {
         let path_facts = record.path_facts[arm_index]
             .clone()
             .expect("a recorded arm id has recorded path facts");
+        focused.state = Arc::new(ProofState {
+            locals: focused.state.locals.clone(),
+            goals: focused.state.goals.clone(),
+            added_facts: Arc::new(path_facts.clone()),
+            checked_facts: Arc::new(path_facts),
+        });
+        Ok(focused)
+    }
+
+    /// Focuses one proof-level execution case. No C transition is repeated;
+    /// the recorded polarity is re-presented only as the focused operation's
+    /// local delta.
+    pub(super) fn focus_execution_if_arm(
+        &self,
+        record: &ExecutionProofCaseSplit<'a>,
+        take_then: bool,
+    ) -> Result<Self, ClickError> {
+        let arm_index = usize::from(!take_then);
+        let mut focused = self.focus(record.ids[arm_index])?;
+        let path_facts = record.path_facts[arm_index].clone();
         focused.state = Arc::new(ProofState {
             locals: focused.state.locals.clone(),
             goals: focused.state.goals.clone(),
@@ -6798,6 +7159,7 @@ impl<'a> Proof<'a> {
             function_entry_prerequisites: checked.added_function_entry_prerequisites,
             function_entry_derivations: checked.added_function_entry_derivations,
             unfolded_predicates: checked.added_unfolded_predicates,
+            statement_partition: None,
         };
         let goal_context = GoalContext {
             facts: checked.facts,
@@ -6860,6 +7222,7 @@ impl<'a> Proof<'a> {
             function_entry_prerequisites: checked.added_certification_facts,
             function_entry_derivations: checked.added_derivations,
             unfolded_predicates: Vec::new(),
+            statement_partition: None,
         };
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -7025,6 +7388,12 @@ impl<'a> Proof<'a> {
     pub(super) fn into_execution_context(self) -> Result<ProofReplayContext, ClickError> {
         #[cfg(test)]
         EXECUTION_CONTEXT_EXPORTS.with(|exports| exports.set(exports.get() + 1));
+        #[cfg(test)]
+        COLLECTED_EXECUTION_CONTEXT_EXPORT_LABELS.with(|labels| {
+            if let Some(labels) = labels.borrow_mut().as_mut() {
+                labels.push(self.context.claim_label().to_string());
+            }
+        });
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("proof does not own an execution frontier"));
         }
@@ -11755,6 +12124,12 @@ impl<'a> Proof<'a> {
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             unreachable!("the frontier requirement was checked above");
         };
+        let parent_execution = Arc::new(execution.clone());
+        let execution_start_state = execution
+            .replay
+            .execution_start_state(&execution.state)
+            .clone();
+        let initial_continuation_depth = execution.replay.frontier.continuations.len();
         let make_goal = |checked: CheckedStatementStep| {
             let mut successor_execution = execution.clone();
             successor_execution.replay = checked.replay;
@@ -11793,7 +12168,13 @@ impl<'a> Proof<'a> {
                 let mut condition = None;
                 let mut common_added: Option<Vec<Proposition>> = None;
                 for successor in checked {
-                    let (goal, added, path) = make_goal(successor);
+                    let CheckedStatementStep {
+                        replay,
+                        state,
+                        facts,
+                        added_facts: added,
+                        path,
+                    } = successor;
                     let Some((path_condition, value)) = path else {
                         return Err(self
                             .step_error("statement successors omitted their certified partition"));
@@ -11805,10 +12186,17 @@ impl<'a> Proof<'a> {
                             ));
                         }
                     } else {
-                        condition = Some(path_condition);
+                        condition = Some(path_condition.clone());
                     }
                     let slot = usize::from(!value);
-                    if by_polarity[slot].replace(goal).is_some() {
+                    let mut successor_execution = execution.clone();
+                    successor_execution.replay = replay;
+                    successor_execution.state = state.into();
+                    let path_fact = Proposition::ConditionIs(path_condition, value);
+                    if by_polarity[slot]
+                        .replace((facts, Arc::new(successor_execution), vec![path_fact]))
+                        .is_some()
+                    {
                         return Err(
                             self.step_error("statement successors repeated one partition polarity")
                         );
@@ -11819,17 +12207,71 @@ impl<'a> Proof<'a> {
                         common_added = Some(added);
                     }
                 }
-                let [Some(then_goal), Some(else_goal)] = by_polarity else {
+                let [Some(then_arm), Some(else_arm)] = by_polarity else {
                     return Err(self.step_error(
                         "statement successors did not cover both partition polarities",
                     ));
                 };
-                let _ = condition.expect("two successors recorded a condition");
-                let (_split, ids, goals) = self
-                    .state
-                    .goals
-                    .split_at(self.focused, [then_goal, else_goal]);
-                (goals, ids[0], common_added.unwrap_or_default())
+                let condition = condition.expect("two successors recorded a condition");
+                let common_added = common_added.unwrap_or_default();
+                // Both call successors descend from the pre-call facts, but
+                // their statement batches are siblings even when those
+                // batches contain some equal propositions. Keep the actual
+                // shared ancestor here; the terminal merge computes common
+                // post-call facts output-sensitively from the two arm deltas.
+                let common_facts = self.facts().clone();
+                let split = SplitId(self.state.goals.next_id);
+                let ids = [
+                    GoalId(self.state.goals.next_id + 1),
+                    GoalId(self.state.goals.next_id + 2),
+                ];
+                let partition = Arc::new(StatementSuccessorPartition {
+                    split,
+                    ids,
+                    condition,
+                    base_facts: [then_arm.0.clone(), else_arm.0.clone()],
+                    base_executions: [then_arm.1.clone(), else_arm.1.clone()],
+                    path_facts: [then_arm.2, else_arm.2],
+                    common_facts,
+                    parent_unfolds: frontier.context.unfolded_predicates.clone(),
+                    parent_execution: parent_execution.clone(),
+                    execution_start_state: execution_start_state.clone(),
+                    initial_continuation_depth,
+                });
+                let goals = self.state.goals.split_at(
+                    self.focused,
+                    [
+                        Goal::Frontier(FrontierGoal {
+                            selection: frontier.selection,
+                            context: GoalContext {
+                                facts: then_arm.0,
+                                unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                                execution: Some(Arc::new({
+                                    let mut execution = (*then_arm.1).clone();
+                                    execution.last_step_delta.statement_partition =
+                                        Some(partition.clone());
+                                    execution
+                                })),
+                            },
+                        }),
+                        Goal::Frontier(FrontierGoal {
+                            selection: frontier.selection,
+                            context: GoalContext {
+                                facts: else_arm.0,
+                                unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                                execution: Some(Arc::new({
+                                    let mut execution = (*else_arm.1).clone();
+                                    execution.last_step_delta.statement_partition = Some(partition);
+                                    execution
+                                })),
+                            },
+                        }),
+                    ],
+                );
+                debug_assert_eq!(goals.0, split);
+                debug_assert_eq!(goals.1, ids);
+                let goals = goals.2;
+                (goals, ids[0], common_added)
             }
             count => {
                 return Err(self.step_error(format!(
@@ -21474,6 +21916,109 @@ mod tests {
                 Proposition::CConditionEvaluates { .. }
             ));
             assert_eq!(facts.to_vec().len(), size as usize + 1);
+        }
+    }
+
+    #[test]
+    fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 identity(int32 x) {
+                    immutable;
+                    ensures result == x;
+                } by {
+                    assumption();
+                }
+            "#,
+        )
+        .expect("test contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function = syntax::parse_function(
+            "int32 identity(int32 x) { int32 copied; copied = x; return copied; }",
+        )
+        .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(71_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let condition = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::GreaterEqual,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            let root = Proof::for_execution_frontier(
+                "execution proof if scaling",
+                0,
+                ProofReplayContext {
+                    state: CState::new(),
+                    pure_facts: (0..size).map(indexed_fact).collect(),
+                    replay: Box::new(replay),
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            )
+            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .expect("the declaration prefix should execute before the proof split");
+            let before = fact_node_allocations();
+            let (split, record) = root
+                .split_focused_execution_if(condition.clone())
+                .expect("the mid-execution proof if should open two siblings");
+            let allocations = fact_node_allocations() - before;
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                allocations,
+            ));
+
+            let completed = split
+                .focus_execution_if_arm(&record, true)
+                .expect("the then sibling should remain open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the then assignment should check")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the then return should check")
+                .focus_execution_if_arm(&record, false)
+                .expect("the else sibling should remain open")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the else assignment should check")
+                .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+                .expect("the else return should check")
+                .join_focused_execution_if_terminal(&record)
+                .expect("the two terminal proof cases should join");
+            assert!(completed.is_at_function_exit());
+            assert!(matches!(
+                completed.certificate().steps().last(),
+                Some(SimpleProofStep::If { .. })
+            ));
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} execution proof-if split allocated {allocations} persistent nodes (bound {bound})"
+            );
         }
     }
 

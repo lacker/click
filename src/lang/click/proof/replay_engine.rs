@@ -9,6 +9,8 @@ mod tactic_replay;
 pub(super) use predicate_step::*;
 pub(super) use proof_certificate_pipeline::*;
 #[cfg(test)]
+pub(in crate::lang::click) use proof_execution::collect_internal_proof_execution_labels;
+#[cfg(test)]
 pub(in crate::lang::click) use proof_execution::count_internal_proof_executions;
 pub(super) use proof_execution::*;
 pub(super) use statement_step::*;
