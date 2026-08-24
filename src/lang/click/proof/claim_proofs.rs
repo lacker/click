@@ -231,10 +231,11 @@ fn collect_post_execution_if_have_indices<'a>(
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
-/// owned by the typed scope driver. Quantified resources, heap-backed contract
-/// predicates, nested scopes, and unsupported logical structures retain their
-/// separately audited compatibility paths. Counted populations use the same
-/// checked resource entry and close operations as ordinary composite scopes.
+/// owned by the typed scope driver. Heap-backed contract predicates, nested
+/// scopes, quantified scope bodies, and unsupported logical structures retain
+/// their separately audited compatibility paths. Quantified contract resources
+/// and counted populations use the same checked resource entry and close
+/// operations as ordinary composite scopes.
 fn top_level_structural_proof_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -275,17 +276,6 @@ fn top_level_structural_proof_supported(
     if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
         return false;
     }
-    let has_quantified_contract_resource = function_block
-        .requires()
-        .iter()
-        .filter_map(requirement_resource)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Resource(resource) = clause.ensure() else {
-                return None;
-            };
-            Some(resource)
-        }))
-        .any(|resource| matches!(resource, ResourceClause::Quantified { .. }));
     let scope_definitions_are_supported = opens.iter().all(|open| match &open.resource {
         ResourceClause::Declared { name, .. } => {
             resource_environment.get(name).is_some_and(|definition| {
@@ -326,7 +316,7 @@ fn top_level_structural_proof_supported(
         }
         tactic => is_linear(tactic),
     });
-    (opens.is_empty() || (!has_quantified_contract_resource && scope_definitions_are_supported))
+    (opens.is_empty() || scope_definitions_are_supported)
         && structural_tactics
         && (grouped_predicate_contract_supported(function_block, predicate_environment)
             || (has_top_level_post_execution_if

@@ -6502,6 +6502,99 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
 }
 
 #[test]
+fn quantified_contract_resource_open_stays_on_one_proof() {
+    let c_source = "int32 preserve_markers(int32 x, int32 amount) { return x; }";
+    let click_source = r#"
+        resource marker(x: int32) {}
+
+        verifying "preserve_markers.c";
+
+        int32 preserve_markers(int32 x, int32 amount) {
+            requires 1 <= amount;
+            owns amount of marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            open(marker(x)) {
+                execute();
+                frame();
+            }
+            simp();
+        }
+    "#;
+    let sources = [("preserve_markers.c", c_source)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the quantified resource scope should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the quantified resource scope entered replay");
+    assert_eq!(context_exports, 0, "the resource scope exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the quantified resource scope fell back"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the quantified resource scope should retain provenance");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(open))
+                if matches!(open.resource, ResourceClause::Declared { ref name, .. } if name == "marker")
+        ),
+        "the retained proof lost the checked open scope: {tactics:#?}"
+    );
+
+    let rewritten = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "preserve_markers",
+        CProofClaim::Grouped,
+    )
+    .expect("the quantified resource scope should serialize");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the serialized quantified resource scope should independently reverify");
+
+    let corrupted = rewritten.replacen("open(marker(x))", "open(marker(x + 1))", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the checked resource selection"
+    );
+    let ((result, fallbacks), replay_executions) = proof::count_internal_proof_executions(|| {
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+    });
+    let error =
+        result.expect_err("tampering with the resource selection must invalidate the proof");
+    assert!(
+        error.message().contains("`unfold(marker((x + 1)))` failed"),
+        "the checked resource-entry operation should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(fallbacks, 0, "an invalid open must not fall back");
+    assert_eq!(
+        replay_executions, 0,
+        "an invalid open must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
     let c_source = r#"
         int32 write_in_bounds(int32 p[], int32 i, int32 n) {
