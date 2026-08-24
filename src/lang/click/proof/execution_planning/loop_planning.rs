@@ -610,13 +610,6 @@ fn loop_effect_open_if_path_into(certificate: &ProofCertificate, path: &mut Vec<
     false
 }
 
-fn loop_effect_top_level_step_supported(step: &SimpleProofStep) -> bool {
-    match step {
-        SimpleProofStep::Open { proof, .. } => loop_effect_open_body_supported(proof),
-        step => loop_effect_linear_step_supported(step),
-    }
-}
-
 fn loop_effect_step_source_width(step: &SimpleProofStep) -> usize {
     match step {
         // Resource scopes participate in the outer source-index sequence;
@@ -631,6 +624,34 @@ fn loop_effect_step_source_width(step: &SimpleProofStep) -> usize {
         }
         _ => 1,
     }
+}
+
+fn select_loop_effect_path_prefix(
+    claim_label: &str,
+    tactics: &[ProofTactic],
+    case_path: &[ProofCaseChoice],
+) -> Result<ProofCertificate, ClickError> {
+    let mut selected = tactics;
+    let mut next_case = 0;
+    while let [ProofTactic::If(proof_if)] = selected {
+        let Some(choice) = case_path.get(next_case) else {
+            break;
+        };
+        if choice.condition != proof_if.condition {
+            break;
+        }
+        selected = if choice.value {
+            &proof_if.then_tactics
+        } else {
+            &proof_if.else_tactics
+        };
+        next_case += 1;
+    }
+    ProofCertificate::from_proof_tactics(selected).map_err(|error| {
+        ClickError::new(format!(
+            "`{claim_label}` selected an invalid structural-effect certificate: {error:?}"
+        ))
+    })
 }
 
 fn apply_loop_effect_scope_certificate_at<'a>(
@@ -881,6 +902,43 @@ fn apply_loop_effect_certificate_at<'a>(
     for (local_index, step) in certificate.steps().iter().enumerate() {
         let tactic_index = tactic_index_offset + local_index;
         match step {
+            SimpleProofStep::If {
+                condition,
+                then_proof,
+                else_proof,
+            } => {
+                if local_index + 1 != certificate.steps().len() {
+                    return Err(ClickError::new(
+                        "a loop-effect `if` must be the terminal proof operation",
+                    ));
+                }
+                let then_source_index = source_index + 1;
+                let else_source_index = then_source_index
+                    + then_proof
+                        .steps()
+                        .iter()
+                        .map(loop_effect_step_source_width)
+                        .sum::<usize>();
+                return proof.apply_execution_if_with(
+                    condition.clone(),
+                    |then_proof_root| {
+                        apply_loop_effect_certificate_at(
+                            then_proof_root,
+                            then_proof,
+                            tactic_index + 1,
+                            then_source_index,
+                        )
+                    },
+                    |else_proof_root| {
+                        apply_loop_effect_certificate_at(
+                            else_proof_root,
+                            else_proof,
+                            tactic_index + 1,
+                            else_source_index,
+                        )
+                    },
+                );
+            }
             SimpleProofStep::Open {
                 resource,
                 proof: body,
@@ -982,11 +1040,13 @@ fn verify_structural_effect_proof(
         ))
     })?;
     // Structural effects are checked once per already-certified preservation
-    // path. The source cursor selects that path's syntactic leaf; it owns no
-    // facts or successor state. Every selected operation still advances the
-    // path's Proof, and the caller reconstructs the structured Surface tree
-    // from the checked leaf provenance after all paths complete.
-    let certificate = certificate_leaf_for_case_path(
+    // path. The source cursor consumes only the exact leading branch prefix
+    // aligned with that path. Any remaining `if` is a semantic proof scope
+    // and advances the path's Proof through an audited split and join. The
+    // cursor owns no facts or successor state, and the caller reconstructs
+    // the structured Surface tree from checked provenance after all paths
+    // complete.
+    let certificate = select_loop_effect_path_prefix(
         &claim_label,
         &source_certificate.to_proof_tactics(),
         case_path,
@@ -996,10 +1056,7 @@ fn verify_structural_effect_proof(
     // selects its bounded explicit premises from this Proof; a search miss is
     // a checked failure rather than permission to replay the same candidate
     // elsewhere.
-    let proof_steps_supported = certificate
-        .steps()
-        .iter()
-        .all(loop_effect_top_level_step_supported);
+    let proof_steps_supported = loop_effect_open_body_supported(&certificate);
     if proof_steps_supported {
         let root =
             preservation.start_loop_effect_goal(&claim_label, site.clone(), before_state, check)?;

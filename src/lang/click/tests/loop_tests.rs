@@ -2361,6 +2361,175 @@ fn recursive_loop_effect_ifs_after_leading_opens_stay_on_proof() {
 }
 
 #[test]
+fn top_level_recursive_loop_effect_ifs_stay_on_proof() {
+    let c_source = r#"
+            struct box { int32 value; };
+
+            int32 count_once(struct box* owner, int32 flag, int32 flag2) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource box_value(owner: struct box*) {
+                owns owner->value;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct box* owner, int32 flag, int32 flag2) {
+                owns box_value(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        if flag == 0 {
+                            if flag2 == 0 {
+                                frame() using {};
+                            } else {
+                                open(box_value(owner)) {
+                                    frame() using {};
+                                }
+                            }
+                        } else {
+                            if flag2 == 0 {
+                                frame() using {};
+                            } else {
+                                frame() using {};
+                            }
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        if flag == 0 {
+                            if flag2 == 0 {
+                                frame() using {};
+                            } else {
+                                open(box_value(owner)) {
+                                    frame() using {};
+                                }
+                            }
+                        } else {
+                            if flag2 == 0 {
+                                frame() using {};
+                            } else {
+                                frame() using {};
+                            }
+                        }
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the top-level recursive effect if should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the top-level recursive effect entered compatibility replay"
+    );
+    assert_eq!(replay_labels, baseline_labels);
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the top-level recursive effect should retain provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some([ProofTactic::If(outer_if)]) = effect_tactics else {
+        panic!("the top-level recursive effect lost its outer if");
+    };
+    assert!(matches!(
+        outer_if.then_tactics.as_slice(),
+        [ProofTactic::If(inner_if)]
+            if matches!(inner_if.then_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+                && matches!(
+                    inner_if.else_tactics.as_slice(),
+                    [ProofTactic::Open(open)]
+                        if matches!(open.tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+                )
+    ));
+    assert!(matches!(
+        outer_if.else_tactics.as_slice(),
+        [ProofTactic::If(inner_if)]
+            if matches!(inner_if.then_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+                && matches!(inner_if.else_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+    ));
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the top-level recursive effect should expand from retained provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten top-level recursive effect should verify normally");
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
+
+    let invalid_leaf = click_source.replacen(
+        "                                frame() using {};",
+        "                                frame() using {\n                                    0 == 1;\n                                };",
+        1,
+    );
+    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&invalid_leaf, &sources)
+            .expect_err("an unavailable top-level leaf premise must be rejected")
+    });
+    assert!(
+        error
+            .message()
+            .contains("requires an exact available premise"),
+        "unexpected top-level leaf diagnostic: {}",
+        error.message()
+    );
+    assert!(
+        invalid_replays <= baseline_replays,
+        "the invalid top-level leaf entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {
