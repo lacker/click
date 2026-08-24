@@ -673,6 +673,7 @@ impl ContextualFrameSkeleton {
 fn contextual_frame_plan(
     skeleton: ContextualFrameSkeleton,
     path_tactics: Vec<Vec<ProofTactic>>,
+    path_independent_only: bool,
 ) -> Result<Option<ContextualFramePlan>, String> {
     if path_tactics.is_empty() {
         return Ok(None);
@@ -683,6 +684,9 @@ fn contextual_frame_plan(
         .collect::<Result<Vec<_>, _>>()?;
     if leaves.iter().all(|leaf| leaf == &leaves[0]) {
         return Ok(Some(ContextualFramePlan::Leaf(leaves[0].clone())));
+    }
+    if path_independent_only {
+        return Ok(None);
     }
     let mut next = 0;
     let plan = skeleton.fill(&leaves, &mut next)?;
@@ -3160,15 +3164,9 @@ impl<'a> Proof<'a> {
         let execution = execution_state.replay.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
-        if self.node.depth == 0
-            && (execution.paths().len() > 1 || execution_state.replay.has_structured_branch_history)
-        {
-            // A compatibility adapter created after a legacy branch owns the
-            // outcomes but not the branch Proof that partitions them. Leave
-            // that context to the legacy frame path; a joined Proof retains
-            // its `If` certificate and can check each candidate arm itself.
-            return Ok(None);
-        }
+        let path_independent_only = self.node.depth == 0
+            && (execution.paths().len() > 1
+                || execution_state.replay.has_structured_branch_history);
         let available = self.facts().to_vec();
         let pre_state = execution_state
             .replay
@@ -3272,7 +3270,11 @@ impl<'a> Proof<'a> {
                 error.message()
             ))
         })?;
-        contextual_frame_plan(skeleton, path_tactics).map_err(|message| {
+        // A compatibility root created after a legacy branch owns the
+        // outcomes but not the branch Proof that partitions them. It may
+        // still check one plan shared by every path; a path-dependent plan
+        // declines here instead of inventing missing branch lineage.
+        contextual_frame_plan(skeleton, path_tactics, path_independent_only).map_err(|message| {
             self.step_error(format!(
                 "smart frame candidate construction failed: {message}"
             ))

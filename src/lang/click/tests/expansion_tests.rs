@@ -8519,7 +8519,8 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_positive.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && (matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                        || name.starts_with("smart tactic compatibility replay"))
         )),
         "the branch, nested have, return, and frame must retain one checked Proof: {events:#?}"
     );
@@ -8574,6 +8575,20 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
     .expect("the retained common nested have should expand");
     verify_c0_sources(&expanded, &[("select_positive.c", c_source)])
         .expect("the explicit common nested proof should independently re-derive");
+
+    let corrupted = expanded.replacen(
+        "frame() using {\n            }",
+        "frame() using {\n                1 == 0;\n            }",
+        1,
+    );
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose the path-independent checked frame"
+    );
+    assert!(
+        verify_c0_sources(&corrupted, &[("select_positive.c", c_source)]).is_err(),
+        "ordinary verification should reject an unavailable frame premise"
+    );
 }
 
 #[test]
