@@ -1300,12 +1300,27 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
-    let initial = ProofReplayContext {
-        state: preservation.state().clone(),
-        pure_facts: pure_facts.to_vec(),
-        replay: Box::new(replay),
-        branch_path: PersistentSequence::default(),
-    };
+    let contexts = execute_internal_proof(
+        &program,
+        ProofReplayContext {
+            state: preservation.state().clone(),
+            pure_facts: pure_facts.to_vec(),
+            replay: Box::new(replay),
+            branch_path: PersistentSequence::default(),
+        },
+        expansion_capture.as_deref_mut(),
+        environment.function_block,
+        environment.parsed_function,
+        &proof_claims,
+        &claim_label,
+        environment.function_environment,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.resource_environment,
+        environment.theorem_environment,
+        environment.function,
+        environment.arguments,
+    )?;
     let effect_items = environment
         .function_block
         .structural_clauses()
@@ -1322,73 +1337,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             effect_checks.len()
         )));
     }
-    if first_generated_tactic_index == tactics.len() {
-        let proof_site = initial.replay.proof_site.clone();
-        let root = Proof::for_execution_frontier(
-            &claim_label,
-            0,
-            initial.clone(),
-            environment.function_block,
-            environment.function,
-            environment.parsed_function,
-            environment.arguments,
-            environment.function_environment,
-            environment.resource_environment,
-            environment.predicate_environment,
-            environment.click_function_environment,
-            environment.theorem_environment,
-        );
-        if let Some(checked) = try_check_linear_loop_preservation(
-            root,
-            &program,
-            expansion_capture.as_deref_mut(),
-            proof_site.as_ref(),
-            usize::MAX,
-            &sentinel,
-            preservation.loop_entry_state(),
-            invariant_checks,
-            &claim_label,
-        )? {
-            let mut effect_certificates = Vec::new();
-            for ((item_index, item), check) in effect_items.iter().zip(effect_checks) {
-                effect_certificates.push((
-                    *item_index,
-                    verify_structural_effect_proof(
-                        expansion_capture.as_deref_mut(),
-                        loop_index,
-                        *item_index,
-                        item,
-                        check,
-                        body,
-                        preservation.state(),
-                        &[],
-                        &checked,
-                        environment,
-                    )?,
-                ));
-            }
-            return Ok(LoopPreservationProofResult {
-                certificate: checked.certificate(),
-                effect_certificates,
-            });
-        }
-    }
-    let contexts = execute_internal_proof(
-        &program,
-        initial,
-        expansion_capture.as_deref_mut(),
-        environment.function_block,
-        environment.parsed_function,
-        &proof_claims,
-        &claim_label,
-        environment.function_environment,
-        environment.predicate_environment,
-        environment.click_function_environment,
-        environment.resource_environment,
-        environment.theorem_environment,
-        environment.function,
-        environment.arguments,
-    )?;
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for context in contexts {

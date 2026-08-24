@@ -111,90 +111,6 @@ fn individual_loop_proof_has_no_whole_claim_acceptance_replay() {
 }
 
 #[test]
-fn explicit_linear_loop_preservation_stays_on_proof() {
-    let c_source = r#"
-        int32 count_to_three() {
-            int32 i;
-            i = 0;
-            while (i < 3) {
-                i = i + 1;
-            }
-            return i;
-        }
-    "#;
-    let click_source = r#"
-        verifying "count_to_three.c";
-
-        int32 count_to_three() {
-            ensures result == 3;
-        } by {
-            step();
-            step();
-            loop {
-                invariant i >= 0;
-                invariant i <= 3;
-                initialize by simp;
-                preserve by {
-                    step();
-                    close_invariants();
-                }
-            }
-            step();
-            simp();
-        }
-    "#;
-    let sources = [("count_to_three.c", c_source)];
-
-    let (verified, replay_labels) = proof::collect_internal_proof_execution_labels(|| {
-        verify_c0_sources(click_source, &sources)
-    });
-    verified.expect("the explicit linear loop preservation should verify");
-    assert!(
-        replay_labels
-            .iter()
-            .all(|label| !label.ends_with(".loop(0).preserve")),
-        "the explicit preservation entered compatibility replay: {replay_labels:?}"
-    );
-
-    let rewritten = expand_c0_claim_source(
-        click_source,
-        &sources,
-        "count_to_three",
-        CProofClaim::Grouped,
-    )
-    .expect("the retained preservation proof should expand");
-    let (reverified, rewritten_replay_labels) =
-        proof::collect_internal_proof_execution_labels(|| verify_c0_sources(&rewritten, &sources));
-    reverified.expect("the rewritten preservation proof should verify normally");
-    assert!(
-        rewritten_replay_labels
-            .iter()
-            .all(|label| !label.ends_with(".loop(0).preserve")),
-        "rewritten preservation entered compatibility replay: {rewritten_replay_labels:?}"
-    );
-
-    let corrupted = click_source.replace(
-        "                    step();\n                    close_invariants();",
-        "                    step() using { 0 == 1; };\n                    close_invariants();",
-    );
-    let (error, corrupted_replay_labels) = proof::collect_internal_proof_execution_labels(|| {
-        verify_c0_sources(&corrupted, &sources)
-            .expect_err("an unavailable explicit preservation premise must be rejected")
-    });
-    assert!(
-        error.message().contains("requires an exact premise"),
-        "{}",
-        error.message()
-    );
-    assert!(
-        corrupted_replay_labels
-            .iter()
-            .all(|label| !label.ends_with(".loop(0).preserve")),
-        "the invalid preservation entered compatibility replay: {corrupted_replay_labels:?}"
-    );
-}
-
-#[test]
 fn loop_initialization_theorem_search_retains_checked_point_proof() {
     let c_source = r#"
             int32 initialize_with_theorem(int32 x) {
@@ -1747,15 +1663,13 @@ fn explicit_loop_effect_have_stays_on_proof() {
             })
         });
     reverified.expect("the rewritten source should verify normally");
-    assert!(
-        rewritten_replays <= baseline_replays,
+    assert_eq!(
+        rewritten_replays, baseline_replays,
         "rewritten-source verification added a compatibility replay execution"
     );
-    assert!(
-        rewritten_replay_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten-source verification added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_replay_labels:?}"
+    assert_eq!(
+        rewritten_replay_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
     );
 }
 
@@ -1896,15 +1810,13 @@ fn loop_effect_have_logical_decomposition_stays_on_proof() {
             })
         });
     reverified.expect("the rewritten source should verify normally");
-    assert!(
-        rewritten_replays <= baseline_replays,
+    assert_eq!(
+        rewritten_replays, baseline_replays,
         "rewritten-source verification replayed the logical have"
     );
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
     );
 }
 
@@ -2051,15 +1963,13 @@ fn loop_effect_open_scope_stays_on_proof() {
             })
         });
     reverified.expect("the rewritten source should verify normally");
-    assert!(
-        rewritten_replays <= baseline_replays,
+    assert_eq!(
+        rewritten_replays, baseline_replays,
         "rewritten-source verification replayed the loop-effect open scope"
     );
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
     );
 
     let after_terminal_frame = click_source.replace(
@@ -2230,15 +2140,13 @@ fn loop_effect_if_after_leading_open_scopes_stays_on_proof() {
             })
         });
     reverified.expect("the rewritten source should verify normally");
-    assert!(
-        rewritten_replays <= baseline_replays,
+    assert_eq!(
+        rewritten_replays, baseline_replays,
         "rewritten-source verification replayed the leading-open effect if"
     );
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
     );
 
     let invalid_arm = click_source.replacen(
@@ -2427,13 +2335,8 @@ fn recursive_loop_effect_ifs_after_leading_opens_stay_on_proof() {
             })
         });
     reverified.expect("the rewritten recursive effect should verify normally");
-    assert!(rewritten_replays <= baseline_replays);
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
-    );
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
 
     let invalid_leaf = click_source.replacen(
         "                                        frame() using {};",
@@ -2601,13 +2504,8 @@ fn top_level_recursive_loop_effect_ifs_stay_on_proof() {
             })
         });
     reverified.expect("the rewritten top-level recursive effect should verify normally");
-    assert!(rewritten_replays <= baseline_replays);
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
-    );
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
 
     let invalid_leaf = click_source.replacen(
         "                                frame() using {};",
@@ -2809,13 +2707,8 @@ fn recursive_loop_effect_cases_stay_on_proof() {
             })
         });
     reverified.expect("serialized loop-effect cases should verify normally");
-    assert!(rewritten_replays <= baseline_replays);
-    assert!(
-        rewritten_labels
-            .iter()
-            .all(|label| baseline_labels.contains(label)),
-        "rewritten source added a compatibility replay path: baseline {baseline_labels:?}, rewritten {rewritten_labels:?}"
-    );
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
 
     let corrupted = click_source.replacen(
         "                        cases (flag == 0 or not (flag == 0)) {",
