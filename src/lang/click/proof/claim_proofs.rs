@@ -261,10 +261,7 @@ fn top_level_structural_proof_supported(
         .iter()
         .filter(|tactic| post_execution_if_tactic_supported(tactic))
         .count();
-    if top_level_post_execution_if_count > 1 {
-        return false;
-    }
-    let has_top_level_post_execution_if = top_level_post_execution_if_count == 1;
+    let has_top_level_post_execution_if = top_level_post_execution_if_count > 0;
     if has_top_level_post_execution_if
         && has_top_level_expanded_execution_if
         && !has_top_level_expanded_execution_tree

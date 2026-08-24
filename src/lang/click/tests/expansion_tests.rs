@@ -9612,6 +9612,95 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
 }
 
 #[test]
+fn successive_post_execution_ifs_stay_on_one_proof() {
+    let c_source = r#"
+        int32 two_decisions(int32 x, int32 y) {
+            int32 result = 0;
+            if (x > 0) {
+                result = result + 1;
+            }
+            if (y > 0) {
+                result = result + 2;
+            }
+            return result;
+        }
+    "#;
+    let click_source = r#"
+        verifying "two_decisions.c";
+
+        int32 two_decisions(int32 x, int32 y) {
+            ensures 0 <= result and result <= 3 by {
+                execute();
+                if at(statement(2).entry, x) > at(statement(2).entry, 0) {
+                    have result == result by simp;
+                } else {
+                    have result == result by simp;
+                }
+                if at(statement(5).entry, y) > at(statement(5).entry, 0) {
+                    have result == result by simp;
+                } else {
+                    have result == result by simp;
+                }
+                simp();
+            }
+        }
+    "#;
+    let sources = [("two_decisions.c", c_source)];
+
+    let ((verified, replays), flat_units) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
+    });
+    verified.expect("successive outcome splits should verify");
+    assert_eq!(flat_units, 1, "the outcome splits should retain one Proof");
+    assert_eq!(
+        replays, 0,
+        "the outcome splits entered compatibility replay"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "two_decisions",
+        CProofClaim::Ensure(0),
+    )
+    .expect("successive outcome splits should expand");
+    assert!(expanded.contains("statement(2).entry"), "{expanded}");
+    assert!(expanded.contains("statement(5).entry"), "{expanded}");
+    let ((reverified, expanded_replays), expanded_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
+        });
+    reverified.expect("the rewritten outcome splits should verify normally");
+    assert_eq!(
+        expanded_flat_units, 1,
+        "the rewritten outcome splits should retain one Proof"
+    );
+    assert_eq!(
+        expanded_replays, 0,
+        "the rewritten outcome splits entered compatibility replay"
+    );
+
+    let corrupted = expanded.replace("statement(2).entry", "statement(5).entry");
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose the first C branch"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+        });
+    let error = corrupted_result.expect_err("the corrupted branch anchor must be rejected");
+    assert!(
+        error
+            .message()
+            .contains("expanded execution branch condition does not match the checked C branch"),
+        "the Proof-owned C split should reject the corruption directly: {error:?}"
+    );
+    assert_eq!(corrupted_fallbacks, 0, "the corruption entered a fallback");
+    assert_eq!(corrupted_replays, 0, "the corruption entered replay");
+}
+
+#[test]
 fn bound_universal_outcome_retains_instantiation_and_transport() {
     let c_source = r#"
         int32 bubble_pass3(int32 p[3]) {
