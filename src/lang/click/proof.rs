@@ -95,7 +95,7 @@ use timing::{TacticTiming, has_independent_source_timing};
 /// Checked kernel evidence used as the input to constructing one
 /// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
 /// its own: search consumes it transiently to write the surface step, and the
-/// resulting `ProofCertificate` is what replays.
+/// resulting operation is checked by `Proof`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click::proof) enum ConstructionEvidence {
     CertifiedStatementStep {
@@ -121,7 +121,6 @@ pub(in crate::lang::click::proof) enum ConstructionEvidence {
         facts: Vec<Proposition>,
         theorem: Theorem,
     },
-    CertifiedFrame(Vec<Vec<PropositionDerivation>>),
 }
 
 type NextTopLevelStatement = (CState, CState, CStatement, Option<CStatement>);

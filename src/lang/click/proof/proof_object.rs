@@ -3289,7 +3289,8 @@ impl<'a> Proof<'a> {
 
     /// Reports whether a source-owned terminal frame can advance this exact
     /// checked Proof. This is a capability query only; a false result leaves
-    /// the proof available for a legacy compatibility fallback.
+    /// the proof unchanged so a larger transactional Proof attempt can
+    /// decline without publishing a partial transition.
     pub(super) fn supports_checked_frame_using(
         &self,
         region: Option<&CodeRegionRef>,
@@ -13756,9 +13757,9 @@ impl<'a> ProofScope<'a> {
     }
 
     /// Reports whether a terminal frame step can use the checked Proof-owned
-    /// operation. Unsupported forms must leave this scope untouched so the
-    /// caller can select the legacy verifier without observing a failed
-    /// partial transition.
+    /// operation. Unsupported forms leave this scope untouched so a larger
+    /// transactional Proof attempt can decline without observing a partial
+    /// transition.
     pub(super) fn supports_checked_frame_using(
         &self,
         region: Option<&CodeRegionRef>,

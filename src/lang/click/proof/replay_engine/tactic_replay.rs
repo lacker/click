@@ -833,8 +833,8 @@ fn apply_qualified_frame_using_on_proof<'a>(
 /// Tries smart frame candidate selection and application through the owned
 /// Proof.
 ///
-/// A miss restores the exact legacy execution context so unsupported region
-/// kinds and frame candidates retain their existing compatibility path.
+/// A miss restores the exact execution context so the source driver can
+/// report that no checked candidate exists. It grants no replay fallback.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
 fn try_smart_frame_on_proof<'a>(
@@ -2044,7 +2044,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::SmartFrame(region_ref) => {
-                if try_smart_frame_on_proof(
+                let framed = try_smart_frame_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
                     &mut replay,
@@ -2062,201 +2062,34 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                     source_index,
-                )? {
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic && !proof_owned_smart_frame_deferred {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    continue;
-                }
-                debug_assert!(region_ref.is_none());
-                require_function_exit(&replay, claim_label, tactic_index, "frame")?;
-                let Some(effect_claim) = claims
-                    .iter()
-                    .find(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
-                else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `frame` has no effect claim to prove"
-                    )));
-                };
-                let FunctionClaimRef::Effect(_, effect_clause) = effect_claim else {
-                    unreachable!("selected claim must be an effect claim")
-                };
-                let execution = replay
-                    .execution()
-                    .expect("function-exit replay should contain an execution");
-                let pre_state = replay.old_reference_state(&state);
-                let mut path_derivations = Vec::with_capacity(execution.paths().len());
-                for (path_index, path) in execution.paths().iter().enumerate() {
-                    if !path.obligations().is_empty() {
+                )?;
+                if !framed {
+                    require_function_exit(&replay, claim_label, tactic_index, "frame")?;
+                    if !claims
+                        .iter()
+                        .any(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
+                    {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `frame` cannot plan from an execution path with unresolved obligations"
+                            "`{claim_label}` tactic {tactic_index}: `frame` has no effect claim to prove"
                         )));
                     }
-                    let mut path_facts = requirement_pure_facts.clone();
-                    path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-                    let mut compatible = true;
-                    if !replay.case_assumptions.is_empty() {
-                        let CFunctionOutcome::Return {
-                            value: result,
-                            state: post_state,
-                        } = path.outcome()
-                        else {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: proof-branch `frame` requires a return outcome"
-                            )));
-                        };
-                        for case in &replay.case_assumptions {
-                            let fact = if let Some(fact) = &case.fact {
-                                fact.clone()
-                            } else {
-                                let condition = lower_outcome_proposition_with_program_points(
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    post_state,
-                                    result,
-                                    &path_facts,
-                                    &case.condition,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &replay.program_point_states,
-                                )
-                                .map_err(|message| {
-                                    ClickError::new(format!(
-                                        "`{claim_label}` tactic {tactic_index}: could not align frame path with proof branch: {message}"
-                                    ))
-                                })?;
-                                if case.value {
-                                    condition
-                                } else {
-                                    Proposition::Not(Box::new(condition))
-                                }
-                            };
-                            let mut case_facts = path_facts.clone();
-                            case_facts.push(fact.clone());
-                            if path_facts
-                                .iter()
-                                .any(|available| propositions_are_exact_negations(available, &fact))
-                                || assumptions_from_propositions(&case_facts)
-                                    .derive_proposition(&false_proposition())
-                                    .is_some()
-                            {
-                                compatible = false;
-                                break;
-                            }
-                            path_facts.push(fact);
-                        }
-                    }
-                    if !compatible {
-                        // A frame planned inside one proof branch owns only
-                        // execution outcomes compatible with that branch.
-                        continue;
-                    }
-                    let implicit_path_facts = path
-                        .facts()
-                        .iter()
-                        .map(|fact| fact.proposition().clone())
-                        .collect::<Vec<_>>();
-                    path_derivations.push(plan_effect_clause_derivations(
-                        claim_label,
-                        path_index,
-                        path.effect_facts(),
-                        &path_facts,
-                        &implicit_path_facts,
-                        effect_clause.effect(),
-                        parsed_function.parameters(),
-                        arguments,
-                        pre_state,
-                        path.outcome(),
-                    )?);
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `frame` found no checked Proof candidate"
+                    )));
                 }
-                // A contextual frame certificate is constructed against the
-                // current context; construction-time surface recordings are
-                // transient, so they run on a clone whose builder is seeded
-                // with the current surface branch skeleton.
-                let mut construction_replay = replay.clone();
-                construction_replay.proof_certificate_builder = ProofCertificateBuilder {
-                    steps: surface_branch_skeleton(&replay.proof_certificate_builder.steps),
-                    last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
-                    ..ProofCertificateBuilder::default()
-                }
-                .into();
-                construct_simple_step_for_planned_operation(
-                    &mut construction_replay,
-                    &state,
-                    function_block,
-                    parsed_function.parameters(),
-                    arguments,
-                    ConstructionEnvironments {
-                        predicate_environment,
-                        click_function_environment,
-                    },
-                    &ConstructionEvidence::CertifiedFrame(path_derivations),
-                );
-                let construction =
-                    std::mem::take(&mut construction_replay.proof_certificate_builder).into_value();
-                // A branched contextual frame merges its synthesized branch
-                // with the existing surface branch here, and a frame inside
-                // an `open { ... }` block merges so its steps are captured
-                // into the block's nested proof. A flat top-level exit frame
-                // is recorded by the drain instead: its independent replay
-                // defers the frame work, the deferrals carry into this
-                // replay, and the drain writes the same steps in deferral
-                // order — merging here would misplace them before every
-                // earlier deferred tactic.
-                let merge_construction = replay.open_scopes > 0
-                    || matches!(construction.steps.as_slice(), [SimpleProofStep::If { .. }]);
-                // The construction is still the tactic's own standalone
-                // expansion even when the drain records the claim-level
-                // steps; a selected `frame()` capture takes it directly.
-                let capture_construction =
-                    (!merge_construction && capture_this_tactic).then(|| construction.clone());
-                let result = complete_smart_tactic(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    construction,
-                    true,
-                    merge_construction,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                if let Some(construction) = capture_construction {
+                let slice = end_tactic_surface_scope(
+                    &mut replay,
+                    scope.take().expect("tactic scope is open"),
+                );
+                if capture_this_tactic && !proof_owned_smart_frame_deferred {
                     finish_tactic_expansion_capture(
                         expansion_capture.as_deref_mut(),
-                        &construction,
+                        &slice,
                         false,
                     );
                 }
+                continue;
             }
             ProofTactic::FrameUsing {
                 region: region_ref,

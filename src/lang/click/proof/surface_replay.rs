@@ -2287,32 +2287,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
             }
         }
-        (None, Some(ConstructionEvidence::CertifiedFrame(path_derivations))) => {
-            let lowered = lower_certified_frame_path_tactics(
-                replay,
-                state,
-                available,
-                parameters,
-                arguments,
-                predicate_environment,
-                click_function_environment,
-                path_derivations,
-            );
-            match lowered {
-                Ok(path_tactics) => {
-                    if let Err(message) = append_surface_tactics_by_leaf(
-                        &mut replay.proof_certificate_builder.steps,
-                        &path_tactics,
-                    ) {
-                        replay.proof_certificate_builder.block(message);
-                    }
-                }
-                Err(error) => replay.proof_certificate_builder.block(format!(
-                    "could not lower contextual frame certificate: {}",
-                    error.message()
-                )),
-            }
-        }
         // A frontier-local loop is lowered after its initialization,
         // preservation, and effect certificates have been checked. Recording
         // the source block here would either retain smart defaults or mark
