@@ -193,30 +193,6 @@ fn checked_linear_continuation_reaches_frame(node: &InternalProofNode) -> bool {
     false
 }
 
-/// Whether one flat source script can be checked as a complete execution
-/// effect proof before any descendant is published. The terminal frame is
-/// load-bearing: it validates the facts retained by the preceding execution
-/// search, so a miss can discard the whole candidate and leave the legacy
-/// context untouched.
-fn checked_terminal_effect_script(tactics: &[IndexedTactic]) -> bool {
-    let Some((last, prefix)) = tactics.split_last() else {
-        return false;
-    };
-    matches!(
-        last.tactic,
-        ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-    ) && prefix.iter().any(|indexed| {
-        matches!(
-            indexed.tactic,
-            ProofTactic::SmartExecute
-                | ProofTactic::SmartExecuteAllPaths
-                | ProofTactic::ExecuteUntil(_)
-        )
-    }) && tactics
-        .iter()
-        .all(|indexed| checked_linear_continuation_tactic(&indexed.tactic))
-}
-
 fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTactic> {
     match tactic {
         ProofTactic::FoldResource(resource) => Some(PostExecutionTactic::Fold(resource.clone())),
@@ -691,68 +667,6 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     Ok(Some(proof))
 }
 
-/// Tries a complete flat execution/effect script on one immutable Proof.
-///
-/// Search may inspect and fork the Proof, but every accepted statement and
-/// frame advances through its ordinary checked operation. Nothing is exported
-/// unless the terminal frame closes the selected effect goal; a miss therefore
-/// preserves the original replay context for compatibility diagnostics.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_execute_checked_terminal_effect_script<'a>(
-    context: &ProofReplayContext,
-    tactics: &[IndexedTactic],
-    expansion_capture: Option<&mut ExpansionCapture>,
-    function_block: &'a FunctionBlock,
-    parsed_function: &'a syntax::C0Function,
-    claim_label: &'a str,
-    function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    function: &'a CFunction,
-    arguments: &'a [CExpression],
-) -> Result<Option<ProofReplayContext>, ClickError> {
-    if !checked_terminal_effect_script(tactics) {
-        return Ok(None);
-    }
-    let linear = InternalProofNode::Linear {
-        tactics: tactics.to_vec(),
-        continuation: Box::new(InternalProofNode::Done),
-    };
-    let Some(proof) = try_check_flat_function_proof(
-        context,
-        &linear,
-        None,
-        expansion_capture,
-        function_block,
-        parsed_function,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-        false,
-        false,
-    )?
-    else {
-        return Ok(None);
-    };
-    let certificate = proof.certificate();
-    let mut checked = proof.into_execution_context()?;
-    for step in certificate.steps() {
-        checked
-            .replay
-            .proof_certificate_builder
-            .push_step(step.clone());
-    }
-    Ok(Some(checked))
-}
-
 fn solve_nested_have<'a>(
     nested: ProofScope<'a>,
     have: &ProofHave,
@@ -1216,26 +1130,6 @@ fn execute_internal_proof_inner(
             continuation,
         } => {
             let branch_path = context.branch_path.clone();
-            if matches!(continuation.as_ref(), InternalProofNode::Done)
-                && let Some(checked) = try_execute_checked_terminal_effect_script(
-                    &context,
-                    tactics,
-                    expansion_capture.as_deref_mut(),
-                    function_block,
-                    parsed_function,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                )
-                .map_err(|error| add_proof_branch_path(error, &branch_path))?
-            {
-                return Ok(vec![checked]);
-            }
             let context = replay_linear_tactics(
                 context,
                 expansion_capture.as_deref_mut(),

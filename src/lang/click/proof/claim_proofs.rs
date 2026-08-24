@@ -103,9 +103,10 @@ fn value_predicate_contract_supported(
 /// Selects the complete-proof route for one or more top-level composite
 /// scopes. Tactics before, between, and after scopes remain linear; a scope
 /// body may also contain the checked C-branch forms owned by the typed scope
-/// driver. Counted populations, quantified resources, heap-backed contract
-/// predicates, nested scopes, and unsupported logical structures retain their
-/// separately audited compatibility paths.
+/// driver. Quantified resources, heap-backed contract predicates, nested
+/// scopes, and unsupported logical structures retain their separately audited
+/// compatibility paths. Counted populations use the same checked resource
+/// entry and close operations as ordinary composite scopes.
 fn top_level_linear_scopes_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -133,29 +134,11 @@ fn top_level_linear_scopes_supported(
             Some(resource)
         }))
         .any(|resource| matches!(resource, ResourceClause::Quantified { .. }));
-    let contract_observes_population = function_block
-        .requires()
-        .iter()
-        .filter_map(Requirement::proposition)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Proposition(proposition) = clause.ensure() else {
-                return None;
-            };
-            Some(proposition)
-        }))
-        .any(crate::lang::click::validation::proposition_contains_resource_count);
-    let scope_definitions_are_nonpopulation = opens.iter().all(|open| match &open.resource {
+    let scope_definitions_are_supported = opens.iter().all(|open| match &open.resource {
         ResourceClause::Declared { name, .. } => {
             resource_environment.get(name).is_some_and(|definition| {
                 definition.composite_body().is_some_and(|body| {
-                    body.condition().is_none_or(|condition| {
-                        !crate::lang::click::validation::proposition_contains_resource_count(
-                            condition,
-                        )
-                    }) && body.facts().iter().all(|fact| {
-                        !crate::lang::click::validation::proposition_contains_resource_count(fact)
-                    }) && body
-                        .contains()
+                    body.contains()
                         .iter()
                         .all(|resource| !matches!(resource, ResourceClause::Quantified { .. }))
                 })
@@ -185,8 +168,7 @@ fn top_level_linear_scopes_supported(
         tactic => is_linear(tactic),
     });
     !has_quantified_contract_resource
-        && !contract_observes_population
-        && scope_definitions_are_nonpopulation
+        && scope_definitions_are_supported
         && scoped_tactics
         && value_predicate_contract_supported(function_block, predicate_environment)
 }
