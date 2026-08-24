@@ -7620,6 +7620,151 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
 }
 
 #[test]
+fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
+    let c_source = r#"
+        int32 read_if(int32 p[], int32 flag) {
+            int32 value;
+            if (flag) {
+                value = p[0];
+            } else {
+                value = 0;
+            }
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        resource cell(p: int32*) {
+            views p[0..1];
+        }
+
+        resource marker(x: int32) {
+            fact x == x;
+        }
+
+        resource wrapped_cell(p: int32*, flag: int32) {
+            contains cell(p);
+            contains marker(flag);
+        }
+
+        verifying "read_if.c";
+
+        int32 read_if(int32 p[], int32 flag) {
+            owns wrapped_cell(p, flag);
+            immutable;
+            ensures result == old(p[0]) or result == 0;
+        } by {
+            open(wrapped_cell(p, flag)) {
+                open(cell(p)) {
+                    step();
+                    branch {
+                        ensuring {
+                            fact value == old(p[0]) or value == 0;
+                            views p[0..1];
+                        }
+                        then {
+                            open(marker(flag)) {
+                                step();
+                            }
+                        }
+                        else {
+                            step();
+                        }
+                    }
+                }
+            }
+            step();
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("read_if.c", c_source)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the nested branch-arm scope should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the nested branch-arm scope entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the nested branch-arm scope exported state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the nested branch-arm scope fell back"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the nested branch-arm scope should retain provenance");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(outer))
+                if matches!(
+                    outer.tactics.as_slice(),
+                    [ProofTactic::Open(cell)]
+                        if matches!(
+                            cell.tactics.get(1),
+                            Some(ProofTactic::Branch(branch))
+                                if matches!(
+                                    branch.then_tactics.first(),
+                                    Some(ProofTactic::Open(marker))
+                                        if matches!(marker.resource, ResourceClause::Declared { ref name, .. } if name == "marker")
+                                )
+                        )
+                )
+        ),
+        "the retained outer scope lost its checked branch-arm scope: {tactics:#?}"
+    );
+
+    let rewritten = expand_c0_claim_source(click_source, &sources, "read_if", CProofClaim::Grouped)
+        .expect("the nested branch-arm scope should serialize");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the serialized nested branch-arm scope should independently reverify");
+
+    let corrupted = rewritten.replacen("open(marker(flag))", "open(marker(flag + 1))", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the nested branch-arm resource selection"
+    );
+    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+    });
+    let error = result
+        .expect_err("tampering with the nested branch-arm resource must invalidate the proof");
+    assert!(
+        error
+            .message()
+            .contains("`unfold(marker((flag + 1)))` failed"),
+        "the checked nested branch-arm entry should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(
+        fallbacks, 0,
+        "an invalid nested branch-arm open must not fall back"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "an invalid nested branch-arm open must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn branch_interface_retains_its_checked_abstract_join() {
     let c_source = r#"
         int32 nonnegative(int32 x) {

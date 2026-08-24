@@ -270,11 +270,6 @@ fn internal_proof_first_index(node: &InternalProofNode) -> Option<usize> {
     }
 }
 
-fn linear_execution_branch_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
-    let tactics = linear_execution_tactics(node)?;
-    checked_execution_arm_tactics_end(tactics).map(|_| tactics)
-}
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum CheckedExecutionRegionEnd {
     SharedContinuation,
@@ -462,21 +457,6 @@ fn checked_execution_region_contains_branch_source_at(
         }
         InternalProofNode::If { .. } => false,
     }
-}
-
-/// Selects only arm pairs whose terminal shape has an audited Proof join.
-/// Two arms that both end in `execute()` join as terminal outcomes; arms that
-/// both stop at the shared continuation use the ordinary branch join. A mixed
-/// pair still needs the legacy multi-context representation.
-fn linear_execution_branch_pair<'a>(
-    then_branch: &'a InternalProofNode,
-    else_branch: &'a InternalProofNode,
-) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
-    let then_tactics = linear_execution_branch_tactics(then_branch)?;
-    let else_tactics = linear_execution_branch_tactics(else_branch)?;
-    (execution_branch_tactics_end_at_exit(then_tactics)
-        == execution_branch_tactics_end_at_exit(else_tactics))
-    .then_some((then_tactics, else_tactics))
 }
 
 fn execution_branch_tactics_end_at_exit(tactics: &[IndexedTactic]) -> bool {
@@ -1982,10 +1962,9 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    let Some((then_tactics, else_tactics)) = linear_execution_branch_pair(then_branch, else_branch)
-    else {
+    if checked_execution_region_pair(then_branch, else_branch).is_none() {
         return Ok(None);
-    };
+    }
     let (split, record) = scope.split_execution_branch()?;
     if ensuring
         .as_ref()
@@ -1993,16 +1972,20 @@ fn advance_checked_open_scope<'a>(
     {
         return Ok(None);
     }
-    let empty = then_tactics.is_empty() && else_tactics.is_empty();
+    let empty = checked_execution_region_is_empty(then_branch)
+        && checked_execution_region_is_empty(else_branch);
     let mut advanced = split;
-    for (take_then, tactics) in [(true, then_tactics), (false, else_tactics)] {
+    for (take_then, region) in [(true, then_branch), (false, else_branch)] {
         if record.arm_id(take_then).is_none() {
             continue;
         }
-        let Some(next) = advance_focused_execution_arm(
+        let Some(next) = advance_focused_execution_region(
             advanced.focus_split_arm(&record, take_then)?,
             &record,
-            tactics,
+            region,
+            expansion_capture.as_deref_mut(),
+            proof_site,
+            0,
         )?
         else {
             return Ok(None);
