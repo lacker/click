@@ -9385,9 +9385,14 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
     "#;
     let sources = [("bubble_pass3.c", c_source)];
 
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    let ((verified, events), certificate_checks) = proof::count_source_certificate_checks(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources))
+    });
     verified.expect("the bound universal outcome should close through Proof");
+    assert_eq!(
+        certificate_checks, 0,
+        "universal candidate search must apply checked operations directly to Proof"
+    );
     let fallback_events = events
         .iter()
         .filter(|event| {

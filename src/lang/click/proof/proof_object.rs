@@ -8282,25 +8282,49 @@ impl<'a> Proof<'a> {
         None
     }
 
+    /// Applies a planner's flat explicit candidate directly to persistent
+    /// `Proof` descendants. Planning may select surface operations, but only
+    /// their ordinary checked implementations can advance the proof.
+    ///
+    /// Generated candidates historically retain a final `assumption()` even
+    /// when the preceding operation already discharged the goal. Ignore only
+    /// that final no-op; any other operation after closure rejects the
+    /// candidate. No certificate is materialized or interpreted here.
+    fn try_planned_explicit_steps(&self, tactics: &[ProofTactic]) -> Option<Self> {
+        if tactics.is_empty() {
+            return None;
+        }
+        let mut proof = self.clone();
+        for (index, tactic) in tactics.iter().enumerate() {
+            if proof.focused_discharged() {
+                if index + 1 == tactics.len() && matches!(tactic, ProofTactic::Assumption) {
+                    continue;
+                }
+                return None;
+            }
+            let step = explicit_linear_step(tactic)?;
+            proof = proof.apply_step(step).ok()?;
+        }
+        proof.is_complete().then_some(proof)
+    }
+
     /// Specializes one replayable universal premise selected by the atomic
     /// decision at the current goal. Planning only chooses the explicit
-    /// quantified fact, argument, and guards; the returned descendant exists
-    /// only if the ordinary certificate checker accepts `InstantiateUsing`.
+    /// quantified fact, argument, and guards; each selected operation advances
+    /// this `Proof` directly.
     fn try_selected_forall_instantiation(
         &self,
         goal: &Proposition,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
         let tactics = plan_explicit_forall_instantiation(goal, premise_pairs)?;
-        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
-        let checked = self.check_certificate(&candidate).ok()?;
-        checked.is_complete().then_some(checked)
+        self.try_planned_explicit_steps(&tactics)
     }
 
     /// Tries only universal facts introduced by checked predicate unfolds when
     /// the atomic decision cannot name an instantiated premise. Candidate
     /// discovery is read-only; a specialization is retained only after the
-    /// ordinary `InstantiateUsing` certificate checks and closes this Proof.
+    /// ordinary `InstantiateUsing` operation advances and closes this Proof.
     fn try_indexed_forall_instantiation(&self) -> Option<Self> {
         let goal = self.goal()?;
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
@@ -8676,7 +8700,7 @@ impl<'a> Proof<'a> {
 
     /// Builds the binder-introduction chain from only the universal premises
     /// selected by the atomic decision. The planner never scans the ambient
-    /// fact set; the ordinary checker owns every resulting refinement.
+    /// fact set; every resulting refinement applies directly to this `Proof`.
     fn try_selected_forall_goal(
         &self,
         goal: &Proposition,
@@ -8684,9 +8708,7 @@ impl<'a> Proof<'a> {
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
         let tactics = plan_explicit_forall_goal_from_premises(goal, surface_goal, premise_pairs)?;
-        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
-        let checked = self.check_certificate(&candidate).ok()?;
-        checked.is_complete().then_some(checked)
+        self.try_planned_explicit_steps(&tactics)
     }
 
     /// Retains the point-wise unchanged-load certificate for a guarded
@@ -15815,6 +15837,29 @@ mod tests {
                 &[],
                 &[],
             );
+            if size == 16 {
+                let premise_pairs = vec![
+                    (kernel_quantified.clone(), quantified_surface.clone()),
+                    (kernel_premise.clone(), premise.clone()),
+                ];
+                let (selected, certificate_checks) = count_source_certificate_checks(|| {
+                    root.try_selected_forall_instantiation(&kernel_goal, &premise_pairs)
+                });
+                let selected =
+                    selected.expect("the selected universal candidate should close through Proof");
+                assert_eq!(
+                    certificate_checks, 0,
+                    "universal instantiation planning must not check a candidate certificate"
+                );
+                assert!(selected.is_complete());
+                assert!(matches!(
+                    selected.certificate().steps(),
+                    [
+                        SimpleProofStep::InstantiateUsing { .. },
+                        SimpleProofStep::Assumption
+                    ]
+                ));
+            }
             let retained_root = root.clone();
             let key = quantified_replay_index_key(&kernel_quantified)
                 .expect("the selected universal should have an alpha key");
