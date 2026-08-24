@@ -5987,6 +5987,157 @@ fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
 }
 
 #[test]
+fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
+    let apply_c = r#"
+        int32 apply_write(int32 p[], int32 x) {
+            p[0] = x;
+            return x;
+        }
+    "#;
+    let rewrite_c = r#"
+        int32 rewrite_write(int32 p[]) {
+            p[0] = 9;
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        theorem int32_sign_split(value: int32) {
+            ensures value <= 0 or value > 0 by {
+                if value <= 0 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        }
+
+        verifying "apply_write.c";
+        verifying "rewrite_write.c";
+
+        int32 apply_write(int32 p[], int32 x) {
+            requires loadable(p[0..1]);
+            consumes p[0..1];
+            ensures result <= 0 or result > 0;
+            mutable p[0..1];
+        } by {
+            execute();
+            apply(int32_sign_split(result)) using {}
+            assumption();
+            frame() using {};
+        }
+
+        int32 rewrite_write(int32 p[]) {
+            requires loadable(p[0..1]);
+            consumes p[0..1];
+            ensures result == 9;
+            mutable p[0..1];
+        } by {
+            execute();
+            rewrite(result == 9);
+            normalize();
+            frame() using {};
+        }
+    "#;
+    let sources = [("apply_write.c", apply_c), ("rewrite_write.c", rewrite_c)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the ordered outcome operations should verify on Proof");
+    assert_eq!(flat_units, 2, "both grouped proofs should retain Proof");
+    assert_eq!(replays, 0, "the ordered outcome operations entered replay");
+    assert_eq!(context_exports, 0, "an outcome Proof exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "an ordered outcome operation fell back"
+    );
+
+    let retained = verified
+        .iter()
+        .flat_map(|theorem| theorem.expanded_proof_tactics().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert!(
+        retained.iter().any(|tactic| matches!(
+            tactic,
+            ProofTactic::ApplyTheoremUsing { application, .. }
+                if application.name == "int32_sign_split"
+        )),
+        "the retained proofs lost the explicit theorem application: {retained:#?}"
+    );
+    assert!(
+        retained
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Rewrite(_))),
+        "the retained proofs lost the rewrite: {retained:#?}"
+    );
+
+    let expanded_apply =
+        expand_c0_claim_source(click_source, &sources, "apply_write", CProofClaim::Grouped)
+            .expect("the ordered theorem application should serialize");
+    verify_c0_sources(&expanded_apply, &sources)
+        .expect("the serialized theorem application should independently reverify");
+    let expanded_rewrite = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "rewrite_write",
+        CProofClaim::Grouped,
+    )
+    .expect("the ordered rewrite should serialize");
+    verify_c0_sources(&expanded_rewrite, &sources)
+        .expect("the serialized rewrite should independently reverify");
+
+    for (corrupted, description) in [
+        (
+            expanded_apply.replacen(
+                "int32_sign_split(result)) using {",
+                "int32_sign_split(result + 1)) using {",
+                1,
+            ),
+            "theorem application",
+        ),
+        (
+            expanded_rewrite.replacen("rewrite(result == 9);", "rewrite(result == 8);", 1),
+            "rewrite",
+        ),
+    ] {
+        let original = if description == "rewrite" {
+            &expanded_rewrite
+        } else {
+            &expanded_apply
+        };
+        assert_ne!(
+            &corrupted, original,
+            "the expansion should expose {description}"
+        );
+        let ((result, fallbacks), replay_executions) =
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+            });
+        result.expect_err("tampering with an ordered outcome operation must invalidate the proof");
+        assert_eq!(fallbacks, 0, "invalid {description} must not fall back");
+        assert_eq!(
+            replay_executions, 0,
+            "invalid {description} must not enter execute_internal_proof"
+        );
+    }
+}
+
+#[test]
 fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() {
     let c_source = r#"
         int32 increment(int32 p[]) {
