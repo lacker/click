@@ -1130,24 +1130,33 @@ fn advance_checked_open_scope<'a>(
         else_branch,
         continuation,
     } = body
-        && let Some(then_proof) = linear_execution_certificate(then_branch)
-        && let Some(else_proof) = linear_execution_certificate(else_branch)
+        && let Some(then_tactics) = linear_execution_tactics(then_branch)
+        && let Some(else_tactics) = linear_execution_tactics(else_branch)
         && matches!(
-            then_proof.steps().last(),
-            Some(SimpleProofStep::FrameUsing { region: None, .. })
+            then_tactics.last().map(|indexed| &indexed.tactic),
+            Some(ProofTactic::FrameUsing { region: None, .. })
         )
         && matches!(
-            else_proof.steps().last(),
-            Some(SimpleProofStep::FrameUsing { region: None, .. })
+            else_tactics.last().map(|indexed| &indexed.tactic),
+            Some(ProofTactic::FrameUsing { region: None, .. })
         )
     {
-        let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::If {
-            condition: condition.clone(),
-            then_proof: Box::new(then_proof),
-            else_proof: Box::new(else_proof),
-        }]);
-        let scope =
-            scope.apply_contextual_frame_certificate_at(&certificate, *index, *source_index)?;
+        let Some(scope) = scope.apply_contextual_frame_tactics_at(
+            condition.clone(),
+            then_tactics
+                .iter()
+                .map(|indexed| indexed.tactic.clone())
+                .collect(),
+            else_tactics
+                .iter()
+                .map(|indexed| indexed.tactic.clone())
+                .collect(),
+            *index,
+            *source_index,
+        )?
+        else {
+            return Ok(None);
+        };
         return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
     }
     let InternalProofNode::Branch {

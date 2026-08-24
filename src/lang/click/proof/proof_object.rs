@@ -2780,34 +2780,6 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Applies a contextual frame candidate through checked simple steps.
-    /// A branch-shaped candidate partitions the owned terminal outcomes and
-    /// recursively checks each leaf; it never treats a proof condition as a
-    /// globally available fact across incompatible paths.
-    fn apply_contextual_frame_candidate_certificate(
-        &self,
-        certificate: &ProofCertificate,
-        origin: Option<ProofStepOrigin>,
-    ) -> Result<Self, ClickError> {
-        let [
-            SimpleProofStep::If {
-                condition,
-                then_proof,
-                else_proof,
-            },
-        ] = certificate.steps()
-        else {
-            return self.check_flat_contextual_frame_candidate(certificate, origin);
-        };
-        let (split, record) = self.split_focused_outcome_if(condition.clone())?;
-        let advanced = split
-            .focus_outcome_arm(&record, 0)?
-            .apply_contextual_frame_candidate_certificate(then_proof, origin)?
-            .focus_outcome_arm(&record, 1)?
-            .apply_contextual_frame_candidate_certificate(else_proof, origin)?;
-        advanced.join_focused_outcome_if(&record)
-    }
-
     /// Applies a planner-selected contextual frame tree directly to this
     /// Proof. The plan carries only Surface operations and branch shape; it
     /// owns no facts, execution state, or semantic successor authority.
@@ -2858,33 +2830,6 @@ impl<'a> Proof<'a> {
             },
             origin,
         )
-    }
-
-    /// Applies one flat contextual-frame plan through its checked operations.
-    /// Generated `have` bodies use the same planner-aware Proof script driver
-    /// as other smart candidates, including its narrow treatment of a final
-    /// redundant `assumption`. No nested certificate is interpreted here.
-    fn check_flat_contextual_frame_candidate(
-        &self,
-        certificate: &ProofCertificate,
-        origin: Option<ProofStepOrigin>,
-    ) -> Result<Self, ClickError> {
-        let mut checked = self.clone();
-        for step in certificate.steps() {
-            let SimpleProofStep::Have { proposition, proof } = step else {
-                checked = checked.apply_step_with_origin(step.clone(), origin)?;
-                continue;
-            };
-            let tactics = proof.to_proof_tactics();
-            let scope = checked.begin_have(proposition.clone())?;
-            let Some(scope) = scope.try_planned_linear_script(&tactics)? else {
-                return Err(checked.step_error(
-                    "contextual frame `have` plan did not complete through checked Proof operations",
-                ));
-            };
-            checked = scope.join()?;
-        }
-        Ok(checked)
     }
 
     /// Recovers only the latest checked branch shape from persistent Proof
@@ -11973,16 +11918,31 @@ impl<'a> ProofScope<'a> {
         self.body.certificate_since(checkpoint)
     }
 
-    /// Checks an already-expanded, branch-shaped contextual frame through the
-    /// same outcome-partition operation used by smart frame search.
-    pub(super) fn apply_contextual_frame_certificate_at(
+    /// Applies an already-expanded branch-shaped contextual frame through the
+    /// same typed outcome-partition plan used by smart frame search. The
+    /// source driver supplies only Surface operations; no certificate is
+    /// constructed or interpreted at this compatibility boundary.
+    pub(super) fn apply_contextual_frame_tactics_at(
         &self,
-        certificate: &ProofCertificate,
+        condition: ClickProposition,
+        then_tactics: Vec<ProofTactic>,
+        else_tactics: Vec<ProofTactic>,
         tactic_index: usize,
         source_index: usize,
-    ) -> Result<Self, ClickError> {
-        let body = self.body.apply_contextual_frame_candidate_certificate(
-            certificate,
+    ) -> Result<Option<Self>, ClickError> {
+        let Ok(then_leaf) = ContextualFrameLeafPlan::from_surface_tactics(then_tactics) else {
+            return Ok(None);
+        };
+        let Ok(else_leaf) = ContextualFrameLeafPlan::from_surface_tactics(else_tactics) else {
+            return Ok(None);
+        };
+        let plan = ContextualFramePlan::If {
+            condition,
+            then_plan: Box::new(ContextualFramePlan::Leaf(then_leaf)),
+            else_plan: Box::new(ContextualFramePlan::Leaf(else_leaf)),
+        };
+        let body = self.body.apply_contextual_frame_plan(
+            &plan,
             Some(ProofStepOrigin {
                 tactic_index,
                 source_index,
@@ -11990,7 +11950,7 @@ impl<'a> ProofScope<'a> {
         )?;
         let mut next = self.clone();
         next.body = body;
-        Ok(next)
+        Ok(Some(next))
     }
 
     /// Applies a source-owned simple step inside the scope. Terminal steps use
