@@ -497,7 +497,8 @@ fn verify_structural_effect_proof(
     check: &CLoopEffectCheck,
     body: &CStatement,
     before_state: &CState,
-    context: &ProofReplayContext,
+    case_path: &[ProofCaseChoice],
+    preservation: &Proof<'_>,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<ProofCertificate, ClickError> {
     let legacy_site = ProofSite::StructuralItem {
@@ -551,15 +552,6 @@ fn verify_structural_effect_proof(
             "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
         ))
     })?;
-    let case_path = context
-        .replay
-        .case_assumptions
-        .iter()
-        .map(|choice| ProofCaseChoice {
-            condition: choice.condition.clone(),
-            value: choice.value,
-        })
-        .collect::<Vec<_>>();
     // Structural effects are checked once per already-certified preservation
     // path. The source cursor selects that path's syntactic leaf; it owns no
     // facts or successor state. Every selected operation still advances the
@@ -568,7 +560,7 @@ fn verify_structural_effect_proof(
     let certificate = certificate_leaf_for_case_path(
         &claim_label,
         &source_certificate.to_proof_tactics(),
-        &case_path,
+        case_path,
     )?;
     // The exact linear subset is checked transactionally on one Proof. Smart
     // frame syntax selects its bounded explicit premises from that Proof;
@@ -588,34 +580,8 @@ fn verify_structural_effect_proof(
         )
     });
     if proof_steps_supported {
-        let mut replay = context.replay.clone();
-        replay.proof_site = Some(site.clone());
-        replay.loop_effect_goal = Some(LoopEffectReplayGoal {
-            before_state: before_state.clone(),
-            check: check.clone(),
-            closed: false,
-        });
-        replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
-        let root = Proof::for_execution_frontier_with_effect_goals(
-            &claim_label,
-            0,
-            ProofReplayContext {
-                state: context.state.clone(),
-                pure_facts: context.pure_facts.clone(),
-                replay,
-                branch_path: context.branch_path.clone(),
-            },
-            EffectGoalSelection::None,
-            environment.function_block,
-            environment.function,
-            environment.parsed_function,
-            environment.arguments,
-            environment.function_environment,
-            environment.resource_environment,
-            environment.predicate_environment,
-            environment.click_function_environment,
-            environment.theorem_environment,
-        );
+        let root =
+            preservation.start_loop_effect_goal(&claim_label, site.clone(), before_state, check)?;
         let checked = if smart_frame {
             root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
         } else {
@@ -642,22 +608,10 @@ fn verify_structural_effect_proof(
         &certificate.to_proof_tactics(),
         effect_source_index,
     )?;
-    let mut replay = context.replay.clone();
-    replay.proof_site = Some(site);
-    replay.loop_effect_goal = Some(LoopEffectReplayGoal {
-        before_state: before_state.clone(),
-        check: check.clone(),
-        closed: false,
-    });
-    replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
+    let root = preservation.start_loop_effect_goal(&claim_label, site, before_state, check)?;
     let replayed = execute_internal_proof(
         &program,
-        ProofReplayContext {
-            state: context.state.clone(),
-            pure_facts: context.pure_facts.clone(),
-            replay,
-            branch_path: context.branch_path.clone(),
-        },
+        root.into_execution_context()?,
         None,
         environment.function_block,
         environment.parsed_function,
@@ -744,12 +698,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
 
     let proof_claims = [];
-    // Positive closer results from the planner half, keyed by the certificate
-    // path that produced them. Replay starts from the same loop-entry context
-    // and checks every deterministic leaf tactic, so reaching the same case
-    // path reproduces the closer inputs without an expensive deep comparison
-    // of snapshot-rich states and proposition sets.
-    let mut verified_closer_paths: Vec<Vec<ProofCaseChoice>> = Vec::new();
     let mut program = if environment
         .frontier_loop_source
         .is_some_and(|source| source.preserve_source_index.is_none())
@@ -803,7 +751,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
-    let replay_start = replay.clone();
     let contexts = execute_internal_proof(
         &program,
         ProofReplayContext {
@@ -825,8 +772,25 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         environment.function,
         environment.arguments,
     )?;
+    let effect_items = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .into_iter()
+        .flat_map(|clause| clause.items().iter().enumerate())
+        .filter(|(_, item)| item.is_effect_kind())
+        .collect::<Vec<_>>();
+    if effect_items.len() != effect_checks.len() {
+        return Err(ClickError::new(format!(
+            "`{claim_label}` has {} structural effect items but {} lowered effect checks",
+            effect_items.len(),
+            effect_checks.len()
+        )));
+    }
     let mut certificate_paths = Vec::new();
-    for context in &contexts {
+    let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
+    for context in contexts {
         let at_back_edge = matches!(
             &context.replay.frontier.point,
             ProofExecutionPoint::StatementEntry { remaining } if remaining.as_ref() == &sentinel
@@ -845,8 +809,22 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
+        let source_tactics =
+            ProofCertificate::from_steps(context.replay.proof_certificate_builder.steps.clone())
+                .to_proof_tactics();
+        let region_simp = context.replay.region_simp;
+        let proof_site = context.replay.proof_site.clone();
+        let invariants_already_closed = context.replay.region_invariants_closed;
+        let statement_index = context.replay.frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
-            if let Some((tactic_index, source_index)) = context.replay.region_simp {
+            if let Some(step) = context.replay.invariant_closer_step {
+                (
+                    step.tactic_index,
+                    step.source_index,
+                    "close_invariants",
+                    "simple",
+                )
+            } else if let Some((tactic_index, source_index)) = region_simp {
                 (tactic_index, source_index, "simp", "smart")
             } else {
                 (tactics.len(), tactics.len(), "assumption", "simple")
@@ -860,7 +838,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                             tactic_index: closer_index,
                             tactic_name: closer_name.to_string(),
                             class: closer_class.to_string(),
-                            statement_index: context.replay.frontier.next_statement_index,
+                            statement_index,
                             source_index: closer_source,
                         },
                     ),
@@ -872,7 +850,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 source_index: closer_source,
                 tactic_name: closer_name.to_string(),
                 tactic_class: closer_class.to_string(),
-                statement_index: context.replay.frontier.next_statement_index,
+                statement_index,
             };
             push_timing_tactic(timing_context.clone());
             TacticTiming {
@@ -881,48 +859,49 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 source_index: closer_source,
                 tactic_name: closer_name.to_string(),
                 tactic_class: closer_class,
-                statement_index: context.replay.frontier.next_statement_index,
+                statement_index,
                 start: std::time::Instant::now(),
                 context: timing_context,
             }
         });
-        let closer_tactics = if invariant_checks.is_empty()
-            || context.replay.region_invariants_closed
-        {
+        let root = Proof::for_execution_frontier(
+            &claim_label,
+            0,
+            context,
+            environment.function_block,
+            environment.function,
+            environment.parsed_function,
+            environment.arguments,
+            environment.function_environment,
+            environment.resource_environment,
+            environment.predicate_environment,
+            environment.click_function_environment,
+            environment.theorem_environment,
+        );
+        let checked = if invariant_checks.is_empty() {
+            root
+        } else {
+            root.certify_loop_invariant_bundle(preservation.loop_entry_state(), invariant_checks)
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` (loop {loop_index} invariant bundle preservation): {}",
+                        error.message()
+                    ))
+                })?
+        };
+        let closer_tactics = if invariant_checks.is_empty() || invariants_already_closed {
             Vec::new()
         } else {
-            let mut closer_facts = context.pure_facts.clone();
-            closer_facts.extend(
-                context
-                    .replay
-                    .effect_facts
-                    .iter()
-                    .map(|fact| fact.proposition().clone()),
-            );
-            closer_facts.extend(crate::kernel::certified_store_equations(
-                &context.replay.effect_facts,
-            ));
-            if let Err(message) = c_loop_invariants_hold_at_back_edge_using(
-                &context.state,
-                preservation.loop_entry_state(),
-                invariant_checks,
-                &assumptions_from_propositions(&closer_facts),
-            ) {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` (loop {loop_index} invariant bundle preservation) could not certify every guarded invariant-lowering path: {message}"
-                )));
-            }
-            verified_closer_paths.push(case_path.clone());
-            vec![ProofTactic::CloseInvariants]
+            checked.certificate().to_proof_tactics().to_vec()
         };
         let omitted_frontier_preservation = environment
             .frontier_loop_source
             .is_some_and(|source| source.preserve_source_index.is_none());
         if !omitted_frontier_preservation
-            && context.replay.region_simp.is_some_and(|(_, source_index)| {
+            && region_simp.is_some_and(|(_, source_index)| {
                 tactic_expansion_capture_matches(
                     expansion_capture.as_deref(),
-                    context.replay.proof_site.as_ref(),
+                    proof_site.as_ref(),
                     source_index,
                 )
             })
@@ -943,10 +922,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 closer_tactics.is_empty(),
             );
         }
-        let surface_tactics =
-            ProofCertificate::from_steps(context.replay.proof_certificate_builder.steps.clone())
-                .to_proof_tactics();
-        let prefix = certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
+        let prefix = certificate_leaf_for_case_path(&claim_label, &source_tactics, &case_path)?;
         let mut leaf_tactics = prefix.to_proof_tactics().to_vec();
         leaf_tactics.extend(closer_tactics);
         let certificate = ProofCertificate::from_proof_tactics(&leaf_tactics).map_err(|error| {
@@ -955,134 +931,9 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             ))
         })?;
         certificate_paths.push(PathCertificate {
-            case_path,
+            case_path: case_path.clone(),
             certificate,
         });
-    }
-    let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
-    let certificate_program = build_internal_proof(&certificate.to_proof_tactics(), &claim_label)?;
-    // This is a detached, deterministic replay of the certificate just
-    // produced above. Its local tactic indices start at zero and are not
-    // source occurrences in the enclosing proof, so no expansion capture is
-    // routed into it: certificate tactic 1 must not be mistaken for enclosing
-    // source tactic 1.
-    let replayed = execute_internal_proof(
-        &certificate_program,
-        ProofReplayContext {
-            state: preservation.state().clone(),
-            pure_facts: pure_facts.to_vec(),
-            replay: Box::new(replay_start),
-            branch_path: PersistentSequence::default(),
-        },
-        None,
-        environment.function_block,
-        environment.parsed_function,
-        &proof_claims,
-        &claim_label,
-        environment.function_environment,
-        environment.predicate_environment,
-        environment.click_function_environment,
-        environment.resource_environment,
-        environment.theorem_environment,
-        environment.function,
-        environment.arguments,
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` preservation certificate failed ordinary replay:\n{}\n{}",
-            format_proof_certificate(&certificate),
-            error.message()
-        ))
-    })?;
-    let effect_items = environment
-        .function_block
-        .structural_clauses()
-        .iter()
-        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
-        .into_iter()
-        .flat_map(|clause| clause.items().iter().enumerate())
-        .filter(|(_, item)| item.is_effect_kind())
-        .collect::<Vec<_>>();
-    if effect_items.len() != effect_checks.len() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` has {} structural effect items but {} lowered effect checks",
-            effect_items.len(),
-            effect_checks.len()
-        )));
-    }
-    let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
-    for context in replayed {
-        let at_back_edge = matches!(
-            &context.replay.frontier.point,
-            ProofExecutionPoint::StatementEntry { remaining } if remaining.as_ref() == &sentinel
-        ) && context.replay.frontier.continuations.is_empty();
-        if !at_back_edge {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` replayed certificate did not finish at the loop back edge"
-            )));
-        }
-        if context.replay.region_invariants_closed == invariant_checks.is_empty() {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` replayed the wrong number of invariant-bundle closers"
-            )));
-        }
-        if !invariant_checks.is_empty() {
-            // `close_invariants` only sets a flag while the certificate
-            // replays; this is where the bundle is actually re-derived, so
-            // this is where that tactic's time is spent. Time it against the
-            // tactic's own identity and let `source_tactic_class` classify it.
-            let _timing = context.replay.invariant_closer_step.and_then(|step| {
-                TacticTiming::new(
-                    &claim_label,
-                    step.tactic_index,
-                    step.source_index,
-                    &ProofTactic::CloseInvariants,
-                    step.statement_index,
-                )
-            });
-            let case_path = context
-                .replay
-                .case_assumptions
-                .iter()
-                .map(|choice| ProofCaseChoice {
-                    condition: choice.condition.clone(),
-                    value: choice.value,
-                })
-                .collect::<Vec<_>>();
-            let planner_already_verified = std::env::var_os("CLICK_DISABLE_CLOSER_REUSE").is_none()
-                && verified_closer_paths.contains(&case_path);
-            if !planner_already_verified {
-                let mut closer_facts = context.pure_facts.clone();
-                closer_facts.extend(
-                    context
-                        .replay
-                        .effect_facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
-                );
-                closer_facts.extend(crate::kernel::certified_store_equations(
-                    &context.replay.effect_facts,
-                ));
-                c_loop_invariants_hold_at_back_edge_using(
-                    &context.state,
-                    preservation.loop_entry_state(),
-                    invariant_checks,
-                    &assumptions_from_propositions(&closer_facts),
-                )
-                .map_err(|message| {
-                    ClickError::new(format!("`{claim_label}` invariant bundle: {message}"))
-                })?;
-            }
-        }
-        let case_path = context
-            .replay
-            .case_assumptions
-            .iter()
-            .map(|choice| ProofCaseChoice {
-                condition: choice.condition.clone(),
-                value: choice.value,
-            })
-            .collect::<Vec<_>>();
         for (effect_index, ((item_index, item), check)) in
             effect_items.iter().zip(effect_checks).enumerate()
         {
@@ -1094,7 +945,8 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 check,
                 body,
                 preservation.state(),
-                &context,
+                &case_path,
+                &checked,
                 environment,
             )?;
             effect_certificate_paths[effect_index].push(PathCertificate {
@@ -1103,6 +955,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             });
         }
     }
+    let certificate = merge_path_aligned_certificates(&claim_label, certificate_paths)?;
     let effect_certificates = effect_items
         .iter()
         .zip(effect_certificate_paths)

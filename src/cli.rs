@@ -26,7 +26,6 @@ pub const PUBLIC_ENVIRONMENT_VARIABLES: &[&str] = &[
     "CLICK_DISABLE_DECIDE_MEMO",
     "CLICK_DISABLE_CERT_ARMS",
     "CLICK_DISABLE_MEMORY_DAG",
-    "CLICK_DISABLE_CLOSER_REUSE",
 ];
 
 /// Stable identifiers for documented command targets, selection rules,

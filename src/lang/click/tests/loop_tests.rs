@@ -1602,6 +1602,49 @@ fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
 }
 
 #[test]
+fn explicit_loop_closer_cannot_bypass_proof_owned_bundle_check() {
+    let c_source = r#"
+            int32 overshoot() {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 2;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "overshoot.c";
+
+            int32 overshoot() {
+                ensures result == 2;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let error = verify_c0_sources(click_source, &[("overshoot.c", c_source)])
+        .expect_err("the explicit closer must not authorize a false invariant bundle");
+    assert!(
+        error.message().contains("invariant bundle") && error.message().contains("preservation"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn branch_shaped_loop_effect_certificate_stays_on_proof() {
     let c_source = r#"
             int32 bubble_pass3(int32 p[3]) {
@@ -1659,6 +1702,10 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
     let (baseline, baseline_replays) =
         proof::count_internal_proof_executions(|| verify_c0_sources(&without_effect, &sources));
     baseline.expect("the comparison branching loop without an effect should verify");
+    assert_eq!(
+        baseline_replays, 40,
+        "the checked branching preservation path was replayed as a detached certificate"
+    );
 
     let (verified, effect_replays) =
         proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources));

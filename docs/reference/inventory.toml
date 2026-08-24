@@ -1422,10 +1422,6 @@ id = "cli.env.CLICK_DISABLE_MEMORY_DAG"
 path = "reference/cli/environment.md#click_disable_memory_dag"
 
 [[item]]
-id = "cli.env.CLICK_DISABLE_CLOSER_REUSE"
-path = "reference/cli/environment.md#click_disable_closer_reuse"
-
-[[item]]
 id = "cli.behavior.shared.duration-syntax"
 path = "reference/cli/index.md#duration-syntax"
 

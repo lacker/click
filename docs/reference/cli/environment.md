@@ -63,11 +63,6 @@ contract-certification arm path.
 Set `CLICK_DISABLE_MEMORY_DAG=1` to disable memory derivation DAG storage and
 use the fallback path.
 
-### `CLICK_DISABLE_CLOSER_REUSE`
-
-Set `CLICK_DISABLE_CLOSER_REUSE=1` to disable reuse of planner-verified
-closers.
-
 These variables are internal experiment handles, not stable user features.
 Use them only for an A/B regression that names the expected invariant. Remove a
 handle when the corresponding fallback is no longer intentionally maintained.

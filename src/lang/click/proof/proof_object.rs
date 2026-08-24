@@ -2273,6 +2273,71 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Derives one structural loop-effect obligation from an already checked
+    /// preservation path. The new root shares the path's facts and execution
+    /// snapshot; only the explicitly declared effect goal and its diagnostic
+    /// source site are installed.
+    pub(super) fn start_loop_effect_goal<'b>(
+        &'b self,
+        claim_label: &'b str,
+        site: ProofSite,
+        before_state: &CState,
+        check: &CLoopEffectCheck,
+    ) -> Result<Proof<'b>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("a loop effect requires an execution proof"));
+        };
+        self.require_execution_frontier("a loop effect")?;
+        let mut execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
+        execution.replay.proof_site = Some(site);
+        execution.replay.loop_effect_goal = Some(LoopEffectReplayGoal {
+            before_state: before_state.clone(),
+            check: check.clone(),
+            closed: false,
+        });
+        execution.replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
+        execution.last_step_delta = ExecutionProofStepDelta::default();
+
+        Ok(Proof {
+            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
+                claim_label,
+                tactic_index: 0,
+                function_block: context.function_block,
+                function: context.function,
+                parsed_function: context.parsed_function,
+                arguments: context.arguments,
+                function_environment: context.function_environment,
+                resource_environment: context.resource_environment,
+                predicate_environment: context.predicate_environment,
+                click_function_environment: context.click_function_environment,
+                theorem_environment: context.theorem_environment,
+            })),
+            state: Arc::new(ProofState {
+                locals: ProofLocals::default(),
+                goals: ProofGoals::root(Goal::Frontier(FrontierGoal {
+                    selection: EffectGoalSelection::None,
+                    context: GoalContext {
+                        facts: self.facts().clone(),
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(execution)),
+                    },
+                })),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: None,
+                step: None,
+                focused: GoalId::ROOT,
+                depth: 0,
+            }),
+            focused: GoalId::ROOT,
+        })
+    }
+
     /// The unique open goal, while every proof owns at most one. Readers
     /// that can only interpret a single focused goal go through here so the
     /// single-goal assumption stays in one place until splits arrive.
@@ -13128,6 +13193,56 @@ impl<'a> Proof<'a> {
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         })
+    }
+
+    /// Checks the complete loop-invariant bundle at this back edge and
+    /// retains `close_invariants` when the source path has not already
+    /// supplied it.
+    ///
+    /// The legacy source driver may arrive with the surface closer already
+    /// reflected in cursor metadata. That metadata is not authority for the
+    /// invariant judgment: this operation always performs the kernel check
+    /// against the Proof-owned state and facts before accepting the path.
+    pub(super) fn certify_loop_invariant_bundle(
+        &self,
+        loop_entry_state: &CState,
+        invariant_checks: &[CLoopInvariantCheck],
+    ) -> Result<Self, ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("loop invariant closure requires an execution proof"));
+        }
+        self.require_execution_frontier("loop invariant closure")?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
+        if !execution.replay.loop_invariant_region {
+            return Err(self.step_error("loop invariant closure requires a loop-region proof"));
+        }
+
+        let mut closer_facts = self.facts().to_vec();
+        closer_facts.extend(
+            execution
+                .replay
+                .effect_facts
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        closer_facts.extend(crate::kernel::certified_store_equations(
+            &execution.replay.effect_facts,
+        ));
+        c_loop_invariants_hold_at_back_edge_using(
+            &execution.state,
+            loop_entry_state,
+            invariant_checks,
+            &assumptions_from_propositions(&closer_facts),
+        )
+        .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
+
+        if execution.replay.region_invariants_closed {
+            Ok(self.clone())
+        } else {
+            self.apply_step(SimpleProofStep::CloseInvariants)
+        }
     }
 
     fn apply_contradiction(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
