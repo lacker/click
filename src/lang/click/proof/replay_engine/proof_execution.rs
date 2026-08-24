@@ -398,33 +398,6 @@ fn retained_surface_has_empty_branch_leaf(proof: &Proof<'_>) -> bool {
     contains_empty_leaf(&proof.certificate().to_proof_tactics())
 }
 
-fn linear_terminal_frame_prefix(node: &InternalProofNode) -> Option<&IndexedTactic> {
-    linear_execution_tactics(node)?.first().filter(|indexed| {
-        matches!(
-            indexed.tactic,
-            ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
-        )
-    })
-}
-
-/// Selects a branch only when any later frame is reachable through operations
-/// already represented by the checked linear continuation driver. Otherwise
-/// exporting a partially migrated terminal outcome would hand its ownership
-/// back to the legacy frame path.
-fn exportable_linear_execution_branch_pair<'a>(
-    then_branch: &'a InternalProofNode,
-    else_branch: &'a InternalProofNode,
-    continuation: &InternalProofNode,
-) -> Option<(&'a [IndexedTactic], &'a [IndexedTactic])> {
-    let pair = linear_execution_branch_pair(then_branch, else_branch)?;
-    if internal_proof_contains_frame(continuation)
-        && !checked_linear_continuation_reaches_frame(continuation)
-    {
-        return None;
-    }
-    Some(pair)
-}
-
 fn checked_structural_execution_branch_supported(
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
@@ -832,7 +805,6 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     else_branch,
                     staged_expansion_capture.as_mut(),
                     proof_site.as_ref(),
-                    proof_site.is_some(),
                     0,
                 )?
                 else {
@@ -1021,7 +993,6 @@ fn advance_focused_execution_region<'a>(
                 else_branch,
                 expansion_capture.as_deref_mut(),
                 proof_site,
-                proof_site.is_some(),
                 depth,
             )?
             else {
@@ -1068,7 +1039,6 @@ fn try_advance_checked_execution_branch<'a>(
     else_branch: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
-    retain_certificate: bool,
     depth: usize,
 ) -> Result<Option<(Proof<'a>, bool, Option<ProofCertificate>)>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
@@ -1105,7 +1075,8 @@ fn try_advance_checked_execution_branch<'a>(
     let empty = checked_execution_region_is_empty(then_branch)
         && checked_execution_region_is_empty(else_branch);
     let joined = advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
-    let certificate = retain_certificate
+    let certificate = proof_site
+        .is_some()
         .then(|| joined.certificate_since(&checkpoint))
         .transpose()?;
     Ok(Some((joined, has_sole_feasible_arm, certificate)))
@@ -1742,130 +1713,12 @@ fn execute_internal_proof_inner(
         }
         InternalProofNode::Branch {
             index,
-            source_index,
+            source_index: _,
             ensuring,
             then_branch,
             else_branch,
             continuation,
         } => {
-            let selected_source_index = context.replay.proof_site.as_ref().and_then(|site| {
-                selected_tactic_index_for_site(expansion_capture.as_deref(), site)
-            });
-            let capture_in_continuation = selected_source_index
-                .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
-            let checked_capture_supported = selected_source_index
-                .is_none_or(|wanted| wanted == *source_index || capture_in_continuation);
-            if checked_capture_supported
-                && let Some((then_tactics, _else_tactics)) =
-                    exportable_linear_execution_branch_pair(then_branch, else_branch, continuation)
-            {
-                let proof = Proof::for_execution_frontier(
-                    claim_label,
-                    *index,
-                    context.clone(),
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                );
-                let checkpoint = proof.checkpoint();
-                if let Some((branch_proof, has_sole_feasible_arm, branch_certificate)) =
-                    try_advance_checked_execution_branch(
-                        proof,
-                        *index,
-                        ensuring,
-                        then_branch,
-                        else_branch,
-                        None,
-                        None,
-                        true,
-                        0,
-                    )?
-                {
-                    let can_advance_continuation = !has_sole_feasible_arm
-                        || (execution_branch_tactics_end_at_exit(then_tactics)
-                            && linear_terminal_frame_prefix(continuation).is_some());
-                    let advanced = if can_advance_continuation
-                        && linear_execution_tactics(continuation).is_some()
-                    {
-                        advance_checked_linear_continuation(
-                            branch_proof,
-                            continuation,
-                            expansion_capture.as_deref_mut(),
-                            context.replay.proof_site.as_ref(),
-                            *source_index,
-                            false,
-                            false,
-                            false,
-                            None,
-                        )?
-                        .map(|(proof, remaining)| {
-                            let continuation = if remaining.is_empty() {
-                                InternalProofNode::Done
-                            } else {
-                                InternalProofNode::Linear {
-                                    tactics: remaining,
-                                    continuation: Box::new(InternalProofNode::Done),
-                                }
-                            };
-                            (proof, Some(continuation))
-                        })
-                    } else {
-                        Some((branch_proof, None))
-                    };
-                    if let Some((proof, checked_continuation)) = advanced {
-                        if !capture_in_continuation
-                            && let Some(site) = context.replay.proof_site.as_ref()
-                        {
-                            record_proof_site_tactic_expansion(
-                                expansion_capture.as_deref_mut(),
-                                site,
-                                *source_index,
-                                &branch_certificate
-                                    .as_ref()
-                                    .expect("the export adapter requested a branch certificate")
-                                    .to_proof_tactics(),
-                            );
-                        }
-                        let certificate = proof.certificate_since(&checkpoint)?;
-                        let mut joined_context = proof.into_execution_context()?;
-                        for (step_index, step) in certificate.steps().iter().enumerate() {
-                            if has_sole_feasible_arm && ensuring.is_none() && step_index == 0 {
-                                joined_context
-                                    .replay
-                                    .proof_certificate_builder
-                                    .push_decided_step(step.clone());
-                            } else {
-                                joined_context
-                                    .replay
-                                    .proof_certificate_builder
-                                    .push_step(step.clone());
-                            }
-                        }
-                        return execute_internal_proof(
-                            checked_continuation.as_ref().unwrap_or(continuation),
-                            joined_context,
-                            expansion_capture,
-                            function_block,
-                            parsed_function,
-                            claims,
-                            claim_label,
-                            function_environment,
-                            predicate_environment,
-                            click_function_environment,
-                            resource_environment,
-                            theorem_environment,
-                            function,
-                            arguments,
-                        );
-                    }
-                }
-            }
             let mut context = context;
             let statement_index = context.replay.frontier.next_statement_index;
             // The branch condition is written against the branch statement's
