@@ -1674,11 +1674,158 @@ fn explicit_loop_effect_have_stays_on_proof() {
 }
 
 #[test]
+fn loop_effect_have_logical_decomposition_stays_on_proof() {
+    let c_source = r#"
+            int32 count_once(int32* p, int32 flag) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_once.c";
+
+            int32 count_once(int32* p, int32 flag) {
+                requires loadable(p[0..1]);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        have flag == 0 or not (flag == 0) by {
+                            if flag == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        have flag == 0 or not (flag == 0) by {
+                            cases (flag == 0 or not (flag == 0)) {
+                                left();
+                            } {
+                                right();
+                            }
+                        }
+                        frame() using {};
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        have flag == 0 or not (flag == 0) by {
+                            if flag == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        have flag == 0 or not (flag == 0) by {
+                            cases (flag == 0 or not (flag == 0)) {
+                                left();
+                            } {
+                                right();
+                            }
+                        }
+                        frame() using {};
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the loop-effect logical have should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the logical have added a compatibility replay execution"
+    );
+    assert_eq!(
+        replay_labels, baseline_labels,
+        "the logical have changed the compatibility replay path"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked logical have should retain expandable provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    assert!(matches!(
+        effect_tactics,
+        Some([
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(if_body),
+                ..
+            }),
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(cases_body),
+                ..
+            }),
+            ProofTactic::FrameUsing { .. }
+        ]) if matches!(if_body.as_slice(), [ProofTactic::If(_)])
+            && matches!(cases_body.as_slice(), [ProofTactic::Cases(_)])
+    ));
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the complete proof should expand from retained provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten source should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "rewritten-source verification replayed the logical have"
+    );
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
+    );
+}
+
+#[test]
 fn loop_effect_open_scope_stays_on_proof() {
     let c_source = r#"
             struct box { int32 value; int32 other; };
 
-            int32 count_once(struct box* owner) {
+            int32 count_once(struct box* owner, int32 flag) {
                 int32 i;
                 i = 0;
                 while (i < 1) {
@@ -1698,7 +1845,7 @@ fn loop_effect_open_scope_stays_on_proof() {
 
             verifying "count_once.c";
 
-            int32 count_once(struct box* owner) {
+            int32 count_once(struct box* owner, int32 flag) {
                 owns box_value(owner);
                 owns box_other(owner);
                 ensures result == 1;
@@ -1711,6 +1858,13 @@ fn loop_effect_open_scope_stays_on_proof() {
                     immutable by {
                         open(box_value(owner)) {
                             open(box_other(owner)) {
+                                have flag == 0 or not (flag == 0) by {
+                                    if flag == 0 {
+                                        left();
+                                    } else {
+                                        right();
+                                    }
+                                }
                                 frame() using {};
                             }
                         }
@@ -1730,6 +1884,13 @@ fn loop_effect_open_scope_stays_on_proof() {
         r#"                    immutable by {
                         open(box_value(owner)) {
                             open(box_other(owner)) {
+                                have flag == 0 or not (flag == 0) by {
+                                    if flag == 0 {
+                                        left();
+                                    } else {
+                                        right();
+                                    }
+                                }
                                 frame() using {};
                             }
                         }
@@ -1781,10 +1942,16 @@ fn loop_effect_open_scope_stays_on_proof() {
     let [ProofTactic::Open(nested)] = open.tactics.as_slice() else {
         panic!("the checked outer open scope did not retain its nested scope");
     };
-    assert!(
-        matches!(nested.tactics.as_slice(), [ProofTactic::FrameUsing { .. }]),
-        "the checked nested open scope did not retain its frame operation"
-    );
+    assert!(matches!(
+        nested.tactics.as_slice(),
+        [
+            ProofTactic::Have(ProofHave {
+                proof: SourceProof::Script(body),
+                ..
+            }),
+            ProofTactic::FrameUsing { .. }
+        ] if matches!(body.as_slice(), [ProofTactic::If(_)])
+    ));
 
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)

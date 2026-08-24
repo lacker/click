@@ -515,7 +515,7 @@ fn loop_effect_linear_step_supported(step: &SimpleProofStep) -> bool {
         | SimpleProofStep::CloseInvariants
         | SimpleProofStep::FrameUsing { .. } => true,
         SimpleProofStep::Have { proof, .. } => {
-            proof.steps().iter().all(loop_effect_linear_step_supported)
+            Proof::supports_linear_source(&SourceProof::Script(proof.to_proof_tactics()))
         }
         SimpleProofStep::Induct { .. }
         | SimpleProofStep::ApplyInduction { .. }
@@ -573,6 +573,21 @@ fn apply_loop_effect_scope_certificate_at<'a>(
                 )?;
                 scope = scope.join_nested(nested)?;
             }
+            SimpleProofStep::Have {
+                proposition,
+                proof: body,
+            } => {
+                let nested = scope.begin_have(proposition.clone())?;
+                let tactics = body.to_proof_tactics();
+                let nested = nested
+                    .try_authoritative_linear_script(&tactics)?
+                    .ok_or_else(|| {
+                        ClickError::new(
+                            "loop-effect `have` body was admitted without a checked Proof driver",
+                        )
+                    })?;
+                scope = scope.join_nested(nested)?;
+            }
             step => {
                 scope = scope.apply_step_at(step.clone(), tactic_index, source_index)?;
             }
@@ -603,6 +618,21 @@ fn apply_loop_effect_certificate_at<'a>(
                     tactic_index + 1,
                     source_index + 1,
                 )?;
+                proof = scope.join()?;
+            }
+            SimpleProofStep::Have {
+                proposition,
+                proof: body,
+            } => {
+                let scope = proof.begin_have(proposition.clone())?;
+                let tactics = body.to_proof_tactics();
+                let scope = scope
+                    .try_authoritative_linear_script(&tactics)?
+                    .ok_or_else(|| {
+                        ClickError::new(
+                            "loop-effect `have` body was admitted without a checked Proof driver",
+                        )
+                    })?;
                 proof = scope.join()?;
             }
             step => {

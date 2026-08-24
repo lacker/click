@@ -57,9 +57,12 @@ Loop structural-effect checking likewise applies every recursively simple
 operation, including nested `have` and `open` resource scopes, to the
 preservation path's typed effect `Proof`. A terminal frame inside nested
 resource scopes stays on that `Proof` while the checked representations close;
-it is discharged only by the outer scope and is never replayed. Only effect
-scripts containing logical or C branching, nested loop structure, or induction
-still cross that compatibility boundary.
+it is discharged only by the outer scope and is never replayed. Proposition
+proofs inside those `have` scopes use the same recursive authoritative driver,
+including nested proof `if` and `cases`, whether the `have` is top-level or
+inside an open resource. Only execution-level branching nested under a resource
+scope, nested loop structure, or induction still crosses that compatibility
+boundary.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
 preserve.
