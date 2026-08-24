@@ -166,7 +166,6 @@ pub(super) struct ExecutionSplit<'a> {
     continuation_index: usize,
     continuation_remaining: Option<Arc<CStatement>>,
     execution_start_state: CState,
-    initial_continuation_depth: usize,
 }
 
 /// Bookkeeping for an exhaustive proof-level case split over execution
@@ -185,7 +184,6 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
     parent_unfolds: PersistentOrderedSet<String>,
     parent_execution: Arc<ExecutionProofState>,
     execution_start_state: CState,
-    initial_continuation_depth: usize,
 }
 
 /// Bookkeeping for one logical `cases` split over an execution frontier.
@@ -248,13 +246,20 @@ impl<'a> ExecutionSplit<'a> {
     /// when the shared continuation is derivable and both arm snapshots
     /// descend from the parent's resource context.
     pub(super) fn supports_interface_branch(&self) -> bool {
+        // A branch that ends a bounded region has no derivable continuation:
+        // its join rests the parent at its own typed boundary instead.
+        let continuation_reachable = derive_execution_join_continuation(
+            &self.parent_execution,
+            &self.continuation_remaining,
+            self.continuation_index,
+        )
+        .is_some()
+            || !matches!(
+                self.parent_execution.replay.frontier.region,
+                ExecutionRegionKind::Function
+            );
         self.sole_feasible_arm().is_some()
-            || (derive_execution_join_continuation(
-                &self.parent_execution,
-                &self.continuation_remaining,
-                self.continuation_index,
-            )
-            .is_some()
+            || (continuation_reachable
                 && self.base_executions.iter().flatten().all(|execution| {
                     execution
                         .state
@@ -290,7 +295,6 @@ struct PreparedExecutionBranch {
     continuation_index: usize,
     continuation_remaining: Option<Arc<CStatement>>,
     execution_start_state: CState,
-    initial_continuation_depth: usize,
     arms: [Option<PreparedExecutionArm>; 2],
 }
 
@@ -314,7 +318,6 @@ struct ExecutionBranchJoinContinuation {
     remaining: Arc<CStatement>,
     next_statement_index: usize,
     continuations: PersistentSequence<ProofExecutionContinuation>,
-    completed_enclosing_branches: Vec<usize>,
 }
 
 /// Derives the exact nonterminal frontier reached after a checked C branch
@@ -331,21 +334,15 @@ fn derive_execution_join_continuation(
             remaining: remaining.clone(),
             next_statement_index: continuation_index,
             continuations,
-            completed_enclosing_branches: Vec::new(),
         });
     }
 
-    let mut completed_enclosing_branches = Vec::new();
     while let Some(continuation) = continuations.pop() {
-        if let ProofExecutionContinuationKind::Branch { statement_index } = continuation.kind {
-            completed_enclosing_branches.push(statement_index);
-        }
         if let Some(remaining) = continuation.remaining {
             return Some(ExecutionBranchJoinContinuation {
                 remaining,
                 next_statement_index: continuation.next_statement_index,
                 continuations,
-                completed_enclosing_branches,
             });
         }
     }
@@ -1148,7 +1145,6 @@ struct StatementSuccessorPartition {
     parent_unfolds: PersistentOrderedSet<String>,
     parent_execution: Arc<ExecutionProofState>,
     execution_start_state: CState,
-    initial_continuation_depth: usize,
 }
 
 /// One unresolved judgment owned by a `Proof`.

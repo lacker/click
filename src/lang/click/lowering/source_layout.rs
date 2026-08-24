@@ -37,6 +37,11 @@ pub(in crate::lang::click) struct SourceExecutionLayout {
 struct SourceExecutionLayoutData {
     statements: BTreeMap<usize, SourceStatementRegion>,
     loop_bodies: BTreeMap<usize, usize>,
+    /// The C `if` statement indices whose regions complete when the keyed
+    /// statement completes normally: the chain of enclosing branches this
+    /// statement ends. Statically derived, so branch-region exits need no
+    /// runtime continuation bookkeeping.
+    exited_branch_regions: BTreeMap<usize, Vec<usize>>,
 }
 
 #[derive(Clone, Copy)]
@@ -59,16 +64,19 @@ pub(in crate::lang::click) enum SourceStatementKind {
 
 impl SourceExecutionLayout {
     pub(in crate::lang::click) fn new(statement: &syntax::C0Statement) -> Self {
+        /// Visits one subtree and returns the pre-order index of its last
+        /// top-level statement, so an enclosing `if` can redirect its arms'
+        /// control successors past the sibling arm to its own continuation.
         fn visit(
             statement: &syntax::C0Statement,
             next_statement_index: &mut usize,
             next_loop_index: &mut usize,
             layout: &mut SourceExecutionLayoutData,
-        ) {
+        ) -> usize {
             match statement {
                 syntax::C0Statement::Seq(first, second) => {
                     visit(first, next_statement_index, next_loop_index, layout);
-                    visit(second, next_statement_index, next_loop_index, layout);
+                    visit(second, next_statement_index, next_loop_index, layout)
                 }
                 syntax::C0Statement::If {
                     then_branch,
@@ -78,19 +86,38 @@ impl SourceExecutionLayout {
                     let statement_index = *next_statement_index;
                     *next_statement_index += 1;
                     let then_statement_index = *next_statement_index;
-                    visit(then_branch, next_statement_index, next_loop_index, layout);
+                    let then_last =
+                        visit(then_branch, next_statement_index, next_loop_index, layout);
                     let else_statement_index = *next_statement_index;
-                    visit(else_branch, next_statement_index, next_loop_index, layout);
+                    let else_last =
+                        visit(else_branch, next_statement_index, next_loop_index, layout);
+                    let continuation_node = *next_statement_index;
                     layout.statements.insert(
                         statement_index,
                         SourceStatementRegion {
-                            continuation_node: *next_statement_index,
+                            continuation_node,
                             kind: SourceStatementKind::If {
                                 then_statement_index,
                                 else_statement_index,
                             },
                         },
                     );
+                    // Completing either arm's last statement completes this
+                    // `if` region and continues at this `if`'s continuation,
+                    // not at the next pre-order statement (the sibling arm).
+                    redirect_control_successor(
+                        layout,
+                        then_last,
+                        statement_index,
+                        continuation_node,
+                    );
+                    redirect_control_successor(
+                        layout,
+                        else_last,
+                        statement_index,
+                        continuation_node,
+                    );
+                    statement_index
                 }
                 syntax::C0Statement::While { body, .. } => {
                     let statement_index = *next_statement_index;
@@ -106,6 +133,7 @@ impl SourceExecutionLayout {
                             kind: SourceStatementKind::Loop { loop_index },
                         },
                     );
+                    statement_index
                 }
                 _ => {
                     let statement_index = *next_statement_index;
@@ -117,6 +145,44 @@ impl SourceExecutionLayout {
                             kind: SourceStatementKind::Plain,
                         },
                     );
+                    statement_index
+                }
+            }
+        }
+
+        /// Redirects the control successor of an arm's last statement to the
+        /// enclosing `if`'s continuation and records the completed branch
+        /// region. When that last statement is itself an `if`, its own arms'
+        /// tails complete both branch regions at once, recursively.
+        fn redirect_control_successor(
+            layout: &mut SourceExecutionLayoutData,
+            last_statement_index: usize,
+            exited_if_index: usize,
+            continuation_node: usize,
+        ) {
+            let Some(region) = layout.statements.get_mut(&last_statement_index) else {
+                return;
+            };
+            region.continuation_node = continuation_node;
+            layout
+                .exited_branch_regions
+                .entry(last_statement_index)
+                .or_default()
+                .push(exited_if_index);
+            if let SourceStatementKind::If { .. } = region.kind {
+                let arm_lasts: Vec<usize> = layout
+                    .exited_branch_regions
+                    .iter()
+                    .filter(|(_, exited)| exited.contains(&last_statement_index))
+                    .map(|(index, _)| *index)
+                    .collect();
+                for arm_last in arm_lasts {
+                    redirect_control_successor(
+                        layout,
+                        arm_last,
+                        exited_if_index,
+                        continuation_node,
+                    );
                 }
             }
         }
@@ -126,6 +192,15 @@ impl SourceExecutionLayout {
         Self {
             data: std::sync::Arc::new(data),
         }
+    }
+
+    /// The C `if` regions that complete when this statement completes
+    /// normally, innermost first.
+    pub(in crate::lang::click) fn exited_branch_regions(&self, index: usize) -> &[usize] {
+        self.data
+            .exited_branch_regions
+            .get(&index)
+            .map_or(&[], Vec::as_slice)
     }
 
     pub(in crate::lang::click) fn statement(&self, index: usize) -> Option<SourceStatementRegion> {
@@ -162,6 +237,7 @@ mod source_execution_layout_tests {
             data: std::sync::Arc::new(SourceExecutionLayoutData {
                 statements,
                 loop_bodies: BTreeMap::new(),
+                exited_branch_regions: BTreeMap::new(),
             }),
         };
         let cloned = layout.clone();

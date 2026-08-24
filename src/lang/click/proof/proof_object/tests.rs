@@ -8458,7 +8458,16 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         let execution = joined
             .execution()
             .expect("joined proof should own its continuation");
-        assert!(execution.replay.completed_branch_regions.contains(&0));
+        assert!(
+            execution
+                .replay
+                .program_point_states
+                .get(&ProgramPointRef {
+                    region: CodeRegionRef::Statement(0),
+                    kind: ProgramPointKind::Exit,
+                })
+                .is_some()
+        );
         assert_eq!(execution.branch_path.len(), 0);
         let completed = joined
             .apply_step(SimpleProofStep::StepUsing(Vec::new()))
@@ -8582,7 +8591,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let then_arm = branches
             .focus_split_arm(&record, true)
             .expect("the then sibling stays open until the join");
-        let Err(overshoot) = then_arm.ensure_focused_arm_step(&record, &overshoot_step) else {
+        let Err(overshoot) = then_arm.apply_step(overshoot_step) else {
             panic!("an arm must not consume the shared return continuation");
         };
         assert!(
@@ -9324,7 +9333,6 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         let (outer_split, outer_record) = make_root(size)
             .split_focused_execution_branch()
             .expect("outer symbolic condition should expose both arms");
-        let outer_statement = outer_record.statement_index;
         let outer_then = outer_split
             .focus_split_arm(&outer_record, true)
             .expect("outer then arm should be feasible");
@@ -9361,15 +9369,20 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         assert!(
             execution
                 .replay
-                .completed_branch_regions
-                .contains(&nested_statement)
+                .program_point_states
+                .get(&ProgramPointRef {
+                    region: CodeRegionRef::Statement(nested_statement),
+                    kind: ProgramPointKind::Exit,
+                })
+                .is_some()
         );
         assert!(
-            execution
-                .replay
-                .completed_branch_regions
-                .contains(&outer_statement)
+            execution.replay.is_at_region_boundary(),
+            "the nested join ends the outer arm's own region"
         );
+        let joined = joined
+            .continue_arm_into_parent_frontier(&outer_record)
+            .expect("the outer split record derives the enclosing continuation");
         assert!(matches!(
             joined.certificate().steps(),
             [SimpleProofStep::Branch {

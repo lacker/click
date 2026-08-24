@@ -194,7 +194,6 @@ impl<'a> Proof<'a> {
             parent_unfolds: partition.parent_unfolds.clone(),
             parent_execution: partition.parent_execution.clone(),
             execution_start_state: partition.execution_start_state.clone(),
-            initial_continuation_depth: partition.initial_continuation_depth,
         };
         Ok(Some((successor, record)))
     }
@@ -527,7 +526,6 @@ impl<'a> Proof<'a> {
             parent_unfolds: partition.parent_unfolds.clone(),
             parent_execution: partition.parent_execution.clone(),
             execution_start_state: partition.execution_start_state.clone(),
-            initial_continuation_depth: partition.initial_continuation_depth,
         };
         Ok(Some((successor, record)))
     }
@@ -627,7 +625,6 @@ impl<'a> Proof<'a> {
                 .replay
                 .execution_start_state(&parent_execution.state)
                 .clone(),
-            initial_continuation_depth: parent_execution.replay.frontier.continuations.len(),
         };
         Ok((successor, record))
     }

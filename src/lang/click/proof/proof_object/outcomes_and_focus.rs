@@ -12,6 +12,13 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.replay.is_at_function_exit())
     }
 
+    /// The focused execution rests at its bounded region's typed boundary:
+    /// its own statement tree is exhausted and no code lies beyond it.
+    pub(in crate::lang::click::proof) fn is_at_region_boundary(&self) -> bool {
+        self.execution()
+            .is_some_and(|execution| execution.replay.is_at_region_boundary())
+    }
+
     /// Whether checked execution retained an infeasible sibling as an empty
     /// logical branch. Direct drivers use this Proof-owned structural fact to
     /// keep unsupported empty-leaf shapes on their compatibility routes.

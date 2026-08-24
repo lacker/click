@@ -138,10 +138,6 @@ pub(super) struct TacticReplayState {
     pub(super) frontier: ExecutionFrontier,
     pub(super) source_layout: SourceExecutionLayout,
     pub(super) program_point_states: ProgramPointStates,
-    /// C `if` regions completed by the most recent execution transition.
-    /// A frontier-local `branch` uses this edge-local record to distinguish
-    /// reaching its join from executing past it in a later tactic.
-    pub(super) completed_branch_regions: PersistentOrderedSet<usize>,
     /// This proof path has passed through a frontier-local `branch`. Unlike
     /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
     /// therefore distinguish an already selected C path at function exit.
@@ -1692,7 +1688,6 @@ mod proof_fact_store_tests {
     fn replay_branch_local_histories_share_their_complete_prefixes() {
         let mut replay = TacticReplayState::default();
         for index in 0..4096 {
-            replay.completed_branch_regions.insert(index);
             replay.defer_post_execution(index, index, PostExecutionTactic::Assumption);
             replay
                 .deferred_expansion_path_choices
@@ -1710,12 +1705,6 @@ mod proof_fact_store_tests {
         let ancestor = replay.clone();
         assert!(
             replay
-                .completed_branch_regions
-                .exact
-                .shares_root_with(&ancestor.completed_branch_regions.exact)
-        );
-        assert!(
-            replay
                 .post_execution_tactics
                 .shares_tail_with(&ancestor.post_execution_tactics)
         );
@@ -1725,7 +1714,6 @@ mod proof_fact_store_tests {
                 .shares_tail_with(&ancestor.deferred_expansion_path_choices)
         );
 
-        replay.completed_branch_regions.insert(4096);
         replay.defer_post_execution(4096, 4096, PostExecutionTactic::Assumption);
         replay
             .deferred_expansion_path_choices
@@ -1740,7 +1728,6 @@ mod proof_fact_store_tests {
                 tactic_offset: 4096,
             });
 
-        assert!(!ancestor.completed_branch_regions.contains(&4096));
         assert_eq!(ancestor.post_execution_tactics.len(), 4096);
         assert_eq!(replay.post_execution_tactics.len(), 4097);
         assert!(Arc::ptr_eq(
@@ -1882,6 +1869,10 @@ pub(super) enum ExecutionRegionKind {
     #[default]
     Function,
     LoopBody,
+    /// One arm of a C `if`: the arm frontier owns exactly the arm's own
+    /// statement tree, so its join composes on the typed boundary without a
+    /// completed-region set or continuation-depth bookkeeping.
+    BranchArm,
 }
 
 #[derive(Clone, Default)]
@@ -1902,7 +1893,6 @@ pub(super) struct ProofExecutionContinuation {
 
 #[derive(Clone, Copy)]
 pub(super) enum ProofExecutionContinuationKind {
-    Branch { statement_index: usize },
     LoopIteration,
 }
 

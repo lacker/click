@@ -1224,7 +1224,9 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     continue;
                 }
                 if expanded_execution_internal_if_supported(current, 0) {
-                    let Some(result) = advance_expanded_execution_region(proof, current, 0)? else {
+                    let Some(result) =
+                        advance_expanded_execution_region(proof, current, 0, &mut None)?
+                    else {
                         return Ok(None);
                     };
                     proof = result.proof;
@@ -1394,11 +1396,13 @@ fn solve_nested_have<'a>(
 
 /// Advances one sibling arm of an in-`Proof` execution split through its
 /// linear source tactics, on a proof focused at that arm's recorded goal.
-/// Every operation is the ordinary focused `Proof` form; the split record
-/// supplies only the stop-at-continuation boundary for source steps.
+/// Every operation is the ordinary focused `Proof` form; the bounded arm
+/// frontier itself refuses source steps past the arm's typed region
+/// boundary, so a source `branch` arm must stop at its shared
+/// continuation. Only expanded and smart step layers may continue past a
+/// boundary, through their own split records.
 fn advance_focused_execution_arm<'a>(
     mut proof: Proof<'a>,
-    record: Option<&ExecutionSplit<'a>>,
     tactics: &[IndexedTactic],
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
@@ -1419,14 +1423,8 @@ fn advance_focused_execution_arm<'a>(
         }
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
-            if let Some(record) = record {
-                proof.ensure_focused_arm_step(record, &step)?;
-            }
             proof.apply_step(step)?
         } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            if let Some(record) = record {
-                proof.ensure_focused_arm_can_advance(record)?;
-            }
             let Some(next) = proof.try_indexed_execute_step()? else {
                 return Ok(None);
             };
@@ -1569,7 +1567,6 @@ fn advance_focused_execution_region_after_leading_tactic<'a>(
     };
     let Some(proof) = advance_focused_execution_arm(
         proof,
-        enclosing_record,
         &tactics[1..],
         expansion_capture.as_deref_mut(),
         proof_site,
@@ -1613,7 +1610,6 @@ fn advance_focused_execution_region<'a>(
         } => {
             let Some(advanced) = advance_focused_execution_arm(
                 proof,
-                enclosing_record,
                 tactics,
                 expansion_capture.as_deref_mut(),
                 proof_site,
@@ -1640,9 +1636,6 @@ fn advance_focused_execution_region<'a>(
             else_branch,
             continuation,
         } => {
-            if let Some(record) = enclosing_record {
-                proof.ensure_focused_arm_can_advance(record)?;
-            }
             let owner = proof.clone();
             let Some((nested, _, certificate)) = try_advance_checked_execution_branch(
                 proof,
@@ -1691,9 +1684,6 @@ fn advance_focused_execution_region<'a>(
             body,
             continuation,
         } => {
-            if let Some(record) = enclosing_record {
-                proof.ensure_focused_arm_can_advance(record)?;
-            }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
             let scope = proof.begin_open(resource.clone(), *source_index)?;
@@ -1764,9 +1754,6 @@ fn advance_focused_execution_region<'a>(
                     owning_source_index,
                     depth + 1,
                 );
-            }
-            if let Some(record) = enclosing_record {
-                proof.ensure_focused_arm_can_advance(record)?;
             }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
@@ -2028,6 +2015,7 @@ fn advance_expanded_execution_linear_region<'a>(
     tactics: &[IndexedTactic],
     continuation: &InternalProofNode,
     depth: usize,
+    enclosing: &mut Option<&ExecutionSplit<'a>>,
 ) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return Ok(None);
@@ -2047,10 +2035,19 @@ fn advance_expanded_execution_linear_region<'a>(
         let Some(step) = linear_execution_simple_step(&indexed.tactic) else {
             return Ok(None);
         };
+        // A terminal arm's source steps may continue past its typed
+        // boundary into the parent continuation, consuming the one escape
+        // the enclosing split record supplies.
+        if matches!(step, SimpleProofStep::StepUsing(_))
+            && proof.is_at_region_boundary()
+            && let Some(record) = enclosing.take()
+        {
+            proof = proof.continue_arm_into_parent_frontier(record)?;
+        }
         proof = proof.with_execution_tactic_index(indexed.index)?;
         proof = proof.apply_step(step)?;
     }
-    advance_expanded_execution_region(proof, continuation, depth + 1)
+    advance_expanded_execution_region(proof, continuation, depth + 1, enclosing)
 }
 
 fn expanded_execution_region_leading_steps(
@@ -2084,11 +2081,17 @@ fn advance_expanded_execution_if_region<'a>(
     else_branch: &InternalProofNode,
     continuation: &InternalProofNode,
     depth: usize,
+    enclosing: &mut Option<&ExecutionSplit<'a>>,
 ) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return Ok(None);
     }
-    let proof = proof.with_execution_tactic_index(index)?;
+    let mut proof = proof.with_execution_tactic_index(index)?;
+    if proof.is_at_region_boundary()
+        && let Some(record) = enclosing.take()
+    {
+        proof = proof.continue_arm_into_parent_frontier(record)?;
+    }
     let (split, record) = proof.split_focused_execution_branch()?;
     let mut advanced = split;
     let mut post_arms = [Vec::new(), Vec::new()];
@@ -2117,11 +2120,13 @@ fn advance_expanded_execution_if_region<'a>(
         let Some((tactics, arm_continuation, _)) = leading else {
             return Ok(None);
         };
+        let mut arm_enclosing = Some(&record);
         let Some(result) = advance_expanded_execution_linear_region(
             focused,
             &tactics[consumed..],
             arm_continuation,
             depth + 1,
+            &mut arm_enclosing,
         )?
         else {
             return Ok(None);
@@ -2130,7 +2135,8 @@ fn advance_expanded_execution_if_region<'a>(
         post_arms[arm_index] = result.post_execution;
     }
     let joined = advanced.join_focused_execution_split(&record, false, None)?;
-    let Some(mut continued) = advance_expanded_execution_region(joined, continuation, depth + 1)?
+    let Some(mut continued) =
+        advance_expanded_execution_region(joined, continuation, depth + 1, enclosing)?
     else {
         return Ok(None);
     };
@@ -2152,6 +2158,7 @@ fn advance_expanded_execution_region<'a>(
     proof: Proof<'a>,
     region: &InternalProofNode,
     depth: usize,
+    enclosing: &mut Option<&ExecutionSplit<'a>>,
 ) -> Result<Option<ExpandedExecutionRegionAdvance<'a>>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return Ok(None);
@@ -2170,7 +2177,13 @@ fn advance_expanded_execution_region<'a>(
         InternalProofNode::Linear {
             tactics,
             continuation,
-        } => advance_expanded_execution_linear_region(proof, tactics, continuation, depth + 1),
+        } => advance_expanded_execution_linear_region(
+            proof,
+            tactics,
+            continuation,
+            depth + 1,
+            enclosing,
+        ),
         InternalProofNode::If {
             index,
             source_index,
@@ -2187,6 +2200,7 @@ fn advance_expanded_execution_region<'a>(
             else_branch,
             continuation,
             depth + 1,
+            enclosing,
         ),
         InternalProofNode::Open { .. } | InternalProofNode::Branch { .. } => Ok(None),
     }
@@ -2934,27 +2948,34 @@ fn execute_internal_proof_inner(
                 )));
             }
             let continuation_index = source_region.continuation_node;
-            let initial_continuation_depth = context.replay.frontier.continuations.len();
             let selected_source_index = context.replay.proof_site.as_ref().and_then(|site| {
                 selected_tactic_index_for_site(expansion_capture.as_deref(), site)
             });
             let capture_in_continuation = selected_source_index
                 .is_some_and(|wanted| internal_proof_contains_source_index(continuation, wanted));
+            let (_, _, branch_statement, _) = next_top_level_statement_from_execution_point(
+                &context.replay,
+                &context.state,
+                function,
+                arguments,
+                claim_label,
+                *index,
+                "branch",
+            )?;
+            let CStatement::If {
+                then_branch: branch_statement_then,
+                else_branch: branch_statement_else,
+                ..
+            } = branch_statement.clone()
+            else {
+                unreachable!("source branch was checked as an if above")
+            };
             let branch_surface_condition = {
-                let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-                    &context.replay,
-                    &context.state,
-                    function,
-                    arguments,
-                    claim_label,
-                    *index,
-                    "branch",
-                )?;
-                let CStatement::If { condition, .. } = statement else {
+                let CStatement::If { condition, .. } = &branch_statement else {
                     unreachable!("source branch was checked as an if above")
                 };
                 surface_with_source_site(
-                    &surface_c_condition(&condition),
+                    &surface_c_condition(condition),
                     &ProgramPointRef {
                         region: CodeRegionRef::Statement(statement_index),
                         kind: ProgramPointKind::Entry,
@@ -3035,6 +3056,7 @@ fn execute_internal_proof_inner(
                     StatementPrerequisitePolicy::Contextual,
                     BranchStepPolicy::Explore,
                     true,
+                    BranchArmMode::Inline,
                     None,
                 )
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;
@@ -3056,10 +3078,14 @@ fn execute_internal_proof_inner(
                             tactic_offset: 0,
                         });
                 }
-                let empty_arm = branch_context
-                    .replay
-                    .completed_branch_regions
-                    .contains(&statement_index);
+                let empty_arm = matches!(
+                    if take_then {
+                        branch_statement_then.as_ref()
+                    } else {
+                        branch_statement_else.as_ref()
+                    },
+                    CStatement::Skip
+                );
                 let branch_contexts = execute_internal_proof(
                     branch,
                     branch_context,
@@ -3078,12 +3104,10 @@ fn execute_internal_proof_inner(
                 )?;
                 for mut branch_context in branch_contexts {
                     let returned = branch_context.replay.is_at_function_exit();
-                    let reached_continuation = branch_context
-                        .replay
-                        .completed_branch_regions
-                        .contains(&statement_index)
-                        && branch_context.replay.frontier.continuations.len()
-                            <= initial_continuation_depth;
+                    let reached_continuation = returned
+                        || branch_context.replay.is_at_region_boundary()
+                        || branch_context.replay.frontier.next_statement_index
+                            == continuation_index;
                     if !reached_continuation {
                         return Err(add_proof_branch_path(
                             ClickError::new(format!(
@@ -3254,18 +3278,11 @@ fn execute_internal_proof_inner(
                         .skip(1)
                         .all(|context| context.state.locals().get(name) == Some(value))
                 });
-                let joined_frontier = continuing_contexts[0].replay.frontier.next_statement_index;
-                if continuing_contexts
-                    .iter()
-                    .skip(1)
-                    .any(|context| context.replay.frontier.next_statement_index != joined_frontier)
-                {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {index}: `branch` arms did not reach one common execution frontier"
-                    )));
-                }
+                // Every continuing arm rests at its typed region boundary,
+                // so the arms share the parent's continuation by
+                // construction; the interface anchors there.
                 let target = ProgramPointRef {
-                    region: CodeRegionRef::Statement(joined_frontier),
+                    region: CodeRegionRef::Statement(continuation_index),
                     kind: ProgramPointKind::Entry,
                 };
                 let needs_abstraction = continuing_contexts.len() > 1;
@@ -3374,6 +3391,15 @@ fn execute_internal_proof_inner(
                     .program_point_states
                     .insert(branch_entry_point, snapshot);
             }
+            // Inline arms carry the post-join frontier themselves; the join
+            // records the branch region's canonical exit state.
+            record_statement_program_point_state(
+                &mut joined_context.replay,
+                function_block,
+                statement_index,
+                ProgramPointKind::Exit,
+                joined_context.state.clone(),
+            );
             joined_context.branch_path.clear();
             joined_context.replay.case_assumptions.clear();
             let mut continued = execute_internal_proof(

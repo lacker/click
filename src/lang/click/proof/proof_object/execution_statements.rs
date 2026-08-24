@@ -40,7 +40,6 @@ impl<'a> Proof<'a> {
             .replay
             .execution_start_state(&execution.state)
             .clone();
-        let initial_continuation_depth = execution.replay.frontier.continuations.len();
         let make_goal = |checked: CheckedStatementStep| {
             let mut successor_execution = execution.clone();
             successor_execution.replay = checked.replay;
@@ -147,7 +146,6 @@ impl<'a> Proof<'a> {
                     parent_unfolds: frontier.context.unfolded_predicates.clone(),
                     parent_execution: parent_execution.clone(),
                     execution_start_state: execution_start_state.clone(),
-                    initial_continuation_depth,
                 });
                 let goals = self.state.goals.split_at(
                     self.focused,

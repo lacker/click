@@ -315,12 +315,29 @@ frontier now carries a typed `ExecutionRegionKind`; exhausting a
 structural-equality `at_back_edge` check are deleted. The regression
 `body_final_branch_preservation_completes_at_typed_back_edge_boundary`
 pins the shape the sentinel was masking: a body-final C `if` whose arms
-and join complete at the boundary with no code behind it. Next: unify
-function exit and the back-edge as instances of one boundary mechanism
-when the frontier migrates onto `Proof` (step 2), then branch joins,
-deleting `completed_branch_regions`. Each chunk scores by the replay
-field or fallback it deletes, never by adding a guarded path beside a
-retained fallback.
+and join complete at the boundary with no code behind it.
+
+Branch joins landed next. `completed_branch_regions`, the `Branch`
+continuation kind, `initial_continuation_depth` on every split record,
+and the dynamic arm-overshoot guard are deleted; the continuation stack
+now carries only loop iterations. `SourceExecutionLayout` carries true
+control-flow successors (arm-final statements chain to their enclosing
+`if`'s continuation) plus the statically derived set of branch regions
+each statement completes, so branch-region exits need no runtime
+bookkeeping. C `if` arms have two modes: path-following flows (decided
+steps, bounded exploration, and the whole legacy engine) splice the
+selected arm inline before the `if`'s tail, while Proof-side sibling
+splits are bounded — the arm frontier owns exactly the arm's own
+statement tree, joins compose on the typed boundary by split identity,
+and the parent frontier is restored by the join. Terminal-style arms
+that legitimately continue to function exit consume one explicit
+escape per region level (`continue_arm_into_parent_frontier`), driven
+by the split record; an arm that escaped is no longer at the boundary,
+so the checked-join predicates still enforce the join discipline.
+Next: unify function exit and the back-edge as instances of one
+boundary mechanism when the frontier migrates onto `Proof` (step 2).
+Each chunk scores by the replay field or fallback it deletes, never by
+adding a guarded path beside a retained fallback.
 
 ## Scoped composite population is a replay-state witness
 
