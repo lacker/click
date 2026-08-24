@@ -179,6 +179,16 @@ impl ResourceContext {
         Self::default()
     }
 
+    /// Whether this context contains a named composite or token resource.
+    ///
+    /// The family-shape index answers this without materializing or scanning
+    /// the resource set. Proof search uses the distinction to keep raw memory
+    /// transitions on `Proof` while leaving named-resource continuation
+    /// selection to an owned scope.
+    pub(crate) fn has_named_resources(&self) -> bool {
+        !self.storage.index.exact_shapes.is_empty()
+    }
+
     /// Whether two resource snapshots are the exact same persistent value.
     ///
     /// Proof joins use this constant-time identity check to retain a resource

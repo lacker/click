@@ -4988,6 +4988,7 @@ impl<'a> Proof<'a> {
         )?;
         execution.state = checked.state.into();
         execution.replay.open_scopes += 1;
+        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let introduced_facts = checked.added_facts.clone();
         let body = Proof {
@@ -7980,6 +7981,7 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
+        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta {
             function_entry_prerequisites: checked.added_certification_facts,
             function_entry_derivations: checked.added_derivations,
@@ -8028,6 +8030,7 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
+        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -8077,6 +8080,7 @@ impl<'a> Proof<'a> {
             &execution.replay.unfolded_predicates,
         )?;
         execution.state = checked.state.into();
+        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -10544,12 +10548,19 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(None);
         };
-        // A standalone `step()` cannot yet decide which resource-backed facts
-        // a later tactic will need. Preserve the transactional compatibility
-        // boundary until its continuation is searched on this Proof too. An
-        // explicit resource scope has an owned continuation contract and uses
-        // the broader selector through `ProofScope::try_smart_step` below.
-        if !execution.state.resources().facts().is_empty() {
+        // A raw-memory transition with no preceding call effect is fully
+        // decided by the checked statement operation: the kernel retains
+        // exactly the permissions and facts that survive it, so the returned
+        // descendant is authoritative. A named entry resource may already
+        // have been unfolded out of the current resource context, while a
+        // call effect may carry a post-call surface fact needed by a later
+        // statement. Both still require continuation-aware search (or an
+        // explicit owned scope) before a standalone `step()` can select a
+        // sufficient representation.
+        if execution.replay.has_resource_surface_history
+            || execution.state.resources().has_named_resources()
+            || !execution.replay.effect_facts.is_empty()
+        {
             return Ok(None);
         }
         if let Some(proof) = self.try_indexed_statement_step()? {

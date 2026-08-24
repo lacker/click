@@ -154,6 +154,12 @@ pub(super) struct TacticReplayState {
     /// a constructed certificate must merge into the builder here rather than
     /// rely on the exit drain's top-level record.
     pub(super) open_scopes: usize,
+    /// A checked composite-resource surface operation occurred on this source
+    /// lineage. This is provenance/capability metadata only: it cannot change
+    /// resources or facts, but survives the transitional per-tactic Proof
+    /// wrapper so later smart search knows an explicit representation may be
+    /// needed by its continuation.
+    pub(super) has_resource_surface_history: bool,
     pub(super) region_invariants_closed: bool,
     /// Where the replayed `close_invariants` tactic sat, so the invariant
     /// bundle check its caller performs after the replay finishes can be

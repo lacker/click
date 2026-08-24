@@ -84,8 +84,76 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
             }
         "#;
 
-    verify_c0_sources(click_source, &[("transport.c", c_source)])
-        .expect("transport should certify a source derived from exact snapshot facts");
+    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
+        crate::instrumentation::collect(|| {
+            verify_c0_sources(click_source, &[("transport.c", c_source)])
+        })
+    });
+    let verified =
+        verified.expect("transport should certify a source derived from exact snapshot facts");
+    assert!(
+        planning_transitions
+            .iter()
+            .all(
+                |(claim, tactic, name)| claim != "set_third_return_second.contract"
+                    || *tactic != 1
+                    || name != "step"
+            ),
+        "the selected raw-memory step must search on a checked Proof descendant: \
+         {planning_transitions:#?}"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_third_return_second.contract"
+                    && name == "smart tactic compatibility replay (tactic 1, source 1)"
+        )),
+        "the selected raw-memory step entered compatibility replay: {events:#?}"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked raw-memory step should retain its expansion");
+    assert_eq!(expanded[1], ProofTactic::StepUsing(Vec::new()));
+
+    let step_offset = click_source
+        .find("step();")
+        .expect("the smart store step should be present");
+    let position = expansion::position_at_offset(click_source, step_offset);
+    let rewritten = expand_c0_tactic_source_at(
+        click_source,
+        &[("transport.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the checked raw-memory step should expand");
+    assert!(rewritten.contains("step() using {"), "{rewritten}");
+    verify_c0_sources(&rewritten, &[("transport.c", c_source)])
+        .expect("the rewritten raw-memory step should verify normally");
+
+    let corrupted = rewritten.replacen(
+        "step() using {\n                }",
+        "step() using {\n                    p[2] == 123;\n                }",
+        1,
+    );
+    assert_ne!(
+        corrupted, rewritten,
+        "the expanded step should expose an independently checked premise list"
+    );
+    let (corrupted_result, corrupted_events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(&corrupted, &[("transport.c", c_source)])
+    });
+    corrupted_result.expect_err("an unavailable raw-memory step premise must be rejected");
+    assert!(
+        corrupted_events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "set_third_return_second.contract"
+                    && name.starts_with("smart tactic compatibility replay")
+        )),
+        "the corrupted explicit step entered compatibility replay: {corrupted_events:#?}"
+    );
 }
 
 #[test]
