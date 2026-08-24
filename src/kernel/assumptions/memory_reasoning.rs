@@ -751,6 +751,52 @@ impl PureFactContext {
         0 <= offset && offset < length
     }
 
+    /// One indexed explicit-fact step beyond structural containment. This is
+    /// intentionally narrower than the general shallow fact-graph helper:
+    /// it accepts only an exact base-offset alias and the two exact range
+    /// bounds, so a named separation candidate does not need recursive
+    /// memory resolution merely because its member index is symbolic.
+    fn pointer_in_range_by_exact_facts(&self, pointer: &Pointer, range: &CMemoryRange) -> bool {
+        if pointer_in_memory_range_shallow(pointer, range) {
+            return true;
+        }
+        if pointer.block != range.base().block {
+            return false;
+        }
+        let offset_matches = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
+            pointer_offsets_match_by_shallow_fact_graph(left, right, self)
+        };
+        let index =
+            pointer
+                .element_index_from_base(range.base())
+                .or_else(|| match &pointer.offset {
+                    PointerOffsetTerm::Add(left, right)
+                        if offset_matches(left, &range.base().offset) =>
+                    {
+                        int32_element_index_from_offset(right)
+                    }
+                    PointerOffsetTerm::Add(left, right)
+                        if offset_matches(right, &range.base().offset) =>
+                    {
+                        int32_element_index_from_offset(left)
+                    }
+                    _ if offset_matches(&pointer.offset, &range.base().offset) => {
+                        Some(Bitvector32Term::Constant(0))
+                    }
+                    _ => None,
+                });
+        let Some(index) = index else {
+            return false;
+        };
+        self.exact_condition_value(&ConditionTerm::signed_less_equal(
+            range.start().clone(),
+            index.clone(),
+        )) == Some(true)
+            && self
+                .exact_condition_value(&ConditionTerm::signed_less_than(index, range.end().clone()))
+                == Some(true)
+    }
+
     pub(in crate::kernel) fn pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
         &self,
         left: &Pointer,
@@ -774,6 +820,23 @@ impl PureFactContext {
                         && pointer_in_memory_range_shallow(right, right_range)
                         || pointer_in_memory_range_shallow(right, left_range)
                             && pointer_in_memory_range_shallow(left, right_range)
+                })
+            },
+        ) {
+            return true;
+        }
+        if crate::instrumentation::measure_operation(
+            "kernel",
+            "explicit range arms",
+            "explicit range: exact-fact candidates",
+            || {
+                candidates.clone().any(|(_, left_range, right_range)| {
+                    #[cfg(test)]
+                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                    self.pointer_in_range_by_exact_facts(left, left_range)
+                        && self.pointer_in_range_by_exact_facts(right, right_range)
+                        || self.pointer_in_range_by_exact_facts(right, left_range)
+                            && self.pointer_in_range_by_exact_facts(left, right_range)
                 })
             },
         ) {
@@ -825,7 +888,12 @@ impl PureFactContext {
             || {
                 candidates.any(|(_, left_range, right_range)| {
                     #[cfg(test)]
-                    MEMORY_SEPARATION_CANDIDATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
+                    {
+                        MEMORY_SEPARATION_CANDIDATE_CHECKS
+                            .with(|checks| checks.set(checks.get() + 1));
+                        MEMORY_SEPARATION_RECURSIVE_CANDIDATE_CHECKS
+                            .with(|checks| checks.set(checks.get() + 1));
+                    }
                     pointer_in_memory_range_for_memory_resolution_with_depth(
                         left, left_range, self, depth,
                     ) && pointer_in_memory_range_for_memory_resolution_with_depth(

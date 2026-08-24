@@ -485,6 +485,80 @@ fn memory_separation_candidates_ignore_unrelated_propositions() {
 }
 
 #[test]
+fn explicit_range_alias_bounds_stay_on_the_shallow_candidate_path() {
+    let left_base = Pointer {
+        block: "shallow-left".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right_base = Pointer {
+        block: "shallow-right".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let index = Bitvector32Term::Variable(Variable(93_100));
+    let end = Bitvector32Term::Variable(Variable(93_101));
+    let left = left_base.offset_by_int32_elements(index.clone());
+    let right = right_base.clone();
+    let left_range = CMemoryRange::new(left_base, Bitvector32Term::Constant(0), end.clone());
+    let right_range = memory_range(right_base, 0, 1);
+    let checks = [16_usize, 64, 256, 1_024, 4_096]
+        .into_iter()
+        .map(|unrelated| {
+            let mut assumptions = PureFactContext::new()
+                .assume_proposition(Proposition::CResourceSeparate {
+                    left: CResource::Memory(left_range.clone()),
+                    right: CResource::Memory(right_range.clone()),
+                })
+                .assume_condition(
+                    ConditionTerm::signed_less_equal(
+                        Bitvector32Term::Constant(0),
+                        index.clone(),
+                    ),
+                    true,
+                )
+                .assume_condition(
+                    ConditionTerm::signed_less_than(index.clone(), end.clone()),
+                    true,
+                );
+            for fact in 0..unrelated {
+                assumptions = assumptions.assume_proposition(Proposition::CResourceSeparate {
+                    left: CResource::Memory(memory_range(
+                        Pointer {
+                            block: format!("unrelated-left-{fact}").into(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        0,
+                        1,
+                    )),
+                    right: CResource::Memory(memory_range(
+                        Pointer {
+                            block: format!("unrelated-right-{fact}").into(),
+                            offset: PointerOffsetTerm::Constant(0),
+                        },
+                        0,
+                        1,
+                    )),
+                });
+            }
+
+            PureFactContext::reset_memory_separation_candidate_checks();
+            PureFactContext::reset_memory_separation_recursive_candidate_checks();
+            assert!(assumptions
+                .pointers_proven_disjoint_by_explicit_range_for_memory_resolution(&left, &right));
+            assert_eq!(
+                PureFactContext::memory_separation_recursive_candidate_checks(),
+                0,
+                "an explicit candidate with exact alias bounds must not enter recursive memory resolution"
+            );
+            PureFactContext::memory_separation_candidate_checks()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        checks.windows(2).all(|pair| pair[0] == pair[1]),
+        "unrelated separation facts changed indexed candidate work: {checks:?}"
+    );
+}
+
+#[test]
 fn memory_loadable_candidates_ignore_unrelated_pointer_blocks() {
     let memory = CMemory::new();
     let target = Pointer {
