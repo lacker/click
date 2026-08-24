@@ -541,17 +541,17 @@ fn loop_effect_open_body_supported(certificate: &ProofCertificate) -> bool {
     loop_effect_open_body_analysis(certificate).is_some()
 }
 
-/// Returns whether this supported open body contains its one terminal
-/// execution `if`. Validation and branch discovery share this linear walk so
-/// a deep leading scope chain is not rescanned once per nesting level.
+/// Returns whether this supported body contains an execution `if` tree.
+/// Validation and branch discovery share this linear walk so deep leading
+/// scopes and recursively nested arms are not rescanned once per level.
 fn loop_effect_open_body_analysis(certificate: &ProofCertificate) -> Option<bool> {
     let mut contains_if = false;
     for (index, step) in certificate.steps().iter().enumerate() {
         let step_contains_if = match step {
             // The branch closes every leading open representation
             // independently on each terminal arm, so it must own the
-            // remainder of every enclosing scope. Recursively nested direct
-            // execution branches remain a later shape; logical branches
+            // remainder of every enclosing scope. Nested execution branches
+            // recurse through this same typed tree driver; logical branches
             // inside `have` use the proposition driver.
             SimpleProofStep::If {
                 then_proof,
@@ -559,14 +559,8 @@ fn loop_effect_open_body_analysis(certificate: &ProofCertificate) -> Option<bool
                 ..
             } => {
                 if index + 1 != certificate.steps().len()
-                    || !then_proof
-                        .steps()
-                        .iter()
-                        .all(loop_effect_scope_step_supported)
-                    || !else_proof
-                        .steps()
-                        .iter()
-                        .all(loop_effect_scope_step_supported)
+                    || loop_effect_open_body_analysis(then_proof).is_none()
+                    || loop_effect_open_body_analysis(else_proof).is_none()
                 {
                     return None;
                 }
@@ -694,6 +688,7 @@ fn apply_loop_effect_open_certificate_at<'a>(
             vec![scope],
             certificate,
             &branch_path,
+            0,
             tactic_index_offset,
             source_index_offset,
         );
@@ -711,6 +706,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
     mut scopes: Vec<ProofScope<'a>>,
     certificate: &ProofCertificate,
     branch_path: &[usize],
+    wrap_from: usize,
     tactic_index_offset: usize,
     source_index_offset: usize,
 ) -> Result<Proof<'a>, ClickError> {
@@ -743,11 +739,17 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                         .iter()
                         .map(loop_effect_step_source_width)
                         .sum::<usize>();
-                return ProofScope::apply_terminal_loop_effect_if(
-                    scopes,
+                let current = scopes
+                    .last()
+                    .expect("an open-chain driver owns a leading scope")
+                    .clone();
+                let joined = ProofScope::apply_loop_effect_if(
+                    &scopes,
+                    current,
                     condition.clone(),
                     |then_scope| {
-                        apply_loop_effect_scope_certificate_at(
+                        apply_loop_effect_arm_certificate_at(
+                            scopes.clone(),
                             then_scope,
                             then_proof,
                             tactic_index + 1,
@@ -755,14 +757,16 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                         )
                     },
                     |else_scope| {
-                        apply_loop_effect_scope_certificate_at(
+                        apply_loop_effect_arm_certificate_at(
+                            scopes.clone(),
                             else_scope,
                             else_proof,
                             tactic_index + 1,
                             else_source_index,
                         )
                     },
-                );
+                )?;
+                return ProofScope::retain_loop_effect_open_scopes(&scopes, wrap_from, joined);
             }
             SimpleProofStep::Open { resource, proof } => {
                 let current = scopes
@@ -781,6 +785,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                         scopes,
                         proof,
                         nested_branch_path,
+                        wrap_from,
                         tactic_index + 1,
                         source_index + 1,
                     );
@@ -834,6 +839,36 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
     Err(ClickError::new(
         "a loop-effect open-chain driver did not reach its checked terminal `if`",
     ))
+}
+
+fn apply_loop_effect_arm_certificate_at<'a>(
+    mut scopes: Vec<ProofScope<'a>>,
+    current: ProofScope<'a>,
+    certificate: &ProofCertificate,
+    tactic_index_offset: usize,
+    source_index_offset: usize,
+) -> Result<Proof<'a>, ClickError> {
+    *scopes
+        .last_mut()
+        .expect("a loop-effect arm owns at least one open scope") = current.clone();
+    if let Some(branch_path) = loop_effect_open_if_path(certificate) {
+        let wrap_from = scopes.len();
+        return apply_loop_effect_open_chain_certificate_at(
+            scopes,
+            certificate,
+            &branch_path,
+            wrap_from,
+            tactic_index_offset,
+            source_index_offset,
+        );
+    }
+    let leaf = apply_loop_effect_scope_certificate_at(
+        current,
+        certificate,
+        tactic_index_offset,
+        source_index_offset,
+    )?;
+    ProofScope::complete_loop_effect_leaf(&scopes, leaf)
 }
 
 fn apply_loop_effect_certificate_at<'a>(

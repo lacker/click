@@ -13831,90 +13831,114 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
-    /// Checks a terminal proof-level `if` below any nonempty chain of open
-    /// resource scopes. Each arm remains a sibling goal on the same Proof,
-    /// closes the effect through the scope-aware frame operation, and then
-    /// closes every resource representation from inner to outer before it is
-    /// discharged. The returned proof records the exact nested
-    /// `Open(...Open(If(...))...)` node; neither the source driver nor an
-    /// expansion cursor owns either arm's facts, resources, or execution
-    /// state.
-    pub(super) fn apply_terminal_loop_effect_if<Then, Else>(
-        scopes: Vec<Self>,
+    /// Checks one proof-level `if` within a loop-effect resource-scope tree.
+    /// The callbacks must retire their selected sibling goal, either by
+    /// closing a terminal leaf or by recursively joining another `if`. This
+    /// operation owns the split and structured join; the source driver only
+    /// selects the two already-lowered arm certificates.
+    pub(super) fn apply_loop_effect_if<Then, Else>(
+        scopes: &[Self],
+        current: Self,
         condition: ClickProposition,
         apply_then: Then,
         apply_else: Else,
     ) -> Result<Proof<'a>, ClickError>
     where
-        Then: FnOnce(Self) -> Result<Self, ClickError>,
-        Else: FnOnce(Self) -> Result<Self, ClickError>,
+        Then: FnOnce(Self) -> Result<Proof<'a>, ClickError>,
+        Else: FnOnce(Self) -> Result<Proof<'a>, ClickError>,
     {
-        let Some(outer) = scopes.first() else {
-            return Err(ClickError::new(
-                "a terminal loop-effect `if` requires at least one open resource scope",
-            ));
-        };
-        if scopes
-            .iter()
-            .any(|scope| !matches!(scope.structure.as_ref(), ProofScopeStructure::Open { .. }))
-        {
-            return Err(outer
-                .root
-                .step_error("a terminal loop-effect `if` requires open resource scopes"));
-        }
-        for pair in scopes.windows(2) {
-            let [parent, child] = pair else {
-                unreachable!("a two-element scope window has two entries")
-            };
-            if !Arc::ptr_eq(&child.root.context, &parent.body.context)
-                || !Arc::ptr_eq(&child.root.state, &parent.body.state)
-                || !Arc::ptr_eq(&child.root.node, &parent.body.node)
-            {
-                return Err(outer
-                    .root
-                    .step_error("leading open scopes do not form one checked Proof chain"));
-            }
-        }
+        Self::validate_loop_effect_open_scopes(scopes)?;
         let inner = scopes
             .last()
             .expect("the nonempty leading scope chain has an inner scope");
-        let (split, record) = inner.body.split_focused_execution_if(condition.clone())?;
+        if !Arc::ptr_eq(&current.root.context, &inner.root.context)
+            || !Arc::ptr_eq(&current.root.state, &inner.root.state)
+            || !Arc::ptr_eq(&current.root.node, &inner.root.node)
+        {
+            return Err(inner
+                .root
+                .step_error("loop-effect branch cursor left its innermost open scope"));
+        }
+        let (split, record) = current.body.split_focused_execution_if(condition.clone())?;
 
-        let mut then_scope = inner.clone();
+        let mut then_scope = current.clone();
         then_scope.body = split.focus_execution_if_arm(&record, true)?;
-        let then_scope = apply_then(then_scope)?;
-        let mut then_body = then_scope.body;
-        for scope in scopes.iter().rev() {
-            then_body = scope.close_open_resource_on_focused_branch(then_body)?;
-        }
-        let then_body = outer.discharge_closed_loop_effect_branch(then_body)?;
+        let then_body = apply_then(then_scope)?;
 
-        let mut else_scope = inner.clone();
+        let mut else_scope = current;
         else_scope.body = then_body.focus_execution_if_arm(&record, false)?;
-        let else_scope = apply_else(else_scope)?;
-        let mut else_body = else_scope.body;
-        for scope in scopes.iter().rev() {
-            else_body = scope.close_open_resource_on_focused_branch(else_body)?;
-        }
-        let else_body = outer.discharge_closed_loop_effect_branch(else_body)?;
+        let else_body = apply_else(else_scope)?;
 
-        let joined =
-            else_body.join_focused_if(&record.marker, record.split, record.ids, condition)?;
+        else_body.join_focused_if(&record.marker, record.split, record.ids, condition)
+    }
+
+    /// Closes every currently open resource representation on one terminal
+    /// branch, then retires that leaf goal. No surface step is synthesized:
+    /// the leaf operations and later audited `if` joins retain the exact
+    /// provenance, while resource closure is the semantics of the enclosing
+    /// `open` nodes.
+    pub(super) fn complete_loop_effect_leaf(
+        scopes: &[Self],
+        leaf: Self,
+    ) -> Result<Proof<'a>, ClickError> {
+        Self::validate_loop_effect_open_scopes(scopes)?;
+        let inner = scopes
+            .last()
+            .expect("the nonempty leading scope chain has an inner scope");
+        if !Arc::ptr_eq(&leaf.root.context, &inner.root.context)
+            || !Arc::ptr_eq(&leaf.root.state, &inner.root.state)
+            || !Arc::ptr_eq(&leaf.root.node, &inner.root.node)
+        {
+            return Err(inner
+                .root
+                .step_error("loop-effect leaf left its innermost open scope"));
+        }
+        let mut body = leaf.body;
+        for scope in scopes.iter().rev() {
+            body = scope.close_open_resource_on_focused_branch(body)?;
+        }
+        scopes[0].discharge_closed_loop_effect_branch(body)
+    }
+
+    /// Retains a checked branch subtree inside the open scopes introduced at
+    /// `wrap_from`. Earlier scopes remain semantic ancestors and are wrapped
+    /// by their own caller. Prefix operations before each nested `open` come
+    /// from that child scope's checked root lineage, so serialization loses
+    /// neither scope-local work nor branch structure.
+    pub(super) fn retain_loop_effect_open_scopes(
+        scopes: &[Self],
+        wrap_from: usize,
+        joined: Proof<'a>,
+    ) -> Result<Proof<'a>, ClickError> {
+        Self::validate_loop_effect_open_scopes(scopes)?;
+        if wrap_from > scopes.len() {
+            return Err(scopes[0]
+                .root
+                .step_error("loop-effect open-scope provenance boundary is out of range"));
+        }
+        if wrap_from == scopes.len() {
+            return Ok(joined);
+        }
+
         let mut body = joined.certificate();
-        for scope in scopes[1..].iter().rev() {
+        for index in ((wrap_from + 1)..scopes.len()).rev() {
+            let scope = &scopes[index];
             let ProofScopeStructure::Open { resource, .. } = scope.structure.as_ref() else {
                 unreachable!("the scope kinds were checked above")
             };
-            body = ProofCertificate::from_steps(vec![SimpleProofStep::Open {
+            let mut steps = scope.root.certificate().steps().to_vec();
+            steps.push(SimpleProofStep::Open {
                 resource: resource.clone(),
                 proof: Box::new(body),
-            }]);
+            });
+            body = ProofCertificate::from_steps(steps);
         }
+        let outer = &scopes[wrap_from];
         let ProofScopeStructure::Open { resource, .. } = outer.structure.as_ref() else {
             unreachable!("the scope kind was checked above")
         };
         let mut introduced_facts = PersistentOrderedSet::default();
-        for scope in &scopes {
+        for scope in &scopes[wrap_from..] {
             for fact in &scope.introduced_facts {
                 introduced_facts.insert(fact.clone());
             }
@@ -13939,9 +13963,39 @@ impl<'a> ProofScope<'a> {
         })
     }
 
+    fn validate_loop_effect_open_scopes(scopes: &[Self]) -> Result<(), ClickError> {
+        let Some(outer) = scopes.first() else {
+            return Err(ClickError::new(
+                "a loop-effect branch requires at least one open resource scope",
+            ));
+        };
+        if scopes
+            .iter()
+            .any(|scope| !matches!(scope.structure.as_ref(), ProofScopeStructure::Open { .. }))
+        {
+            return Err(outer
+                .root
+                .step_error("a loop-effect branch requires open resource scopes"));
+        }
+        for pair in scopes.windows(2) {
+            let [parent, child] = pair else {
+                unreachable!("a two-element scope window has two entries")
+            };
+            if !Arc::ptr_eq(&child.root.context, &parent.body.context)
+                || !Arc::ptr_eq(&child.root.state, &parent.body.state)
+                || !Arc::ptr_eq(&child.root.node, &parent.body.node)
+            {
+                return Err(outer
+                    .root
+                    .step_error("leading open scopes do not form one checked Proof chain"));
+            }
+        }
+        Ok(())
+    }
+
     /// Closes this open resource on the currently focused terminal branch
     /// without yet retiring the branch goal. This is the per-arm half of
-    /// `apply_terminal_loop_effect_if`; the logical join is allowed only after
+    /// a recursive loop-effect branch tree; logical joins are allowed only after
     /// both independently checked representations have closed.
     fn close_open_resource_on_focused_branch(
         &self,

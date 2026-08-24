@@ -2172,6 +2172,195 @@ fn loop_effect_if_after_leading_open_scopes_stays_on_proof() {
 }
 
 #[test]
+fn recursive_loop_effect_ifs_after_leading_opens_stay_on_proof() {
+    let c_source = r#"
+            struct pair { int32 first; int32 second; };
+
+            int32 count_once(struct pair* owner, int32 flag, int32 flag2) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource pair_first(owner: struct pair*) {
+                owns owner->first;
+            }
+
+            resource pair_second(owner: struct pair*) {
+                owns owner->second;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct pair* owner, int32 flag, int32 flag2) {
+                owns pair_first(owner);
+                owns pair_second(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        open(pair_first(owner)) {
+                            have flag == flag by {
+                                normalize();
+                            }
+                            open(pair_second(owner)) {
+                                if flag == 0 {
+                                    if flag2 == 0 {
+                                        frame() using {};
+                                    } else {
+                                        frame() using {};
+                                    }
+                                } else {
+                                    if flag2 == 0 {
+                                        frame() using {};
+                                    } else {
+                                        frame() using {};
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        open(pair_first(owner)) {
+                            have flag == flag by {
+                                normalize();
+                            }
+                            open(pair_second(owner)) {
+                                if flag == 0 {
+                                    if flag2 == 0 {
+                                        frame() using {};
+                                    } else {
+                                        frame() using {};
+                                    }
+                                } else {
+                                    if flag2 == 0 {
+                                        frame() using {};
+                                    } else {
+                                        frame() using {};
+                                    }
+                                }
+                            }
+                        }
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the recursive loop-effect if tree should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the recursive effect if tree added a compatibility replay execution"
+    );
+    assert_eq!(
+        replay_labels, baseline_labels,
+        "the recursive effect if tree changed the compatibility replay path"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the recursive effect if tree should retain expandable provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some([ProofTactic::Open(first)]) = effect_tactics else {
+        panic!("the recursive effect lost its first leading open scope");
+    };
+    let [ProofTactic::Have(prefix), ProofTactic::Open(second)] = first.tactics.as_slice() else {
+        panic!("the recursive effect lost its checked prefix or second leading open scope");
+    };
+    assert!(matches!(
+        prefix.proof,
+        SourceProof::Script(ref body) if matches!(body.as_slice(), [ProofTactic::Normalize])
+    ));
+    let [ProofTactic::If(outer_if)] = second.tactics.as_slice() else {
+        panic!("the recursive effect lost its outer if");
+    };
+    for arm in [&outer_if.then_tactics, &outer_if.else_tactics] {
+        assert!(matches!(
+            arm.as_slice(),
+            [ProofTactic::If(inner_if)]
+                if matches!(inner_if.then_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+                    && matches!(inner_if.else_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+        ));
+    }
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the recursive effect tree should expand from retained provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten recursive effect should verify normally");
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
+
+    let invalid_leaf = click_source.replacen(
+        "                                        frame() using {};",
+        "                                        frame() using {\n                                            0 == 1;\n                                        };",
+        1,
+    );
+    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&invalid_leaf, &sources)
+            .expect_err("an unavailable recursive leaf premise must be rejected")
+    });
+    assert!(
+        error
+            .message()
+            .contains("requires an exact available premise"),
+        "unexpected recursive leaf diagnostic: {}",
+        error.message()
+    );
+    assert!(
+        invalid_replays <= baseline_replays,
+        "the invalid recursive leaf entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {
