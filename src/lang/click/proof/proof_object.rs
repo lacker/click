@@ -15,9 +15,6 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
-    static CERTIFICATE_INTERPRETATIONS: std::cell::Cell<usize> = const {
-        std::cell::Cell::new(0)
-    };
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -43,16 +40,6 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
     let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::lang::click) fn count_certificate_interpretations<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = CERTIFICATE_INTERPRETATIONS.with(std::cell::Cell::get);
-    let result = operation();
-    let after = CERTIFICATE_INTERPRETATIONS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -130,13 +117,6 @@ pub(super) struct ExecutionSplit<'a> {
     continuation_remaining: Option<Arc<CStatement>>,
     execution_start_state: CState,
     initial_continuation_depth: usize,
-}
-
-#[derive(Clone)]
-struct StatementSuccessorSplit {
-    split: SplitId,
-    ids: [GoalId; 2],
-    condition: ConditionTerm,
 }
 
 /// One checked branch arm's contribution to a checked execution join: the
@@ -312,12 +292,6 @@ enum ProofScopeStructure {
         source_index: usize,
         preserve_exposed_body: bool,
     },
-}
-
-#[derive(Clone)]
-enum ProofBranchStructure {
-    Cases { disjunction: ClickProposition },
-    If { condition: ClickProposition },
 }
 
 fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
@@ -1281,10 +1255,6 @@ struct ProofNode {
     /// recorded attribution; it never infers ownership from final states.
     focused: GoalId,
     depth: usize,
-    /// An exhaustive operational partition created by this exact statement
-    /// step. A following ordinary proof `if` may name its condition and
-    /// discharge the already-certified sibling frontiers.
-    statement_split: Option<StatementSuccessorSplit>,
 }
 
 /// Persistent semantic fact state shared by every `Proof` kind.
@@ -1466,7 +1436,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
-                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -1861,7 +1830,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
-                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -1977,7 +1945,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
-                statement_split: None,
             }),
             focused: GoalId::ROOT,
         }
@@ -2181,7 +2148,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
-                statement_split: None,
             }),
             focused: GoalId::ROOT,
         })
@@ -2374,7 +2340,6 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 focused: self.focused,
                 depth: self.node.depth + 1,
-                statement_split: None,
             }),
             focused: self.focused,
         })
@@ -3340,7 +3305,6 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused: self.focused,
                     depth: self.node.depth,
-                    statement_split: None,
                 }),
                 focused: ids[0],
             },
@@ -3397,65 +3361,12 @@ impl<'a> Proof<'a> {
                     step: None,
                     focused: self.focused,
                     depth: self.node.depth,
-                    statement_split: None,
                 }),
                 focused: ids[0],
             },
             split,
             ids,
         ))
-    }
-
-    /// Enters an exhaustive operational partition already produced by the
-    /// immediately preceding statement step. The surface `if` supplies no
-    /// new hypothesis: both polarities must lower to the exact certified
-    /// successor facts before its arms may address those sibling frontiers.
-    fn enter_statement_successor_if(
-        &self,
-        condition: &ClickProposition,
-    ) -> Result<Option<(Self, SplitId, [GoalId; 2])>, ClickError> {
-        let Some(record) = self.node.statement_split.clone() else {
-            return Ok(None);
-        };
-        if self.focused != record.ids[0] {
-            return Err(
-                self.step_error("statement-successor `if` must begin at its first certified arm")
-            );
-        }
-        let then_fact = self.lower_surface_proposition(condition, "proof `if` condition")?;
-        let expected_then = Proposition::ConditionIs(record.condition.clone(), true);
-        if !path_condition_equivalent(&then_fact, &expected_then) {
-            return Err(self.step_error(format!(
-                "proof `if` condition does not name the preceding statement's certified partition: expected {expected_then:?}, got {then_fact:?}"
-            )));
-        }
-        let else_proof = self.focus(record.ids[1])?;
-        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
-        let else_fact =
-            else_proof.lower_surface_proposition(&else_surface, "proof `if` negation")?;
-        let expected_else = Proposition::ConditionIs(record.condition.clone(), false);
-        if !path_condition_equivalent(&else_fact, &expected_else) {
-            return Err(self.step_error(format!(
-                "proof `if` negation does not name the preceding statement's certified partition: expected {expected_else:?}, got {else_fact:?}"
-            )));
-        }
-
-        Ok(Some((
-            Self {
-                context: self.context.clone(),
-                state: self.state.clone(),
-                node: Arc::new(ProofNode {
-                    parent: Some(self.node.clone()),
-                    step: None,
-                    focused: self.node.focused,
-                    depth: self.node.depth,
-                    statement_split: None,
-                }),
-                focused: record.ids[0],
-            },
-            record.split,
-            record.ids,
-        )))
     }
 
     /// Joins a completed in-`Proof` `if` split with one structured `If`
@@ -3569,7 +3480,6 @@ impl<'a> Proof<'a> {
                 ))),
                 focused: marker.node.focused,
                 depth: parent.depth + 1,
-                statement_split: None,
             }),
             focused: marker.node.focused,
         })
@@ -3749,7 +3659,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
-                statement_split: None,
             }),
             focused: ids[0],
         };
@@ -3913,7 +3822,6 @@ impl<'a> Proof<'a> {
                 })),
                 focused: parent_goal,
                 depth: parent_node.depth + 1,
-                statement_split: None,
             }),
             focused: parent_goal,
         })
@@ -4052,7 +3960,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: GoalId::ROOT,
                 depth: 0,
-                statement_split: None,
             }),
             focused: GoalId::ROOT,
         };
@@ -4121,7 +4028,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: 0,
-                statement_split: None,
             }),
             focused: self.focused,
         };
@@ -5757,7 +5663,6 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(parts.step)),
                 focused: parent_goal,
                 depth: parent_node.depth + 1,
-                statement_split: None,
             }),
             focused: parent_goal,
         })
@@ -6064,7 +5969,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
-                statement_split: None,
             }),
             focused,
         };
@@ -6086,177 +5990,6 @@ impl<'a> Proof<'a> {
             initial_continuation_depth: prepared.initial_continuation_depth,
         };
         Ok((successor, record))
-    }
-
-    /// Checks an already-serialized simple certificate as a migration oracle
-    /// for transactional unit tests. Ordinary production verification has no
-    /// caller: source and generated tactics use the checked Proof drivers.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn check_certificate(
-        &self,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        #[cfg(test)]
-        SOURCE_CERTIFICATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        self.check_certificate_with_origin(certificate, None)
-    }
-
-    fn check_certificate_with_origin(
-        &self,
-        certificate: &ProofCertificate,
-        origin: Option<ProofStepOrigin>,
-    ) -> Result<Self, ClickError> {
-        #[cfg(test)]
-        CERTIFICATE_INTERPRETATIONS.with(|checks| checks.set(checks.get() + 1));
-        enum CheckFrame<'certificate, 'proof> {
-            Continue {
-                steps: &'certificate [SimpleProofStep],
-                next: usize,
-            },
-            BranchLeft {
-                marker: ProofCheckpoint<'proof>,
-                split: SplitId,
-                ids: [GoalId; 2],
-                structure: ProofBranchStructure,
-                right: &'certificate ProofCertificate,
-            },
-            BranchRight {
-                marker: ProofCheckpoint<'proof>,
-                split: SplitId,
-                ids: [GoalId; 2],
-                structure: ProofBranchStructure,
-            },
-            Have {
-                scope: ProofScope<'proof>,
-            },
-        }
-
-        let mut proof = self.clone();
-        let mut steps = certificate.steps();
-        let mut next = 0;
-        let mut frames = Vec::new();
-        loop {
-            if let Some(step) = steps.get(next) {
-                next += 1;
-                match step {
-                    SimpleProofStep::Cases {
-                        disjunction,
-                        left_proof,
-                        right_proof,
-                    } => {
-                        let (split_proof, split, ids) =
-                            proof.split_focused_cases(disjunction.clone())?;
-                        let marker = split_proof.checkpoint();
-                        proof = split_proof;
-                        frames.push(CheckFrame::Continue { steps, next });
-                        frames.push(CheckFrame::BranchLeft {
-                            marker,
-                            split,
-                            ids,
-                            structure: ProofBranchStructure::Cases {
-                                disjunction: disjunction.clone(),
-                            },
-                            right: right_proof,
-                        });
-                        steps = left_proof.steps();
-                        next = 0;
-                    }
-                    SimpleProofStep::If {
-                        condition,
-                        then_proof,
-                        else_proof,
-                    } => {
-                        let (split_proof, split, ids) = if let Some(existing) =
-                            proof.enter_statement_successor_if(condition)?
-                        {
-                            existing
-                        } else {
-                            proof.split_focused_if(condition.clone())?
-                        };
-                        let marker = split_proof.checkpoint();
-                        proof = split_proof;
-                        frames.push(CheckFrame::Continue { steps, next });
-                        frames.push(CheckFrame::BranchLeft {
-                            marker,
-                            split,
-                            ids,
-                            structure: ProofBranchStructure::If {
-                                condition: condition.clone(),
-                            },
-                            right: else_proof,
-                        });
-                        steps = then_proof.steps();
-                        next = 0;
-                    }
-                    SimpleProofStep::Have {
-                        proposition,
-                        proof: body,
-                    } => {
-                        let scope = proof.begin_have(proposition.clone())?;
-                        proof = scope.body.clone();
-                        frames.push(CheckFrame::Continue { steps, next });
-                        frames.push(CheckFrame::Have { scope });
-                        steps = body.steps();
-                        next = 0;
-                    }
-                    _ => proof = proof.apply_step_with_origin(step.clone(), origin)?,
-                }
-                continue;
-            }
-
-            let Some(frame) = frames.pop() else {
-                return Ok(proof);
-            };
-            match frame {
-                CheckFrame::Continue {
-                    steps: continuation,
-                    next: continuation_next,
-                } => {
-                    steps = continuation;
-                    next = continuation_next;
-                }
-                CheckFrame::BranchLeft {
-                    marker,
-                    split,
-                    ids,
-                    structure,
-                    right,
-                } => {
-                    proof = proof.focus(ids[1])?;
-                    frames.push(CheckFrame::BranchRight {
-                        marker,
-                        split,
-                        ids,
-                        structure,
-                    });
-                    steps = right.steps();
-                    next = 0;
-                }
-                CheckFrame::BranchRight {
-                    marker,
-                    split,
-                    ids,
-                    structure,
-                } => {
-                    proof = match structure {
-                        ProofBranchStructure::Cases { disjunction } => {
-                            proof.join_focused_cases(&marker, split, ids, disjunction)?
-                        }
-                        ProofBranchStructure::If { condition } => {
-                            proof.join_focused_if(&marker, split, ids, condition)?
-                        }
-                    };
-                    steps = &[];
-                    next = 0;
-                }
-                CheckFrame::Have { mut scope } => {
-                    scope.body = proof;
-                    proof = scope.join()?;
-                    steps = &[];
-                    next = 0;
-                }
-            }
-        }
     }
 
     fn certificate_after_node(
@@ -9992,7 +9725,6 @@ impl<'a> Proof<'a> {
                 step: None,
                 focused: self.focused,
                 depth: self.node.depth,
-                statement_split: None,
             }),
             focused: outcome_ids[0],
         };
@@ -11763,7 +11495,7 @@ impl<'a> Proof<'a> {
             )
         };
 
-        let (goals, focused, statement_split, added_facts) = match checked.len() {
+        let (goals, focused, added_facts) = match checked.len() {
             1 => {
                 let (goal, added, path) = make_goal(
                     checked
@@ -11775,7 +11507,6 @@ impl<'a> Proof<'a> {
                 (
                     self.state.goals.replace_at(self.focused, goal),
                     self.focused,
-                    None,
                     added,
                 )
             }
@@ -11815,20 +11546,12 @@ impl<'a> Proof<'a> {
                         "statement successors did not cover both partition polarities",
                     ));
                 };
-                let (split, ids, goals) = self
+                let _ = condition.expect("two successors recorded a condition");
+                let (_split, ids, goals) = self
                     .state
                     .goals
                     .split_at(self.focused, [then_goal, else_goal]);
-                (
-                    goals,
-                    ids[0],
-                    Some(StatementSuccessorSplit {
-                        split,
-                        ids,
-                        condition: condition.expect("two successors recorded a condition"),
-                    }),
-                    common_added.unwrap_or_default(),
-                )
+                (goals, ids[0], common_added.unwrap_or_default())
             }
             count => {
                 return Err(self.step_error(format!(
@@ -11849,7 +11572,6 @@ impl<'a> Proof<'a> {
                 step: Some(Arc::new(step)),
                 focused: self.focused,
                 depth: self.node.depth + 1,
-                statement_split,
             }),
             focused,
         })
@@ -12476,7 +12198,6 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused: self.root.focused,
                         depth: self.root.node.depth + 1,
-                        statement_split: None,
                     }),
                     focused: self.root.focused,
                 })
@@ -12554,7 +12275,6 @@ impl<'a> ProofScope<'a> {
                         })),
                         focused,
                         depth: self.root.node.depth + 1,
-                        statement_split: None,
                     }),
                     focused,
                 })
@@ -14451,8 +14171,9 @@ mod tests {
             let certificate =
                 ProofCertificate::from_steps(vec![unfold.clone(), SimpleProofStep::Assumption]);
             let checked = root
-                .check_certificate(&certificate)
-                .expect("an explicit proposition unfold certificate should check through Proof");
+                .try_planned_linear_script(&certificate.to_proof_tactics())
+                .expect("the explicit proposition unfold script should apply through Proof")
+                .expect("the explicit proposition unfold script should close");
             assert!(checked.is_complete());
             assert_eq!(checked.certificate(), certificate);
             assert!(root.certificate().steps().is_empty());
@@ -14528,8 +14249,9 @@ mod tests {
             SimpleProofStep::Assumption,
         ]);
         let checked = root
-            .check_certificate(&certificate)
-            .expect("point unfold should use the shared predicate transition");
+            .try_planned_linear_script(&certificate.to_proof_tactics())
+            .expect("point unfold should use the shared Proof script driver")
+            .expect("point unfold should close through the shared predicate transition");
         assert!(checked.is_complete());
         assert_eq!(checked.certificate(), certificate);
         assert!(root.certificate().steps().is_empty());
@@ -17101,16 +16823,11 @@ mod tests {
             );
             let retained_root = root.clone();
             let before = fact_node_allocations();
-            let (closed, certificate_interpretations) =
-                count_certificate_interpretations(|| root.try_simp_closure());
-            let closed = closed
+            let closed = root
+                .try_simp_closure()
                 .expect("smart search must not exceed its deadline")
                 .expect("the typed path should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
-            assert_eq!(
-                certificate_interpretations, 0,
-                "the structured signed-order candidate must advance Proof directly"
-            );
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
             let allocation_bound = 128 * logarithmic_height + 512;
             assert!(
@@ -18916,9 +18633,11 @@ mod tests {
             .expect("the typed equality evidence should select the named theorem");
             let planned_certificate = ProofCertificate::from_proof_tactics(&planned)
                 .expect("the named equality theorem should form a simple certificate");
-            pure_root
-                .check_certificate(&planned_certificate)
-                .unwrap_or_else(|error| panic!("the named equality certificate failed: {error:?}"));
+            let planned_closed = pure_root
+                .try_planned_linear_script(&planned_certificate.to_proof_tactics())
+                .unwrap_or_else(|error| panic!("the named equality plan failed: {error:?}"))
+                .expect("the named equality plan should close through checked Proof operations");
+            assert!(planned_closed.is_complete());
             let pure_closed = pure_root
                 .try_restricted_simp_closure(&selected)
                 .expect("restricted simp should retain the checked equality theorem");

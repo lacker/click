@@ -15,9 +15,8 @@ mod proof_object;
 
 #[cfg(test)]
 pub(in crate::lang::click) use proof_object::{
-    count_certificate_interpretations, count_checked_execution_interface_joins,
-    count_execution_context_exports, count_explicit_linear_fallbacks,
-    count_source_certificate_checks,
+    count_checked_execution_interface_joins, count_execution_context_exports,
+    count_explicit_linear_fallbacks, count_source_certificate_checks,
 };
 mod pure_theorems;
 mod replay_engine;
@@ -1259,31 +1258,25 @@ mod certificate_tests {
         let succeeding = ProofCertificate::from_proof_tactics(&[ProofTactic::Normalize])
             .expect("normalize is a simple tactic");
 
-        let (failed, certificate_interpretations) = count_certificate_interpretations(|| {
-            pure_goal_proof_certificate_gateway(
-                "reflexive.ensures_0",
-                || Ok(failing.clone()),
-                |certificate| {
-                    replay_pure_theorem_certificate(
-                        "reflexive.ensures_0",
-                        &context.requires,
-                        &goal,
-                        &predicate_environment,
-                        &click_function_environment,
-                        &theorem_environment,
-                        &context,
-                        certificate,
-                        None,
-                    )
-                },
-            )
-        });
+        let failed = pure_goal_proof_certificate_gateway(
+            "reflexive.ensures_0",
+            || Ok(failing.clone()),
+            |certificate| {
+                replay_pure_theorem_certificate(
+                    "reflexive.ensures_0",
+                    &context.requires,
+                    &goal,
+                    &predicate_environment,
+                    &click_function_environment,
+                    &theorem_environment,
+                    &context,
+                    certificate,
+                    None,
+                )
+            },
+        );
         let error =
             failed.expect_err("a perturbed smart certificate must not be reported as success");
-        assert_eq!(
-            certificate_interpretations, 0,
-            "pure surface validation must apply checked Proof operations, even on failure"
-        );
         assert!(
             error
                 .message()
@@ -1291,24 +1284,18 @@ mod certificate_tests {
             "unexpected gateway error: {}",
             error.message()
         );
-        let (succeeded, certificate_interpretations) = count_certificate_interpretations(|| {
-            replay_pure_theorem_certificate(
-                "reflexive.ensures_0",
-                &context.requires,
-                &goal,
-                &predicate_environment,
-                &click_function_environment,
-                &theorem_environment,
-                &context,
-                &succeeding,
-                None,
-            )
-        });
-        succeeded.expect("failed validation must not mutate the shared proof inputs");
-        assert_eq!(
-            certificate_interpretations, 0,
-            "pure surface validation must not invoke the generic certificate interpreter"
+        let succeeded = replay_pure_theorem_certificate(
+            "reflexive.ensures_0",
+            &context.requires,
+            &goal,
+            &predicate_environment,
+            &click_function_environment,
+            &theorem_environment,
+            &context,
+            &succeeding,
+            None,
         );
+        succeeded.expect("failed validation must not mutate the shared proof inputs");
     }
 
     #[test]

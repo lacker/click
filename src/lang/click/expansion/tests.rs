@@ -1141,22 +1141,15 @@ int32 vector_replace_if(
         ("vector_set.c", set_source),
         ("vector_replace_if.c", replace_source),
     ];
-    let (expanded_frame, certificate_interpretations) =
-        crate::lang::click::proof::count_certificate_interpretations(|| {
-            expand_top_level_tactic_for_test(
-                click_source,
-                &sources,
-                "vector_replace_if",
-                CProofClaim::Grouped,
-                7,
-            )
-        });
+    let expanded_frame = expand_top_level_tactic_for_test(
+        click_source,
+        &sources,
+        "vector_replace_if",
+        CProofClaim::Grouped,
+        7,
+    );
     let expanded_frame = expanded_frame
         .expect("smart frame should expand with snapshot-correct loadability premises");
-    assert_eq!(
-        certificate_interpretations, 0,
-        "outcome script selection must advance through Proof without certificate interpretation"
-    );
 
     assert!(
         expanded_frame.contains("frame() using {"),
