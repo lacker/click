@@ -60,16 +60,38 @@ fn grouped_contract_resource_shape(function_block: &FunctionBlock) -> (bool, boo
     )
 }
 
-fn value_predicate_contract_supported(
+fn grouped_predicate_contract_supported(
     function_block: &FunctionBlock,
     predicate_environment: &PredicateEnvironment,
 ) -> bool {
+    fn direct_predicate_call_key(
+        proposition: &ClickProposition,
+    ) -> Option<(String, Vec<CExpression>)> {
+        let ClickProposition::PredicateCall { name, arguments } = proposition else {
+            return None;
+        };
+        let arguments = arguments
+            .iter()
+            .map(|argument| match argument {
+                ContractExpression::CFragment(expression) => Some(expression.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((name.clone(), arguments))
+    }
+
     let pointer_parameters = function_block
         .signature()
         .parameters()
         .iter()
         .filter(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
         .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    let preserved_predicates = function_block
+        .requires()
+        .iter()
+        .filter_map(Requirement::proposition)
+        .filter_map(direct_predicate_call_key)
         .collect::<BTreeSet<_>>();
     function_block
         .requires()
@@ -85,6 +107,16 @@ fn value_predicate_contract_supported(
             let mut predicates = BTreeSet::new();
             collect_called_predicates(proposition, &mut predicates);
             if predicates.is_empty() {
+                return true;
+            }
+            // A heap-backed predicate requirement and an identical ensure
+            // are already one checked fact at the execution frontier. The
+            // retained Proof can preserve or explicitly unfold that fact
+            // without the value-only lowering restriction used by predicate
+            // conclusions that must be established from execution aftermath.
+            if direct_predicate_call_key(proposition)
+                .is_some_and(|key| preserved_predicates.contains(&key))
+            {
                 return true;
             }
             let mut referenced = BTreeSet::new();
@@ -173,7 +205,7 @@ fn top_level_structural_proof_supported(
     });
     (opens.is_empty() || (!has_quantified_contract_resource && scope_definitions_are_supported))
         && structural_tactics
-        && value_predicate_contract_supported(function_block, predicate_environment)
+        && grouped_predicate_contract_supported(function_block, predicate_environment)
 }
 
 fn value_predicate_definition_supported(
@@ -482,7 +514,7 @@ fn grouped_flat_proof_supported(
     let owns_one_execution_frontier =
         !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
     owns_one_execution_frontier
-        && value_predicate_contract_supported(function_block, predicate_environment)
+        && grouped_predicate_contract_supported(function_block, predicate_environment)
         && (!has_declared_contract_resource || declared_resource_call_shape)
 }
 

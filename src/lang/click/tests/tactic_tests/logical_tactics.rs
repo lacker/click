@@ -955,10 +955,54 @@ fn unfolds_general_sorted_predicate() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("keep_sorted.c", c_source)])
-        .expect("general sorted predicate should unfold deterministically");
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("keep_sorted.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("general sorted predicate should unfold deterministically");
 
     assert_eq!(verified.len(), 1);
+    assert_eq!(
+        flat_units, 1,
+        "the grouped predicate proof should retain one Proof"
+    );
+    assert_eq!(
+        replay_executions, 0,
+        "the preserved heap predicate must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the preserved heap predicate must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary predicate preservation must not check a certificate"
+    );
+
+    let expanded = expand_c0_claim_source(
+        click_source,
+        &[("keep_sorted.c", c_source)],
+        "keep_sorted",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained predicate proof should expand");
+    assert!(expanded.contains("unfold(sorted);"), "{expanded}");
+    verify_c0_sources(&expanded, &[("keep_sorted.c", c_source)])
+        .expect("the expanded predicate proof should independently reverify");
+
+    let corrupted = expanded.replacen("unfold(sorted);", "unfold(missing);", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its checked unfold"
+    );
+    verify_c0_sources(&corrupted, &[("keep_sorted.c", c_source)])
+        .expect_err("a corrupted predicate unfold must be rejected");
 }
 
 #[test]
