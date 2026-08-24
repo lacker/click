@@ -314,20 +314,22 @@ fn grouped_flat_proof_supported(
 ) -> bool {
     // The direct grouped slice owns one execution frontier with proposition
     // claims, including value-predicate contracts, immutable opaque calls
-    // transferring unmixed declared composite resources, and all feasible
+    // transferring unmixed declared composite resources, explicit checked
+    // unfold/fold/observe operations on those resources, and all feasible
     // successor paths.
     // Heap/resource-observing predicate bodies, mixed raw-memory/composite
-    // contracts, and explicit composite manipulation still depend on outcome
-    // compatibility planning. The direct leading-point slice deliberately
-    // starts with proposition-only goals and the linear operations already
-    // checked by Proof. Logical decomposition over value propositions stays
-    // inside the nested Proof goal. Universal and existential value binders
-    // also remain inside that goal; their explicit checked operations need no
-    // cursor state. An exact empty mutable frame is checked here when it
-    // immediately follows the execution operation. A post-execution logical
-    // operation before that frame still needs the ordered compatibility
-    // driver. Entry resource-relation facts use the same nested proposition
-    // scopes; top-level grouped choices preserve their compatibility cursor.
+    // contracts still depend on outcome compatibility planning. Top-level
+    // `open` has its own structural Proof driver. The direct leading-point
+    // slice deliberately starts with proposition-only goals and the linear
+    // operations already checked by Proof. Logical decomposition over value
+    // propositions stays inside the nested Proof goal. Universal and
+    // existential value binders also remain inside that goal; their explicit
+    // checked operations need no cursor state. An exact empty mutable frame is
+    // checked here when it immediately follows the execution operation. A
+    // post-execution logical operation before that frame still needs the
+    // ordered compatibility driver. Entry resource-relation facts use the same
+    // nested proposition scopes; top-level grouped choices preserve their
+    // compatibility cursor.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -351,17 +353,9 @@ fn grouped_flat_proof_supported(
             .effects()
             .iter()
             .all(|clause| matches!(clause.effect(), Effect::Immutable))
-        && tactics.iter().all(|tactic| {
-            !matches!(
-                tactic,
-                ProofTactic::SmartFrame(_)
-                    | ProofTactic::FrameUsing { .. }
-                    | ProofTactic::UnfoldResource(_)
-                    | ProofTactic::FoldResource(_)
-                    | ProofTactic::ObserveResource(_)
-                    | ProofTactic::Open(_)
-            )
-        });
+        && tactics
+            .iter()
+            .all(|tactic| !matches!(tactic, ProofTactic::Open(_)));
     let has_mutable_effect = function_block
         .effects()
         .iter()
