@@ -158,12 +158,20 @@ fn smart_loop_effect_frame_selection_ignores_unrelated_named_facts() {
         let click_source = format!(
             "verifying \"fill_one.c\";\n\nint32 fill_one(int32 p[]{parameters}) {{\n    requires loadable(p[0..1]);\n    consumes p[0..1];\n{requirements}    ensures result == 1;\n}} by {{\n    step();\n    step();\n    loop {{\n        invariant i >= 0;\n        invariant i <= 1;\n        mutable p[0..1] by frame;\n        initialize by simp;\n        preserve by {{\n            step();\n            step();\n            close_invariants();\n        }}\n    }}\n    step();\n    simp();\n}}\n"
         );
-        let ((verified, candidates), sample) = scaling_sample(size, || {
-            proof::count_smart_loop_effect_frame_candidates(|| {
-                verify_c0_sources(&click_source, &[("fill_one.c", &c_source)])
+        let (((verified, candidates), replay_labels), sample) = scaling_sample(size, || {
+            proof::collect_internal_proof_execution_labels(|| {
+                proof::count_smart_loop_effect_frame_candidates(|| {
+                    verify_c0_sources(&click_source, &[("fill_one.c", &c_source)])
+                })
             })
         });
         verified.expect("the smart loop effect frame should ignore unrelated named facts");
+        assert!(
+            replay_labels
+                .iter()
+                .all(|label| !label.ends_with(".loop(0).preserve")),
+            "size {size} explicit preservation entered compatibility replay: {replay_labels:?}"
+        );
         candidate_counts.push(candidates);
         samples.push(sample);
     }

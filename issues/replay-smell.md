@@ -77,6 +77,15 @@ leading loop-effect scopes compose on `Proof`, and structural-effect checking
 has no compatibility replay fallback. Induction, a C `branch` at the loop
 back-edge effect goal, and nested-loop certificate variants are rejected as
 invalid effect operations rather than treated as migration targets.
+Source-linear handwritten loop-preservation proofs now likewise retain one
+`Proof` from the loop-body entry through every explicit or smart operation,
+the back-edge invariant-bundle judgment, and the structural-effect checks.
+A terminal `simp` selects invariant closure on that same persistent lineage;
+ordinary verification and verification of expanded source do not replay the
+preservation certificate. Structurally branching preservation source, nested
+loop preservation, and planner-generated automatic preservation remain at the
+explicit compatibility boundary until frontier-loop structural operations are
+owned by `Proof`.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
 preserve.
