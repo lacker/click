@@ -1141,6 +1141,113 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
 }
 
 #[test]
+fn grouped_mutable_outcome_resources_stay_on_one_proof() {
+    let c_source = r#"
+            int32 set_seven(int32* cell) {
+                cell[0] = 7;
+                return cell[0];
+            }
+        "#;
+    let click_source = r#"
+            resource seven_cell(cell: int32*) {
+                owns cell[0..1];
+                fact cell[0] == 7;
+            }
+
+            verifying "set_seven.c";
+
+            int32 set_seven(int32* cell) {
+                owns seven_cell(cell);
+                mutable cell[0..1];
+                ensures result == 7;
+            } by {
+                unfold(seven_cell(cell));
+                execute();
+                have cell[0] == 7 by {
+                    simp();
+                }
+                fold(seven_cell(cell));
+                frame() using {
+                    cell[0] == 7;
+                }
+                simp();
+            }
+        "#;
+    let sources = &[("set_seven.c", c_source)];
+
+    let (
+        (
+            (((verified, explicit_fallbacks), certificate_checks), context_exports),
+            replay_executions,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, sources)
+                    })
+                })
+            })
+        })
+    });
+    verified.expect("mutable outcome resource operations should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "mutable outcome resource operations must not replay"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the mutable outcome Proof must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary mutable outcome verification must not check a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "mutable outcome resource operations must apply directly to Proof"
+    );
+
+    let expanded = expand_c0_claim_source(click_source, sources, "set_seven", CProofClaim::Grouped)
+        .expect("the retained mutable outcome Proof should expand");
+    assert!(expanded.contains("unfold(seven_cell(cell));"), "{expanded}");
+    assert!(expanded.contains("have cell[0] == 7 by {"), "{expanded}");
+    assert!(expanded.contains("fold(seven_cell(cell));"), "{expanded}");
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten mutable outcome proof should verify normally");
+
+    let frame_fact = "cell[0] == 7;";
+    let frame_fact_offset = expanded
+        .rfind(frame_fact)
+        .expect("expanded frame should retain its checked premise");
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        frame_fact_offset..frame_fact_offset + frame_fact.len(),
+        "cell[0] == 8;",
+    );
+    assert_ne!(
+        corrupted, expanded,
+        "expansion should expose the post-execution frame premise"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources))
+        });
+    corrupted_result.expect_err("tampering with the post-execution frame premise must fail");
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "invalid migrated outcome work must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "invalid migrated outcome work must not enter replay"
+    );
+}
+
+#[test]
 fn flat_function_expansion_rewrites_and_rejects_tampering() {
     let c_source = r#"
             int32 identity(int32 x) {

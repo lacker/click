@@ -1041,6 +1041,14 @@ struct OutcomeGoal {
     /// Zero-based position among the exit's checked paths, in the checked
     /// execution's deterministic order.
     path_index: usize,
+    /// Effect clauses still owed by this exact checked outcome. Result-aware
+    /// operations may advance the path before its source-ordered frame closes
+    /// this selection.
+    selection: EffectGoalSelection,
+    /// Effect indices discharged by the most recent checked outcome frame.
+    /// Ordered finalization consumes this private authority without checking
+    /// the same effect transition again.
+    checked_effects: Arc<Vec<usize>>,
     /// The outcome's result-aware point data. Behind one `Arc` so a nested
     /// proposition judgment stated at this outcome borrows it by identity;
     /// a checked operation that records new lowerings installs a fresh
@@ -1058,6 +1066,9 @@ struct OutcomePointData {
     state: SharedValue<CState>,
     surface_propositions: SurfacePropositionMap,
     effect_facts: Arc<Vec<ExecutionPureFact>>,
+    /// The path's non-effect execution facts, matching the resource-fold law's
+    /// historical input exactly.
+    execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
     /// The statement-entry anchor for premises naming a C local after it
     /// left scope, captured from the frontier at derivation.
     premise_anchor: Option<ProgramPointRef>,
@@ -1189,6 +1200,8 @@ impl Goal {
             }),
             Self::FunctionOutcome(goal) => Self::FunctionOutcome(OutcomeGoal {
                 path_index: goal.path_index,
+                selection: goal.selection,
+                checked_effects: goal.checked_effects.clone(),
                 point: goal.point.clone(),
                 context,
             }),
@@ -1211,8 +1224,8 @@ pub(super) enum EffectGoalSelection {
 /// Private authority that the ordered outcome finalizer may consume without
 /// proving the same function effect a second time.
 ///
-/// Only `Proof::apply_execution_frame_using` constructs this value, after it
-/// checks every selected effect against every owned execution outcome.
+/// Only checked `Proof` frame operations construct this value, after checking
+/// every selected effect against the outcome or outcomes they own.
 #[derive(Clone)]
 pub(super) struct CheckedFrameAuthority {
     effect_indices: Arc<Vec<usize>>,
@@ -2296,7 +2309,13 @@ impl<'a> Proof<'a> {
             SimpleProofStep::UnfoldResource(resource) => {
                 self.apply_execution_resource_unfold(resource)
             }
-            SimpleProofStep::FoldResource(resource) => self.apply_execution_resource_fold(resource),
+            SimpleProofStep::FoldResource(resource) => {
+                if self.focused_outcome_point().is_some() {
+                    self.apply_outcome_resource_fold(resource)
+                } else {
+                    self.apply_execution_resource_fold(resource)
+                }
+            }
             SimpleProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }
@@ -2319,7 +2338,11 @@ impl<'a> Proof<'a> {
             SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             SimpleProofStep::CloseInvariants => self.apply_close_invariants(),
             SimpleProofStep::FrameUsing { region, premises } => {
-                self.apply_execution_frame_using(region.as_ref(), premises, origin)
+                if self.focused_outcome_point().is_some() {
+                    self.apply_outcome_frame_using(region.as_ref(), premises)
+                } else {
+                    self.apply_execution_frame_using(region.as_ref(), premises, origin)
+                }
             }
             _ => {
                 Err(self
@@ -2345,11 +2368,15 @@ impl<'a> Proof<'a> {
         &self,
         context: &ExecutionProofContext<'_>,
     ) -> Result<Vec<usize>, ClickError> {
-        let Some(Goal::Frontier(FrontierGoal { selection, .. })) = self.focused_goal() else {
-            return Err(self.step_error("`frame using` requires an execution effect goal"));
+        let selection = match self.focused_goal() {
+            Some(Goal::Frontier(FrontierGoal { selection, .. })) => *selection,
+            Some(Goal::FunctionOutcome(OutcomeGoal { selection, .. })) => *selection,
+            _ => {
+                return Err(self.step_error("`frame using` requires an execution effect goal"));
+            }
         };
         let effect_count = context.function_block.effects().len();
-        let indices = match *selection {
+        let indices = match selection {
             EffectGoalSelection::None => Vec::new(),
             EffectGoalSelection::One(index) if index < effect_count => vec![index],
             EffectGoalSelection::One(index) => {
@@ -2399,6 +2426,115 @@ impl<'a> Proof<'a> {
     /// outlined so its execution-state locals do not enlarge the common
     /// simple-step dispatcher frame; the expansion small-stack test pins that
     /// dispatch budget.
+    #[inline(never)]
+    fn apply_outcome_frame_using(
+        &self,
+        region: Option<&CodeRegionRef>,
+        premises: &[ClickProposition],
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`frame using` requires an execution proof"));
+        };
+        if !matches!(region, None | Some(CodeRegionRef::Function)) {
+            return Err(
+                self.step_error("a result-aware `frame using` can close only the function effect")
+            );
+        }
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return Err(self.step_error("result-aware `frame using` requires an outcome goal"));
+        };
+        let effect_indices = self.selected_effect_indices(context)?;
+        let execution = goal.context.execution.as_deref().ok_or_else(|| {
+            self.step_error("result-aware `frame using` lost its execution snapshot")
+        })?;
+        let pre_state = execution.replay.execution_start_state(&execution.state);
+
+        let mut point = (*goal.point).clone();
+        let mut frame_facts = Vec::with_capacity(premises.len());
+        for surface in premises {
+            let fact = point
+                .surface_propositions
+                .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| {
+                    self.lower_surface_proposition(surface, "`frame using` premise")
+                })?;
+            if !self.facts().contains(&fact) {
+                return Err(self.step_error(format!(
+                    "`frame using` requires an exact available premise: {fact:?}"
+                )));
+            }
+            point.surface_propositions.record_lowering(surface, &fact)?;
+            if !frame_facts.contains(&fact) {
+                frame_facts.push(fact);
+            }
+        }
+
+        let mut outcome = CFunctionOutcome::Return {
+            value: (*point.result).clone(),
+            state: (*point.state).clone(),
+        };
+        for effect_index in &effect_indices {
+            let claim = FunctionClaimRef::Effect(
+                *effect_index,
+                &context.function_block.effects()[*effect_index],
+            );
+            let claim_label =
+                function_claim_label(context.function_block.signature().name(), &claim);
+            check_effect_claim_exact(
+                &claim_label,
+                goal.path_index,
+                &point.effect_facts,
+                &frame_facts,
+                &claim,
+                context.parsed_function.parameters(),
+                context.arguments,
+                pre_state,
+                &outcome,
+            )?;
+        }
+
+        let mut assumptions = self.facts().assumptions().clone();
+        for fact in point.effect_facts.iter() {
+            assumptions = assumptions.assume_proposition(fact.proposition().clone());
+        }
+        let (transitioned, _obligations) =
+            crate::kernel::apply_c_function_contract_resource_transition(
+                pre_state,
+                context.function,
+                context.arguments,
+                outcome,
+                &assumptions,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "could not apply checked contract resource effect: {message}"
+                ))
+            })?;
+        outcome = transitioned;
+        let CFunctionOutcome::Return { value, state } = outcome else {
+            return Err(self.step_error(
+                "checked contract resource effect did not preserve the return outcome",
+            ));
+        };
+        point.result = Arc::new(value);
+        point.state = state.into();
+        let mut updated = goal.clone();
+        updated.selection = EffectGoalSelection::None;
+        updated.checked_effects = Arc::new(effect_indices);
+        updated.point = Arc::new(point);
+        Ok(ProofState {
+            locals: self.state.locals.clone(),
+            goals: self
+                .state
+                .goals
+                .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(frame_facts),
+        })
+    }
+
     #[inline(never)]
     fn apply_execution_frame_using(
         &self,
@@ -6876,6 +7012,63 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Applies one source-ordered composite fold to the focused typed outcome.
+    /// The result/state snapshot and persistent fact root advance together in
+    /// the returned Proof successor; no caller-owned outcome is mutated.
+    fn apply_outcome_resource_fold(
+        &self,
+        resource: &ResourceClause,
+    ) -> Result<ProofState, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("outcome resource `fold` requires an execution proof"));
+        };
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return Err(self.step_error("outcome resource `fold` requires a focused outcome goal"));
+        };
+        let execution = goal.context.execution.as_deref().ok_or_else(|| {
+            self.step_error("outcome resource `fold` lost its execution snapshot")
+        })?;
+        let pre_state = execution.replay.execution_start_state(&execution.state);
+        let outcome = CFunctionOutcome::Return {
+            value: (*goal.point.result).clone(),
+            state: (*goal.point.state).clone(),
+        };
+        let checked = fold_composite_resource_on_outcome_for_proof(
+            context.resource_environment,
+            resource,
+            context.claim_label,
+            goal.path_index,
+            &goal.point.execution_pure_facts,
+            self.facts().clone(),
+            &goal.point.surface_propositions,
+            context.parsed_function.parameters(),
+            context.arguments,
+            pre_state,
+            outcome,
+            context.predicate_environment,
+            context.click_function_environment,
+            &self.active_unfolded_predicates(),
+        )?;
+        let CFunctionOutcome::Return { value, state } = checked.outcome else {
+            unreachable!("folding a return outcome preserves its outcome kind")
+        };
+        let mut point = (*goal.point).clone();
+        point.result = Arc::new(value);
+        point.state = state.into();
+        let mut updated = goal.clone();
+        updated.point = Arc::new(point);
+        updated.context.facts = checked.facts;
+        Ok(ProofState {
+            locals: self.state.locals.clone(),
+            goals: self
+                .state
+                .goals
+                .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+            added_facts: Arc::new(Vec::new()),
+            checked_facts: Arc::new(Vec::new()),
+        })
+    }
+
     pub(super) fn into_execution_context(self) -> Result<ProofReplayContext, ClickError> {
         #[cfg(test)]
         EXECUTION_CONTEXT_EXPORTS.with(|exports| exports.set(exports.get() + 1));
@@ -9436,6 +9629,28 @@ impl<'a> Proof<'a> {
             })
     }
 
+    pub(super) fn focused_outcome_snapshot(&self) -> Result<CFunctionOutcome, ClickError> {
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
+        };
+        Ok(CFunctionOutcome::Return {
+            value: (*goal.point.result).clone(),
+            state: (*goal.point.state).clone(),
+        })
+    }
+
+    pub(super) fn checked_outcome_frame_authority(
+        &self,
+    ) -> Result<CheckedFrameAuthority, ClickError> {
+        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+            return Err(self.step_error("frame authority requires a focused outcome goal"));
+        };
+        if !matches!(goal.selection, EffectGoalSelection::None) || goal.checked_effects.is_empty() {
+            return Err(self.step_error("the focused outcome has no checked frame authority"));
+        }
+        Ok(CheckedFrameAuthority::new((*goal.checked_effects).clone()))
+    }
+
     /// Updates the focused outcome goal's immutable result/state snapshot
     /// after a separately checked resource transition.
     pub(super) fn with_outcome_snapshot(
@@ -9552,11 +9767,7 @@ impl<'a> Proof<'a> {
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             return Err(self.step_error("outcome goals require an open execution frontier"));
         };
-        if !matches!(frontier.selection, EffectGoalSelection::None) {
-            return Err(self.step_error(
-                "outcome goals require the frontier's effect obligations to be closed or unselected",
-            ));
-        }
+        let effect_selection = frontier.selection;
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
@@ -9660,11 +9871,14 @@ impl<'a> Proof<'a> {
                     id,
                     Goal::FunctionOutcome(OutcomeGoal {
                         path_index,
+                        selection: effect_selection,
+                        checked_effects: Arc::new(Vec::new()),
                         point: Arc::new(OutcomePointData {
                             result: Arc::new(result),
                             state: state.into(),
                             surface_propositions: frontier_surface.clone(),
                             effect_facts: Arc::new(execution_facts),
+                            execution_pure_facts: Arc::new(path.facts().to_vec()),
                             premise_anchor: frontier_anchor.clone(),
                             requirement_facts: requirement_facts.clone(),
                             requirement_surfaces: requirement_surfaces.clone(),
@@ -12177,16 +12391,26 @@ impl<'a> ProofScope<'a> {
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_fact(kernel.clone());
+                let mut goals = self
+                    .root
+                    .state
+                    .goals
+                    .with_facts_at(self.root.focused, facts);
+                if let Some(Goal::FunctionOutcome(outcome)) = goals.get(self.root.focused).cloned()
+                {
+                    let mut updated = outcome;
+                    let mut point = (*updated.point).clone();
+                    point
+                        .surface_propositions
+                        .record_lowering(&proposition, &kernel)?;
+                    updated.point = Arc::new(point);
+                    goals = goals.replace_at(self.root.focused, Goal::FunctionOutcome(updated));
+                }
                 Ok(Proof {
                     context: self.root.context.clone(),
                     state: Arc::new(ProofState {
                         locals: self.root.state.locals.clone(),
-
-                        goals: self
-                            .root
-                            .state
-                            .goals
-                            .with_facts_at(self.root.focused, facts),
+                        goals,
                         added_facts: Arc::new(vec![kernel.clone()]),
                         checked_facts: Arc::new(vec![kernel]),
                     }),

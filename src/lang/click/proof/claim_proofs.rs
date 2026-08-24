@@ -313,12 +313,14 @@ fn grouped_flat_proof_supported(
     predicate_environment: &PredicateEnvironment,
 ) -> bool {
     // The direct grouped slice owns one execution frontier with proposition
-    // claims, including value-predicate contracts, immutable opaque calls
-    // transferring unmixed declared composite resources, explicit checked
-    // unfold/fold/observe operations on those resources, and all feasible
+    // claims, including value-predicate contracts, opaque calls transferring
+    // unmixed declared composite resources, explicit checked
+    // unfold/fold/observe operations on those resources, source-ordered
+    // mutable outcome folds with an explicit nonempty frame, and all feasible
     // successor paths.
     // Heap/resource-observing predicate bodies, mixed raw-memory/composite
-    // contracts still depend on outcome compatibility planning. Top-level
+    // contracts and ambient smart mutable resource frames still depend on
+    // outcome compatibility planning. Top-level
     // `open` has its own structural Proof driver. The direct leading-point
     // slice deliberately starts with proposition-only goals and the linear
     // operations already checked by Proof. Logical decomposition over value
@@ -348,18 +350,46 @@ fn grouped_flat_proof_supported(
         });
     let (has_declared_contract_resource, declared_resources_are_unmixed) =
         grouped_contract_resource_shape(function_block);
-    let declared_resource_call_shape = declared_resources_are_unmixed
-        && function_block
-            .effects()
-            .iter()
-            .all(|clause| matches!(clause.effect(), Effect::Immutable))
-        && tactics
-            .iter()
-            .all(|tactic| !matches!(tactic, ProofTactic::Open(_)));
     let has_mutable_effect = function_block
         .effects()
         .iter()
         .any(|clause| !matches!(clause.effect(), Effect::Immutable));
+    let first_execution = tactics.iter().position(|tactic| {
+        matches!(
+            tactic,
+            ProofTactic::Step
+                | ProofTactic::StepUsing(_)
+                | ProofTactic::SmartStep
+                | ProofTactic::SmartExecute
+                | ProofTactic::SmartExecuteAllPaths
+                | ProofTactic::ExecuteUntil(_)
+        )
+    });
+    let explicit_mutable_outcome_resource_shape = first_execution.is_some_and(|execution| {
+        tactics
+            .iter()
+            .enumerate()
+            .find(|(index, tactic)| {
+                *index > execution && matches!(tactic, ProofTactic::FoldResource(_))
+            })
+            .is_some_and(|(fold, _)| {
+                tactics.iter().enumerate().any(|(index, tactic)| {
+                    index > fold
+                        && matches!(
+                            tactic,
+                            ProofTactic::FrameUsing {
+                                region: None | Some(CodeRegionRef::Function),
+                                premises,
+                            } if !premises.is_empty()
+                        )
+                })
+            })
+    });
+    let declared_resource_call_shape = declared_resources_are_unmixed
+        && tactics
+            .iter()
+            .all(|tactic| !matches!(tactic, ProofTactic::Open(_)))
+        && (!has_mutable_effect || explicit_mutable_outcome_resource_shape);
     let unsupported_empty_mutable_frame_ordering = has_mutable_effect
         && tactics.iter().enumerate().any(|(index, tactic)| {
             matches!(
@@ -1343,11 +1373,12 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     };
     // The drain re-enters the proof-object substrate exactly once: the
     // terminal execution context becomes an execution-frontier `Proof` whose
-    // typed outcome goals own each returning path's result, state, and fact
-    // context. At this boundary the function frame has already been consumed
-    // into deferred checked authority, so the reconstructed frontier carries
-    // no effect selection. A context that is not at a returning function
-    // exit derives no goals and drains through the legacy path unchanged.
+    // typed outcome goals own each returning path's result, state, fact
+    // context, and any effect selection not already consumed by a checked
+    // frontier frame. This lets source-ordered result/resource operations run
+    // before an explicit outcome frame without moving semantic authority back
+    // into the drain. A context that is not at a returning function exit
+    // derives no goals and drains through the legacy path unchanged.
     // Derivation is unconditional: every result-aware tactic kind consumes
     // goals now, and the working-set parity invariant below must hold for
     // every drain before the legacy vector retires.
@@ -1355,6 +1386,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         OrderedProofUnit::Checked(proof) => Some(proof.finalization_view()?),
         OrderedProofUnit::Replay(_) => None,
     };
+    let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
     let pure_facts = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
         (OrderedProofUnit::Replay(context), None) => context.pure_facts.clone(),
@@ -2180,53 +2212,71 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         });
                         match post_tactic {
                             PostExecutionTactic::Fold(resource) => {
-                                outcome = fold_composite_resources_on_outcome(
-                                    resource_environment,
-                                    std::slice::from_ref(resource),
-                                    &proof_label,
-                                    path_index,
-                                    path.facts(),
-                                    &path_requirements,
-                                    &current_outcome_surface_propositions,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &unfolded_predicates,
-                                    ResourceBodyClosure::Initialize,
-                                )?;
-                                path_requirements = project_outcome_resource_facts(
-                                    resource_environment,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    &path_requirements,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &proof_label,
-                                    path_index,
-                                )?;
-                                // Install the checked resource projection on
-                                // the retained outcome proof.
-                                if let Some(evolving) = outcome_proof.take() {
-                                    outcome_proof = Some(
-                                        evolving
-                                            .with_outcome_snapshot(&outcome)?
-                                            .with_checked_outcome_facts(&path_requirements)?,
+                                let surface_tactics = if proof_owned {
+                                    let Some(evolving) = outcome_proof.take() else {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `fold` has no Proof goal"
+                                        )));
+                                    };
+                                    let before = evolving.checkpoint();
+                                    let folded = evolving.apply_step(
+                                        SimpleProofStep::FoldResource(resource.clone()),
+                                    )?;
+                                    outcome = folded.focused_outcome_snapshot()?;
+                                    let retained =
+                                        folded.certificate_since(&before)?.to_proof_tactics();
+                                    outcome_proof = Some(folded);
+                                    retained
+                                } else {
+                                    outcome = fold_composite_resources_on_outcome(
+                                        resource_environment,
+                                        std::slice::from_ref(resource),
+                                        &proof_label,
+                                        path_index,
+                                        path.facts(),
+                                        &path_requirements,
+                                        &current_outcome_surface_propositions,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        outcome,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        &unfolded_predicates,
+                                        ResourceBodyClosure::Initialize,
+                                    )?;
+                                    path_requirements = project_outcome_resource_facts(
+                                        resource_environment,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        &outcome,
+                                        &path_requirements,
+                                        predicate_environment,
+                                        click_function_environment,
+                                        &proof_label,
+                                        path_index,
+                                    )?;
+                                    if let Some(evolving) = outcome_proof.take() {
+                                        outcome_proof = Some(
+                                            evolving
+                                                .with_outcome_snapshot(&outcome)?
+                                                .with_checked_outcome_facts(&path_requirements)?,
+                                        );
+                                    }
+                                    vec![ProofTactic::FoldResource(resource.clone())]
+                                };
+                                for tactic in surface_tactics {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        replay.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic,
                                     );
                                 }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::FoldResource(resource.clone()),
-                                );
                             }
                             PostExecutionTactic::CloseOpen {
                                 resource,
@@ -3207,6 +3257,57 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 );
                             }
                             PostExecutionTactic::FrameUsing { region, premises } => {
+                                if proof_owned {
+                                    let Some(evolving) = outcome_proof.take() else {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `frame using` has no Proof goal"
+                                        )));
+                                    };
+                                    let before = evolving.checkpoint();
+                                    let framed = evolving.apply_step_at(
+                                        SimpleProofStep::FrameUsing {
+                                            region: region.clone(),
+                                            premises: premises.clone(),
+                                        },
+                                        *tactic_index,
+                                        *source_index,
+                                    )?;
+                                    let authority = framed.checked_outcome_frame_authority()?;
+                                    let mut matched = 0;
+                                    for (claim_index, claim) in claims.iter().enumerate() {
+                                        let FunctionClaimRef::Effect(effect_index, _) = claim
+                                        else {
+                                            continue;
+                                        };
+                                        if !authority.contains(*effect_index) {
+                                            continue;
+                                        }
+                                        closures[claim_index] = ClaimClosure::by_exact_check();
+                                        matched += 1;
+                                    }
+                                    if matched != authority.len() {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome frame selected {} effect goals but ordered finalization owns {matched}",
+                                            authority.len()
+                                        )));
+                                    }
+                                    outcome = framed.focused_outcome_snapshot()?;
+                                    resource_transition_applied = true;
+                                    let certificate = framed.certificate_since(&before)?;
+                                    for tactic in certificate.to_proof_tactics() {
+                                        record_post_execution_surface_tactic(
+                                            deferred.surface_recorded,
+                                            &mut path_surface_post_tactics,
+                                            &mut path_deferred_capture_tactics,
+                                            replay.deferred_tactic_capture.as_ref(),
+                                            post_execution_index,
+                                            *tactic_index,
+                                            tactic,
+                                        );
+                                    }
+                                    outcome_proof = Some(framed);
+                                    continue;
+                                }
                                 let CFunctionOutcome::Return {
                                     value: result,
                                     state: post_state,

@@ -2645,10 +2645,14 @@ pub(super) struct CheckedResourceFold {
     pub(super) facts: ProofFacts,
 }
 
+pub(super) struct CheckedOutcomeResourceFold {
+    pub(super) outcome: CFunctionOutcome,
+    pub(super) facts: ProofFacts,
+}
+
 /// Checks one ordinary pre-execution `fold` against a persistent Proof
-/// frontier. Outcome finalization continues to use the legacy batch wrapper;
-/// this transition owns exactly one source step and does not materialize the
-/// complete ambient fact sequence on its success path.
+/// frontier. This transition owns exactly one source step and does not
+/// materialize the complete ambient fact sequence on its success path.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fold_composite_resource_for_proof(
     resource_environment: &ResourceEnvironment,
@@ -2679,6 +2683,51 @@ pub(super) fn fold_composite_resource_for_proof(
         unfolded_predicates,
         ResourceBodyClosure::Initialize,
     )
+}
+
+/// Checks one result-aware `fold` against the persistent facts and snapshot
+/// owned by a typed function-outcome goal. The returned outcome and fact root
+/// are the semantic successor; ordered finalization must not reproduce this
+/// transition in a parallel mutable working set.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fold_composite_resource_on_outcome_for_proof(
+    resource_environment: &ResourceEnvironment,
+    resource: &ResourceClause,
+    claim_label: &str,
+    path_index: usize,
+    execution_pure_facts: &[ExecutionPureFact],
+    facts: ProofFacts,
+    surface_propositions: &SurfacePropositionMap,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    pre_state: &CState,
+    outcome: CFunctionOutcome,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    unfolded_predicates: &[String],
+) -> Result<CheckedOutcomeResourceFold, ClickError> {
+    let facts = ProofResourcePureFacts::new(facts);
+    let outcome = fold_composite_resources_on_outcome_with_facts(
+        resource_environment,
+        std::slice::from_ref(resource),
+        claim_label,
+        path_index,
+        execution_pure_facts,
+        &facts,
+        surface_propositions,
+        parameters,
+        arguments,
+        pre_state,
+        outcome,
+        predicate_environment,
+        click_function_environment,
+        unfolded_predicates,
+        ResourceBodyClosure::Initialize,
+    )?;
+    Ok(CheckedOutcomeResourceFold {
+        outcome,
+        facts: facts.facts,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

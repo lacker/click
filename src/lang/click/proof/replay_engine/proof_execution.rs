@@ -253,6 +253,10 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         ProofTactic::Assumption => Some(PostExecutionTactic::Assumption),
         ProofTactic::Normalize => Some(PostExecutionTactic::Normalize),
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
+        ProofTactic::FrameUsing { region, premises } => Some(PostExecutionTactic::FrameUsing {
+            region: region.clone(),
+            premises: premises.clone(),
+        }),
         ProofTactic::Simp => Some(PostExecutionTactic::Simp),
         _ => None,
     }
