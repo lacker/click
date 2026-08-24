@@ -495,6 +495,7 @@ fn verify_structural_effect_proof(
     item_index: usize,
     item: &StructuralItem,
     check: &CLoopEffectCheck,
+    body: &CStatement,
     before_state: &CState,
     context: &ProofReplayContext,
     environment: &ExecutionProofEnvironment<'_>,
@@ -522,7 +523,14 @@ fn verify_structural_effect_proof(
             )
         })
         .unwrap_or_else(|| (legacy_site.clone(), legacy_site.description(), 0));
-    let certificate = match item.proof() {
+    let source_proof = item.proof();
+    let smart_frame = matches!(
+        source_proof,
+        SourceProof::Default
+            | SourceProof::Tactic(SmartTactic::Auto)
+            | SourceProof::Tactic(SmartTactic::Frame)
+    );
+    let certificate = match source_proof {
         SourceProof::Default
         | SourceProof::Tactic(SmartTactic::Auto)
         | SourceProof::Tactic(SmartTactic::Frame) => {
@@ -543,22 +551,13 @@ fn verify_structural_effect_proof(
             "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
         ))
     })?;
-    if environment.frontier_loop_source.is_some()
+    let capture_this_effect = environment.frontier_loop_source.is_some()
         && selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-            == Some(effect_source_index)
-    {
-        record_proof_site_tactic_expansion(
-            expansion_capture.as_deref_mut(),
-            &site,
-            effect_source_index,
-            &certificate.to_proof_tactics(),
-        );
-    }
-    // The exact linear subset is checked transactionally on one Proof. An
-    // empty loop frame historically sees every ambient fact, unlike the
-    // exact-premise Proof operation; retain that compatibility fallback only
-    // when the exact operation cannot close the goal. A nonempty `using`
-    // clause is authoritative and its checked failure must reach the source.
+            == Some(effect_source_index);
+    // The exact linear subset is checked transactionally on one Proof. Smart
+    // frame syntax selects its bounded explicit premises from that Proof;
+    // explicit scripts are authoritative, including an empty `using` block.
+    // Only structurally unsupported scripts retain compatibility replay.
     let proof_steps_supported = certificate.steps().iter().all(|step| {
         matches!(
             step,
@@ -601,7 +600,9 @@ fn verify_structural_effect_proof(
             environment.click_function_environment,
             environment.theorem_environment,
         );
-        let checked = (|| {
+        let checked = if smart_frame {
+            root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
+        } else {
             let mut checked = root;
             for (tactic_index, step) in certificate.steps().iter().enumerate() {
                 checked = checked.apply_step_at(
@@ -610,23 +611,33 @@ fn verify_structural_effect_proof(
                     effect_source_index + tactic_index,
                 )?;
             }
-            checked.is_complete().then_some(checked).ok_or_else(|| {
-                ClickError::new(format!(
+            Some(checked)
+        };
+        if let Some(checked) = checked {
+            if !checked.is_complete() {
+                return Err(ClickError::new(format!(
                     "`{claim_label}` structural-effect proof did not close its checked Proof goal"
-                ))
-            })
-        })();
-        match checked {
-            Ok(checked) => return Ok(checked.certificate()),
-            Err(_)
-                if !certificate.steps().iter().any(|step| {
-                    matches!(
-                        step,
-                        SimpleProofStep::FrameUsing { premises, .. } if !premises.is_empty()
-                    )
-                }) => {}
-            Err(error) => return Err(error),
+                )));
+            }
+            let checked_certificate = checked.certificate();
+            if capture_this_effect {
+                record_proof_site_tactic_expansion(
+                    expansion_capture.as_deref_mut(),
+                    &site,
+                    effect_source_index,
+                    &checked_certificate.to_proof_tactics(),
+                );
+            }
+            return Ok(checked_certificate);
         }
+    }
+    if capture_this_effect {
+        record_proof_site_tactic_expansion(
+            expansion_capture.as_deref_mut(),
+            &site,
+            effect_source_index,
+            &certificate.to_proof_tactics(),
+        );
     }
     let program = build_internal_proof_from_source_index(
         &certificate.to_proof_tactics(),
@@ -1082,6 +1093,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 *item_index,
                 item,
                 check,
+                body,
                 preservation.state(),
                 &context,
                 environment,

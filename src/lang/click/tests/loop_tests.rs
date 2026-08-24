@@ -1463,15 +1463,17 @@ fn loop_structural_effect_frame_stays_on_proof() {
         "the rewritten effect added compatibility replay"
     );
 
-    let empty_frame = "frame() using {\n                        }";
-    let corrupted = expanded.replacen(
-        empty_frame,
-        "frame() using {\n                            0 == 1;\n                        }",
-        1,
-    );
-    assert_ne!(
-        corrupted, expanded,
-        "the extracted frame should be corruptible"
+    let frame_start = expanded
+        .find("frame() using {")
+        .expect("the expanded effect should contain a frame");
+    let frame_end = expanded[frame_start..]
+        .find("\n                        }")
+        .map(|offset| frame_start + offset)
+        .expect("the expanded frame should have a closing brace");
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        frame_start + "frame() using {".len()..frame_end,
+        "\n                            0 == 1;",
     );
     let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
         verify_c0_sources(&corrupted, &[("count_once.c", c_source)])
@@ -1487,6 +1489,115 @@ fn loop_structural_effect_frame_stays_on_proof() {
     assert!(
         corrupted_replays <= baseline_replays,
         "the invalid checked effect entered additional compatibility replay: baseline {baseline_replays}, invalid {corrupted_replays}"
+    );
+}
+
+#[test]
+fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
+    let c_source = r#"
+            int32 fill_one(int32 p[]) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    p[i] = 1;
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let with_effect = r#"
+            verifying "fill_one.c";
+
+            int32 fill_one(int32 p[]) {
+                requires loadable(p[0..1]);
+                consumes p[0..1];
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    mutable p[0..1] by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let without_effect = with_effect.replace("                    mutable p[0..1] by frame;\n", "");
+
+    let (baseline, baseline_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&without_effect, &[("fill_one.c", c_source)])
+    });
+    baseline.expect("the comparison loop without an effect should verify");
+    let (verified, effect_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(with_effect, &[("fill_one.c", c_source)])
+    });
+    verified.expect("the smart mutable loop frame should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "smart mutable framing added compatibility replay"
+    );
+
+    let offset = with_effect
+        .find("mutable p[0..1] by frame")
+        .expect("the mutable effect should have a source position")
+        + "mutable p[0..1] by ".len();
+    let position = expansion::position_at_offset(with_effect, offset);
+    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
+        expand_c0_tactic_source_at(
+            with_effect,
+            &[("fill_one.c", c_source)],
+            position.line,
+            position.column,
+        )
+    });
+    let expanded = expanded.expect("the smart mutable frame should expand");
+    let frame_start = expanded
+        .find("frame() using {")
+        .expect("the expansion should contain an explicit frame");
+    let frame_end = expanded[frame_start..]
+        .find("\n                        }")
+        .map(|offset| frame_start + offset)
+        .expect("the expanded frame should have a closing brace");
+    assert!(
+        expanded[frame_start..frame_end].contains(';'),
+        "the smart frame did not expose its checked premises: {expanded}"
+    );
+    assert_eq!(
+        expansion_replays, baseline_replays,
+        "smart mutable expansion added compatibility replay"
+    );
+
+    let (reverified, rewritten_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&expanded, &[("fill_one.c", c_source)])
+    });
+    reverified.expect("the explicit mutable frame should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "the rewritten mutable frame added compatibility replay"
+    );
+
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(frame_start + "frame() using {".len()..frame_end, "");
+    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&corrupted, &[("fill_one.c", c_source)])
+            .expect_err("removing the selected mutable-frame premises must fail")
+    });
+    assert!(
+        error.message().contains("loop effect fact"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        corrupted_replays <= baseline_replays,
+        "the corrupted mutable frame entered additional replay: baseline {baseline_replays}, invalid {corrupted_replays}"
     );
 }
 

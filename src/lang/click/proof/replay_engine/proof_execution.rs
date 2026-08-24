@@ -3411,6 +3411,53 @@ fn introduce_proof_case_assumption(
         });
         return Ok(true);
     }
+    if context.replay.loop_effect_goal.is_some() {
+        // A structural-effect replay path may already own the exact C-branch
+        // fact under this Surface spelling. Prefer that unambiguous indexed
+        // identity to rereading the condition from the heap. Ordinary loop
+        // preservation must lower afresh because the same spelling can name
+        // the next iteration's new condition variables.
+        let positive_surface = condition.clone();
+        let negative_surface = negate_click_proposition(condition);
+        let positive = context
+            .replay
+            .surface_propositions
+            .available_kernel_matching(&positive_surface, |kernel| {
+                context.pure_facts.contains(kernel)
+            })
+            .cloned();
+        let negative = context
+            .replay
+            .surface_propositions
+            .available_kernel_matching(&negative_surface, |kernel| {
+                context.pure_facts.contains(kernel)
+            })
+            .cloned();
+        if positive.is_some() != negative.is_some() {
+            let recorded_value = positive.is_some();
+            if value != recorded_value {
+                return Ok(false);
+            }
+            let kernel_fact = positive.or(negative).expect("one recorded polarity exists");
+            let surface_fact = if value {
+                positive_surface
+            } else {
+                negative_surface
+            };
+            context
+                .replay
+                .surface_propositions
+                .record_lowering(&surface_fact, &kernel_fact)?;
+            context.replay.case_assumptions.push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(kernel_fact),
+                at_function_entry: context.replay.is_at_function_entry(),
+            });
+            return Ok(true);
+        }
+    }
     if context.replay.is_at_function_exit()
         && context.replay.has_structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)

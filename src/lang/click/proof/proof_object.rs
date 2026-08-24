@@ -27,6 +27,9 @@ thread_local! {
     static CHECKED_EXPANDED_EXECUTION_IFS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static SMART_LOOP_EFFECT_FRAME_CANDIDATES: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -66,6 +69,16 @@ pub(in crate::lang::click) fn count_execution_context_exports<R>(
     let before = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     let result = operation();
     let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_smart_loop_effect_frame_candidates<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
+    let result = operation();
+    let after = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -1513,6 +1526,10 @@ pub(super) struct ProofFacts {
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
     by_quantified_replay: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+    /// Kernel-certified memory summaries for the selected execution
+    /// frontier. Structural frame checking consumes these as transition
+    /// evidence; they are not user premises and have no Surface spelling.
+    memory_effect_summaries: PersistentSequence<Proposition>,
     /// Universal facts introduced specifically by a checked predicate unfold.
     /// Outcome smart search never probes ambient theorem or path universals.
     predicate_unfolded_universal_facts: PersistentSequence<Proposition>,
@@ -2890,6 +2907,7 @@ impl<'a> Proof<'a> {
                     .iter()
                     .map(|fact| fact.proposition().clone()),
             );
+            loop_effect_facts.extend(self.facts().memory_effect_summaries().cloned());
             loop_effect_facts.sort();
             loop_effect_facts.dedup();
             c_loop_effects_hold_at_back_edge(
@@ -3327,6 +3345,100 @@ impl<'a> Proof<'a> {
             Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
             Err(_) => Ok(None),
         }
+    }
+
+    /// Selects exact premises for a smart loop structural frame from facts
+    /// indexed under C names used by that loop body. Candidate work is bounded
+    /// by the affected source operation and its relevant indexed facts; no
+    /// ambient fact scan or semantic replay participates.
+    pub(super) fn try_smart_loop_effect_frame_at(
+        &self,
+        body: &CStatement,
+        tactic_index: usize,
+        source_index: usize,
+    ) -> Result<Option<Self>, ClickError> {
+        let execution = self.execution().ok_or_else(|| {
+            self.step_error("smart loop framing requires an execution-frontier Proof")
+        })?;
+        execution.replay.loop_effect_goal.as_ref().ok_or_else(|| {
+            self.step_error("smart loop framing requires a structural effect goal")
+        })?;
+        let mut dependency_names = BTreeSet::new();
+        collect_statement_variable_names(body, &mut dependency_names);
+        let mut candidates = BTreeSet::new();
+        for name in dependency_names {
+            for kernel in execution
+                .replay
+                .surface_propositions
+                .current_c_variable_kernel_facts(&name)
+            {
+                if self
+                    .facts()
+                    .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                {
+                    candidates.insert(kernel.clone());
+                }
+            }
+        }
+        let mut premises = Vec::with_capacity(candidates.len());
+        #[cfg(test)]
+        SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(|count| count.set(count.get() + candidates.len()));
+        for kernel in candidates {
+            let Some(surface) = self.loop_effect_surface_premise(&kernel) else {
+                continue;
+            };
+            if !premises.contains(&surface) {
+                premises.push(surface);
+            }
+        }
+        let selected = SimpleProofStep::FrameUsing {
+            region: None,
+            premises,
+        };
+        match self.apply_step_at(selected, tactic_index, source_index) {
+            Ok(checked) => Ok(Some(checked)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => Err(error),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn loop_effect_surface_premise(&self, kernel: &Proposition) -> Option<ClickProposition> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return None;
+        };
+        let execution = self.execution()?;
+        let matches = |surface: &ClickProposition| {
+            let lowered = execution
+                .replay
+                .surface_propositions
+                .available_kernel_matching(surface, |candidate| {
+                    self.facts()
+                        .replay_available_across_effects(candidate, &execution.replay.effect_facts)
+                })
+                .cloned()
+                .or_else(|| {
+                    self.lower_surface_proposition_direct(surface, "smart loop frame premise")
+                        .ok()
+                });
+            lowered.is_some_and(|lowered| {
+                lowered == *kernel || condition_polarity_equivalent(&lowered, kernel)
+            })
+        };
+        if let Some(surface) = execution
+            .replay
+            .surface_propositions
+            .surfaces(kernel)
+            .find(|surface| matches(surface))
+        {
+            return Some(surface.clone());
+        }
+        let surface = synthesize_surface_proposition(
+            kernel,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &execution.state,
+        )?;
+        matches(&surface).then_some(surface)
     }
 
     // Each primitive rule stays outlined so adding a rule-local proposition
@@ -13745,6 +13857,7 @@ impl ProofFacts {
         let mut by_snapshot_blind = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
         let mut by_quantified_replay = PersistentMap::default();
+        let mut memory_effect_summaries = PersistentSequence::default();
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
         let mut implicit_transport_assumptions = PureFactContext::new();
@@ -13756,6 +13869,9 @@ impl ProofFacts {
             ordered.push(fact.clone());
             top_level_exact = top_level_exact.with_value(fact.clone());
             by_quantified_replay = index_quantified_replay_fact(by_quantified_replay, fact);
+            if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
+                memory_effect_summaries.push(fact.clone());
+            }
             implications_by_consequent =
                 index_implication_consequents(implications_by_consequent, fact);
             by_predicate = index_predicate_fact(by_predicate, fact);
@@ -13787,6 +13903,7 @@ impl ProofFacts {
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_replay,
+            memory_effect_summaries,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             implications_by_consequent,
             assumptions,
@@ -13826,6 +13943,10 @@ impl ProofFacts {
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
         let by_quantified_replay =
             index_quantified_replay_fact(self.by_quantified_replay.clone(), &fact);
+        let mut memory_effect_summaries = self.memory_effect_summaries.clone();
+        if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
+            memory_effect_summaries.push(fact.clone());
+        }
         let implications_by_consequent =
             index_implication_consequents(self.implications_by_consequent.clone(), &fact);
         if matches!(fact, Proposition::And(_, _)) {
@@ -13856,6 +13977,7 @@ impl ProofFacts {
             by_snapshot_blind,
             bitvector_equalities_by_atom,
             by_quantified_replay,
+            memory_effect_summaries,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             implications_by_consequent,
             assumptions: self.assumptions.clone().assume_proposition(fact.clone()),
@@ -13926,6 +14048,10 @@ impl ProofFacts {
 
     pub(super) fn assumptions(&self) -> &PureFactContext {
         &self.assumptions
+    }
+
+    fn memory_effect_summaries(&self) -> impl Iterator<Item = &Proposition> {
+        self.memory_effect_summaries.iter()
     }
 
     /// Exact proper-conjunct membership with the same condition-polarity
