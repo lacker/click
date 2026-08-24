@@ -531,28 +531,18 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         original_requirements,
         requirement_label_indices,
     );
-    let (proof, append_certificate) = match plan {
+    let proof = match plan {
         Plan::Script(tactics) => {
-            if let Some(checked) = proof.try_linear_script(tactics)? {
-                (checked, true)
-            } else {
-                let Ok(certificate) = ProofCertificate::from_proof_tactics(tactics) else {
-                    return Ok(None);
-                };
-                // Preserve legacy failure diagnostics for certificate
-                // operations not yet admitted by Proof, or for a rejected
-                // source script.
-                let Ok(checked) = proof.check_certificate(&certificate) else {
-                    return Ok(None);
-                };
-                (checked, false)
-            }
+            let Some(checked) = proof.try_linear_script(tactics)? else {
+                return Ok(None);
+            };
+            checked
         }
         Plan::DirectSmart => {
             let Some(closed) = proof.try_simp_closure()? else {
                 return Ok(None);
             };
-            (closed, true)
+            closed
         }
     };
     if !proof.is_complete() {
@@ -560,14 +550,12 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             "`{claim_label}` have proof {tactic_index}: checked proof retained an open goal"
         )));
     }
-    let certificate = append_certificate.then(|| {
-        let body = proof.certificate();
-        ProofCertificate::from_steps(vec![SimpleProofStep::Have {
-            proposition: have.proposition.clone(),
-            proof: Box::new(body),
-        }])
-    });
-    Ok(Some((goal, certificate)))
+    let body = proof.certificate();
+    let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Have {
+        proposition: have.proposition.clone(),
+        proof: Box::new(body),
+    }]);
+    Ok(Some((goal, Some(certificate))))
 }
 
 /// Tries the bounded smart statement selectors on the immutable Proof. The
