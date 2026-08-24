@@ -1499,13 +1499,24 @@ int32 compare_swap2(int32 p[2]) {
 
     let offset = click_source.rfind("simp").expect("simp should be present");
     let position = position_at_offset(click_source, offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("compare_swap2.c", c_source)],
-        position.line,
-        position.column,
-    )
-    .expect("post-execution simp should expand");
+    let (expanded, events) = crate::instrumentation::collect(|| {
+        expand_c0_tactic_source_at(
+            click_source,
+            &[("compare_swap2.c", c_source)],
+            position.line,
+            position.column,
+        )
+    });
+    let expanded = expanded.expect("post-execution simp should expand");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "compare_swap2.ensures_0"
+                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
+        )),
+        "the prerequisite branch-shaped execute entered compatibility replay: {events:#?}"
+    );
 
     // The branch anchors at the statement that branched; statement 0 is
     // the `tmp` declaration, so this is the same state as function entry

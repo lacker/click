@@ -1818,10 +1818,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         theorem_environment,
                     );
                     let checkpoint = root.checkpoint();
-                    let planned = ProofCertificate::from_steps(construction.steps.clone());
-                    if let Some(proof) =
-                        root.try_planned_linear_script(&planned.to_proof_tactics())?
-                    {
+                    if let Some(proof) = root.try_planned_execution_steps(&construction.steps)? {
                         let certificate = proof.certificate_since(&checkpoint)?;
                         let result = proof.into_execution_context()?;
                         state = result.state;

@@ -5029,11 +5029,6 @@ impl<'a> Proof<'a> {
                 context.tactic_index,
                 "branch",
             )?;
-        if current_state.memory().has_pending_heap_allocation() {
-            return Err(self.step_error(
-                "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
-            ));
-        }
         let CStatement::If {
             condition,
             then_branch,
@@ -5079,6 +5074,11 @@ impl<'a> Proof<'a> {
                 &current_state,
                 transition.pure_facts.assumptions(),
             );
+            if resolved_state.memory().has_pending_heap_allocation() {
+                return Err(self.step_error(
+                    "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
+                ));
+            }
             arm_execution
                 .replay
                 .frontier
@@ -6973,13 +6973,12 @@ impl<'a> Proof<'a> {
     /// those transitions, so this checks the exact Surface operations against
     /// the C branch and applies only the remaining body steps to the focused
     /// sibling. No certificate is constructed or interpreted.
-    pub(super) fn focus_expanded_execution_arm_entry(
+    fn checked_expanded_execution_arm_entry_steps(
         &self,
         record: &ExecutionSplit<'a>,
         take_then: bool,
-        surface_condition: &ClickProposition,
-        steps: &[SimpleProofStep],
-    ) -> Result<Option<(Self, usize)>, ClickError> {
+        surface_condition: Option<&ClickProposition>,
+    ) -> Result<Vec<SimpleProofStep>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
@@ -7007,7 +7006,9 @@ impl<'a> Proof<'a> {
                 kind: ProgramPointKind::Entry,
             },
         )?;
-        if surface_condition != &checked_condition {
+        if surface_condition
+            .is_some_and(|surface_condition| surface_condition != &checked_condition)
+        {
             return Err(self.step_error(
                 "expanded execution branch condition does not match the checked C branch",
             ));
@@ -7025,6 +7026,22 @@ impl<'a> Proof<'a> {
         };
         let mut expected = vec![SimpleProofStep::StepUsing(vec![path_condition])];
         expected.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        Ok(expected)
+    }
+
+    pub(super) fn focus_expanded_execution_arm_entry(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+        surface_condition: &ClickProposition,
+        steps: &[SimpleProofStep],
+    ) -> Result<Option<(Self, usize)>, ClickError> {
+        let expected = self.checked_expanded_execution_arm_entry_steps(
+            record,
+            take_then,
+            Some(surface_condition),
+        )?;
+        let entry_steps = expected.len();
         if record.arm_id(take_then).is_none() {
             // A common extracted surface tree may retain the checked entry
             // prefix for an arm that earlier path facts make unreachable on
@@ -7058,15 +7075,178 @@ impl<'a> Proof<'a> {
         surface_condition: &ClickProposition,
         steps: &[SimpleProofStep],
     ) -> Result<Self, ClickError> {
-        let Some((mut proof, entry_steps)) =
+        let Some((proof, entry_steps)) =
             self.focus_expanded_execution_arm_entry(record, take_then, surface_condition, steps)?
         else {
             return Err(self.step_error("cannot advance an infeasible expanded execution arm"));
         };
-        for step in &steps[entry_steps..] {
-            proof = proof.apply_step(step.clone())?;
+        proof.apply_expanded_execution_steps_inner(&steps[entry_steps..])
+    }
+
+    fn apply_expanded_execution_steps_inner(
+        &self,
+        steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let mut proof = self.clone();
+        for step in steps {
+            proof = match step {
+                SimpleProofStep::If {
+                    condition,
+                    then_proof,
+                    else_proof,
+                } => proof.apply_expanded_execution_if(
+                    condition,
+                    then_proof.steps(),
+                    else_proof.steps(),
+                )?,
+                _ => proof.apply_step(step.clone())?,
+            };
         }
         Ok(proof)
+    }
+
+    fn planned_execution_step_is_supported(step: &SimpleProofStep) -> bool {
+        match step {
+            SimpleProofStep::Have { .. }
+            | SimpleProofStep::UnfoldPredicate(_)
+            | SimpleProofStep::TransportUsing { .. }
+            | SimpleProofStep::StepUsing(_) => true,
+            SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            } => {
+                !then_proof.steps().is_empty()
+                    && !else_proof.steps().is_empty()
+                    && then_proof
+                        .steps()
+                        .iter()
+                        .all(Self::planned_execution_step_is_supported)
+                    && else_proof
+                        .steps()
+                        .iter()
+                        .all(Self::planned_execution_step_is_supported)
+            }
+            _ => false,
+        }
+    }
+
+    fn planned_execution_steps_contain_transition(steps: &[SimpleProofStep]) -> bool {
+        steps.iter().any(|step| match step {
+            SimpleProofStep::StepUsing(_) => true,
+            SimpleProofStep::If {
+                then_proof,
+                else_proof,
+                ..
+            } => {
+                Self::planned_execution_steps_contain_transition(then_proof.steps())
+                    || Self::planned_execution_steps_contain_transition(else_proof.steps())
+            }
+            _ => false,
+        })
+    }
+
+    fn apply_planned_execution_steps_inner(
+        &self,
+        steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let mut proof = self.clone();
+        for step in steps {
+            proof = match step {
+                SimpleProofStep::If {
+                    condition,
+                    then_proof,
+                    else_proof,
+                } => proof.apply_planned_execution_if(
+                    condition,
+                    then_proof.steps(),
+                    else_proof.steps(),
+                )?,
+                _ => proof.apply_step(step.clone())?,
+            };
+        }
+        Ok(proof)
+    }
+
+    /// Applies one planner-selected whole-execution tree directly to this
+    /// Proof. The generated tree is only structured Surface input: Proof
+    /// validates each operation, owns every C split and join, and accepts the
+    /// result only when the checked execution has reached function exit.
+    pub(super) fn try_planned_execution_steps(
+        &self,
+        steps: &[SimpleProofStep],
+    ) -> Result<Option<Self>, ClickError> {
+        if steps.is_empty()
+            || !steps.iter().all(Self::planned_execution_step_is_supported)
+            || !Self::planned_execution_steps_contain_transition(steps)
+        {
+            return Ok(None);
+        }
+        let proof = self.apply_planned_execution_steps_inner(steps)?;
+        Ok(proof.is_at_function_exit().then_some(proof))
+    }
+
+    fn apply_planned_execution_if(
+        &self,
+        condition: &ClickProposition,
+        then_steps: &[SimpleProofStep],
+        else_steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let arm_premises = [then_steps, else_steps].map(|steps| match steps.first() {
+            Some(SimpleProofStep::StepUsing(premises)) => Some(premises.clone()),
+            _ => None,
+        });
+        if let [Some(then_premises), Some(else_premises)] = arm_premises {
+            let tactic_index = match self.context.as_ref() {
+                ProofContext::Execution(context) => context.tactic_index,
+                _ => 0,
+            };
+            let collapsed = self.try_collapse_statement_successor_if(
+                condition,
+                [(tactic_index, then_premises), (tactic_index, else_premises)],
+            )?;
+            if let Some((split, record)) = collapsed {
+                let advanced = split
+                    .focus_execution_if_arm(&record, true)?
+                    .apply_planned_execution_steps_inner(&then_steps[1..])?
+                    .focus_execution_if_arm(&record, false)?
+                    .apply_planned_execution_steps_inner(&else_steps[1..])?;
+                return advanced.join_focused_execution_if_terminal(&record);
+            }
+        }
+        if let Some((split, record)) = self.enter_statement_successor_if(condition)? {
+            let advanced = split
+                .focus_execution_if_arm(&record, true)?
+                .apply_planned_execution_steps_inner(then_steps)?
+                .focus_execution_if_arm(&record, false)?
+                .apply_planned_execution_steps_inner(else_steps)?;
+            return advanced.join_focused_execution_if_terminal(&record);
+        }
+
+        let (split, record) = self.split_focused_execution_branch()?;
+        let mut advanced = split;
+        for (take_then, steps) in [(true, then_steps), (false, else_steps)] {
+            if record.arm_id(take_then).is_none() {
+                continue;
+            }
+            let entry_steps = advanced
+                .checked_expanded_execution_arm_entry_steps(&record, take_then, None)?
+                .len();
+            if steps.len() < entry_steps
+                || !steps[..entry_steps]
+                    .iter()
+                    .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+            {
+                return Err(self.step_error(format!(
+                    "planned execution {} arm does not begin with its {entry_steps} C branch-entry step(s)",
+                    if take_then { "then" } else { "else" },
+                )));
+            }
+            advanced = advanced
+                .focus_split_arm(&record, take_then)?
+                .apply_planned_execution_steps_inner(&steps[entry_steps..])?;
+        }
+        advanced.join_focused_execution_split(&record, false, None)
     }
 
     /// Applies an already-expanded logical C branch as one audited structural
@@ -7091,7 +7271,10 @@ impl<'a> Proof<'a> {
                 }
                 continue;
             }
-            if !matches!(steps.last(), Some(SimpleProofStep::StepUsing(_))) {
+            if !matches!(
+                steps.last(),
+                Some(SimpleProofStep::StepUsing(_) | SimpleProofStep::If { .. })
+            ) {
                 return Err(self.step_error(format!(
                     "expanded execution {} arm does not end in a checked C step",
                     if take_then { "then" } else { "else" },

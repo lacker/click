@@ -117,6 +117,14 @@ fn bounded_statement_successor_exclusion_ignores_unrelated_ambient_facts() {
             )
         });
         verified.expect("the bounded successor product should ignore unrelated ambient facts");
+        assert!(
+            sample
+                .named_work
+                .keys()
+                .all(|name| !name.contains("smart tactic compatibility replay")),
+            "the bounded branch plan entered compatibility replay: {:?}",
+            sample.named_work
+        );
         exclusion_work.push(
             sample
                 .named_work
