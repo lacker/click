@@ -2401,24 +2401,30 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             CFunctionOutcome::Return {
                                 value: result,
                                 state: post_state,
-                            } => surface_branch_path_for_outcome(
-                                &deferred.branch_skeleton,
-                                &path_requirements,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                result,
-                                &replay.program_point_states,
-                                predicate_environment,
-                                click_function_environment,
-                            )
-                            // A post-join path carries no pre-join guard facts and
-                            // cannot decide the pre-join surface branches; its tactic
-                            // is path-independent. A genuinely misaligned placement
-                            // still fails: every-leaf appending rejects conflicting
-                            // leaves and the whole-claim gate replays the result.
-                            .ok(),
+                            } => direct_view
+                                .as_ref()
+                                .and_then(|view| {
+                                    view.surface_branch_path(path_index, &deferred.branch_skeleton)
+                                })
+                                .or_else(|| {
+                                    surface_branch_path_for_outcome(
+                                        &deferred.branch_skeleton,
+                                        &path_requirements,
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        post_state,
+                                        result,
+                                        &replay.program_point_states,
+                                        predicate_environment,
+                                        click_function_environment,
+                                    )
+                                    // A compatibility post-join path may carry no
+                                    // pre-join guard facts and therefore cannot decide
+                                    // the surface branches. A completed Proof uses its
+                                    // retained typed split provenance above.
+                                    .ok()
+                                }),
                             _ if deferred.branch_skeleton.is_empty() => Some(Vec::new()),
                             _ => {
                                 return Err(ClickError::new(format!(

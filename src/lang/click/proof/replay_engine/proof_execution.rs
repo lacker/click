@@ -127,9 +127,20 @@ pub(in crate::lang::click::proof) fn expanded_execution_if_tactic_supported(
         && !(then_steps.is_empty() && else_steps.is_empty())
 }
 
-pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
-    tactic: &ProofTactic,
-) -> bool {
+fn post_execution_tree_arm_supported(tactics: &[ProofTactic], depth: usize) -> bool {
+    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
+        && tactics.iter().enumerate().all(|(index, tactic)| {
+            if matches!(tactic, ProofTactic::Simp) {
+                return false;
+            }
+            if flat_post_execution_tactic(tactic).is_some() {
+                return true;
+            }
+            index + 1 == tactics.len() && post_execution_tree_tactic_supported_at(tactic, depth + 1)
+        })
+}
+
+fn post_execution_tree_tactic_supported_at(tactic: &ProofTactic, depth: usize) -> bool {
     let ProofTactic::If(proof_if) = tactic else {
         return false;
     };
@@ -137,14 +148,17 @@ pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
     // split, not an expansion cursor selecting a checked execution outcome.
     // Execution expansion leaves a stable program-point condition and
     // explicit checked operations in both arms.
-    proof_case_is_stable_program_point_condition(&proof_if.condition)
-        && proof_if
-            .then_tactics
-            .iter()
-            .chain(&proof_if.else_tactics)
-            .all(|tactic| {
-                !matches!(tactic, ProofTactic::Simp) && flat_post_execution_tactic(tactic).is_some()
-            })
+    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
+        && proof_case_is_stable_program_point_condition(&proof_if.condition)
+        && post_execution_tree_arm_supported(&proof_if.then_tactics, depth)
+        && post_execution_tree_arm_supported(&proof_if.else_tactics, depth)
+        && !(proof_if.then_tactics.is_empty() && proof_if.else_tactics.is_empty())
+}
+
+pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
+    tactic: &ProofTactic,
+) -> bool {
+    post_execution_tree_tactic_supported_at(tactic, 0)
 }
 
 pub(in crate::lang::click::proof) fn mid_execution_proof_if_tactic_supported(
@@ -203,8 +217,14 @@ fn checked_execution_proof_if_arm_supported(tactics: &[ProofTactic], depth: usiz
             .all(|(index, tactic)| match tactic {
                 ProofTactic::If(nested) => {
                     index + 1 == tactics.len()
-                        && checked_execution_proof_if_arm_supported(&nested.then_tactics, depth + 1)
-                        && checked_execution_proof_if_arm_supported(&nested.else_tactics, depth + 1)
+                        && (post_execution_tree_tactic_supported_at(tactic, depth + 1)
+                            || (checked_execution_proof_if_arm_supported(
+                                &nested.then_tactics,
+                                depth + 1,
+                            ) && checked_execution_proof_if_arm_supported(
+                                &nested.else_tactics,
+                                depth + 1,
+                            )))
                 }
                 ProofTactic::Open(_) | ProofTactic::Branch(_) | ProofTactic::Loop(_) => false,
                 tactic => {
@@ -706,13 +726,25 @@ fn deferred_post_execution_if_is_explicit_path_cursor(
     then_tactics: &[DeferredPostExecutionTactic],
     else_tactics: &[DeferredPostExecutionTactic],
 ) -> bool {
+    fn explicit_tree(tactics: &[DeferredPostExecutionTactic], depth: usize) -> bool {
+        depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
+            && tactics.iter().all(|deferred| match &deferred.tactic {
+                PostExecutionTactic::Simp => false,
+                PostExecutionTactic::If {
+                    condition,
+                    then_tactics,
+                    else_tactics,
+                } => {
+                    proof_case_is_stable_program_point_condition(condition)
+                        && explicit_tree(then_tactics, depth + 1)
+                        && explicit_tree(else_tactics, depth + 1)
+                }
+                _ => true,
+            })
+    }
     proof_case_is_stable_program_point_condition(condition)
-        && then_tactics.iter().chain(else_tactics).all(|deferred| {
-            !matches!(
-                deferred.tactic,
-                PostExecutionTactic::Simp | PostExecutionTactic::If { .. }
-            )
-        })
+        && explicit_tree(then_tactics, 0)
+        && explicit_tree(else_tactics, 0)
 }
 
 fn checked_structural_execution_branch_supported(
@@ -1206,34 +1238,48 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     current = continuation;
                     continue;
                 }
-                let product = match (
-                    linear_execution_tactics(then_branch),
-                    linear_execution_tactics(else_branch),
+                let arm_steps = match (
+                    execution_region_leading_tactic(then_branch),
+                    execution_region_leading_tactic(else_branch),
                 ) {
-                    (Some(then_tactics), Some(else_tactics))
-                        if matches!(
-                            then_tactics.first().map(|indexed| &indexed.tactic),
-                            Some(ProofTactic::StepUsing(_))
-                        ) && matches!(
-                            else_tactics.first().map(|indexed| &indexed.tactic),
-                            Some(ProofTactic::StepUsing(_))
-                        ) =>
-                    {
-                        let ProofTactic::StepUsing(then_premises) = &then_tactics[0].tactic else {
-                            unreachable!("the match guard required an explicit then step")
-                        };
-                        let ProofTactic::StepUsing(else_premises) = &else_tactics[0].tactic else {
-                            unreachable!("the match guard required an explicit else step")
-                        };
+                    (Some(then_tactic), Some(else_tactic)) => match (
+                        source_successor_if_arm_step(then_tactic, condition, true),
+                        source_successor_if_arm_step(else_tactic, condition, false),
+                    ) {
+                        (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let product = if let Some(arm_steps) = arm_steps.as_ref() {
+                    let exact = proof.try_split_source_successor_if(
+                        condition,
+                        [
+                            (arm_steps[0].0, arm_steps[0].1, arm_steps[0].2.clone()),
+                            (arm_steps[1].0, arm_steps[1].1, arm_steps[1].2.clone()),
+                        ],
+                    )?;
+                    if exact.is_some() {
+                        record_source_successor_smart_expansions(
+                            arm_steps,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                        );
+                        exact
+                    } else if !arm_steps[0].3 && !arm_steps[1].3 {
                         proof.try_collapse_statement_successor_if(
                             condition,
                             [
-                                (then_tactics[0].index, then_premises.clone()),
-                                (else_tactics[0].index, else_premises.clone()),
+                                (arm_steps[0].0, arm_steps[0].2.clone()),
+                                (arm_steps[1].0, arm_steps[1].2.clone()),
                             ],
                         )?
+                    } else {
+                        None
                     }
-                    _ => None,
+                } else {
+                    None
                 };
                 let consumed_leading_steps = product.is_some();
                 let (split, record) = if let Some(collapsed) = product {
@@ -1248,28 +1294,28 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
                 {
                     let focused = advanced.focus_execution_if_arm(&record, take_then)?;
-                    let branch_tail;
-                    let branch = if consumed_leading_steps {
-                        let tactics = linear_execution_tactics(branch)
-                            .expect("the bounded product accepted a linear branch");
-                        branch_tail = InternalProofNode::Linear {
-                            tactics: tactics[1..].to_vec(),
-                            continuation: Box::new(InternalProofNode::Done),
-                        };
-                        &branch_tail
+                    let next = if consumed_leading_steps {
+                        advance_focused_execution_region_after_leading_tactic(
+                            focused,
+                            None,
+                            branch,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                            1,
+                        )?
                     } else {
-                        branch
+                        advance_focused_execution_region(
+                            focused,
+                            None,
+                            branch,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                            1,
+                        )?
                     };
-                    let Some(next) = advance_focused_execution_region(
-                        focused,
-                        None,
-                        branch,
-                        staged_expansion_capture.as_mut(),
-                        proof_site.as_ref(),
-                        owning_source_index,
-                        1,
-                    )?
-                    else {
+                    let Some(next) = next else {
                         return Ok(None);
                     };
                     if !next.is_at_function_exit() {
@@ -1427,6 +1473,109 @@ fn advance_focused_execution_arm<'a>(
         proof = next;
     }
     Ok(Some(proof))
+}
+
+fn execution_region_leading_tactic(region: &InternalProofNode) -> Option<&IndexedTactic> {
+    let InternalProofNode::Linear { tactics, .. } = region else {
+        return None;
+    };
+    tactics.first()
+}
+
+fn source_successor_if_arm_step(
+    indexed: &IndexedTactic,
+    condition: &ClickProposition,
+    take_then: bool,
+) -> Option<(usize, usize, Vec<ClickProposition>, bool)> {
+    match &indexed.tactic {
+        ProofTactic::StepUsing(premises) => {
+            Some((indexed.index, indexed.source_index, premises.clone(), false))
+        }
+        ProofTactic::SmartStep => Some((
+            indexed.index,
+            indexed.source_index,
+            vec![if take_then {
+                condition.clone()
+            } else {
+                negate_click_proposition(condition)
+            }],
+            true,
+        )),
+        _ => None,
+    }
+}
+
+fn record_source_successor_smart_expansions(
+    arm_steps: &[(usize, usize, Vec<ClickProposition>, bool); 2],
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+) {
+    let Some(site) = proof_site else {
+        return;
+    };
+    for (_, source_index, premises, smart) in arm_steps {
+        if *smart
+            && *source_index != owning_source_index
+            && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                == Some(*source_index)
+        {
+            let certificate =
+                ProofCertificate::from_steps(vec![SimpleProofStep::StepUsing(premises.clone())]);
+            record_proof_site_tactic_expansion(
+                expansion_capture.as_deref_mut(),
+                site,
+                *source_index,
+                &certificate.to_proof_tactics(),
+            );
+        }
+    }
+}
+
+/// Advances a structural source region after its first linear tactic was
+/// already consumed by the operation that created the focused Proof arms.
+/// The untouched continuation is borrowed directly, so this cursor retains
+/// no semantic state and does not clone the proof tree.
+#[allow(clippy::too_many_arguments)]
+fn advance_focused_execution_region_after_leading_tactic<'a>(
+    proof: Proof<'a>,
+    enclosing_record: Option<&ExecutionSplit<'a>>,
+    region: &InternalProofNode,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    depth: usize,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    let InternalProofNode::Linear {
+        tactics,
+        continuation,
+    } = region
+    else {
+        return Ok(None);
+    };
+    let Some(_) = tactics.first() else {
+        return Ok(None);
+    };
+    let Some(proof) = advance_focused_execution_arm(
+        proof,
+        enclosing_record,
+        &tactics[1..],
+        expansion_capture.as_deref_mut(),
+        proof_site,
+        owning_source_index,
+    )?
+    else {
+        return Ok(None);
+    };
+    advance_focused_execution_region(
+        proof,
+        enclosing_record,
+        continuation,
+        expansion_capture,
+        proof_site,
+        owning_source_index,
+        depth + 1,
+    )
 }
 
 /// Advances the supported structural grammar of one checked execution arm.
@@ -1610,26 +1759,73 @@ fn advance_focused_execution_region<'a>(
             }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
-            let (split, record) =
-                if let Some(existing) = proof.enter_statement_successor_if(condition)? {
-                    existing
-                } else {
-                    proof.split_focused_execution_if(condition.clone())?
-                };
+            let arm_steps = match (
+                execution_region_leading_tactic(then_branch),
+                execution_region_leading_tactic(else_branch),
+            ) {
+                (Some(then_tactic), Some(else_tactic)) => match (
+                    source_successor_if_arm_step(then_tactic, condition, true),
+                    source_successor_if_arm_step(else_tactic, condition, false),
+                ) {
+                    (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let product = if let Some(arm_steps) = arm_steps.as_ref() {
+                let product = proof.try_split_source_successor_if(
+                    condition,
+                    [
+                        (arm_steps[0].0, arm_steps[0].1, arm_steps[0].2.clone()),
+                        (arm_steps[1].0, arm_steps[1].1, arm_steps[1].2.clone()),
+                    ],
+                )?;
+                if product.is_some() {
+                    record_source_successor_smart_expansions(
+                        arm_steps,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                    );
+                }
+                product
+            } else {
+                None
+            };
+            let consumed_leading_steps = product.is_some();
+            let (split, record) = if let Some(collapsed) = product {
+                collapsed
+            } else if let Some(existing) = proof.enter_statement_successor_if(condition)? {
+                existing
+            } else {
+                proof.split_focused_execution_if(condition.clone())?
+            };
             let mut advanced = split;
             for (take_then, branch) in [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
             {
                 let focused = advanced.focus_execution_if_arm(&record, take_then)?;
-                let Some(next) = advance_focused_execution_region(
-                    focused,
-                    enclosing_record,
-                    branch,
-                    expansion_capture.as_deref_mut(),
-                    proof_site,
-                    owning_source_index,
-                    depth + 1,
-                )?
-                else {
+                let next = if consumed_leading_steps {
+                    advance_focused_execution_region_after_leading_tactic(
+                        focused,
+                        enclosing_record,
+                        branch,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    )?
+                } else {
+                    advance_focused_execution_region(
+                        focused,
+                        enclosing_record,
+                        branch,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    )?
+                };
+                let Some(next) = next else {
                     return Ok(None);
                 };
                 if !next.is_at_function_exit() {

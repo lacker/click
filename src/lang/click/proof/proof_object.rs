@@ -1118,6 +1118,39 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) facts: Vec<Proposition>,
     pub(super) replay: &'p TacticReplayState,
     pub(super) branch_path: &'p PersistentSequence<String>,
+    outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],
+}
+
+impl ProofFinalizationView<'_> {
+    /// Selects the retained surface branch skeleton for one checked outcome.
+    /// Decisions are Proof provenance recorded at the typed splits; expansion
+    /// reads them without reconstructing semantic facts from the post-state.
+    pub(super) fn surface_branch_path(
+        &self,
+        path_index: usize,
+        tactics: &[ProofTactic],
+    ) -> Option<Vec<bool>> {
+        let mut decisions = self.outcome_branch_decisions.get(path_index)?.iter().rev();
+        let mut path = Vec::new();
+        let mut current = tactics;
+        loop {
+            let Some(proof_if) = current.iter().rev().find_map(|tactic| match tactic {
+                ProofTactic::If(proof_if) => Some(proof_if),
+                _ => None,
+            }) else {
+                return Some(path);
+            };
+            let selected_then = decisions
+                .find(|decision| decision.condition == proof_if.condition)?
+                .value;
+            path.push(selected_then);
+            current = if selected_then {
+                &proof_if.then_tactics
+            } else {
+                &proof_if.else_tactics
+            };
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -3659,6 +3692,77 @@ impl<'a> Proof<'a> {
             initial_continuation_depth: partition.initial_continuation_depth,
         };
         Ok(Some((successor, record)))
+    }
+
+    /// Splits a proof path condition that exactly names the current C `if`
+    /// and applies each arm's leading source step as a checked `StepUsing`
+    /// operation on that focused Proof. Smart entries arrive with the same
+    /// explicit premises selected by their caller. The returned arms remain
+    /// proof cases, so their source scopes may continue through the C join;
+    /// only the branch-entry transition is selected here.
+    pub(super) fn try_split_source_successor_if(
+        &self,
+        condition: &ClickProposition,
+        arm_steps: [(usize, usize, Vec<ClickProposition>); 2],
+    ) -> Result<Option<(Self, ExecutionProofCaseSplit<'a>)>, ClickError> {
+        let Some(execution) = self.execution() else {
+            return Ok(None);
+        };
+        // A preceding call or other multi-successor statement already owns a
+        // certified partition. Its bounded product requires explicit source
+        // evidence to exclude parent lanes; a fresh proof-case assumption
+        // must not bypass that checked adapter merely because the following
+        // C statement uses the same condition.
+        if execution.last_step_delta.statement_partition.is_some() {
+            return Ok(None);
+        }
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let statement_index = execution.replay.frontier.next_statement_index;
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &execution.replay,
+            &execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "source proof `if`",
+        )?;
+        let CStatement::If {
+            condition: c_condition,
+            ..
+        } = statement
+        else {
+            return Ok(None);
+        };
+        let source_fact = self.lower_surface_proposition(condition, "proof `if` condition")?;
+        let c_surface = surface_c_condition(&c_condition);
+        let c_fact = self.lower_surface_proposition(&c_surface, "current C `if` condition")?;
+        if !path_condition_equivalent(&source_fact, &c_fact) {
+            return Ok(None);
+        }
+
+        let (split, mut record) = self.split_focused_execution_if(condition.clone())?;
+        record.surface_condition = surface_with_source_site(
+            &c_surface,
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        let mut advanced = split;
+        for (arm_index, take_then) in [(0usize, true), (1usize, false)] {
+            let (tactic_index, source_index, premises) = &arm_steps[arm_index];
+            advanced = advanced
+                .focus_execution_if_arm(&record, take_then)?
+                .apply_step_at(
+                    SimpleProofStep::StepUsing(premises.clone()),
+                    *tactic_index,
+                    *source_index,
+                )?;
+        }
+        Ok(Some((advanced, record)))
     }
 
     /// Tries the one bounded product needed when a proof-level condition does
@@ -7869,6 +7973,7 @@ impl<'a> Proof<'a> {
             facts: self.facts().to_vec(),
             replay: &execution.replay,
             branch_path: &execution.branch_path,
+            outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),
         })
     }
 

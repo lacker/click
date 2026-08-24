@@ -1591,17 +1591,138 @@ int32 nested(int32 x) {
         .map(|start| start + needle.rfind("simp").unwrap())
         .expect("inner else simp should be present");
     let position = position_at_offset(click_source, offset);
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("nested.c", c_source)],
-        position.line,
-        position.column,
-    )
-    .expect("selected nested-branch simp should expand");
+    let (((verified, original_fallbacks), original_replays), original_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    verify_c0_sources(click_source, &[("nested.c", c_source)])
+                })
+            })
+        });
+    verified.expect("nested source proof should stay on Proof");
+    assert_eq!(
+        original_flat_units, 1,
+        "nested source proof split its Proof"
+    );
+    assert_eq!(original_replays, 0, "nested source proof entered replay");
+    assert_eq!(original_fallbacks, 0, "nested source proof fell back");
+
+    let (((expanded, expansion_fallbacks), expansion_replays), expansion_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &[("nested.c", c_source)],
+                        position.line,
+                        position.column,
+                    )
+                })
+            })
+        });
+    let expanded = expanded.expect("selected nested-branch simp should expand");
+    assert_eq!(expansion_flat_units, 1, "nested expansion split its Proof");
+    assert_eq!(
+        expansion_replays, 0,
+        "selected nested-branch expansion entered compatibility replay"
+    );
+    assert_eq!(
+        expansion_fallbacks, 0,
+        "selected nested-branch expansion fell back from a checked operation"
+    );
 
     assert_eq!(expanded.matches("simp();").count(), 2);
-    verify_c0_sources(&expanded, &[("nested.c", c_source)])
-        .expect("sibling proof cases must not steal the deferred capture");
+    let (((reverified, reverify_fallbacks), reverify_replays), reverify_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    verify_c0_sources(&expanded, &[("nested.c", c_source)])
+                })
+            })
+        });
+    reverified.expect("sibling proof cases must not steal the deferred capture");
+    assert_eq!(
+        reverify_flat_units, 1,
+        "rewritten nested proof split its Proof"
+    );
+    assert_eq!(
+        reverify_replays, 0,
+        "rewritten nested-branch proof entered compatibility replay"
+    );
+    assert_eq!(
+        reverify_fallbacks, 0,
+        "rewritten nested-branch proof fell back from a checked operation"
+    );
+
+    let leading = "if x >= 0 {\n            step();";
+    let leading_offset = click_source
+        .find(leading)
+        .map(|start| start + leading.rfind("step").unwrap())
+        .expect("outer then leading step should be present");
+    let leading_position = position_at_offset(click_source, leading_offset);
+    let (((leading_expanded, leading_fallbacks), leading_replays), leading_flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &[("nested.c", c_source)],
+                        leading_position.line,
+                        leading_position.column,
+                    )
+                })
+            })
+        });
+    let leading_expanded = leading_expanded.expect("leading smart branch step should expand");
+    assert_eq!(leading_flat_units, 1, "leading expansion split its Proof");
+    assert_eq!(leading_replays, 0, "leading expansion entered replay");
+    assert_eq!(leading_fallbacks, 0, "leading expansion fell back");
+    assert!(
+        leading_expanded.contains("step() using"),
+        "leading smart step did not extract its checked operation: {leading_expanded}"
+    );
+    let (((leading_reverified, leading_reverify_fallbacks), leading_reverify_replays), _) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_explicit_linear_fallbacks(|| {
+                    verify_c0_sources(&leading_expanded, &[("nested.c", c_source)])
+                })
+            })
+        });
+    leading_reverified.expect("expanded leading branch step should reverify");
+    assert_eq!(
+        leading_reverify_replays, 0,
+        "expanded leading branch step entered replay"
+    );
+    assert_eq!(
+        leading_reverify_fallbacks, 0,
+        "expanded leading branch step fell back"
+    );
+
+    let corrupted = leading_expanded.replacen(
+        "step() using {\n                x >= 0;\n            }",
+        "step() using {\n                x < 0;\n            }",
+        1,
+    );
+    assert_ne!(
+        corrupted, leading_expanded,
+        "leading expansion should expose its checked branch premise"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&corrupted, &[("nested.c", c_source)])
+            })
+        });
+    corrupted_result.expect_err("wrong leading branch premise should be rejected by Proof");
+    assert_eq!(
+        corrupted_replays, 0,
+        "wrong leading branch premise entered replay"
+    );
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "wrong leading branch premise fell back"
+    );
 }
 
 #[test]
