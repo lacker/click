@@ -1009,10 +1009,37 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("identity.c", c_source)])
+    let (
+        (
+            ((((verified, events), candidate_applications), certificate_checks), context_exports),
+            replays,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_candidate_certificate_applications(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("identity.c", c_source)])
+                        })
+                    })
+                })
+            })
+        })
     });
     verified.expect("exit witness should refine its checked obligation scope");
+    assert_eq!(flat_units, 1, "the function proof should retain Proof");
+    assert_eq!(replays, 0, "the existential proof entered internal replay");
+    assert_eq!(context_exports, 0, "the existential Proof exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked source certificate"
+    );
+    assert_eq!(
+        candidate_applications, 0,
+        "the witness path applied a constructed candidate certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -1037,6 +1064,86 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the retained witness/normalize scope should verify independently");
+}
+
+#[test]
+fn post_execution_choose_and_witness_share_the_retained_outcome_proof() {
+    let c_source = "int32 identity(int32 x) { return x; }";
+    let click_source = r#"
+        verifying "identity.c";
+
+        int32 identity(int32 x) {
+            requires has_k: exists (k: int32) { k == x };
+            ensures exists (j: int32) { j == result } by {
+                execute();
+                choose(k from requirement has_k);
+                witness(j = k);
+                simp();
+            }
+        }
+    "#;
+
+    let (
+        ((((verified, candidate_applications), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_candidate_certificate_applications(|| {
+                        verify_c0_sources(click_source, &[("identity.c", c_source)])
+                    })
+                })
+            })
+        })
+    });
+    verified.expect("choose and witness should advance one retained outcome Proof");
+    assert_eq!(flat_units, 1, "the function proof should retain Proof");
+    assert_eq!(replays, 0, "the existential operations entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the existential operations exported state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+    assert_eq!(
+        candidate_applications, 0,
+        "ordinary verification applied a candidate"
+    );
+
+    let simp_offset = click_source.rfind("simp();").unwrap();
+    let position = expansion::position_at_offset(click_source, simp_offset);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("identity.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained choose/witness Proof should serialize");
+    assert!(
+        expanded.contains("choose(k from requirement has_k);"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("witness(j = k);"), "{expanded}");
+    verify_c0_sources(&expanded, &[("identity.c", c_source)])
+        .expect("the serialized choose/witness proof should independently verify");
+
+    let witness_offset = expanded
+        .rfind("witness(j = k);")
+        .expect("the extracted nested proof should retain its witness");
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        witness_offset..witness_offset + "witness(j = k);".len(),
+        "witness(j = k + 1);",
+    );
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its witness"
+    );
+    verify_c0_sources(&corrupted, &[("identity.c", c_source)])
+        .expect_err("tampering with the extracted witness must invalidate the proof");
 }
 
 #[test]

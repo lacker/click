@@ -1295,6 +1295,82 @@ mod exit_claim {
 
 use exit_claim::{ClaimClosure, ClosedClaim};
 
+/// Selects the one ungrouped proposition claim refined by top-level
+/// `choose`/`witness` operations and starts its result-aware judgment from the
+/// current outcome Proof. Rewrites and active unfolds are re-applied inside
+/// this independently serializable claim body exactly as expansion requires,
+/// but every operation advances this retained Proof directly.
+fn begin_outcome_existence_proof<'a>(
+    outcome_root: &Proof<'a>,
+    outcome: &CFunctionOutcome,
+    path_requirements: &[Proposition],
+    claims: &[FunctionClaimRef<'_>],
+    closures: &[ClaimClosure],
+    rewrite_claim_equalities: &[Vec<ClickProposition>],
+    unfolded_predicates: &[String],
+) -> Result<(usize, ClickProposition, Proof<'a>), ClickError> {
+    let mut open = claims
+        .iter()
+        .enumerate()
+        .filter_map(|(claim_index, claim)| {
+            if closures[claim_index].is_closed() {
+                return None;
+            }
+            let FunctionClaimRef::Ensure(_, ensure_clause) = claim else {
+                return None;
+            };
+            let Ensure::Proposition(surface_goal) = ensure_clause.ensure() else {
+                return None;
+            };
+            Some((claim_index, surface_goal.clone()))
+        });
+    let Some((claim_index, surface_goal)) = open.next() else {
+        return Err(ClickError::new(
+            "top-level existential operation has no current proposition claim",
+        ));
+    };
+    if open.next().is_some() {
+        return Err(ClickError::new(
+            "top-level existential operation is ambiguous across multiple proposition claims",
+        ));
+    }
+
+    let root = outcome_root
+        .with_outcome_snapshot(outcome)?
+        .with_checked_outcome_facts(path_requirements)?;
+    let mut proof = root.focus_point_surface_goal(&surface_goal)?;
+    for equality in &rewrite_claim_equalities[claim_index] {
+        proof = proof.apply_step(SimpleProofStep::Rewrite(equality.clone()))?;
+    }
+    // These steps make the retained nested body independently surface
+    // checkable. An unfold already inherited by the outcome is harmlessly
+    // skipped, matching the former checked-scope behavior.
+    for name in unfolded_predicates {
+        match proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone())) {
+            Ok(next) => proof = next,
+            Err(_) => check_verification_deadline()?,
+        }
+    }
+    Ok((claim_index, surface_goal, proof))
+}
+
+/// Serializes a completed existential claim Proof in the established
+/// independently-checkable surface form. This is extraction only: the body
+/// has already discharged the claim, and this certificate is never applied
+/// during ordinary verification.
+fn outcome_existence_surface_certificate(
+    surface_goal: ClickProposition,
+    completed: &Proof<'_>,
+) -> ProofCertificate {
+    ProofCertificate::from_steps(vec![
+        SimpleProofStep::Have {
+            proposition: surface_goal,
+            proof: Box::new(completed.certificate()),
+        },
+        SimpleProofStep::Assumption,
+    ])
+}
+
 #[derive(Clone)]
 struct CachedIndependentExecution {
     pre_state: CState,
@@ -2194,7 +2270,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         mut closures,
                         mut rewritten_claim_goals,
                         mut frame_certified_claim_goals,
-                        mut existence_tactics,
                         mut surface_certificate_facts,
                         mut outcome_surface_propositions,
                     ) = crate::instrumentation::measure_operation(
@@ -2206,7 +2281,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 vec![ClaimClosure::default(); claims.len()],
                                 vec![None::<Proposition>; claims.len()],
                                 vec![None::<Proposition>; claims.len()],
-                                Vec::<ProofTactic>::new(),
                                 path_requirements.clone(),
                                 replay.surface_propositions.clone(),
                             )
@@ -2241,6 +2315,11 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 })
                                 .ok()
                         });
+                    // An ungrouped top-level `choose`/`witness` refines one
+                    // result-aware claim. Retain that typed judgment between
+                    // source operations; syntax is recorded only for surface
+                    // attribution, never reapplied as a candidate certificate.
+                    let mut existence_proof = None;
                     // Contract resource/population effects are applied once
                     // at the frame that certifies them. A grouped proof sees
                     // the effect goals directly; an isolated ensure proof
@@ -2858,7 +2937,27 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 }
                             }
                             PostExecutionTactic::Choose(choice) => {
-                                existence_tactics.push(ProofTactic::Choose(choice.clone()));
+                                let (claim_index, surface_goal, proof) =
+                                    match existence_proof.take() {
+                                        Some(active) => active,
+                                        None => begin_outcome_existence_proof(
+                                            outcome_proof.as_ref().ok_or_else(|| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `choose` is unavailable"
+                                                ))
+                                            })?,
+                                            &outcome,
+                                            &path_requirements,
+                                            claims,
+                                            &closures,
+                                            &rewrite_claim_equalities,
+                                            &unfolded_predicates,
+                                        )?,
+                                    };
+                                let proof = proof
+                                    .with_outcome_snapshot(&outcome)?
+                                    .apply_step(SimpleProofStep::Choose(choice.clone()))?;
+                                existence_proof = Some((claim_index, surface_goal, proof));
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
@@ -2870,7 +2969,27 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 );
                             }
                             PostExecutionTactic::Witness(witness) => {
-                                existence_tactics.push(ProofTactic::Witness(witness.clone()));
+                                let (claim_index, surface_goal, proof) =
+                                    match existence_proof.take() {
+                                        Some(active) => active,
+                                        None => begin_outcome_existence_proof(
+                                            outcome_proof.as_ref().ok_or_else(|| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `witness` is unavailable"
+                                                ))
+                                            })?,
+                                            &outcome,
+                                            &path_requirements,
+                                            claims,
+                                            &closures,
+                                            &rewrite_claim_equalities,
+                                            &unfolded_predicates,
+                                        )?,
+                                    };
+                                let proof = proof
+                                    .with_outcome_snapshot(&outcome)?
+                                    .apply_step(SimpleProofStep::Witness(witness.clone()))?;
+                                existence_proof = Some((claim_index, surface_goal, proof));
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
@@ -3667,6 +3786,42 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
+                                if let Some((claim_index, surface_goal, proof)) =
+                                    existence_proof.take()
+                                {
+                                    let proof = proof.with_outcome_snapshot(&outcome)?;
+                                    let completed = if let Some(completed) =
+                                        proof.try_direct_logical_closure()?
+                                    {
+                                        completed
+                                    } else if let Some(completed) = proof.try_simp_closure()? {
+                                        completed
+                                    } else {
+                                        let claim_label = function_claim_label(
+                                            function_block.signature().name(),
+                                            &claims[claim_index],
+                                        );
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` did not complete the retained existential Proof for `{claim_label}`"
+                                        )));
+                                    };
+                                    if !completed.is_complete() {
+                                        return Err(ClickError::new(format!(
+                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: retained existential Proof remained incomplete after `simp`"
+                                        )));
+                                    }
+                                    let certificate = outcome_existence_surface_certificate(
+                                        surface_goal,
+                                        &completed,
+                                    );
+                                    closures[claim_index] =
+                                        ClaimClosure::by_checked_certificate(&certificate);
+                                    if capturing_this_tactic {
+                                        path_deferred_capture_tactics
+                                            .extend(certificate.to_proof_tactics());
+                                    }
+                                    continue;
+                                }
                                 // A divergent path has no outcome to prove
                                 // claims against; every open ensure closes
                                 // with the same trivial Normalize certificate
@@ -3720,11 +3875,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 // claims fall back unchanged, and the
                                 // attempt's memo footprint rolls back with
                                 // it.
-                                if (!replay.grouped_contract || existence_tactics.is_empty())
-                                    && let CFunctionOutcome::Return {
-                                        value: result,
-                                        state: post_state,
-                                    } = &outcome
+                                if let CFunctionOutcome::Return {
+                                    value: result,
+                                    state: post_state,
+                                } = &outcome
                                 {
                                     // Try the already-migrated proposition
                                     // vocabulary as one immutable Proof before
@@ -3776,19 +3930,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             }
                                         }
                                     }
-                                    let existence_candidate = if existence_tactics.is_empty() {
-                                        None
-                                    } else {
-                                        match ProofCertificate::from_proof_tactics(
-                                            &existence_tactics,
-                                        ) {
-                                            Ok(candidate) => Some(candidate),
-                                            Err(_) => {
-                                                direct_supported = false;
-                                                None
-                                            }
-                                        }
-                                    };
                                     if direct_supported && !direct_resource_claims.is_empty() {
                                         let CFunctionOutcome::Return { .. } = &outcome else {
                                             unreachable!("gated on a return outcome above");
@@ -3954,38 +4095,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 selected = false;
                                                 break;
                                             }
-                                            let scope =
-                                                if let Some(candidate) = &existence_candidate {
-                                                    // Re-record the active
-                                                    // unfolds inside the scope:
-                                                    // the retained body must
-                                                    // verify independently of
-                                                    // the enclosing goal's
-                                                    // inherited unfold delta.
-                                                    let mut scope = scope;
-                                                    for name in &unfolded_predicates {
-                                                        match scope.apply_step(
-                                                            SimpleProofStep::UnfoldPredicate(
-                                                                name.clone(),
-                                                            ),
-                                                        ) {
-                                                            Ok(next) => scope = next,
-                                                            Err(_) => {
-                                                                check_verification_deadline()?;
-                                                            }
-                                                        }
-                                                    }
-                                                    let Ok(scope) = scope
-                                                        .apply_candidate_certificate(candidate)
-                                                    else {
-                                                        check_verification_deadline()?;
-                                                        selected = false;
-                                                        break;
-                                                    };
-                                                    scope
-                                                } else {
-                                                    scope
-                                                };
                                             let selected_scope = if let Some(scope) =
                                                 scope.try_direct_logical_closure()?
                                             {
@@ -4271,6 +4380,25 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 }
                     }
 
+                    if !require_explicit_closers
+                        && let Some((claim_index, _, proof)) = existence_proof.take()
+                    {
+                        let proof = proof.with_outcome_snapshot(&outcome)?;
+                        match proof.try_direct_logical_closure()? {
+                            Some(completed) if completed.is_complete() => {
+                                // The source's choose/witness steps are already
+                                // retained in the path surface stream. The
+                                // ordinary implicit closer contributes no
+                                // additional syntax.
+                                closures[claim_index] = ClaimClosure::by_exact_check();
+                            }
+                            _ => closures[claim_index].record_failure(
+                                "the retained existential Proof did not close by the implicit exact check"
+                                    .to_string(),
+                            ),
+                        }
+                    }
+
                     if !require_explicit_closers {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closures[claim_index].is_closed() {
@@ -4278,43 +4406,21 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             }
                             let claim_label =
                                 function_claim_label(function_block.signature().name(), claim);
-                            let result = if !existence_tactics.is_empty() {
-                                let mut available = path_requirements.clone();
-                                check_function_claim_with_existence_tactics(
-                                    &claim_label,
-                                    path_index,
-                                    &path.execution_facts(),
-                                    &mut available,
-                                    claim,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &unfolded_predicates,
-                                    &existence_tactics,
-                                    function_block.requires(),
-                                    &replay.program_point_states,
-                                    false,
-                                )
-                            } else {
-                                check_function_claim(
-                                    &claim_label,
-                                    path_index,
-                                    &path.execution_facts(),
-                                    &path_requirements,
-                                    claim,
-                                    parsed_function.parameters(),
-                                    arguments,
-                                    pre_state,
-                                    &outcome,
-                                    predicate_environment,
-                                    click_function_environment,
-                                    &replay.program_point_states,
-                                    &unfolded_predicates,
-                                )
-                            };
+                            let result = check_function_claim(
+                                &claim_label,
+                                path_index,
+                                &path.execution_facts(),
+                                &path_requirements,
+                                claim,
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                &outcome,
+                                predicate_environment,
+                                click_function_environment,
+                                &replay.program_point_states,
+                                &unfolded_predicates,
+                            );
                             match result {
                                 Ok(()) => closures[claim_index] = ClaimClosure::by_exact_check(),
                                 Err(error) => closures[claim_index]
@@ -4440,7 +4546,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
                     let implicitly_closable = path_deferred_capture_tactics.is_empty()
                         || (!require_explicit_closers
-                            && existence_tactics.is_empty()
                             && claims.iter().all(|claim| match claim {
                                 FunctionClaimRef::Ensure(_, ensure_clause)
                                     if matches!(ensure_clause.ensure(), Ensure::Proposition(_)) =>

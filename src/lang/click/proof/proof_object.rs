@@ -15,6 +15,9 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static CANDIDATE_CERTIFICATE_APPLICATIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -40,6 +43,16 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
     let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_candidate_certificate_applications<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = CANDIDATE_CERTIFICATE_APPLICATIONS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = CANDIDATE_CERTIFICATE_APPLICATIONS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -2177,7 +2190,10 @@ impl<'a> Proof<'a> {
     /// Lowers and selects one externally owned Surface Click obligation from
     /// a point frontier. The returned proof shares every accumulated checked
     /// fact but owns fresh provenance for that obligation's closing steps.
-    fn focus_point_surface_goal(&self, goal: &ClickProposition) -> Result<Self, ClickError> {
+    pub(super) fn focus_point_surface_goal(
+        &self,
+        goal: &ClickProposition,
+    ) -> Result<Self, ClickError> {
         let kernel = self.lower_surface_goal(goal, "point obligation")?;
         self.focus_point_goal_with_surface(kernel, Some(goal.clone()))
     }
@@ -9657,13 +9673,19 @@ impl<'a> Proof<'a> {
         &self,
         outcome: &CFunctionOutcome,
     ) -> Result<Self, ClickError> {
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
-            return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
-        };
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(self.step_error("an outcome snapshot requires a return outcome"));
         };
-        let mut point = (*goal.point).clone();
+        let point = match self.focused_goal() {
+            Some(Goal::FunctionOutcome(goal)) => goal.point.as_ref(),
+            Some(Goal::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
+                self.step_error("an outcome snapshot requires a result-aware proposition goal")
+            })?,
+            _ => {
+                return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
+            }
+        };
+        let mut point = point.clone();
         // Resource-producing post-execution tactics can replace the outcome
         // state after this goal was derived. Carry that persistent snapshot
         // root forward; otherwise later
@@ -9673,12 +9695,25 @@ impl<'a> Proof<'a> {
         // materialization.
         point.result = Arc::new(value.clone());
         point.state = state.clone().into();
-        let mut updated = goal.clone();
-        updated.point = Arc::new(point);
+        let point = Arc::new(point);
         let mut state = (*self.state).clone();
-        state.goals = state
-            .goals
-            .replace_at(self.focused, Goal::FunctionOutcome(updated));
+        state.goals = match self.focused_goal() {
+            Some(Goal::FunctionOutcome(goal)) => {
+                let mut updated = goal.clone();
+                updated.point = point;
+                state
+                    .goals
+                    .replace_at(self.focused, Goal::FunctionOutcome(updated))
+            }
+            Some(Goal::Proposition(goal)) => {
+                let mut updated = goal.clone();
+                updated.outcome = Some(point);
+                state
+                    .goals
+                    .replace_at(self.focused, Goal::Proposition(updated))
+            }
+            _ => unreachable!("the outcome point was selected above"),
+        };
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(state),
@@ -9694,8 +9729,12 @@ impl<'a> Proof<'a> {
         &self,
         facts: &[Proposition],
     ) -> Result<Self, ClickError> {
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
-            return Err(self.step_error("outcome facts require a focused outcome goal"));
+        let point = match self.focused_goal() {
+            Some(Goal::FunctionOutcome(goal)) => goal.point.as_ref(),
+            Some(Goal::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
+                self.step_error("outcome facts require a result-aware proposition goal")
+            })?,
+            _ => return Err(self.step_error("outcome facts require a focused outcome goal")),
         };
         // Path preparation can unfold predicate requirements in place. Keep
         // the point view's requirement prefix aligned with the checked fact
@@ -9704,14 +9743,27 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(context) => context.function_block.requires().len(),
             _ => 0,
         };
-        let mut point = (*goal.point).clone();
+        let mut point = point.clone();
         point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
-        let mut updated = goal.clone();
-        updated.point = Arc::new(point);
+        let point = Arc::new(point);
         let mut state = (*self.state).clone();
-        state.goals = state
-            .goals
-            .replace_at(self.focused, Goal::FunctionOutcome(updated));
+        state.goals = match self.focused_goal() {
+            Some(Goal::FunctionOutcome(goal)) => {
+                let mut updated = goal.clone();
+                updated.point = point;
+                state
+                    .goals
+                    .replace_at(self.focused, Goal::FunctionOutcome(updated))
+            }
+            Some(Goal::Proposition(goal)) => {
+                let mut updated = goal.clone();
+                updated.outcome = Some(point);
+                state
+                    .goals
+                    .replace_at(self.focused, Goal::Proposition(updated))
+            }
+            _ => unreachable!("the outcome point was selected above"),
+        };
         state.goals = state.goals.with_facts_at(
             self.focused,
             self.facts().resync_ordered_preserving_provenance(facts),
@@ -12372,6 +12424,10 @@ impl<'a> ProofScope<'a> {
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
+        #[cfg(test)]
+        CANDIDATE_CERTIFICATE_APPLICATIONS.with(|applications| {
+            applications.set(applications.get() + 1);
+        });
         self.check_certificate(certificate)
     }
 
