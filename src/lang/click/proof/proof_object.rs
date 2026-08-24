@@ -3338,24 +3338,17 @@ impl<'a> Proof<'a> {
         ) {
             return Ok(None);
         }
-        if self.node.depth > 0 {
-            let step = SimpleProofStep::FrameUsing {
-                region: None,
-                premises: Vec::new(),
-            };
-            match self.apply_step_at(step, tactic_index, source_index) {
-                Ok(framed) => return Ok(Some(framed)),
-                Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
-                Err(_) => {}
-            }
+        let step = SimpleProofStep::FrameUsing {
+            region: None,
+            premises: Vec::new(),
+        };
+        match self.apply_step_at(step, tactic_index, source_index) {
+            Ok(framed) => return Ok(Some(framed)),
+            Err(error) if crate::instrumentation::deadline_exceeded() => return Err(error),
+            Err(_) => {}
         }
-        // An unqualified `frame()` is a smart operation, even when an empty
-        // `FrameUsing` happens to prove the selected effect. A compatibility
-        // root has no retained Proof history for earlier deferred source
-        // steps, so its contextual candidate must preserve the explicit
-        // resource facts those steps need. Native Proof descendants already
-        // own their history and keep the cheap exact candidate as the first
-        // choice.
+        // If the exact empty operation cannot prove the selected effect, use
+        // contextual search to select explicit premises and leading haves.
         let Some(candidate) = self.select_contextual_frame_candidate()? else {
             return Ok(None);
         };

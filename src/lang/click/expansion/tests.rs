@@ -1982,7 +1982,18 @@ int32 write_selected(int32 p[2], int32 flag) {
 }
 "#;
     let sources = [("write_selected.c", c_source)];
-    verify_c0_sources(click_source, &sources).expect("branched baseline should verify");
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("branched baseline should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_selected.contract"
+                    && name.starts_with("smart tactic compatibility replay (tactic 3,")
+        )),
+        "the branch-local exact frames entered compatibility replay: {events:#?}"
+    );
     for (selected_text, selected_smart) in [
         ("have result + 1", "have result + 1 == 1 by simp"),
         ("have result - 1", "have result - 1 == 0 by simp"),

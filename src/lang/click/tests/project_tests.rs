@@ -1384,6 +1384,82 @@ fn recursive_zero_list_creates_only_canonical_terms() {
 }
 
 #[test]
+fn recursive_zero_list_branch_frames_stay_on_proof() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest
+        .join("examples")
+        .join("recursive-zero-list")
+        .join("recursive_zero_list.click");
+    let click_source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let sources = crate::cli::read_verifying_sources(&path, &click_source)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim.starts_with("zero_list_sum")
+                    && name.starts_with("smart tactic compatibility replay")
+        )),
+        "a recursive branch frame entered compatibility replay: {events:#?}"
+    );
+
+    let function_start = click_source
+        .find("int32 zero_list_sum(")
+        .expect("the recursive sum should be present");
+    let frame = function_start
+        + click_source[function_start..]
+            .find("frame();")
+            .expect("the recursive branch should contain a frame");
+    let position = expansion::position_at_offset(&click_source, frame);
+    let expanded =
+        expand_c0_tactic_source_at(&click_source, &c_sources, position.line, position.column)
+            .expect("the checked branch frame should expand");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded branch frame should verify normally");
+
+    let function_start = expanded
+        .find("int32 zero_list_sum(")
+        .expect("the expanded recursive sum should remain present");
+    let frame_marker = "frame() using {";
+    let frame = function_start
+        + expanded[function_start..]
+            .find(frame_marker)
+            .expect("the expansion should expose an explicit frame");
+    let premises_start = frame + frame_marker.len();
+    let premises_end = premises_start
+        + expanded[premises_start..]
+            .find('}')
+            .expect("the explicit frame should close");
+    assert!(
+        expanded[premises_start..premises_end].trim().is_empty(),
+        "the exact branch frame should need no premises: {expanded}"
+    );
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        premises_start..premises_end,
+        "\n                1 == 0;\n            ",
+    );
+    let (invalid, invalid_events) =
+        crate::instrumentation::collect(|| verify_c0_sources(&corrupted, &c_sources));
+    invalid.expect_err("ordinary verification should reject an unavailable frame premise");
+    assert!(
+        invalid_events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim.starts_with("zero_list_sum")
+                    && name.starts_with("smart tactic compatibility replay")
+        )),
+        "the invalid explicit frame entered compatibility replay: {invalid_events:#?}"
+    );
+}
+
+#[test]
 fn vector_push_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("vector-push", "vector_push.click");
 }
