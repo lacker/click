@@ -8532,10 +8532,34 @@ fn open_scope_retains_its_checked_branch_interface() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("scoped_nonnegative.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("scoped_nonnegative.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the scoped branch interface should stay on Proof");
+    assert_eq!(
+        flat_units, 1,
+        "the scoped interface should retain one Proof"
+    );
+    assert_eq!(replay_executions, 0, "the scoped interface entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the scoped interface exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "the scoped interface checked a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -8608,10 +8632,31 @@ fn open_scope_retains_its_checked_execution_branch() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("empty_branch.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("empty_branch.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the execution branch should join inside the open Proof");
+    assert_eq!(flat_units, 1, "the scoped branch should retain one Proof");
+    assert_eq!(replay_executions, 0, "the scoped branch entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the scoped branch exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "the scoped branch checked a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -8686,10 +8731,31 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("selected_branch.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("selected_branch.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the decided execution path should stay inside the open Proof");
+    assert_eq!(flat_units, 1, "the decided scope should retain one Proof");
+    assert_eq!(replay_executions, 0, "the decided scope entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the decided scope exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "the decided scope checked a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,

@@ -646,7 +646,7 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
                 continuation,
                 ..
             } => {
-                if proof.is_at_function_exit() || linear_execution_tactics(body).is_none() {
+                if proof.is_at_function_exit() {
                     return Ok(None);
                 }
                 saw_scope = true;
@@ -844,41 +844,6 @@ fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofSte
         .iter()
         .map(|indexed| linear_execution_simple_step(&indexed.tactic))
         .collect()
-}
-
-/// The checked open driver can participate in expansion capture when the
-/// selected source tactic is one of the smart operations for which it can
-/// return the exact retained Proof delta. Captures outside this open are
-/// unaffected; unsupported captures inside it keep using the legacy driver.
-fn checked_open_scope_can_service_capture(
-    body: &InternalProofNode,
-    capture: Option<&ExpansionCapture>,
-    proof_site: Option<&ProofSite>,
-) -> bool {
-    let Some(site) = proof_site else {
-        return capture.is_none();
-    };
-    let Some(wanted) = selected_tactic_index_for_site(capture, site) else {
-        return true;
-    };
-    if !internal_proof_contains_source_index(body, wanted) {
-        return true;
-    }
-    linear_execution_tactics(body).is_some_and(|tactics| {
-        tactics.iter().any(|indexed| {
-            indexed.source_index == wanted
-                && matches!(
-                    indexed.tactic,
-                    ProofTactic::SmartStep
-                        | ProofTactic::ApplyTheorem(_)
-                        | ProofTactic::Transport { .. }
-                        | ProofTactic::SmartExecute
-                        | ProofTactic::SmartExecuteAllPaths
-                        | ProofTactic::SmartFrame(_)
-                        | ProofTactic::ExecuteUntil(_)
-                )
-        })
-    })
 }
 
 /// Advances a linear resource scope one checked node at a time. A nested
@@ -1147,164 +1112,6 @@ fn advance_checked_open_scope<'a>(
     advance_checked_open_scope(scope, continuation, expansion_capture, proof_site)
 }
 
-/// Checks one supported `open` body on the same Proof that owns its entry and
-/// close transitions. Kept out of the recursive structural driver frame for
-/// the same stack-bound reason as the resource-step adapter.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn execute_checked_open_scope<'a>(
-    context: ProofReplayContext,
-    expansion_capture: Option<&mut ExpansionCapture>,
-    resource: ResourceClause,
-    source_index: usize,
-    body: &InternalProofNode,
-    function_block: &'a FunctionBlock,
-    parsed_function: &'a syntax::C0Function,
-    claim_label: &'a str,
-    function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    function: &'a CFunction,
-    arguments: &'a [CExpression],
-    tactic_index: usize,
-) -> Result<Option<ProofReplayContext>, ClickError> {
-    let proof_site = context.replay.proof_site.clone();
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        context,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    let scope = root.begin_open(resource, source_index)?;
-    let Some(scope) =
-        advance_checked_open_scope(scope, body, expansion_capture, proof_site.as_ref())?
-    else {
-        return Ok(None);
-    };
-    let proof = scope.join()?;
-    let certificate = proof.certificate();
-    let mut context = proof.into_execution_context()?;
-    for step in certificate.steps() {
-        context
-            .replay
-            .proof_certificate_builder
-            .push_step(step.clone());
-    }
-    Ok(Some(context))
-}
-
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_execute_checked_open_scope<'a>(
-    context: &ProofReplayContext,
-    expansion_capture: Option<&mut ExpansionCapture>,
-    body: &InternalProofNode,
-    resource: ResourceClause,
-    source_index: usize,
-    function_block: &'a FunctionBlock,
-    parsed_function: &'a syntax::C0Function,
-    claim_label: &'a str,
-    function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    function: &'a CFunction,
-    arguments: &'a [CExpression],
-    tactic_index: usize,
-) -> Result<Option<ProofReplayContext>, ClickError> {
-    execute_checked_open_scope(
-        context.clone(),
-        expansion_capture,
-        resource,
-        source_index,
-        body,
-        function_block,
-        parsed_function,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-        tactic_index,
-    )
-}
-
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_execute_checked_open_scope_and_continue<'a>(
-    context: &ProofReplayContext,
-    expansion_capture: Option<&mut ExpansionCapture>,
-    body: &InternalProofNode,
-    continuation: &InternalProofNode,
-    resource: ResourceClause,
-    source_index: usize,
-    function_block: &'a FunctionBlock,
-    parsed_function: &'a syntax::C0Function,
-    claims: &[FunctionClaimRef<'_>],
-    claim_label: &'a str,
-    function_environment: &'a CExecutionEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    function: &'a CFunction,
-    arguments: &'a [CExpression],
-    tactic_index: usize,
-) -> Result<Option<Vec<ProofReplayContext>>, ClickError> {
-    let Some(context) = try_execute_checked_open_scope(
-        context,
-        expansion_capture,
-        body,
-        resource,
-        source_index,
-        function_block,
-        parsed_function,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-        tactic_index,
-    )?
-    else {
-        return Ok(None);
-    };
-    execute_internal_proof(
-        continuation,
-        context,
-        None,
-        function_block,
-        parsed_function,
-        claims,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function,
-        arguments,
-    )
-    .map(Some)
-}
-
 // The complete mdtest and example gates both reach depth 9. Keep a modest
 // amount of room for ordinary proof nesting while rejecting hostile or
 // accidentally recursive certificates before the large interpreter frame is
@@ -1470,36 +1277,6 @@ fn execute_internal_proof_inner(
             body,
             continuation,
         } => {
-            let checked_supported = checked_open_scope_can_service_capture(
-                body,
-                expansion_capture.as_deref(),
-                context.replay.proof_site.as_ref(),
-            );
-            if checked_supported {
-                let checked = try_execute_checked_open_scope_and_continue(
-                    &context,
-                    expansion_capture.as_deref_mut(),
-                    body,
-                    continuation,
-                    resource.clone(),
-                    *source_index,
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    *index,
-                )?;
-                if let Some(contexts) = checked {
-                    return Ok(contexts);
-                }
-            }
             let mut opened = context;
             if opened.replay.is_at_function_exit() {
                 return Err(ClickError::new(format!(

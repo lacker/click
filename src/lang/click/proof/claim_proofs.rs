@@ -100,11 +100,12 @@ fn value_predicate_contract_supported(
         })
 }
 
-/// Selects the complete-proof route for one or more top-level composite scopes
-/// with only linear tactics before, inside, between, and after them. Counted populations,
-/// quantified resources, heap-backed contract predicates, nested scopes, and
-/// structural proof branches retain their separately audited compatibility
-/// paths until those semantic joins are owned by the same Proof driver.
+/// Selects the complete-proof route for one or more top-level composite
+/// scopes. Tactics before, between, and after scopes remain linear; a scope
+/// body may also contain the checked C-branch forms owned by the typed scope
+/// driver. Counted populations, quantified resources, heap-backed contract
+/// predicates, nested scopes, and unsupported logical structures retain their
+/// separately audited compatibility paths.
 fn top_level_linear_scopes_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -176,14 +177,17 @@ fn top_level_linear_scopes_supported(
                 | ProofTactic::Witness(_)
         )
     };
-    let linear_tactics = tactics.iter().all(|tactic| match tactic {
-        ProofTactic::Open(open) => open.tactics.iter().all(is_linear),
+    let scope_body_tactic_supported = |tactic: &ProofTactic| {
+        is_linear(tactic) || matches!(tactic, ProofTactic::If(_) | ProofTactic::Branch(_))
+    };
+    let scoped_tactics = tactics.iter().all(|tactic| match tactic {
+        ProofTactic::Open(open) => open.tactics.iter().all(scope_body_tactic_supported),
         tactic => is_linear(tactic),
     });
     !has_quantified_contract_resource
         && !contract_observes_population
         && scope_definitions_are_nonpopulation
-        && linear_tactics
+        && scoped_tactics
         && value_predicate_contract_supported(function_block, predicate_environment)
 }
 
