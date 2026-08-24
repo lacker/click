@@ -1,13 +1,8 @@
-//! Completion and independent replay of typed simple proofs.
+//! Compatibility replay for remaining generated Surface certificates.
 //!
-//! A smart tactic's search constructs its [`ProofCertificate`] directly, step by
-//! step, while it commits to each move (see
-//! `construct_simple_step_for_planned_operation`). This module receives that
-//! constructed proof, independently replays it through the ordinary simple
-//! tactic executor, and merges the steps into the enclosing proof's surface
-//! record. There is no intermediate plan language or plan replay: the
-//! independent replay of the `ProofCertificate` is the only re-execution, and its
-//! resulting context is the smart tactic's result.
+//! The general smart-`have` adapter still uses this boundary when its body is
+//! not yet represented by a checked `Proof` scope. Ordinary execution smart
+//! tactics no longer enter this module.
 
 use super::*;
 
@@ -155,116 +150,4 @@ fn merge_surface_certificate_contexts(
     merged.pure_facts = common_pure_facts;
     merged.branch_path = enclosing_branch_path.clone();
     Ok(merged)
-}
-
-/// Checks a smart tactic's constructed [`ProofCertificate`] by independent replay
-/// and merges its steps into the enclosing proof's surface record.
-///
-/// `construction` is the builder the smart search filled while committing to
-/// its moves. `certified_frame` marks a contextual `frame` certificate, whose
-/// synthesized branch structure merges with an existing surface branch
-/// instead of being appended inside it.
-///
-/// `merge_construction` controls whether the constructed steps join the
-/// enclosing surface record here. A function-exit tactic whose independent
-/// replay defers its work passes `false`: the deferred entries carry into the
-/// enclosing replay and the exit drain records the same surface steps in
-/// their deferral order, where a direct merge would place them before every
-/// deferred tactic that preceded this one in the source.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn complete_smart_tactic(
-    context: ProofReplayContext,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claims: &[FunctionClaimRef<'_>],
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    function: &CFunction,
-    arguments: &[CExpression],
-    tactic_index: usize,
-    source_index: usize,
-    construction: ProofCertificateBuilder,
-    certified_frame: bool,
-    merge_construction: bool,
-) -> Result<ProofReplayContext, ClickError> {
-    if let Some(blocker) = &construction.blocker {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `ProofCertificate` construction failed: {blocker}"
-        )));
-    }
-    if construction.steps.is_empty() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart search found an internal plan, but `ProofCertificate` construction produced no steps"
-        )));
-    }
-    let proof = ProofCertificate::from_steps(construction.steps.clone());
-    let outer_certificate = context.replay.proof_certificate_builder.clone();
-    let deferred_before = context.replay.post_execution_tactics.len();
-    let mut verified_result = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        claim_label,
-        format!(
-            "smart tactic compatibility replay (tactic {tactic_index}, source {source_index})"
-        ),
-        || {
-            replay_proof_certificate(
-                context,
-                function_block,
-                parsed_function,
-                claims,
-                claim_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                function,
-                arguments,
-                tactic_index,
-                source_index,
-                &proof,
-            )
-        },
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: constructed `ProofCertificate` failed independent replay:\n{}\n{}",
-            format_proof_certificate(&proof),
-            error.message()
-        ))
-    })?;
-    let mut merged = outer_certificate;
-    if merge_construction {
-        // The merged steps are the surface record; deferred work the
-        // independent replay carried into the enclosing replay must not be
-        // recorded a second time by the exit drain.
-        let mut deferred = verified_result.replay.post_execution_tactics.to_vec();
-        for entry in deferred.iter_mut().skip(deferred_before) {
-            entry.surface_recorded = true;
-        }
-        verified_result.replay.post_execution_tactics = PersistentSequence::default();
-        for entry in deferred {
-            verified_result.replay.post_execution_tactics.push(entry);
-        }
-        let replaces_existing_branch = certified_frame
-            && matches!(proof.steps(), [SimpleProofStep::If { .. }])
-            && merged
-                .steps
-                .iter()
-                .any(|step| matches!(step, SimpleProofStep::If { .. }));
-        if replaces_existing_branch {
-            merged.replace_trailing_branch(proof.steps().to_vec());
-        } else {
-            for step in proof.steps() {
-                merged.push_step(step.clone());
-            }
-        }
-        merged.last_step_entry = construction.last_step_entry;
-    }
-    verified_result.replay.proof_certificate_builder = merged;
-    Ok(verified_result)
 }

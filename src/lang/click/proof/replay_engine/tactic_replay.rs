@@ -1966,35 +1966,14 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                     continue;
                 }
-                let result = complete_smart_tactic(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    construction,
-                    false,
-                    true,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                if let Some(blocker) = construction.blocker {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `execute_until` could not construct checked Proof operations: {blocker}"
+                    )));
+                }
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `execute_until` found no checked Proof candidate"
+                )));
             }
             ProofTactic::SmartFrame(region_ref) => {
                 let framed = try_smart_frame_on_proof(
@@ -2345,10 +2324,10 @@ fn replay_linear_tactics_without_frontier_loops(
                 assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::ApplyTheorem(application) => {
-                // A mid-execution smart `apply` is planned into an explicit
-                // `apply using` and checked through `complete_smart_tactic`
-                // before this match (see the `ApplyTheorem` pre-pass above),
-                // so only the function-exit form reaches this arm.
+                // A mid-execution smart `apply` is selected as an explicit
+                // `apply using` and applied directly to `Proof` before this
+                // match (see the `ApplyTheorem` pre-pass above), so only the
+                // function-exit form reaches this arm.
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",

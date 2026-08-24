@@ -1367,10 +1367,10 @@ fn certify_grouped_claims_result(
 /// smart success must replay through a surface-expressible certificate
 /// before acceptance.
 ///
-/// Mid-execution the invariant is already structural — a smart step can only
-/// continue from the replay context `complete_smart_tactic` returns, and there is
-/// no other way to obtain one, so "accepted without a certificate" is not
-/// synthesizable. At function exit the per-claim drain used to write it easily:
+/// Mid-execution the invariant is already structural — a smart operation can
+/// continue only from its accepted checked `Proof` descendant, so "accepted
+/// without a checked transition" is not synthesizable. At function exit the
+/// per-claim drain used to write closure easily:
 /// closure was `closed_claims[i] = true`, a bool any site could set, with the
 /// certificates hanging off parallel arrays and the gate re-asserted by hand
 /// at every closing site.
