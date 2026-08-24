@@ -2747,11 +2747,10 @@ impl<'a> Proof<'a> {
         advanced.join_focused_outcome_if(&record)
     }
 
-    /// Checks one flat planner candidate while letting the owned nested Proof
-    /// decide whether a theorem application already closed a generated
-    /// `have`. Surface lowering historically appends `assumption` because a
-    /// point theorem may merely add an equivalent snapshot fact; when it adds
-    /// the exact goal, that suffix would instead follow a completed proof.
+    /// Applies one flat contextual-frame plan through its checked operations.
+    /// Generated `have` bodies use the same planner-aware Proof script driver
+    /// as other smart candidates, including its narrow treatment of a final
+    /// redundant `assumption`. No nested certificate is interpreted here.
     fn check_flat_contextual_frame_candidate(
         &self,
         certificate: &ProofCertificate,
@@ -2763,26 +2762,13 @@ impl<'a> Proof<'a> {
                 checked = checked.apply_step_with_origin(step.clone(), origin)?;
                 continue;
             };
-            let body_steps = proof.steps();
-            let theorem_assumption_suffix = matches!(
-                body_steps,
-                [
-                    ..,
-                    SimpleProofStep::ApplyTheoremUsing { .. },
-                    SimpleProofStep::Assumption
-                ]
-            );
-            let mut scope = checked.begin_have(proposition.clone())?;
-            if theorem_assumption_suffix {
-                for body_step in &body_steps[..body_steps.len() - 1] {
-                    scope = scope.apply_step(body_step.clone())?;
-                }
-                if !scope.body.is_complete() {
-                    scope = scope.apply_step(SimpleProofStep::Assumption)?;
-                }
-            } else {
-                scope.body = scope.body.check_certificate_with_origin(proof, origin)?;
-            }
+            let tactics = proof.to_proof_tactics();
+            let scope = checked.begin_have(proposition.clone())?;
+            let Some(scope) = scope.try_planned_linear_script(&tactics)? else {
+                return Err(checked.step_error(
+                    "contextual frame `have` plan did not complete through checked Proof operations",
+                ));
+            };
             checked = scope.join()?;
         }
         Ok(checked)
