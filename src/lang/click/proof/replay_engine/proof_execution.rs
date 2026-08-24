@@ -368,7 +368,18 @@ fn checked_execution_region_end_at(
                 }
             }
         }
-        InternalProofNode::Open { .. } | InternalProofNode::If { .. } => None,
+        InternalProofNode::Open {
+            body, continuation, ..
+        } => match checked_execution_region_end_at(body, depth + 1)? {
+            CheckedExecutionRegionEnd::FunctionExit => {
+                matches!(continuation.as_ref(), InternalProofNode::Done)
+                    .then_some(CheckedExecutionRegionEnd::FunctionExit)
+            }
+            CheckedExecutionRegionEnd::SharedContinuation => {
+                checked_execution_region_end_at(continuation, depth + 1)
+            }
+        },
+        InternalProofNode::If { .. } => None,
     }
 }
 
@@ -439,7 +450,17 @@ fn checked_execution_region_contains_branch_source_at(
                     depth + 1,
                 )
         }
-        InternalProofNode::Open { .. } | InternalProofNode::If { .. } => false,
+        InternalProofNode::Open {
+            body, continuation, ..
+        } => {
+            checked_execution_region_contains_branch_source_at(body, source_index, depth + 1)
+                || checked_execution_region_contains_branch_source_at(
+                    continuation,
+                    source_index,
+                    depth + 1,
+                )
+        }
+        InternalProofNode::If { .. } => false,
     }
 }
 
@@ -1346,7 +1367,37 @@ fn advance_focused_execution_region<'a>(
                 depth + 1,
             )
         }
-        InternalProofNode::Open { .. } | InternalProofNode::If { .. } => Ok(None),
+        InternalProofNode::Open {
+            index,
+            source_index,
+            resource,
+            body,
+            continuation,
+        } => {
+            proof.ensure_focused_arm_can_advance(enclosing_record)?;
+            let owner = proof.clone();
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let scope = proof.begin_open(resource.clone(), *source_index)?;
+            let Some(scope) = advance_checked_open_scope(
+                scope,
+                body,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+            )?
+            else {
+                return Ok(None);
+            };
+            let proof = scope.join()?.restore_execution_tactic_attribution(&owner)?;
+            advance_focused_execution_region(
+                proof,
+                enclosing_record,
+                continuation,
+                expansion_capture,
+                proof_site,
+                depth + 1,
+            )
+        }
+        InternalProofNode::If { .. } => Ok(None),
     }
 }
 
