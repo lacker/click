@@ -293,9 +293,10 @@ fn leading_point_have_supported(have: &ProofHave) -> bool {
 /// Classifies the source-ordered empty-frame segment whose intervening outcome
 /// operations are checked on `Proof`: after the latest execution operation,
 /// every operation before the exact empty function frame must be a supported
-/// `have` or checked transport. The returned indices identify haves whose
-/// bodies become authoritative as part of this route; the final flag records
-/// whether such a frame sealed a transport segment.
+/// `have`, checked transport, or checked proposition closer. The returned
+/// indices identify haves whose bodies become authoritative as part of this
+/// route; the final flag records whether such a frame sealed a transport
+/// segment.
 ///
 /// This is one linear source pass. In particular, admitting several haves does
 /// not rescan their shared prefix or make explicit checking quadratic.
@@ -340,6 +341,12 @@ fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet
             )
         {
             pending_transport = true;
+            continue;
+        }
+        if saw_execution
+            && segment_supported
+            && matches!(tactic, ProofTactic::Assumption | ProofTactic::Normalize)
+        {
             continue;
         }
         if matches!(
@@ -406,9 +413,10 @@ fn grouped_flat_proof_supported(
     // existential value binders also remain inside that goal; their explicit
     // checked operations need no cursor state. Exact empty mutable frames and
     // a preceding sequence of supported post-execution `have` scopes and fact
-    // transports are checked in source order on typed outcome goals. Entry
-    // resource-relation facts use the same nested proposition scopes;
-    // top-level grouped choices preserve their compatibility cursor.
+    // transports and checked proposition closers are checked in source order on
+    // typed outcome goals. Entry resource-relation facts use the same nested
+    // proposition scopes; top-level grouped choices preserve their
+    // compatibility cursor.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
