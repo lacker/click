@@ -626,8 +626,55 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
         }
     "#;
 
-    verify_c0_sources(click_source, &[("owned_string_set.c", c_source)])
-        .expect("explicit store certificate should verify");
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("owned_string_set.c", c_source)])
+    });
+    verified.expect("explicit store certificate should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "owned_string_set.contract"
+                    && name == "smart tactic compatibility replay (tactic 9, source 9)"
+        )),
+        "the leading Have and resource-backed step must remain on Proof: {events:#?}"
+    );
+
+    let smart_step = click_source
+        .rfind("step();")
+        .expect("the resource-backed return step should be present");
+    let position = expansion::position_at_offset(click_source, smart_step);
+    let expanded = expand_c0_tactic_source_at(
+        click_source,
+        &[("owned_string_set.c", c_source)],
+        position.line,
+        position.column,
+    )
+    .expect("the retained Have and statement step should expand");
+    assert!(expanded.contains("have "), "{expanded}");
+    assert!(expanded.contains("step() using {"), "{expanded}");
+    verify_c0_sources(&expanded, &[("owned_string_set.c", c_source)])
+        .expect("the rewritten resource-backed step should verify normally");
+
+    let premise_body = expanded
+        .rfind("step() using {")
+        .expect("the expanded smart step should expose its premise list")
+        + "step() using {".len();
+    let mut corrupted = expanded.clone();
+    corrupted.insert_str(premise_body, "\n                    index < 0;");
+    let (corrupted_result, corrupted_events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(&corrupted, &[("owned_string_set.c", c_source)])
+    });
+    corrupted_result.expect_err("an unavailable resource-step premise must be rejected");
+    assert!(
+        corrupted_events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "owned_string_set.contract"
+                    && name.starts_with("smart tactic compatibility replay")
+        )),
+        "the corrupted explicit step entered compatibility replay: {corrupted_events:#?}"
+    );
 }
 
 #[test]
@@ -715,13 +762,24 @@ fn expanded_read_step_keeps_named_range_separation_premises() {
             .map(|offset| offset + 1)
             .unwrap_or(0)
         + 1;
-    let expanded = expand_c0_tactic_source_at(
-        click_source,
-        &[("owned_string_pop.c", c_source)],
-        line,
-        column,
-    )
-    .expect("the read step's generated surface certificate should replay");
+    let (expanded, events) = crate::instrumentation::collect(|| {
+        expand_c0_tactic_source_at(
+            click_source,
+            &[("owned_string_pop.c", c_source)],
+            line,
+            column,
+        )
+    });
+    let expanded = expanded.expect("the read step's generated surface certificate should replay");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "owned_string_pop.contract"
+                    && name == "smart tactic compatibility replay (tactic 3, source 3)"
+        )),
+        "resource-backed execute entered compatibility replay: {events:#?}"
+    );
 
     let strict_limits = crate::instrumentation::TacticLimits {
         simple: std::time::Duration::from_secs(30),

@@ -515,7 +515,18 @@ int32 pipeline(struct counter* owner) {
         ("pipeline.c", pipeline_c),
     ];
 
-    verify_c0_sources(click_source, &sources).expect("the original smart proof should verify");
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    verified.expect("the original smart proof should verify");
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "pipeline.contract"
+                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
+        )),
+        "resource-backed execute_until entered compatibility replay: {events:#?}"
+    );
 
     let frontier_have = click_source.find("have owner->value == 1 by simp").unwrap();
     let have_position = expansion::position_at_offset(click_source, frontier_have);

@@ -1547,7 +1547,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::UnfoldPredicate(_)
+                            SimpleProofStep::Have { .. }
+                                | SimpleProofStep::UnfoldPredicate(_)
                                 | SimpleProofStep::TransportUsing { .. }
                                 | SimpleProofStep::StepUsing(_)
                         )
@@ -1723,7 +1724,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::UnfoldPredicate(_)
+                            SimpleProofStep::Have { .. }
+                                | SimpleProofStep::UnfoldPredicate(_)
                                 | SimpleProofStep::TransportUsing { .. }
                                 | SimpleProofStep::StepUsing(_)
                         )
@@ -1885,7 +1887,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
-                            SimpleProofStep::UnfoldPredicate(_)
+                            SimpleProofStep::Have { .. }
+                                | SimpleProofStep::UnfoldPredicate(_)
                                 | SimpleProofStep::TransportUsing { .. }
                                 | SimpleProofStep::StepUsing(_)
                         )

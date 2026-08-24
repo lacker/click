@@ -2657,6 +2657,9 @@ impl<'a> Proof<'a> {
             )));
         }
 
+        if let SimpleProofStep::Have { proposition, proof } = &step {
+            return self.apply_have_step(proposition, proof);
+        }
         if let SimpleProofStep::Step = &step {
             return self.apply_execution_statement_step(step, &[]);
         }
@@ -2731,6 +2734,23 @@ impl<'a> Proof<'a> {
             }),
             focused: self.focused,
         })
+    }
+
+    /// Applies one explicit `Have` through the same owned scope operations as
+    /// a source `have` block. Each body step advances the scope's persistent
+    /// child `Proof`; joining publishes only the checked proposition and
+    /// retains the body's exact surface operations as provenance. A failed
+    /// body leaves this immutable root untouched.
+    fn apply_have_step(
+        &self,
+        proposition: &ClickProposition,
+        proof: &ProofCertificate,
+    ) -> Result<Self, ClickError> {
+        let mut scope = self.begin_have(proposition.clone())?;
+        for step in proof.steps() {
+            scope = scope.apply_step(step.clone())?;
+        }
+        scope.join()
     }
 
     fn selected_effect_indices(
@@ -15390,7 +15410,7 @@ mod tests {
             complete.certificate().steps(),
             &[
                 SimpleProofStep::Have {
-                    proposition,
+                    proposition: proposition.clone(),
                     proof: Box::new(ProofCertificate::from_steps(vec![
                         SimpleProofStep::Normalize,
                     ])),
@@ -15400,10 +15420,46 @@ mod tests {
         );
         assert!(!root.is_complete());
         assert!(root.certificate().steps().is_empty());
+        assert!(
+            root.apply_step(SimpleProofStep::Have {
+                proposition: proposition.clone(),
+                proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Intro])),
+            })
+            .is_err(),
+            "an invalid explicit Have body must be rejected"
+        );
+        assert!(
+            root.certificate().steps().is_empty(),
+            "a rejected explicit Have body must leave its immutable root untouched"
+        );
+
+        let checked_have = root
+            .apply_step(SimpleProofStep::Have {
+                proposition: proposition.clone(),
+                proof: Box::new(ProofCertificate::from_steps(vec![
+                    SimpleProofStep::Normalize,
+                ])),
+            })
+            .expect("an explicit Have step should use the owned checked scope");
+        let complete = checked_have
+            .apply_step(SimpleProofStep::Assumption)
+            .expect("the checked Have step should publish its proposition");
+        assert_eq!(
+            complete.certificate().steps(),
+            &[
+                SimpleProofStep::Have {
+                    proposition,
+                    proof: Box::new(ProofCertificate::from_steps(vec![
+                        SimpleProofStep::Normalize,
+                    ])),
+                },
+                SimpleProofStep::Assumption,
+            ]
+        );
     }
 
     #[test]
-    fn smart_have_scope_scales_with_local_output_and_is_transactional() {
+    fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         let proposition = ClickProposition::Comparison {
             left: ContractExpression::CFragment(CExpression::Value(int32(0))),
             operator: ComparisonOperator::Equal,
@@ -15479,6 +15535,35 @@ mod tests {
             assert!(
                 allocations <= allocation_bound,
                 "size {size} smart scope allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert_eq!(
+                complete.certificate().steps(),
+                &[
+                    SimpleProofStep::Have {
+                        proposition: proposition.clone(),
+                        proof: Box::new(ProofCertificate::from_steps(vec![
+                            SimpleProofStep::Normalize,
+                        ])),
+                    },
+                    SimpleProofStep::Assumption,
+                ]
+            );
+
+            let before = fact_node_allocations();
+            let complete = root
+                .apply_step(SimpleProofStep::Have {
+                    proposition: proposition.clone(),
+                    proof: Box::new(ProofCertificate::from_steps(vec![
+                        SimpleProofStep::Normalize,
+                    ])),
+                })
+                .expect("the explicit Have should check through its owned scope")
+                .apply_step(SimpleProofStep::Assumption)
+                .expect("the explicit Have should publish its proposition");
+            let allocations = fact_node_allocations() - before;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} explicit Have allocated {allocations} persistent nodes (bound {allocation_bound})"
             );
             assert_eq!(
                 complete.certificate().steps(),
