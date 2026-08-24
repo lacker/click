@@ -5760,7 +5760,7 @@ fn grouped_explicit_empty_mutable_frame_stays_on_proof() {
 }
 
 #[test]
-fn grouped_post_execution_have_before_empty_mutable_frame_stays_on_proof() {
+fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
     let c_source = r#"
         int32 write_first(int32 p[]) {
             p[0] = 9;
@@ -5779,6 +5779,13 @@ fn grouped_post_execution_have_before_empty_mutable_frame_stays_on_proof() {
             execute();
             have result == 9 by {
                 simp();
+            }
+            have forall (k: int32) {
+                result == 9 implies k == k
+            } by {
+                intro();
+                intro();
+                normalize();
             }
             frame() using {};
             simp();
@@ -5833,27 +5840,40 @@ fn grouped_post_execution_have_before_empty_mutable_frame_stays_on_proof() {
     let tactics = verified[0]
         .expanded_proof_tactics()
         .expect("the ordered outcome operations should retain provenance");
-    assert!(
-        tactics
+    let frame_index = tactics
+        .iter()
+        .position(|tactic| {
+            matches!(
+                tactic,
+                ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
+            )
+        })
+        .expect("the retained proof lost its exact empty frame");
+    assert_eq!(
+        tactics[..frame_index]
             .iter()
-            .any(|tactic| matches!(tactic, ProofTactic::Have(_))),
-        "the retained proof lost its post-execution have: {tactics:#?}"
+            .filter(|tactic| matches!(tactic, ProofTactic::Have(_)))
+            .count(),
+        2,
+        "the retained proof lost a post-execution have: {tactics:#?}"
     );
     assert!(
-        tactics.iter().any(|tactic| matches!(
+        tactics[..frame_index].iter().any(|tactic| matches!(
             tactic,
-            ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
+            ProofTactic::Have(ProofHave {
+                proposition: ClickProposition::ForAll { .. },
+                proof: SourceProof::Script(body),
+            }) if body.iter().filter(|step| matches!(step, ProofTactic::Intro)).count() == 2
         )),
-        "the retained proof lost its exact empty frame: {tactics:#?}"
+        "the retained proof lost its universal scope operations: {tactics:#?}"
     );
-
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "write_first", CProofClaim::Grouped)
             .expect("the ordered outcome operations should serialize");
     verify_c0_sources(&rewritten, &sources)
         .expect("the serialized outcome operations should independently reverify");
 
-    let corrupted = rewritten.replacen("have result == 9", "have result == 8", 1);
+    let corrupted = rewritten.replacen("k == k", "k == k + 1", 1);
     assert_ne!(
         corrupted, rewritten,
         "the expansion should expose the checked have"
@@ -5862,7 +5882,7 @@ fn grouped_post_execution_have_before_empty_mutable_frame_stays_on_proof() {
         proof::count_internal_proof_executions(|| {
             proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
         });
-    corrupted_result.expect_err("tampering with the outcome have must invalidate the proof");
+    corrupted_result.expect_err("tampering with the universal have must invalidate the proof");
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid migrated operation must not become a compatibility miss"
