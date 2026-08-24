@@ -32,6 +32,10 @@ authority.
 
 ## Transitional implementation
 
+This section is historical evidence for the replacement architecture. The
+work plan is the Architecture correction below plus the census and design
+sections that follow it; do not treat the shapes recorded here as a queue.
+
 `Proof` owns persistent typed goals and the private provenance nodes connecting
 accepted successors to checked operations. However, its execution model is not
 yet an independent replacement for replay. `Proof::for_execution_frontier`
@@ -140,6 +144,176 @@ loop- or branch-specific syntax drivers would preserve this defect.
 6. Instrument exact compatibility call sites. Claim labels, total execution
    counts, or baseline comparisons are supporting diagnostics, not proof that
    a particular fallback was avoided.
+
+## State census (2026-08-24)
+
+Taken after `proof_object.rs` was mechanically split into concern modules.
+The replay adapters (`for_execution_frontier`,
+`for_execution_frontier_with_effect_goals`, `start_loop_effect_goal`,
+`into_execution_context`, `finalization_view`) are co-located in
+`src/lang/click/proof/proof_object/replay_boundary.rs`, so step 5 deletes
+one file rather than hunting scattered methods.
+
+### `TacticReplayState` fields by ownership
+
+`TacticReplayState` (`replay_state.rs:135`) has 36 fields. Line references
+are as of this census date.
+
+Semantic fields whose destination is typed `Proof` state: `loop_effect_goal`
+(subsumed by the typed region boundary's effect payload), `frontier`,
+`effect_facts` (joins already compute typed `introduced_effect_facts`
+deltas), `case_assumptions`, `next_opaque_call` and `next_kernel_variable`
+(freshness counters, snapshotted even inside `PlannedStatementTransition`),
+`execution_start_facts`, `function_entry_execution_prerequisites` and
+`function_entry_derivations` (typed per-step deltas already exist on
+`ExecutionProofStepDelta`), `unfolded_predicates` (a typed duplicate already
+lives in `GoalContext`; delete the replay copy), `frontier_loop_clauses`,
+`frontier_loop_rules`, `function_entry_state`, `concrete_loop_execution`,
+`execution_abstraction`, `region_invariants_closed` (becomes discharge of a
+typed invariant-bundle obligation), and the semantic half of
+`program_point_states` (named `CState` snapshots; the point keying survives
+as source attribution).
+
+Semantic fields whose destination is deletion: `proof_certificate_builder`
+(step 4, with dependents `next_path_choice`, `open_scopes`,
+`planned_statement_transitions`), `completed_branch_regions` and
+`has_structured_branch_history` (replaced by typed split/region identity),
+`post_execution_tactics` and `ordered_finalization` (compatibility
+boundaries of the exit drain), and `region_proof` /
+`loop_invariant_region` (mode flags that become region identity).
+
+Cursor fields that survive in the non-semantic cursor: `proof_site`,
+`source_layout`, `region_simp`, `invariant_closer_step`,
+`has_resource_surface_history`, `grouped_contract`,
+`deferred_tactic_capture`, `deferred_expansion_path_choices`, and the
+diagnostic `branch_path` on both context structs. `surface_propositions` is
+serialization metadata (every recovered candidate is re-validated by exact
+equality) but currently sits on the checking hot path; it becomes surface
+attribution attached to provenance with no checking authority.
+
+`ExecutionProofState` (`proof_object.rs:1060`) already holds the
+destination shapes: `state` (the Proof-owned `CState`), `branch_decisions`
+and `outcome_branch_decisions` (output-sized provenance), and
+`last_step_delta` (the typed export mechanism). Its embedded `replay` field
+dissolves per the lists above; `has_empty_execution_branch_leaf` deletes
+with the compatibility routing it gates.
+
+### Replay call-site map
+
+`execute_internal_proof` (`replay_engine/proof_execution.rs:2576`) has four
+production entry points, plus its internal recursion:
+
+- `claim_proofs.rs:797` — single-claim fallback once
+  `try_check_structural_function_proof` / `try_check_flat_function_proof`
+  decline; also every generated smart script (`auto`, `frame`, `simp`).
+- `claim_proofs.rs:1013` — the grouped whole-contract equivalent.
+- `loop_planning.rs:1303` — every loop preservation proof, explicit or
+  planned, via the synthetic sentinel frontier.
+- `loop_planning.rs:433` — automatic preservation planning: a worklist
+  search that replays one-tactic programs per candidate, then merges
+  certificates that are re-verified through the previous site — the
+  construct-then-replay double engine in one place.
+
+Nothing is expansion-only: `click expand` threads capture state through the
+identical verification paths, so every site above is on ordinary
+verification.
+
+`tactic_replay.rs` contains roughly twenty wrap/op/unwrap round trips
+(`try_smart_step_on_proof` and friends, plus inline per-tactic arms): each
+constructs a `ProofReplayContext` from loose locals, builds a `Proof` via
+`for_execution_frontier`, applies one checked operation, exports the state
+back through `into_execution_context`, and pushes the certificate steps
+into `proof_certificate_builder`. These are pure step-2 casualties; no
+individual site needs its own migration.
+
+`finalization_view` has three readers: the ordered outcome drain
+(`claim_proofs.rs:1521`), deferred expansion capture
+(`have_proofs.rs:2063`), and a non-semantic timing read
+(`proof_execution.rs:796`) that only needs the cursor split.
+
+Dependency summary: step 1 unblocks both `loop_planning.rs` sites and the
+interpreter's `Branch` join; step 2 removes every `tactic_replay.rs` round
+trip and lets the `try_check_*` roots start as `Proof`; step 3 deletes
+`execute_internal_proof` and `OrderedProofUnit::Replay`; step 4 retires the
+`proof_certificate_builder` reads inside finalization; step 5 deletes
+`replay_boundary.rs` and `ProofReplayContext` itself.
+
+### Boundary representations the typed region goal must subsume
+
+The execution position is not a `Proof` concept today.
+`ProofExecutionPoint` (`replay_state.rs:1897`) has exactly three states —
+`FunctionEntry`, `StatementEntry`, `FunctionExit` — with no region or
+back-edge variant, and `FrontierGoal` (`proof_object.rs:1297`) carries only
+an effect selection and context: "execute to function exit", "execute this
+arm to its join", and "execute the loop body to the back-edge" are
+indistinguishable by type. The four boundary kinds are encoded three
+different ways:
+
+- Function exit: the `FunctionExit` enum variant (holding the outcome
+  candidates inside the position itself), plus the caller-side invariant
+  `continuations.len() <= initial_continuation_depth` re-checked at every
+  terminal join.
+- Branch join: `completed_branch_regions` membership, and stack depth back
+  at the split's `initial_continuation_depth`, and
+  `frontier.next_statement_index` equal to the layout's continuation node —
+  three replay-state observables mutated by side effect. Sibling identity
+  (`SplitId`, arm `GoalId`s, `Arc::ptr_eq` markers) already exists on
+  `Proof` and is sound; only the C-level boundary is untyped.
+- Loop back-edge: structural equality of the remaining program with a
+  synthetic `return 0` sentinel plus an empty continuation stack
+  (`loop_planning.rs:1266` and `:1343`); the loop-effect obligation is a
+  mutable `closed` boolean rather than goal discharge.
+- Scope return: `Arc`-pointer ancestry on `Proof` (sound) duplicated by the
+  replay continuation stack and the `open_scopes` counter, with scope close
+  deferred through `post_execution_tactics` when the frontier is already at
+  exit.
+
+## Typed execution-region boundary: design draft
+
+Replay encodes "stop here" by keeping code beyond the boundary in the
+frontier — the function tail after a branch arm, a synthetic sentinel after
+a loop body — and then checking after the fact that execution did not run
+past. The typed replacement inverts this: an execution-region goal owns
+exactly the region's statement tree, so completion is structural exhaustion
+of the goal's own frontier, and executing past the boundary is
+unrepresentable rather than detected.
+
+Shape:
+
+- `FrontierGoal` gains a typed region identity — function body, branch arm
+  (keyed by `SplitId` and arm position), or loop body (keyed by loop index)
+  — and a typed boundary stating what is due at completion: function exit
+  carries per-path outcome obligations, a branch join carries the join
+  interface at its split identity, and a loop back-edge carries the
+  invariant bundle and structural-effect obligations.
+- A region goal completes in one of two typed states: at-boundary (its
+  statement tree is exhausted — by construction, since it owns no code past
+  the boundary) or terminal (a `return` retired the path into typed outcome
+  candidates). Joins accept mixed arms, as `branch ensuring` already does;
+  terminal arms contribute outcome candidates that propagate to the parent
+  region.
+- Joins compose by split identity and marker ancestry alone: both sibling
+  goals at-boundary for the same split lets an audited join re-derive the
+  parent's region goal owning the shared continuation. No completed-region
+  set, no depth comparison, no statement-index comparison.
+- Nested regions are nested goals rather than stacked continuations; the
+  `ExecutionFrontier` continuation stack dissolves into the goal tree, and
+  `initial_continuation_depth` fields disappear from the split records.
+- Loop preservation constructs a loop-body region goal directly — no
+  sentinel, no `region_proof` / `loop_invariant_region` flags. Preservation
+  obligations discharge against the boundary payload.
+- `SourceExecutionLayout`, `CodeRegionRef`, and `ProgramPointRef` survive as
+  cursor attribution describing where a region sits in source; they no
+  longer decide completion.
+
+Validation order, per the corrected migration order: first re-express
+function exit — the already-green distinguished boundary — as a function
+region goal with an exact counter proving `focus_function_outcomes`
+consumes the typed boundary rather than replay's `FunctionExit` variant.
+Then the loop back-edge, deleting the sentinel and the `at_back_edge`
+check. Then branch joins, deleting `completed_branch_regions`. Each chunk
+scores by the replay field or fallback it deletes, never by adding a
+guarded path beside a retained fallback.
 
 ## Scoped composite population is a replay-state witness
 
