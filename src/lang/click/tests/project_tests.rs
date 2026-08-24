@@ -1292,6 +1292,72 @@ fn input_cursor_creates_only_canonical_terms() {
 }
 
 #[test]
+fn input_cursor_call_step_with_trailing_have_stays_on_proof() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest
+        .join("examples")
+        .join("input-cursor")
+        .join("input_cursor.click");
+    let click_source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let sources = crate::cli::read_verifying_sources(&path, &click_source)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
+
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "input_cursor_shared_pipeline.contract"
+                    && name == "smart tactic compatibility replay (tactic 5, source 5)"
+        )),
+        "the call step's trailing have entered compatibility replay: {events:#?}"
+    );
+
+    let marker = "    step();\n    transport(at(statement(4).entry";
+    let selected = click_source
+        .find(marker)
+        .expect("the shared pipeline call step should be present")
+        + "    ".len();
+    let position = expansion::position_at_offset(&click_source, selected);
+    let expanded =
+        expand_c0_tactic_source_at(&click_source, &c_sources, position.line, position.column)
+            .expect("the checked call step and trailing have should expand");
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded call step should verify normally");
+
+    let function_start = expanded
+        .find("int32 input_cursor_shared_pipeline")
+        .expect("the expanded shared pipeline should remain present");
+    let expanded_step = function_start
+        + expanded[function_start..]
+            .find("step() using {")
+            .expect("the call transition should expand as a checked step");
+    let have = "have ignored == 0 by {";
+    let expanded_have = function_start
+        + expanded[function_start..]
+            .find(have)
+            .expect("the planner's trailing have should be source-expressible");
+    assert!(
+        expanded_step < expanded_have,
+        "the trailing have should follow the checked call transition"
+    );
+
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(
+        expanded_have..expanded_have + have.len(),
+        "have ignored == 1 by {",
+    );
+    assert!(
+        verify_c0_sources(&corrupted, &c_sources).is_err(),
+        "ordinary verification should reject a corrupted expanded have"
+    );
+}
+
+#[test]
 fn linked_list_creates_only_canonical_terms() {
     example_project_creates_only_canonical_terms("linked-list", "linked_list.click");
 }

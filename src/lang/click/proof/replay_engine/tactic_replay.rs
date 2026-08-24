@@ -1543,10 +1543,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
                 if construction.blocker.is_none()
                     && !construction.steps.is_empty()
-                    && matches!(
-                        construction.steps.last(),
-                        Some(SimpleProofStep::StepUsing(_))
-                    )
                     && construction.steps.iter().all(|step| {
                         matches!(
                             step,
@@ -1556,6 +1552,10 @@ fn replay_linear_tactics_without_frontier_loops(
                                 | SimpleProofStep::StepUsing(_)
                         )
                     })
+                    && construction
+                        .steps
+                        .iter()
+                        .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
                     let mut proof = Proof::for_execution_frontier(
                         claim_label,
