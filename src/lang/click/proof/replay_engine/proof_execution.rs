@@ -1849,6 +1849,28 @@ fn advance_checked_open_scope<'a>(
         };
         return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
     }
+    if let InternalProofNode::Open {
+        index,
+        source_index,
+        resource,
+        body: nested_body,
+        continuation,
+    } = body
+    {
+        let scope = scope.with_execution_tactic_index(*index)?;
+        let nested = scope.begin_open(resource.clone(), *source_index)?;
+        let Some(nested) = advance_checked_open_scope(
+            nested,
+            nested_body,
+            expansion_capture.as_deref_mut(),
+            proof_site,
+        )?
+        else {
+            return Ok(None);
+        };
+        let scope = scope.join_nested(nested)?;
+        return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
+    }
     if let InternalProofNode::If {
         condition,
         then_branch,

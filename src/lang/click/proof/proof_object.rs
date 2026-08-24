@@ -12573,6 +12573,28 @@ impl<'a> ProofScope<'a> {
         &self.body
     }
 
+    /// Attributes the next checked execution operation inside this scope to
+    /// its own source tactic without changing the enclosing scope root.
+    pub(super) fn with_execution_tactic_index(
+        &self,
+        tactic_index: usize,
+    ) -> Result<Self, ClickError> {
+        let mut next = self.clone();
+        next.body = self.body.with_execution_tactic_index(tactic_index)?;
+        Ok(next)
+    }
+
+    /// Opens another composite resource from this scope's current checked
+    /// body. The returned nested scope can only rejoin through `join_nested`,
+    /// which checks that it descends from this exact body.
+    pub(super) fn begin_open(
+        &self,
+        resource: ResourceClause,
+        source_index: usize,
+    ) -> Result<ProofScope<'a>, ClickError> {
+        self.body.begin_open(resource, source_index)
+    }
+
     /// Opens one proposition subproof at the current scope body's frontier.
     ///
     /// The returned scope is rooted at this scope's current checked body. It
@@ -12585,8 +12607,8 @@ impl<'a> ProofScope<'a> {
         self.body.begin_have(proposition)
     }
 
-    /// Incorporates one completed scope rooted at the current body as the
-    /// outer scope's next checked structural node.
+    /// Incorporates one completed proposition or resource scope rooted at the
+    /// current body as the outer scope's next checked structural node.
     ///
     /// This is the scope analogue of `Proof::apply_step`: callers cannot
     /// replace the body with an unrelated checked proof or skip intervening

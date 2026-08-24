@@ -228,14 +228,66 @@ fn collect_post_execution_if_have_indices<'a>(
     }
 }
 
+fn structural_linear_tactic_supported(tactic: &ProofTactic) -> bool {
+    !matches!(
+        tactic,
+        ProofTactic::Open(_)
+            | ProofTactic::If(_)
+            | ProofTactic::Cases(_)
+            | ProofTactic::Branch(_)
+            | ProofTactic::Loop(_)
+            | ProofTactic::Choose(_)
+            | ProofTactic::Witness(_)
+    )
+}
+
+fn structural_open_definition_supported(
+    open: &ProofOpen,
+    resource_environment: &ResourceEnvironment,
+) -> bool {
+    let definition_supported = match &open.resource {
+        ResourceClause::Declared { name, .. } => {
+            resource_environment.get(name).is_some_and(|definition| {
+                definition.composite_body().is_some_and(|body| {
+                    body.contains()
+                        .iter()
+                        .all(|resource| !matches!(resource, ResourceClause::Quantified { .. }))
+                })
+            })
+        }
+        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Quantified { .. } => {
+            false
+        }
+    };
+    definition_supported
+        && open.tactics.iter().all(|tactic| match tactic {
+            ProofTactic::Open(nested) => {
+                structural_open_definition_supported(nested, resource_environment)
+            }
+            _ => true,
+        })
+}
+
+fn structural_open_body_tactic_supported(tactic: &ProofTactic) -> bool {
+    match tactic {
+        ProofTactic::Open(open) => open
+            .tactics
+            .iter()
+            .all(structural_open_body_tactic_supported),
+        ProofTactic::If(_) | ProofTactic::Branch(_) => true,
+        tactic => structural_linear_tactic_supported(tactic),
+    }
+}
+
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
-/// owned by the typed scope driver. Heap-backed contract predicates, nested
-/// scopes, quantified scope bodies, and unsupported logical structures retain
-/// their separately audited compatibility paths. Quantified contract resources
-/// and counted populations use the same checked resource entry and close
-/// operations as ordinary composite scopes.
+/// owned by the typed scope driver. Heap-backed contract predicates, scopes
+/// nested inside branch arms, quantified scope bodies, and unsupported logical
+/// structures retain their separately audited compatibility paths. Sequential
+/// nested scopes, quantified contract resources, and counted populations use
+/// the same checked resource entry and close operations as ordinary composite
+/// scopes.
 fn top_level_structural_proof_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
@@ -276,37 +328,14 @@ fn top_level_structural_proof_supported(
     if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
         return false;
     }
-    let scope_definitions_are_supported = opens.iter().all(|open| match &open.resource {
-        ResourceClause::Declared { name, .. } => {
-            resource_environment.get(name).is_some_and(|definition| {
-                definition.composite_body().is_some_and(|body| {
-                    body.contains()
-                        .iter()
-                        .all(|resource| !matches!(resource, ResourceClause::Quantified { .. }))
-                })
-            })
-        }
-        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Quantified { .. } => {
-            false
-        }
-    });
-    let is_linear = |tactic: &ProofTactic| {
-        !matches!(
-            tactic,
-            ProofTactic::Open(_)
-                | ProofTactic::If(_)
-                | ProofTactic::Cases(_)
-                | ProofTactic::Branch(_)
-                | ProofTactic::Loop(_)
-                | ProofTactic::Choose(_)
-                | ProofTactic::Witness(_)
-        )
-    };
-    let scope_body_tactic_supported = |tactic: &ProofTactic| {
-        is_linear(tactic) || matches!(tactic, ProofTactic::If(_) | ProofTactic::Branch(_))
-    };
+    let scope_definitions_are_supported = opens
+        .iter()
+        .all(|open| structural_open_definition_supported(open, resource_environment));
     let structural_tactics = tactics.iter().all(|tactic| match tactic {
-        ProofTactic::Open(open) => open.tactics.iter().all(scope_body_tactic_supported),
+        ProofTactic::Open(open) => open
+            .tactics
+            .iter()
+            .all(structural_open_body_tactic_supported),
         ProofTactic::Branch(_) => true,
         tactic @ ProofTactic::If(_) => {
             expanded_execution_if_tactic_supported(tactic)
@@ -314,7 +343,7 @@ fn top_level_structural_proof_supported(
                 || expanded_execution_tree_tactic_supported(tactic)
                 || post_execution_if_tactic_supported(tactic)
         }
-        tactic => is_linear(tactic),
+        tactic => structural_linear_tactic_supported(tactic),
     });
     (opens.is_empty() || scope_definitions_are_supported)
         && structural_tactics

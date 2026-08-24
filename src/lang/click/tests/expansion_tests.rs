@@ -7260,6 +7260,106 @@ fn linear_open_have_retains_the_selected_theorem_application() {
 }
 
 #[test]
+fn nested_composite_resource_scopes_stay_on_one_proof() {
+    let c_source = "int32 read_cell(int32 p[]) { return p[0]; }";
+    let click_source = r#"
+        resource cell(p: int32*) {
+            owns p[0..1];
+        }
+
+        resource wrapped_cell(p: int32*) {
+            contains cell(p);
+        }
+
+        verifying "read_cell.c";
+
+        int32 read_cell(int32 p[]) {
+            owns wrapped_cell(p);
+            immutable;
+            ensures result == old(p[0]);
+        } by {
+            open(wrapped_cell(p)) {
+                open(cell(p)) {
+                    execute();
+                }
+            }
+            frame();
+            simp();
+        }
+    "#;
+    let sources = [("read_cell.c", c_source)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the nested resource scopes should verify through Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the nested resource scopes entered replay");
+    assert_eq!(context_exports, 0, "the nested scopes exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the nested resource scopes fell back"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the nested resource scopes should retain provenance");
+    assert!(
+        matches!(
+            tactics.first(),
+            Some(ProofTactic::Open(outer))
+                if matches!(
+                    outer.tactics.as_slice(),
+                    [ProofTactic::Open(inner)]
+                        if matches!(inner.resource, ResourceClause::Declared { ref name, .. } if name == "cell")
+                )
+        ),
+        "the retained proof lost the nested checked scope: {tactics:#?}"
+    );
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "read_cell", CProofClaim::Grouped)
+            .expect("the nested resource scopes should serialize");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the serialized nested scopes should independently reverify");
+
+    let corrupted = rewritten.replacen("open(cell(p))", "open(cell(p + 1))", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the nested resource selection"
+    );
+    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+    });
+    let error =
+        result.expect_err("tampering with the nested resource selection must invalidate the proof");
+    assert!(
+        error.message().contains("`unfold(cell((p + 1)))` failed"),
+        "the nested checked resource entry should reject the tamper directly: {error:?}"
+    );
+    assert_eq!(fallbacks, 0, "an invalid nested open must not fall back");
+    assert_eq!(
+        corrupted_replays, 0,
+        "an invalid nested open must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn linear_open_retains_a_direct_bare_theorem_application() {
     let c_source = r#"
         int32 retain_lower(int32 lower, int32 upper) {
