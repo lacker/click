@@ -6138,6 +6138,99 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
 }
 
 #[test]
+fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
+    let c_source = r#"
+        int32 write_first(int32 p[]) {
+            p[0] = 9;
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        predicate is_nine(value: int32) {
+            value == 9
+        }
+
+        predicate is_eight(value: int32) {
+            value == 8
+        }
+
+        verifying "write_first.c";
+
+        int32 write_first(int32 p[]) {
+            requires loadable(p[0..1]);
+            consumes p[0..1];
+            ensures is_nine(result);
+            mutable p[0..1];
+        } by {
+            execute();
+            unfold(is_nine);
+            assumption();
+            frame() using {};
+        }
+    "#;
+    let sources = [("write_first.c", c_source)];
+
+    let (
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        verify_c0_sources(click_source, &sources)
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the ordered predicate unfold should verify on Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the ordered predicate unfold entered replay");
+    assert_eq!(context_exports, 0, "the outcome Proof exported state");
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification replayed a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "the ordered predicate unfold fell back"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the predicate unfold should retain provenance");
+    assert!(
+        tactics.iter().any(|tactic| matches!(
+            tactic,
+            ProofTactic::UnfoldPredicate(name) if name == "is_nine"
+        )),
+        "the retained proof lost its predicate unfold: {tactics:#?}"
+    );
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "write_first", CProofClaim::Grouped)
+            .expect("the ordered predicate unfold should serialize");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the serialized predicate unfold should independently reverify");
+
+    let corrupted = rewritten.replacen("unfold(is_nine);", "unfold(is_eight);", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the unfold"
+    );
+    let ((result, fallbacks), replay_executions) = proof::count_internal_proof_executions(|| {
+        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+    });
+    result.expect_err("tampering with the predicate unfold must invalidate the proof");
+    assert_eq!(fallbacks, 0, "an invalid unfold must not fall back");
+    assert_eq!(
+        replay_executions, 0,
+        "an invalid unfold must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() {
     let c_source = r#"
         int32 increment(int32 p[]) {
