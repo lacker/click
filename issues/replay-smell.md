@@ -50,9 +50,12 @@ Legacy smart paths also construct `ProofCertificate` values, replay them
 through `execute_internal_proof`, and merge the resulting replay contexts.
 The former whole-claim and whole-contract acceptance gates have been removed:
 ordinary verification no longer synthesizes a completed proof's surface form
-and verifies the claim again. The remaining compatibility boundaries are the
-duplicated proof engine to remove; independent internal certificate replay is
-not an invariant to preserve.
+and verifies the claim again. Leading proposition scopes, including quantified
+goals, now use the recursive `Proof` source capability directly rather than a
+second admission list that could route supported checked operations to replay.
+The remaining compatibility boundaries are the duplicated proof engine to
+remove; independent internal certificate replay is not an invariant to
+preserve.
 
 This is not a canonicalization issue. It concerns proof-state ownership and
 the final removal of adapters left by the proof-object migration.

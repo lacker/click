@@ -2466,6 +2466,38 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
 }
 
 #[test]
+fn leading_universal_contradiction_scope_stays_on_proof() {
+    let c_source = "int32 impossible_universal(int32 x) { return x; }";
+    let click_source = r#"
+        verifying "impossible_universal.c";
+
+        int32 impossible_universal(int32 x) {
+            requires zero: x == 0;
+            requires nonzero: x != 0;
+            ensures result == x;
+        } by {
+            have forall (k: int32) { k == k } by {
+                contradiction(x == 0);
+            }
+            execute();
+            simp();
+        }
+    "#;
+
+    let ((verified, replay_executions), flat_units) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            verify_c0_sources(click_source, &[("impossible_universal.c", c_source)])
+        })
+    });
+    verified.expect("a checked contradiction should close the leading universal scope");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the universally supported leading scope must not enter compatibility replay"
+    );
+}
+
+#[test]
 fn enumerate_closes_a_constant_bounded_universal_goal() {
     let c_source = r#"
         int32 keep(int32 x) {

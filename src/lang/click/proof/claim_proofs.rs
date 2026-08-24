@@ -382,78 +382,12 @@ fn value_predicate_definition_supported(
     supported
 }
 
-fn leading_point_proposition_supported(proposition: &ClickProposition) -> bool {
-    match proposition {
-        ClickProposition::Comparison { .. }
-        | ClickProposition::Defined { .. }
-        | ClickProposition::Loadable { .. } => true,
-        ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
-            leading_point_proposition_supported(proposition)
-        }
-        ClickProposition::Exists { .. } | ClickProposition::RangeAny { .. } => true,
-        ClickProposition::ForAll { body, .. } | ClickProposition::RangeAll { body, .. } => {
-            leading_point_proposition_supported(body)
-        }
-        ClickProposition::And(left, right)
-        | ClickProposition::Or(left, right)
-        | ClickProposition::Implies(left, right) => {
-            leading_point_proposition_supported(left) && leading_point_proposition_supported(right)
-        }
-        ClickProposition::PredicateCall { .. }
-        | ClickProposition::Separate { .. }
-        | ClickProposition::Contains { .. } => true,
-    }
-}
-
-fn leading_point_tactics_supported(tactics: &[ProofTactic]) -> bool {
-    !tactics.is_empty()
-        && tactics
-            .iter()
-            .enumerate()
-            .all(|(index, tactic)| match tactic {
-                ProofTactic::ApplyTheorem(_)
-                | ProofTactic::ApplyTheoremUsing { .. }
-                | ProofTactic::Choose(_)
-                | ProofTactic::Witness(_)
-                | ProofTactic::InstantiateUsing { .. }
-                | ProofTactic::Assumption
-                | ProofTactic::Extract(_)
-                | ProofTactic::Normalize
-                | ProofTactic::Intro
-                | ProofTactic::Split
-                | ProofTactic::Left
-                | ProofTactic::Right
-                | ProofTactic::Enumerate
-                | ProofTactic::UnfoldPredicate(_)
-                | ProofTactic::Rewrite(_)
-                | ProofTactic::TransportUsing { .. } => true,
-                ProofTactic::Simp | ProofTactic::SimpUsing(_) => index + 1 == tactics.len(),
-                ProofTactic::Have(have) => leading_point_have_supported(have),
-                ProofTactic::If(proof_if) => {
-                    index + 1 == tactics.len()
-                        && leading_point_tactics_supported(&proof_if.then_tactics)
-                        && leading_point_tactics_supported(&proof_if.else_tactics)
-                }
-                ProofTactic::Cases(proof_cases) => {
-                    index + 1 == tactics.len()
-                        && leading_point_tactics_supported(&proof_cases.left_tactics)
-                        && leading_point_tactics_supported(&proof_cases.right_tactics)
-                }
-                _ => false,
-            })
-}
-
-fn leading_point_source_proof_supported(proof: &SourceProof) -> bool {
-    match proof {
-        SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
-        SourceProof::Script(tactics) => leading_point_tactics_supported(tactics),
-        SourceProof::Tactic(SmartTactic::Frame) => false,
-    }
-}
-
 fn leading_point_have_supported(have: &ProofHave) -> bool {
-    leading_point_proposition_supported(&have.proposition)
-        && leading_point_source_proof_supported(&have.proof)
+    // Proposition lowering and every accepted body operation are owned by the
+    // nested Proof scope. Keep one capability query for that source driver;
+    // a second leading-scope classifier can only lag behind checked steps
+    // (as it previously did for `contradiction`).
+    Proof::supports_linear_source(&have.proof)
 }
 
 /// Classifies the source-ordered empty-frame segment whose intervening outcome
