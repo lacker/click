@@ -693,7 +693,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
         return Ok(None);
     }
     check_verification_deadline()?;
-    if !proof.is_at_function_exit() || retained_surface_has_empty_branch_leaf(&proof) {
+    if !proof.is_at_function_exit() {
         return Ok(None);
     }
     for indexed in remaining {

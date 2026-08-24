@@ -210,10 +210,34 @@ fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("constant_negative.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("constant_negative.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the decided C branch should retain its checked path");
+    assert_eq!(flat_units, 1, "the decided proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the decided proof must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the decided proof must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary decided verification must not check a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -234,17 +258,30 @@ fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
         "the feasible then path should be retained with its structural entry step: {tactics:#?}"
     );
 
-    let (captured, capture_events) = crate::instrumentation::collect(|| {
-        super::super::proof::capture_c0_tactic_expansion(
-            click_source,
-            &[("constant_negative.c", c_source)],
-            super::super::expansion::ProofSite::FunctionClaim {
-                function_name: "constant_negative".to_string(),
-                claim: CProofClaim::Ensure(0),
-            },
-            0,
-        )
-    });
+    let ((((captured, capture_events), capture_checks), capture_exports), capture_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        super::super::proof::capture_c0_tactic_expansion(
+                            click_source,
+                            &[("constant_negative.c", c_source)],
+                            super::super::expansion::ProofSite::FunctionClaim {
+                                function_name: "constant_negative".to_string(),
+                                claim: CProofClaim::Ensure(0),
+                            },
+                            0,
+                        )
+                    })
+                })
+            })
+        });
+    assert_eq!(capture_replays, 0, "decided capture must stay on Proof");
+    assert_eq!(capture_exports, 0, "decided capture must not export state");
+    assert_eq!(
+        capture_checks, 0,
+        "decided capture must not check a certificate"
+    );
     let captured = captured.expect("the decided source branch should expose its expansion");
     assert!(
         matches!(
@@ -260,15 +297,31 @@ fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
             if claim == "constant_negative.returns_one" && name == "surface certificate replay"
     )));
 
-    let expanded = expand_c0_claim_source(
-        click_source,
-        &[("constant_negative.c", c_source)],
-        "constant_negative",
-        CProofClaim::Ensure(0),
-    )
-    .expect("the decided branch should expand");
+    let (((expanded, expansion_checks), expansion_exports), expansion_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    expand_c0_claim_source(
+                        click_source,
+                        &[("constant_negative.c", c_source)],
+                        "constant_negative",
+                        CProofClaim::Ensure(0),
+                    )
+                })
+            })
+        });
+    let expanded = expanded.expect("the decided branch should expand");
+    assert_eq!(expansion_replays, 0, "decided expansion must stay on Proof");
+    assert_eq!(
+        expansion_exports, 0,
+        "decided expansion must not export state"
+    );
+    assert_eq!(
+        expansion_checks, 0,
+        "decided expansion must not check a certificate"
+    );
     verify_c0_sources(&expanded, &[("constant_negative.c", c_source)])
-        .expect("the retained decided certificate should independently re-derive the proof");
+        .expect("the serialized decided proof should independently reverify");
 }
 
 #[test]
