@@ -7255,10 +7255,34 @@ fn branch_interface_retains_its_checked_abstract_join() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("nonnegative.c", c_source)])
+    let (
+        ((((verified, events), certificate_checks), context_exports), replay_executions),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    crate::instrumentation::collect(|| {
+                        verify_c0_sources(click_source, &[("nonnegative.c", c_source)])
+                    })
+                })
+            })
+        })
     });
     let verified = verified.expect("the checked branch interface should verify");
+    assert_eq!(flat_units, 1, "the branch proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "the branch proof must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "the branch proof must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary branch verification must not check a certificate"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -8397,20 +8421,10 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
         .expect("select_ready should be the final verified function")
         .expanded_proof_tactics()
         .expect("the transformed interface should retain an expansion");
-    let arm_retains_fold_evidence = |arm: &[ProofTactic]| {
+    let arm_retains_fold = |arm: &[ProofTactic]| {
         matches!(
             arm,
-            [
-                ProofTactic::StepUsing(_),
-                ProofTactic::Have(ProofHave {
-                    proposition: ClickProposition::Comparison {
-                        operator: ComparisonOperator::Equal,
-                        ..
-                    },
-                    proof: SourceProof::Script(proof),
-                }),
-                ProofTactic::FoldResource(_),
-            ] if matches!(proof.as_slice(), [ProofTactic::Assumption])
+            [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
         )
     };
     assert!(
@@ -8431,8 +8445,8 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
                         ..
                     }),
                 ]) if name == "ready_bundle"
-            ) && arm_retains_fold_evidence(&branch.then_tactics)
-                && arm_retains_fold_evidence(&branch.else_tactics)
+            ) && arm_retains_fold(&branch.then_tactics)
+                && arm_retains_fold(&branch.else_tactics)
         ),
         "{tactics:#?}"
     );

@@ -100,14 +100,14 @@ fn value_predicate_contract_supported(
         })
 }
 
-/// Selects the complete-proof route for one or more top-level composite
-/// scopes. Tactics before, between, and after scopes remain linear; a scope
-/// body may also contain the checked C-branch forms owned by the typed scope
-/// driver. Quantified resources, heap-backed contract predicates, nested
-/// scopes, and unsupported logical structures retain their separately audited
-/// compatibility paths. Counted populations use the same checked resource
-/// entry and close operations as ordinary composite scopes.
-fn top_level_linear_scopes_supported(
+/// Selects the complete-proof route for supported top-level composite scopes
+/// and execution branches. Tactics before, between, and after structures
+/// remain linear; a scope body may also contain the checked C-branch forms
+/// owned by the typed scope driver. Quantified resources, heap-backed contract
+/// predicates, nested scopes, and unsupported logical structures retain their
+/// separately audited compatibility paths. Counted populations use the same
+/// checked resource entry and close operations as ordinary composite scopes.
+fn top_level_structural_proof_supported(
     function_block: &FunctionBlock,
     tactics: &[ProofTactic],
     predicate_environment: &PredicateEnvironment,
@@ -120,7 +120,10 @@ fn top_level_linear_scopes_supported(
             _ => None,
         })
         .collect::<Vec<_>>();
-    if opens.is_empty() {
+    let has_top_level_branch = tactics
+        .iter()
+        .any(|tactic| matches!(tactic, ProofTactic::Branch(_)));
+    if opens.is_empty() && !has_top_level_branch {
         return false;
     }
     let has_quantified_contract_resource = function_block
@@ -163,13 +166,13 @@ fn top_level_linear_scopes_supported(
     let scope_body_tactic_supported = |tactic: &ProofTactic| {
         is_linear(tactic) || matches!(tactic, ProofTactic::If(_) | ProofTactic::Branch(_))
     };
-    let scoped_tactics = tactics.iter().all(|tactic| match tactic {
+    let structural_tactics = tactics.iter().all(|tactic| match tactic {
         ProofTactic::Open(open) => open.tactics.iter().all(scope_body_tactic_supported),
+        ProofTactic::Branch(_) => true,
         tactic => is_linear(tactic),
     });
-    !has_quantified_contract_resource
-        && scope_definitions_are_supported
-        && scoped_tactics
+    (opens.is_empty() || (!has_quantified_contract_resource && scope_definitions_are_supported))
+        && structural_tactics
         && value_predicate_contract_supported(function_block, predicate_environment)
 }
 
@@ -600,13 +603,13 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let direct_proof = if top_level_linear_scopes_supported(
+    let direct_proof = if top_level_structural_proof_supported(
         function_block,
         tactics,
         predicate_environment,
         resource_environment,
     ) {
-        try_check_scoped_function_proof(
+        try_check_structural_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -800,13 +803,30 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     };
     let grouped_direct_supported =
         grouped_flat_proof_supported(function_block, tactics, predicate_environment);
-    let grouped_scoped_supported = top_level_linear_scopes_supported(
+    let grouped_structural_supported = top_level_structural_proof_supported(
         function_block,
         tactics,
         predicate_environment,
         resource_environment,
     );
-    let direct_proof = if grouped_direct_supported {
+    let direct_proof = if grouped_structural_supported {
+        try_check_structural_function_proof(
+            &initial,
+            &program,
+            generated_by_source_index,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            &proof_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            resource_environment,
+            theorem_environment,
+            &function,
+            &arguments,
+        )?
+    } else if grouped_direct_supported {
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         try_check_flat_function_proof(
             &initial,
@@ -825,23 +845,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &arguments,
             true,
             owns_post_execution_transport,
-        )?
-    } else if grouped_scoped_supported {
-        try_check_scoped_function_proof(
-            &initial,
-            &program,
-            generated_by_source_index,
-            expansion_capture.as_deref_mut(),
-            function_block,
-            parsed_function,
-            &proof_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            &function,
-            &arguments,
         )?
     } else {
         None

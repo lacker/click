@@ -1466,6 +1466,42 @@ fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickPropos
 }
 
 impl<'a> Proof<'a> {
+    /// Reattributes subsequent execution-structure diagnostics to the source
+    /// tactic that owns them without changing proof state or provenance.
+    ///
+    /// Simple steps carry their own origins. Structural operations span
+    /// several checked transitions, so a long-lived function Proof updates
+    /// this cursor metadata before entering each top-level structure.
+    pub(super) fn with_execution_tactic_index(
+        &self,
+        tactic_index: usize,
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("execution tactic attribution requires an execution proof"));
+        };
+        if context.tactic_index == tactic_index {
+            return Ok(self.clone());
+        }
+        Ok(Self {
+            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
+                claim_label: context.claim_label,
+                tactic_index,
+                function_block: context.function_block,
+                function: context.function,
+                parsed_function: context.parsed_function,
+                arguments: context.arguments,
+                function_environment: context.function_environment,
+                resource_environment: context.resource_environment,
+                predicate_environment: context.predicate_environment,
+                click_function_environment: context.click_function_environment,
+                theorem_environment: context.theorem_environment,
+            })),
+            state: self.state.clone(),
+            node: self.node.clone(),
+            focused: self.focused,
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn for_pure_goal(
         claim_label: &'a str,

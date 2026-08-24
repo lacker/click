@@ -536,14 +536,14 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     Ok(Some(proof))
 }
 
-/// Checks one function proof containing top-level linear
-/// `open(resource) { ... }` scopes without exporting any checked scope back
-/// into replay-owned semantic state. Linear prefixes, scope entries and bodies,
-/// closes, intervening continuations, the frame, and the outcome suffix remain
-/// one persistent Proof lineage; a miss publishes neither semantic state nor
+/// Checks one function proof containing supported top-level resource scopes
+/// and execution branches without exporting any checked structure back into
+/// replay-owned semantic state. Linear prefixes, structural bodies and joins,
+/// intervening continuations, the frame, and the outcome suffix remain one
+/// persistent Proof lineage; a miss publishes neither semantic state nor
 /// expansion metadata.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
+pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     context: &ProofReplayContext,
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
@@ -564,7 +564,7 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     let mut proof = Proof::for_execution_frontier(
         claim_label,
         internal_proof_first_index(program).ok_or_else(|| {
-            ClickError::new(format!("`{claim_label}` has no scoped proof tactics"))
+            ClickError::new(format!("`{claim_label}` has no structural proof tactics"))
         })?,
         context.clone(),
         function_block,
@@ -579,7 +579,7 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
     );
     let mut current = program;
     let mut remaining = Vec::new();
-    let mut saw_scope = false;
+    let mut saw_structure = false;
     loop {
         match current {
             InternalProofNode::Done => break,
@@ -616,16 +616,17 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
                 current = continuation;
             }
             InternalProofNode::Open {
+                index,
                 source_index,
                 resource,
                 body,
                 continuation,
-                ..
             } => {
                 if proof.is_at_function_exit() {
                     return Ok(None);
                 }
-                saw_scope = true;
+                saw_structure = true;
+                proof = proof.with_execution_tactic_index(*index)?;
                 let scope = proof.begin_open(resource.clone(), *source_index)?;
                 let Some(scope) = advance_checked_open_scope(
                     scope,
@@ -639,10 +640,56 @@ pub(in crate::lang::click::proof) fn try_check_scoped_function_proof<'a>(
                 proof = scope.join()?;
                 current = continuation;
             }
-            InternalProofNode::If { .. } | InternalProofNode::Branch { .. } => return Ok(None),
+            InternalProofNode::Branch {
+                index,
+                source_index,
+                ensuring,
+                then_branch,
+                else_branch,
+                continuation,
+            } => {
+                let selected_source_index = proof_site.as_ref().and_then(|site| {
+                    selected_tactic_index_for_site(staged_expansion_capture.as_ref(), site)
+                });
+                let capture_in_continuation = selected_source_index.is_some_and(|wanted| {
+                    internal_proof_contains_source_index(continuation, wanted)
+                });
+                if !selected_source_index
+                    .is_none_or(|wanted| wanted == *source_index || capture_in_continuation)
+                {
+                    return Ok(None);
+                }
+                let Some((then_tactics, else_tactics)) =
+                    exportable_linear_execution_branch_pair(then_branch, else_branch, continuation)
+                else {
+                    return Ok(None);
+                };
+                let Some((advanced, _, certificate)) = try_advance_checked_execution_branch(
+                    proof,
+                    *index,
+                    ensuring,
+                    then_tactics,
+                    else_tactics,
+                )?
+                else {
+                    return Ok(None);
+                };
+                proof = advanced;
+                saw_structure = true;
+                if !capture_in_continuation && let Some(site) = proof_site.as_ref() {
+                    record_proof_site_tactic_expansion(
+                        staged_expansion_capture.as_mut(),
+                        site,
+                        *source_index,
+                        &certificate.to_proof_tactics(),
+                    );
+                }
+                current = continuation;
+            }
+            InternalProofNode::If { .. } => return Ok(None),
         }
     }
-    if !saw_scope {
+    if !saw_structure {
         return Ok(None);
     }
     check_verification_deadline()?;
@@ -751,6 +798,48 @@ fn advance_focused_execution_arm<'a>(
         }
     }
     Ok(Some(proof))
+}
+
+/// Applies one supported two-arm execution branch entirely through the typed
+/// Proof split/join API. Callers may choose different source-driving
+/// boundaries, but branch entry, arm advancement, interface checking, and the
+/// semantic join have one implementation.
+fn try_advance_checked_execution_branch<'a>(
+    proof: Proof<'a>,
+    tactic_index: usize,
+    ensuring: &Option<Vec<ProofAssertion>>,
+    then_tactics: &[IndexedTactic],
+    else_tactics: &[IndexedTactic],
+) -> Result<Option<(Proof<'a>, bool, ProofCertificate)>, ClickError> {
+    let proof = proof.with_execution_tactic_index(tactic_index)?;
+    let checkpoint = proof.checkpoint();
+    let (split, record) = proof.split_focused_execution_branch()?;
+    if ensuring
+        .as_ref()
+        .is_some_and(|_| !record.supports_interface_branch())
+    {
+        return Ok(None);
+    }
+    let has_sole_feasible_arm = record.sole_feasible_arm().is_some();
+    let mut advanced = split;
+    for (take_then, tactics) in [(true, then_tactics), (false, else_tactics)] {
+        if record.arm_id(take_then).is_none() {
+            continue;
+        }
+        let Some(next) = advance_focused_execution_arm(
+            advanced.focus_split_arm(&record, take_then)?,
+            &record,
+            tactics,
+        )?
+        else {
+            return Ok(None);
+        };
+        advanced = next;
+    }
+    let empty = then_tactics.is_empty() && else_tactics.is_empty();
+    let joined = advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
+    let certificate = joined.certificate_since(&checkpoint)?;
+    Ok(Some((joined, has_sole_feasible_arm, certificate)))
 }
 
 fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
@@ -1416,39 +1505,16 @@ fn execute_internal_proof_inner(
                     theorem_environment,
                 );
                 let checkpoint = proof.checkpoint();
-                let (split, record) = proof.split_focused_execution_branch()?;
-                let feasible_arm = record.sole_feasible_arm();
-                let checked_interface_preflight = ensuring
-                    .as_ref()
-                    .is_none_or(|_| record.supports_interface_branch());
-                let empty = then_tactics.is_empty() && else_tactics.is_empty();
-                let checked = if checked_interface_preflight {
-                    (|| {
-                        let mut advanced = split;
-                        for (take_then, tactics) in [(true, then_tactics), (false, else_tactics)] {
-                            if record.arm_id(take_then).is_none() {
-                                continue;
-                            }
-                            let Some(next) = advance_focused_execution_arm(
-                                advanced.focus_split_arm(&record, take_then)?,
-                                &record,
-                                tactics,
-                            )?
-                            else {
-                                return Ok(None);
-                            };
-                            advanced = next;
-                        }
-                        Ok::<_, ClickError>(Some(advanced))
-                    })()?
-                } else {
-                    None
-                };
-                if let Some(advanced) = checked {
-                    let branch_proof =
-                        advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
-                    let branch_certificate = branch_proof.certificate_since(&checkpoint)?;
-                    let can_advance_continuation = feasible_arm.is_none()
+                if let Some((branch_proof, has_sole_feasible_arm, branch_certificate)) =
+                    try_advance_checked_execution_branch(
+                        proof,
+                        *index,
+                        ensuring,
+                        then_tactics,
+                        else_tactics,
+                    )?
+                {
+                    let can_advance_continuation = !has_sole_feasible_arm
                         || (execution_branch_tactics_end_at_exit(then_tactics)
                             && linear_terminal_frame_prefix(continuation).is_some());
                     let advanced = if can_advance_continuation
@@ -1493,7 +1559,7 @@ fn execute_internal_proof_inner(
                         let certificate = proof.certificate_since(&checkpoint)?;
                         let mut joined_context = proof.into_execution_context()?;
                         for (step_index, step) in certificate.steps().iter().enumerate() {
-                            if feasible_arm.is_some() && ensuring.is_none() && step_index == 0 {
+                            if has_sole_feasible_arm && ensuring.is_none() && step_index == 0 {
                                 joined_context
                                     .replay
                                     .proof_certificate_builder
