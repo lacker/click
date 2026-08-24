@@ -329,6 +329,47 @@ impl PureFactContext {
         self.derive_proposition_using(proposition, true)
     }
 
+    /// Searches for a simplifier derivation without using the goal's own
+    /// exact ambient fact as a premise. This is a read-only weakening used
+    /// when an enclosing checked `have` needs independently replayable
+    /// evidence rather than the circular `assumption()` candidate.
+    ///
+    /// The returned derivation still replays against the original stronger
+    /// context. Removing one exact entry touches only persistent indexes
+    /// keyed by that proposition; it never rebuilds or scans the fact set.
+    pub(crate) fn derive_simp_proposition_without_exact_goal(
+        &self,
+        proposition: &Proposition,
+    ) -> Option<PropositionDerivation> {
+        let mut weakened = self.clone();
+        match proposition {
+            Proposition::ConditionIs(condition, value) => {
+                if weakened.condition_facts.get(condition) == Some(value) {
+                    weakened.condition_facts = weakened.condition_facts.without_key(condition);
+                    weakened.adjust_signed_order_bound(condition, *value, false);
+                    weakened.rebuild_memory_load_condition_facts();
+                    weakened.content_fingerprint ^=
+                        Self::fingerprint(1, &(condition.clone(), *value));
+                }
+            }
+            Proposition::Not(body) => match body.as_ref() {
+                Proposition::ConditionIs(condition, value)
+                    if weakened.condition_facts.get(condition) == Some(&!*value) =>
+                {
+                    let assumed = !*value;
+                    weakened.condition_facts = weakened.condition_facts.without_key(condition);
+                    weakened.adjust_signed_order_bound(condition, assumed, false);
+                    weakened.rebuild_memory_load_condition_facts();
+                    weakened.content_fingerprint ^=
+                        Self::fingerprint(1, &(condition.clone(), assumed));
+                }
+                _ => weakened.remove_proposition_fact(proposition),
+            },
+            _ => weakened.remove_proposition_fact(proposition),
+        }
+        weakened.derive_simp_proposition(proposition)
+    }
+
     /// Check one atomic theory consequence against this exact premise set.
     ///
     /// Unlike [`Self::derive_proposition`], this does not introduce logical

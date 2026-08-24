@@ -695,34 +695,6 @@ fn contextual_frame_plan(
     Ok(Some(plan))
 }
 
-fn surface_tactics_need_snapshot_legacy(tactics: &[ProofTactic]) -> bool {
-    tactics.iter().any(|tactic| match tactic {
-        ProofTactic::ApplyTheoremUsing { application, .. } => {
-            application.arguments.iter().any(contains_at_expression)
-        }
-        ProofTactic::Have(ProofHave { proof, .. }) => {
-            let SourceProof::Script(body) = proof else {
-                return true;
-            };
-            surface_tactics_need_snapshot_legacy(body)
-        }
-        ProofTactic::Open(open) => surface_tactics_need_snapshot_legacy(&open.tactics),
-        ProofTactic::If(proof_if) => {
-            surface_tactics_need_snapshot_legacy(&proof_if.then_tactics)
-                || surface_tactics_need_snapshot_legacy(&proof_if.else_tactics)
-        }
-        ProofTactic::Cases(proof_cases) => {
-            surface_tactics_need_snapshot_legacy(&proof_cases.left_tactics)
-                || surface_tactics_need_snapshot_legacy(&proof_cases.right_tactics)
-        }
-        ProofTactic::Branch(branch) => {
-            surface_tactics_need_snapshot_legacy(&branch.then_tactics)
-                || surface_tactics_need_snapshot_legacy(&branch.else_tactics)
-        }
-        _ => false,
-    })
-}
-
 fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickProposition> {
     match proposition {
         ClickProposition::Comparison {
@@ -3385,32 +3357,6 @@ impl<'a> Proof<'a> {
         let Some(candidate) = self.select_contextual_frame_candidate()? else {
             return Ok(None);
         };
-        if let ContextualFramePlan::Leaf(leaf) = &candidate
-            && leaf.haves.iter().any(|have| {
-                surface_tactics_need_snapshot_legacy(&have.tactics)
-                    && self.execution().is_some_and(|execution| {
-                        execution
-                            .replay
-                            .post_execution_tactics
-                            .iter()
-                            .any(|deferred| {
-                                matches!(
-                                    &deferred.tactic,
-                                    PostExecutionTactic::Have(prior)
-                                        if prior.proposition == have.proposition
-                                )
-                            })
-                    })
-            })
-        {
-            // A preceding source `have` can make a same-written snapshot
-            // proposition available under a different lowering identity.
-            // Re-emitting its contextual theorem does not repair that earlier
-            // source contribution. Leave this flat case on the compatibility
-            // path until the leading scope itself retains a source-stable
-            // proof; new frame-local leading scopes proceed on Proof below.
-            return Ok(None);
-        }
         let origin = Some(ProofStepOrigin {
             tactic_index,
             source_index,
@@ -8321,6 +8267,18 @@ impl<'a> Proof<'a> {
         if let Some(proof) = self.try_direct_logical_closure()? {
             return Ok(Some(proof));
         }
+        self.try_simp_closure_after_direct(false)
+    }
+
+    /// Continues smart closure after direct logical candidates have either
+    /// missed or been deliberately rejected as non-replayable. When
+    /// `exclude_exact_goal` is true, the atomic derivation query may not cite
+    /// the goal's own ambient fact; every selected theorem step is still
+    /// checked against this unchanged Proof.
+    fn try_simp_closure_after_direct(
+        &self,
+        exclude_exact_goal: bool,
+    ) -> Result<Option<Self>, ClickError> {
         if let Some(surface_goal) = self.surface_goal()
             && let Some(proof) = self.try_selected_unchanged_load_forall_goal(surface_goal, &[])
         {
@@ -8328,7 +8286,7 @@ impl<'a> Proof<'a> {
         }
         let atomic = (|| {
             let (goal, derivation, premise_pairs, point_application_closes_goal) =
-                self.selected_simp_derivation()?;
+                self.selected_simp_derivation(exclude_exact_goal)?;
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
@@ -8352,7 +8310,7 @@ impl<'a> Proof<'a> {
             return Ok(Some(atomic));
         }
         let anchored_pairs = self
-            .selected_simp_derivation()
+            .selected_simp_derivation(exclude_exact_goal)
             .map(|(_, _, pairs, _)| pairs)
             .unwrap_or_default();
         if let Some(anchored) = self
@@ -8848,6 +8806,7 @@ impl<'a> Proof<'a> {
     /// query: only the later `apply_step` calls may advance the proof.
     fn selected_simp_derivation(
         &self,
+        exclude_exact_goal: bool,
     ) -> Option<(
         Proposition,
         PropositionDerivation,
@@ -8882,9 +8841,16 @@ impl<'a> Proof<'a> {
                 }
             };
         let goal = self.goal()?.clone();
-        let plan = plan_simp_certificate(&goal, self.facts().assumptions())?;
-        let SimpEvidence::Derivation(derivation) = plan else {
-            return None;
+        let derivation = if exclude_exact_goal {
+            self.facts()
+                .assumptions()
+                .derive_simp_proposition_without_exact_goal(&goal)?
+        } else {
+            let plan = plan_simp_certificate(&goal, self.facts().assumptions())?;
+            let SimpEvidence::Derivation(derivation) = plan else {
+                return None;
+            };
+            derivation
         };
         let context_premises = derivation.context_premises();
         let resolve_premise = |premise: &Proposition, anchor: Option<&ProgramPointRef>| {
@@ -9935,7 +9901,7 @@ impl<'a> Proof<'a> {
 
     fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
         let (goal, derivation, premise_pairs, point_application_closes_goal) =
-            self.selected_simp_derivation()?;
+            self.selected_simp_derivation(false)?;
         self.check_typed_atomic_simp_candidate(
             &goal,
             &derivation,
@@ -13777,9 +13743,15 @@ impl<'a> ProofScope<'a> {
     /// Runs the migrated `simp` search inside the nested proof and retains
     /// the accepted descendant directly.
     pub(super) fn try_simp_closure(&self) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_simp_closure()? else {
+        let Some(mut body) = self.body.try_simp_closure()? else {
             return Ok(None);
         };
+        if body.node.depth == 1
+            && matches!(body.node.step.as_deref(), Some(SimpleProofStep::Assumption))
+            && let Some(replayable) = self.body.try_simp_closure_after_direct(true)?
+        {
+            body = replayable;
+        }
         let mut next = self.clone();
         next.body = body;
         Ok(Some(next))
@@ -18615,6 +18587,52 @@ mod tests {
             ));
             assert!(Arc::ptr_eq(&root.state, &retained_root.state));
             assert!(root.certificate().steps().is_empty());
+
+            // A nested smart `have` must not serialize the goal's ambient
+            // copy as `assumption()`: the surface proposition may lower in a
+            // different snapshot when expansion is verified from source.
+            // Search through a context weakened by only that exact fact and
+            // retain the same checked signed-order theorem path on Proof.
+            let mut exact_requires = requires.clone();
+            exact_requires.push(goal.clone());
+            let exact_theorem_context = PureTheoremContext {
+                memory: memory.clone(),
+                values: BTreeMap::new(),
+                array_refs: BTreeMap::new(),
+                requires: exact_requires.clone(),
+                surface_requirements: surface_requirements.clone(),
+            };
+            let exact_root = Proof::for_pure_goal(
+                "source-stable persistent signed-order have",
+                &exact_requires,
+                goal.clone(),
+                &exact_theorem_context,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let scope = exact_root
+                .begin_have(surface_goal.clone())
+                .expect("the signed-order have should open a nested proof");
+            let before = fact_node_allocations();
+            let selected = scope
+                .try_simp_closure()
+                .expect("nested smart search must not exceed its deadline")
+                .expect("the exact goal should have an independent theorem path");
+            let allocations = fact_node_allocations() - before;
+            assert!(
+                allocations <= allocation_bound,
+                "size {size} exact-goal-excluding have allocated {allocations} persistent nodes (bound {allocation_bound})"
+            );
+            assert!(selected.body().is_complete());
+            assert!(matches!(
+                selected.body().certificate().steps(),
+                [
+                    SimpleProofStep::Have { .. },
+                    SimpleProofStep::ApplyTheoremUsing { .. },
+                ]
+            ));
+            assert!(exact_root.certificate().steps().is_empty());
         }
     }
 

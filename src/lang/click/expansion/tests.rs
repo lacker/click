@@ -1249,15 +1249,27 @@ int32 vector_replace_if(
         ("vector_set.c", set_source),
         ("vector_replace_if.c", replace_source),
     ];
-    let expanded_frame = expand_top_level_tactic_for_test(
-        click_source,
-        &sources,
-        "vector_replace_if",
-        CProofClaim::Grouped,
-        7,
-    );
+    let (expanded_frame, events) = crate::instrumentation::collect(|| {
+        expand_top_level_tactic_for_test(
+            click_source,
+            &sources,
+            "vector_replace_if",
+            CProofClaim::Grouped,
+            7,
+        )
+    });
     let expanded_frame = expanded_frame
         .expect("smart frame should expand with snapshot-correct loadability premises");
+
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "vector_set.contract"
+                    && name == "smart tactic compatibility replay (tactic 7, source 7)"
+        )),
+        "a prior deferred have kept the contextual frame on compatibility replay: {events:#?}"
+    );
 
     assert!(
         expanded_frame.contains("frame() using {"),
@@ -1265,6 +1277,40 @@ int32 vector_replace_if(
     );
     verify_c0_sources(&expanded_frame, &sources)
         .expect("expanded frame certificate should independently replay");
+
+    let expanded_have = expand_top_level_tactic_for_test(
+        click_source,
+        &sources,
+        "vector_set",
+        CProofClaim::Grouped,
+        6,
+    )
+    .expect("the snapshot-sensitive deferred have should expand");
+    let vector_set = expanded_have.find("int32 vector_set").unwrap();
+    let vector_set_end = expanded_have[vector_set..]
+        .find("int32 vector_replace_if")
+        .map(|offset| vector_set + offset)
+        .unwrap();
+    let expanded_have_body = &expanded_have[vector_set..vector_set_end];
+    assert!(
+        expanded_have_body.contains("apply(int32_increment_strictly_increases"),
+        "the deferred have should retain theorem-backed evidence: {expanded_have_body}"
+    );
+    assert!(
+        !expanded_have_body.contains("have index < (index + 1) by {\n        assumption();"),
+        "the deferred have must not cite its own ambient goal fact: {expanded_have_body}"
+    );
+    verify_c0_sources(&expanded_have, &sources)
+        .expect("the theorem-backed deferred have should verify normally");
+    let corrupted_have = expanded_have.replacen(
+        "have index < (index + 1) by {",
+        "have index == (index + 1) by {",
+        1,
+    );
+    assert!(
+        verify_c0_sources(&corrupted_have, &sources).is_err(),
+        "ordinary verification should reject a corrupted deferred have"
+    );
 
     let execute_offset = expanded_frame
         .rfind("    execute();")
