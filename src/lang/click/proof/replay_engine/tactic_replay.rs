@@ -632,9 +632,9 @@ fn try_smart_step_on_proof<'a>(
 /// Tries exact-root execute search directly on the owned Proof.
 ///
 /// A successful search returns the already-checked descendant and appends its
-/// retained simple or structured steps. A miss unwraps the untouched root, so
-/// ambient contexts and unsupported statements keep their established
-/// compatibility planner and diagnostics.
+/// retained simple or structured steps. A miss unwraps the untouched root so
+/// the source driver can try broader checked candidates without granting an
+/// independent replay path.
 #[allow(clippy::too_many_arguments)]
 fn try_exact_execute_on_proof<'a>(
     state: &mut CState,
@@ -1764,13 +1764,13 @@ fn replay_linear_tactics_without_frontier_loops(
                     }
                     continue;
                 }
-                // The compatibility planner may select a whole-function C
-                // branch after the exact Proof search declines. Treat that
-                // structure only as generated Surface input: the recursive
-                // Proof script driver checks the split and every arm, and the
-                // accepted descendant owns the resulting provenance. A miss
-                // leaves the immutable root available for the remaining
-                // transitional fallback.
+                // The source planner may select a whole-function C branch
+                // after the exact Proof search declines. Treat that structure
+                // only as generated Surface input: the recursive Proof script
+                // driver checks the split and every arm, and the accepted
+                // descendant owns the resulting provenance. A miss is
+                // reported by this source tactic; the root is never exported
+                // into another semantic representation.
                 if construction.blocker.is_none()
                     && construction
                         .steps
@@ -1823,41 +1823,15 @@ fn replay_linear_tactics_without_frontier_loops(
                         }
                         continue;
                     }
-                    let result = root.into_execution_context()?;
-                    state = result.state;
-                    requirement_pure_facts = result.pure_facts;
-                    replay = result.replay;
-                    branch_path = result.branch_path;
                 }
-                let result = complete_smart_tactic(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    parsed_function,
-                    claims,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    function,
-                    arguments,
-                    tactic_index,
-                    source_index,
-                    construction,
-                    false,
-                    true,
-                )?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                if let Some(blocker) = construction.blocker {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: smart `execute` could not construct checked Proof operations: {blocker}"
+                    )));
+                }
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: smart `execute` found no checked Proof candidate"
+                )));
             }
             ProofTactic::ExecuteUntil(region_ref) => {
                 if try_linear_execute_until_on_proof(
