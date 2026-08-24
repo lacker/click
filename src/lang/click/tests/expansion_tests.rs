@@ -4061,9 +4061,15 @@ fn smart_simp_transcribes_a_three_edge_signed_order_path() {
             }
         }
     "#;
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_click_theorems(click_source));
+    let ((verified, events), generated_certificate_checks) =
+        proof::count_generated_certificate_checks(|| {
+            crate::instrumentation::collect(|| verify_click_theorems(click_source))
+        });
     verified.expect("the checked order-path Proof should verify");
+    assert_eq!(
+        generated_certificate_checks, 0,
+        "ordinary signed-order simp must apply its planned operations directly to Proof"
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,

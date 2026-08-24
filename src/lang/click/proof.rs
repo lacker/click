@@ -16,7 +16,8 @@ mod proof_object;
 #[cfg(test)]
 pub(in crate::lang::click) use proof_object::{
     count_checked_execution_interface_joins, count_execution_context_exports,
-    count_explicit_linear_fallbacks, count_source_certificate_checks,
+    count_explicit_linear_fallbacks, count_generated_certificate_checks,
+    count_source_certificate_checks,
 };
 mod pure_theorems;
 mod replay_engine;

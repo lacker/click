@@ -15,6 +15,9 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static GENERATED_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -40,6 +43,16 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
     let before = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     let result = operation();
     let after = SOURCE_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_generated_certificate_checks<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = GENERATED_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = GENERATED_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -6115,6 +6128,8 @@ impl<'a> Proof<'a> {
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
+        #[cfg(test)]
+        GENERATED_CERTIFICATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
         self.check_certificate_with_origin(certificate, None, true)
     }
 
@@ -9199,8 +9214,11 @@ impl<'a> Proof<'a> {
                     point_application_closes_goal,
                 )
             })?;
-        let candidate = ProofCertificate::from_proof_tactics(&tactics).ok()?;
-        let proof = self.check_generated_certificate(&candidate).ok()?;
+        // The planner selects only Surface-expressible explicit operations.
+        // Apply those through the same recursive Proof driver used by
+        // authoritative source scripts; the plan is provenance input, not an
+        // independently interpreted semantic certificate.
+        let proof = self.try_planned_linear_script(&tactics).ok().flatten()?;
         proof.is_complete().then_some(proof)
     }
 
@@ -9212,8 +9230,11 @@ impl<'a> Proof<'a> {
         &self,
         tactics: &[ProofTactic],
         authoritative: bool,
+        generated: bool,
     ) -> Result<Option<Self>, ClickError> {
-        if authoritative {
+        if generated {
+            self.try_planned_linear_script(tactics)
+        } else if authoritative {
             self.try_authoritative_linear_script(tactics)
         } else {
             self.try_linear_script(tactics)
@@ -9231,7 +9252,7 @@ impl<'a> Proof<'a> {
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
         let contains_search = script_contains_linear_search(tactics);
-        match self.try_linear_script_inner(tactics, false) {
+        match self.try_linear_script_inner(tactics, false, false) {
             // Before this migration, an explicit-only script was checked by
             // the established source interpreter whenever the typed Proof
             // surface did not yet admit it. Preserve that transactional
@@ -9254,13 +9275,26 @@ impl<'a> Proof<'a> {
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
-        self.try_linear_script_inner(tactics, true)
+        self.try_linear_script_inner(tactics, true, false)
+    }
+
+    /// Applies one planner-selected Surface script to this Proof. Generated
+    /// theorem plans may retain a final `assumption()` for outcome contexts
+    /// where the theorem sometimes adds only an anchored equivalent fact. If
+    /// an earlier checked operation closes that body exactly, only that final
+    /// generated no-op is ignored. Explicit source scripts remain strict.
+    fn try_planned_linear_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        self.try_linear_script_inner(tactics, true, true)
     }
 
     fn try_linear_script_inner(
         &self,
         tactics: &[ProofTactic],
         authoritative: bool,
+        generated: bool,
     ) -> Result<Option<Self>, ClickError> {
         if tactics.is_empty() {
             return Ok(None);
@@ -9273,8 +9307,14 @@ impl<'a> Proof<'a> {
         }
 
         let mut proof = self.clone();
-        for tactic in tactics {
+        for (index, tactic) in tactics.iter().enumerate() {
             if proof.focused_discharged() {
+                if generated
+                    && index + 1 == tactics.len()
+                    && matches!(tactic, ProofTactic::Assumption)
+                {
+                    continue;
+                }
                 // A final `simp` after an exact theorem conclusion is a
                 // harmless search no-op and emits no redundant certificate
                 // step, matching direct smart closure behavior.
@@ -9314,7 +9354,9 @@ impl<'a> Proof<'a> {
                             scope.try_simp_closure()?
                         }
                         SourceProof::Script(body) => {
-                            if authoritative {
+                            if generated {
+                                scope.try_planned_linear_script(body)?
+                            } else if authoritative {
                                 scope.try_authoritative_linear_script(body)?
                             } else {
                                 scope.try_linear_script(body)?
@@ -9331,15 +9373,19 @@ impl<'a> Proof<'a> {
                     let (split_proof, split, ids) =
                         proof.split_focused_if(proof_if.condition.clone())?;
                     let marker = split_proof.checkpoint();
-                    let Some(then_done) = split_proof
-                        .focus(ids[0])?
-                        .try_focused_script_arm(&proof_if.then_tactics, authoritative)?
+                    let Some(then_done) = split_proof.focus(ids[0])?.try_focused_script_arm(
+                        &proof_if.then_tactics,
+                        authoritative,
+                        generated,
+                    )?
                     else {
                         return Ok(None);
                     };
-                    let Some(both_done) = then_done
-                        .focus(ids[1])?
-                        .try_focused_script_arm(&proof_if.else_tactics, authoritative)?
+                    let Some(both_done) = then_done.focus(ids[1])?.try_focused_script_arm(
+                        &proof_if.else_tactics,
+                        authoritative,
+                        generated,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -9354,15 +9400,19 @@ impl<'a> Proof<'a> {
                     let (split_proof, split, ids) =
                         proof.split_focused_cases(proof_cases.disjunction.clone())?;
                     let marker = split_proof.checkpoint();
-                    let Some(left_done) = split_proof
-                        .focus(ids[0])?
-                        .try_focused_script_arm(&proof_cases.left_tactics, authoritative)?
+                    let Some(left_done) = split_proof.focus(ids[0])?.try_focused_script_arm(
+                        &proof_cases.left_tactics,
+                        authoritative,
+                        generated,
+                    )?
                     else {
                         return Ok(None);
                     };
-                    let Some(both_done) = left_done
-                        .focus(ids[1])?
-                        .try_focused_script_arm(&proof_cases.right_tactics, authoritative)?
+                    let Some(both_done) = left_done.focus(ids[1])?.try_focused_script_arm(
+                        &proof_cases.right_tactics,
+                        authoritative,
+                        generated,
+                    )?
                     else {
                         return Ok(None);
                     };
@@ -12390,6 +12440,21 @@ impl<'a> ProofScope<'a> {
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
         let Some(body) = self.body.try_authoritative_linear_script(tactics)? else {
+            return Ok(None);
+        };
+        let mut next = self.clone();
+        next.body = body;
+        Ok(Some(next))
+    }
+
+    /// Applies a planner-selected recursive script inside this owned scope,
+    /// retaining the checked body descendant without materializing a
+    /// certificate.
+    fn try_planned_linear_script(
+        &self,
+        tactics: &[ProofTactic],
+    ) -> Result<Option<Self>, ClickError> {
+        let Some(body) = self.body.try_planned_linear_script(tactics)? else {
             return Ok(None);
         };
         let mut next = self.clone();
@@ -17083,11 +17148,16 @@ mod tests {
             );
             let retained_root = root.clone();
             let before = fact_node_allocations();
-            let closed = root
-                .try_simp_closure()
+            let (closed, generated_certificate_checks) =
+                count_generated_certificate_checks(|| root.try_simp_closure());
+            let closed = closed
                 .expect("smart search must not exceed its deadline")
                 .expect("the typed path should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
+            assert_eq!(
+                generated_certificate_checks, 0,
+                "the structured signed-order candidate must advance Proof directly"
+            );
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
             let allocation_bound = 128 * logarithmic_height + 512;
             assert!(
