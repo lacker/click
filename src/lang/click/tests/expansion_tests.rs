@@ -1365,18 +1365,44 @@ fn marked_constant_store_transport_retains_load_identity() {
     "#;
     let sources = [("touch_other.c", touch_c), ("pipeline.c", pipeline_c)];
 
-    let (verified, events) =
-        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
+    let (
+        (
+            ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
+            replays,
+        ),
+        flat_units,
+    ) = proof::count_flat_proof_units(|| {
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    proof::count_explicit_linear_fallbacks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
+                    })
+                })
+            })
+        })
+    });
     verified.expect("the smart marked transport should verify before expansion");
-    let simple_transport_checks = events
+    assert_eq!(flat_units, 2, "both function proofs should retain Proof");
+    assert_eq!(replays, 0, "the marked transport entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the marked transport exported Proof state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+    assert_eq!(explicit_fallbacks, 0, "the marked transport fell back");
+    let transport_checks = events
         .iter()
         .filter_map(|event| {
             let crate::instrumentation::VerificationEvent::TacticStarted(tactic) = event else {
                 return None;
             };
-            (tactic.claim == "pipeline.contract"
-                && tactic.tactic_name == "transport"
-                && tactic.class == "simple")
+            (tactic.claim == "pipeline.contract" && tactic.tactic_name == "transport")
                 .then_some(tactic)
         })
         .collect::<Vec<_>>();
@@ -1393,9 +1419,13 @@ fn marked_constant_store_transport_retains_load_identity() {
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        simple_transport_checks.len(),
+        transport_checks.len(),
         1,
-        "ordinary verification should not replay the smart transport before whole-certificate checking: {simple_transport_checks:#?}; replay operations: {replay_operations:#?}"
+        "ordinary verification should check the selected transport exactly once: {transport_checks:#?}; replay operations: {replay_operations:#?}"
+    );
+    assert!(
+        replay_operations.is_empty(),
+        "the marked transport should not enter a replay operation: {replay_operations:#?}"
     );
     let selected = click_source.find("transport(").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -1407,6 +1437,29 @@ fn marked_constant_store_transport_retains_load_identity() {
             .contains("transport(at(after_write, owner->value == 11), owner->value == 11) using {")
     );
     verify_c0_sources(&expanded, &sources).expect("the expanded marked transport should replay");
+
+    let corrupted = expanded.replacen(
+        "owner->value == 11) using {",
+        "owner->value == 12) using {",
+        1,
+    );
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its target"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+        });
+    corrupted_result.expect_err("tampering with the transport target must invalidate the proof");
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "an invalid migrated transport must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "invalid migrated source must not enter execute_internal_proof"
+    );
 
     let mutating_c = touch_c.replace("owner->other = 0;", "owner->value = 0;");
     let mutating_click = click_source.replace(

@@ -334,15 +334,6 @@ fn advance_checked_linear_continuation<'a>(
             .replay
             .frontier
             .next_statement_index;
-        let _timing = timing_claim_label.and_then(|claim_label| {
-            TacticTiming::new(
-                claim_label,
-                indexed.index,
-                indexed.source_index,
-                &indexed.tactic,
-                statement_index,
-            )
-        });
         let terminal_frame = matches!(
             indexed.tactic,
             ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
@@ -355,6 +346,15 @@ fn advance_checked_linear_continuation<'a>(
         if proof.is_at_function_exit() && !terminal_frame {
             return Ok(Some((proof, tactics[offset..].to_vec())));
         }
+        let _timing = timing_claim_label.and_then(|claim_label| {
+            TacticTiming::new(
+                claim_label,
+                indexed.index,
+                indexed.source_index,
+                &indexed.tactic,
+                statement_index,
+            )
+        });
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             if let SimpleProofStep::FrameUsing { region, premises } = &step
@@ -467,7 +467,11 @@ fn advance_checked_linear_continuation<'a>(
 /// The source shape excludes structural proof branches, resource scopes, and
 /// loop regions. Execution operations advance the frontier immediately;
 /// result-aware suffix operations are retained only as source-order metadata
-/// and are applied to the typed outcome goals during finalization.
+/// and are applied to the typed outcome goals during finalization. The exact
+/// empty-frame transport segment owns its continuation transactionally, so
+/// its smart statement steps may use the indexed selector without exporting a
+/// partial descendant; other direct and compatibility callers retain the
+/// narrower standalone-step policy.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     context: &ProofReplayContext,
@@ -484,7 +488,8 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
     arguments: &'a [CExpression],
-    authoritative_nested_haves: bool,
+    complete_grouped_authority: bool,
+    allow_indexed_smart_step: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     // A compatibility miss must leave the expansion cursor untouched just as
     // it leaves the semantic root untouched. Only publish cursor metadata
@@ -516,9 +521,9 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
         staged_expansion_capture.as_mut(),
         context.replay.proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
-        false,
+        allow_indexed_smart_step,
         true,
-        authoritative_nested_haves,
+        complete_grouped_authority,
         Some(claim_label),
     )?
     else {
@@ -731,6 +736,7 @@ fn try_execute_checked_terminal_effect_script<'a>(
         theorem_environment,
         function,
         arguments,
+        false,
         false,
     )?
     else {

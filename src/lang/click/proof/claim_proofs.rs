@@ -290,14 +290,16 @@ fn leading_point_have_supported(have: &ProofHave) -> bool {
         && leading_point_source_proof_supported(&have.proof)
 }
 
-/// Classifies the one source-ordered empty-frame segment whose intervening
-/// outcome scopes are checked authoritatively on `Proof`: after the latest
-/// execution operation, every operation before the exact empty function frame
-/// must be a supported `have`. The returned indices identify those haves.
+/// Classifies the source-ordered empty-frame segment whose intervening outcome
+/// operations are checked on `Proof`: after the latest execution operation,
+/// every operation before the exact empty function frame must be a supported
+/// `have` or checked transport. The returned indices identify haves whose
+/// bodies become authoritative as part of this route; the final flag records
+/// whether such a frame sealed a transport segment.
 ///
 /// This is one linear source pass. In particular, admitting several haves does
 /// not rescan their shared prefix or make explicit checking quadratic.
-fn exact_empty_frame_outcome_have_indices(tactics: &[ProofTactic]) -> (bool, BTreeSet<usize>) {
+fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet<usize>, bool) {
     let is_execution = |tactic: &ProofTactic| {
         matches!(
             tactic,
@@ -313,11 +315,14 @@ fn exact_empty_frame_outcome_have_indices(tactics: &[ProofTactic]) -> (bool, BTr
     let mut segment_supported = false;
     let mut pending_haves = Vec::new();
     let mut authoritative_haves = BTreeSet::new();
+    let mut pending_transport = false;
+    let mut authoritative_transport = false;
     for (index, tactic) in tactics.iter().enumerate() {
         if is_execution(tactic) {
             saw_execution = true;
             segment_supported = true;
             pending_haves.clear();
+            pending_transport = false;
             continue;
         }
         if saw_execution
@@ -325,6 +330,16 @@ fn exact_empty_frame_outcome_have_indices(tactics: &[ProofTactic]) -> (bool, BTr
             && matches!(tactic, ProofTactic::Have(have) if leading_point_have_supported(have))
         {
             pending_haves.push(index);
+            continue;
+        }
+        if saw_execution
+            && segment_supported
+            && matches!(
+                tactic,
+                ProofTactic::Transport { .. } | ProofTactic::TransportUsing { .. }
+            )
+        {
+            pending_transport = true;
             continue;
         }
         if matches!(
@@ -335,19 +350,22 @@ fn exact_empty_frame_outcome_have_indices(tactics: &[ProofTactic]) -> (bool, BTr
             } if premises.is_empty()
         ) {
             if !saw_execution || !segment_supported {
-                return (false, BTreeSet::new());
+                return (false, BTreeSet::new(), false);
             }
             authoritative_haves.extend(pending_haves.drain(..));
+            authoritative_transport |= pending_transport;
             // A second empty frame needs its own execution segment.
             segment_supported = false;
+            pending_transport = false;
             continue;
         }
         if saw_execution {
             segment_supported = false;
             pending_haves.clear();
+            pending_transport = false;
         }
     }
-    (true, authoritative_haves)
+    (true, authoritative_haves, authoritative_transport)
 }
 
 fn reject_grouped_top_level_existential_operations(
@@ -387,10 +405,10 @@ fn grouped_flat_proof_supported(
     // propositions stays inside the nested Proof goal. Universal and
     // existential value binders also remain inside that goal; their explicit
     // checked operations need no cursor state. Exact empty mutable frames and
-    // a preceding sequence of supported post-execution `have` scopes are
-    // checked in source order on typed outcome goals. Entry resource-relation
-    // facts use the same nested proposition scopes; top-level grouped choices
-    // preserve their compatibility cursor.
+    // a preceding sequence of supported post-execution `have` scopes and fact
+    // transports are checked in source order on typed outcome goals. Entry
+    // resource-relation facts use the same nested proposition scopes;
+    // top-level grouped choices preserve their compatibility cursor.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -449,8 +467,9 @@ fn grouped_flat_proof_supported(
             .iter()
             .all(|tactic| !matches!(tactic, ProofTactic::Open(_)))
         && (!has_mutable_effect || explicit_mutable_outcome_resource_shape);
+    let exact_empty_frame_segment = exact_empty_frame_outcome_segment(tactics);
     let unsupported_empty_mutable_frame_ordering =
-        has_mutable_effect && !exact_empty_frame_outcome_have_indices(tactics).0;
+        has_mutable_effect && !exact_empty_frame_segment.0;
     let owns_one_execution_frontier =
         !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
     owns_one_execution_frontier
@@ -613,6 +632,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             theorem_environment,
             &function,
             &arguments,
+            false,
             false,
         )?
     };
@@ -781,6 +801,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         resource_environment,
     );
     let direct_proof = if grouped_direct_supported {
+        let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         try_check_flat_function_proof(
             &initial,
             &program,
@@ -797,6 +818,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &function,
             &arguments,
             true,
+            owns_post_execution_transport,
         )?
     } else if grouped_scoped_supported {
         try_check_scoped_function_proof(
@@ -1429,7 +1451,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     };
     let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
     let authoritative_outcome_haves = proof_owned
-        .then(|| exact_empty_frame_outcome_have_indices(certificate_tactics).1)
+        .then(|| exact_empty_frame_outcome_segment(certificate_tactics).1)
         .unwrap_or_default();
     let pure_facts = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
