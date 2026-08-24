@@ -8725,8 +8725,51 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
         CProofClaim::Grouped,
     )
     .expect("the scoped decided branch should expand");
-    verify_c0_sources(&expanded, &[("selected_branch.c", c_source)])
-        .expect("the scoped decided certificate should independently re-derive the proof");
+    let (reverified, checked_ifs) = proof::count_checked_expanded_execution_ifs(|| {
+        verify_c0_sources(&expanded, &[("selected_branch.c", c_source)])
+    });
+    reverified.expect("the scoped decided expansion should independently re-derive the proof");
+    assert_eq!(
+        checked_ifs, 1,
+        "the expanded C `if` should use its Proof operation"
+    );
+
+    let mut corrupted_tactics = tactics.clone();
+    let Some(ProofTactic::Open(open)) = corrupted_tactics.first_mut() else {
+        unreachable!()
+    };
+    let Some(ProofTactic::If(proof_if)) = open.tactics.first_mut() else {
+        unreachable!()
+    };
+    let Some(ProofTactic::StepUsing(entry)) = proof_if.then_tactics.first_mut() else {
+        unreachable!()
+    };
+    entry.clear();
+    let corrupted_proof = crate::lang::click::printing::format_proof_tactics(&corrupted_tactics)
+        .expect("the corrupted tactics should remain surface-expressible");
+    let proof_start = expanded
+        .find("} by {")
+        .map(|index| index + 2)
+        .expect("the expanded claim should retain its proof block");
+    let proof_end = expanded
+        .rfind('}')
+        .map(|index| index + 1)
+        .expect("the expanded claim should close its proof block");
+    let mut corrupted = expanded.clone();
+    corrupted.replace_range(proof_start..proof_end, &corrupted_proof);
+    let (corrupted_result, corrupted_checks) = proof::count_source_certificate_checks(|| {
+        verify_c0_sources(&corrupted, &[("selected_branch.c", c_source)])
+    });
+    let error = corrupted_result
+        .expect_err("tampering with the checked C-branch entry must invalidate the expansion");
+    assert!(
+        error.message().contains("checked branch-entry step"),
+        "the Proof operation should reject the corrupted entry directly: {error:?}"
+    );
+    assert_eq!(
+        corrupted_checks, 0,
+        "the invalid C `if` checked a certificate"
+    );
 }
 
 #[test]

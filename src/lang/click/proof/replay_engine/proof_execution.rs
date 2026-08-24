@@ -839,12 +839,11 @@ fn advance_focused_execution_arm<'a>(
     Ok(Some(proof))
 }
 
-fn linear_execution_certificate(node: &InternalProofNode) -> Option<ProofCertificate> {
-    let tactics = linear_execution_tactics(node)?
+fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
+    linear_execution_tactics(node)?
         .iter()
-        .map(|indexed| indexed.tactic.clone())
-        .collect::<Vec<_>>();
-    ProofCertificate::from_proof_tactics(&tactics).ok()
+        .map(|indexed| linear_execution_simple_step(&indexed.tactic))
+        .collect()
 }
 
 /// The checked open driver can participate in expansion capture when the
@@ -1058,68 +1057,16 @@ fn advance_checked_open_scope<'a>(
         continuation,
         ..
     } = body
-        && let Some(then_proof) = linear_execution_certificate(then_branch)
-        && let Some(else_proof) = linear_execution_certificate(else_branch)
-        && ((matches!(
-            then_proof.steps().last(),
-            Some(SimpleProofStep::StepUsing(_))
-        ) && matches!(
-            else_proof.steps().last(),
-            Some(SimpleProofStep::StepUsing(_))
-        )) || (then_proof.steps().is_empty()
-            && matches!(
-                else_proof.steps().last(),
-                Some(SimpleProofStep::StepUsing(_))
-            ))
-            || (else_proof.steps().is_empty()
-                && matches!(
-                    then_proof.steps().last(),
-                    Some(SimpleProofStep::StepUsing(_))
-                )))
+        && let Some(then_steps) = linear_execution_steps(then_branch)
+        && let Some(else_steps) = linear_execution_steps(else_branch)
+        && ((matches!(then_steps.last(), Some(SimpleProofStep::StepUsing(_)))
+            && matches!(else_steps.last(), Some(SimpleProofStep::StepUsing(_))))
+            || (then_steps.is_empty()
+                && matches!(else_steps.last(), Some(SimpleProofStep::StepUsing(_))))
+            || (else_steps.is_empty()
+                && matches!(then_steps.last(), Some(SimpleProofStep::StepUsing(_)))))
     {
-        let checkpoint = scope.checkpoint();
-        let (split, record) = scope.split_execution_branch()?;
-        let mut advanced = split;
-        if let Some(take_then) = record.sole_feasible_arm() {
-            let (selected, impossible) = if take_then {
-                (&then_proof, &else_proof)
-            } else {
-                (&else_proof, &then_proof)
-            };
-            if !impossible.steps().is_empty()
-                || !matches!(selected.steps().last(), Some(SimpleProofStep::StepUsing(_)))
-            {
-                return Ok(None);
-            }
-            advanced =
-                advanced.check_focused_logical_arm_certificate(&record, take_then, selected)?;
-        } else {
-            if !matches!(
-                then_proof.steps().last(),
-                Some(SimpleProofStep::StepUsing(_))
-            ) || !matches!(
-                else_proof.steps().last(),
-                Some(SimpleProofStep::StepUsing(_))
-            ) {
-                return Ok(None);
-            }
-            advanced =
-                advanced.check_focused_logical_arm_certificate(&record, true, &then_proof)?;
-            advanced =
-                advanced.check_focused_logical_arm_certificate(&record, false, &else_proof)?;
-        }
-        let scope = scope.join_execution_split(&advanced, &record, false, None)?;
-        let actual = scope.certificate_since(&checkpoint)?;
-        let expected = ProofCertificate::from_steps(vec![SimpleProofStep::If {
-            condition: condition.clone(),
-            then_proof: Box::new(then_proof),
-            else_proof: Box::new(else_proof),
-        }]);
-        if actual.steps() != expected.steps() {
-            return Err(ClickError::new(
-                "expanded execution branch does not match the checked C branch certificate",
-            ));
-        }
+        let scope = scope.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
         return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);
     }
     if let InternalProofNode::If {

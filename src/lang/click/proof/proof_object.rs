@@ -21,6 +21,9 @@ thread_local! {
     static EXECUTION_CONTEXT_EXPORTS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static CHECKED_EXPANDED_EXECUTION_IFS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -60,6 +63,16 @@ pub(in crate::lang::click) fn count_execution_context_exports<R>(
     let before = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
     let result = operation();
     let after = EXECUTION_CONTEXT_EXPORTS.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_checked_expanded_execution_ifs<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = CHECKED_EXPANDED_EXECUTION_IFS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = CHECKED_EXPANDED_EXECUTION_IFS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -5789,16 +5802,19 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Re-derives one logical sibling arm from its retained Surface
-    /// certificate. Terminal and decided branches record one synthetic
-    /// branch-entry `step using` (two for an empty C arm); those structural
-    /// entry steps are validated and skipped because the split already
-    /// performed them, and the body steps apply on the focused sibling.
-    pub(super) fn check_focused_logical_arm_certificate(
+    /// Validates and applies one already-expanded logical execution arm.
+    ///
+    /// Terminal and decided branches render one structural branch-entry
+    /// `step using` (two for an empty C arm). The split already performed
+    /// those transitions, so this checks the exact Surface operations against
+    /// the C branch and applies only the remaining body steps to the focused
+    /// sibling. No certificate is constructed or interpreted.
+    fn apply_focused_expanded_execution_arm(
         &self,
         record: &ExecutionSplit<'a>,
         take_then: bool,
-        certificate: &ProofCertificate,
+        surface_condition: &ClickProposition,
+        steps: &[SimpleProofStep],
     ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
@@ -5810,37 +5826,86 @@ impl<'a> Proof<'a> {
             context.arguments,
             context.claim_label,
             context.tactic_index,
-            "terminal branch certificate",
+            "expanded execution branch",
         )?;
         let CStatement::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } = statement
         else {
-            return Err(self.step_error("terminal branch certificate root is not a C `if`"));
+            return Err(self.step_error("expanded execution branch root is not a C `if`"));
         };
+        let checked_condition = surface_with_source_site(
+            &surface_c_condition(&condition),
+            &ProgramPointRef {
+                region: CodeRegionRef::Statement(record.statement_index),
+                kind: ProgramPointKind::Entry,
+            },
+        )?;
+        if surface_condition != &checked_condition {
+            return Err(self.step_error(
+                "expanded execution branch condition does not match the checked C branch",
+            ));
+        }
         let source_arm = if take_then {
             then_branch.as_ref()
         } else {
             else_branch.as_ref()
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        if certificate.steps().len() < entry_steps
-            || !certificate.steps()[..entry_steps]
-                .iter()
-                .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
-        {
+        let path_condition = if take_then {
+            checked_condition
+        } else {
+            negate_click_proposition(&checked_condition)
+        };
+        let mut expected = vec![SimpleProofStep::StepUsing(vec![path_condition])];
+        expected.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        if steps.get(..entry_steps) != Some(expected.as_slice()) {
             return Err(self.step_error(format!(
-                "logical execution {} certificate does not begin with its {entry_steps} checked branch-entry step(s)",
+                "expanded execution {} arm does not begin with its {entry_steps} checked branch-entry step(s)",
                 if take_then { "then" } else { "else" },
             )));
         }
         let mut proof = self.focus_split_arm(record, take_then)?;
-        for step in &certificate.steps()[entry_steps..] {
+        for step in &steps[entry_steps..] {
             proof = proof.apply_step(step.clone())?;
         }
         Ok(proof)
+    }
+
+    /// Applies an already-expanded logical C branch as one audited structural
+    /// Proof transition. Source syntax supplies only its condition and simple
+    /// arm operations; the split, entry validation, focused successors, and
+    /// join remain owned by this Proof lineage.
+    fn apply_expanded_execution_if(
+        &self,
+        condition: &ClickProposition,
+        then_steps: &[SimpleProofStep],
+        else_steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let (split, record) = self.split_focused_execution_branch()?;
+        let mut advanced = split;
+        for (take_then, steps) in [(true, then_steps), (false, else_steps)] {
+            if record.arm_id(take_then).is_none() {
+                if !steps.is_empty() {
+                    return Err(self.step_error(format!(
+                        "expanded execution {} arm is nonempty, but the checked C branch is infeasible",
+                        if take_then { "then" } else { "else" },
+                    )));
+                }
+                continue;
+            }
+            if !matches!(steps.last(), Some(SimpleProofStep::StepUsing(_))) {
+                return Err(self.step_error(format!(
+                    "expanded execution {} arm does not end in a checked C step",
+                    if take_then { "then" } else { "else" },
+                )));
+            }
+            advanced = advanced
+                .apply_focused_expanded_execution_arm(&record, take_then, condition, steps)?;
+        }
+        advanced.join_focused_execution_split(&record, false, None)
     }
 
     /// Enforces the source `branch` body's boundary on the focused sibling
@@ -11897,6 +11962,39 @@ impl<'a> ProofScope<'a> {
                 .root
                 .step_error("execution branch join did not produce one direct checked successor"));
         }
+        let mut next = self.clone();
+        for fact in body.added_facts() {
+            if !next.introduced_facts.contains(fact) {
+                next.introduced_facts.push(fact.clone());
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
+    /// Applies an already-expanded logical C branch inside this resource
+    /// scope without constructing or comparing a parallel certificate.
+    pub(super) fn apply_expanded_execution_if(
+        &self,
+        condition: &ClickProposition,
+        then_steps: &[SimpleProofStep],
+        else_steps: &[SimpleProofStep],
+    ) -> Result<Self, ClickError> {
+        let body = self
+            .body
+            .apply_expanded_execution_if(condition, then_steps, else_steps)?;
+        let Some(parent) = body.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("expanded execution branch produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &self.body.node) {
+            return Err(self.root.step_error(
+                "expanded execution branch did not produce one direct checked successor",
+            ));
+        }
+        #[cfg(test)]
+        CHECKED_EXPANDED_EXECUTION_IFS.with(|count| count.set(count.get() + 1));
         let mut next = self.clone();
         for fact in body.added_facts() {
             if !next.introduced_facts.contains(fact) {
