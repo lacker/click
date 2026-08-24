@@ -554,6 +554,80 @@ fn verify_structural_effect_proof(
             &certificate.to_proof_tactics(),
         );
     }
+    // The exact linear subset is checked transactionally on one Proof. An
+    // empty loop frame historically sees every ambient fact, unlike the
+    // exact-premise Proof operation; retain that compatibility fallback only
+    // when the exact operation cannot close the goal. A nonempty `using`
+    // clause is authoritative and its checked failure must reach the source.
+    let proof_steps_supported = certificate.steps().iter().all(|step| {
+        matches!(
+            step,
+            SimpleProofStep::Mark(_)
+                | SimpleProofStep::ApplyTheoremUsing { .. }
+                | SimpleProofStep::TransportUsing { .. }
+                | SimpleProofStep::UnfoldPredicate(_)
+                | SimpleProofStep::UnfoldResource(_)
+                | SimpleProofStep::FoldResource(_)
+                | SimpleProofStep::ObserveResource(_)
+                | SimpleProofStep::FrameUsing { .. }
+        )
+    });
+    if proof_steps_supported {
+        let mut replay = context.replay.clone();
+        replay.proof_site = Some(site.clone());
+        replay.loop_effect_goal = Some(LoopEffectReplayGoal {
+            before_state: before_state.clone(),
+            check: check.clone(),
+            closed: false,
+        });
+        replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
+        let root = Proof::for_execution_frontier_with_effect_goals(
+            &claim_label,
+            0,
+            ProofReplayContext {
+                state: context.state.clone(),
+                pure_facts: context.pure_facts.clone(),
+                replay,
+                branch_path: context.branch_path.clone(),
+            },
+            EffectGoalSelection::None,
+            environment.function_block,
+            environment.function,
+            environment.parsed_function,
+            environment.arguments,
+            environment.function_environment,
+            environment.resource_environment,
+            environment.predicate_environment,
+            environment.click_function_environment,
+            environment.theorem_environment,
+        );
+        let checked = (|| {
+            let mut checked = root;
+            for (tactic_index, step) in certificate.steps().iter().enumerate() {
+                checked = checked.apply_step_at(
+                    step.clone(),
+                    tactic_index,
+                    effect_source_index + tactic_index,
+                )?;
+            }
+            checked.is_complete().then_some(checked).ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` structural-effect proof did not close its checked Proof goal"
+                ))
+            })
+        })();
+        match checked {
+            Ok(checked) => return Ok(checked.certificate()),
+            Err(_)
+                if !certificate.steps().iter().any(|step| {
+                    matches!(
+                        step,
+                        SimpleProofStep::FrameUsing { premises, .. } if !premises.is_empty()
+                    )
+                }) => {}
+            Err(error) => return Err(error),
+        }
+    }
     let program = build_internal_proof_from_source_index(
         &certificate.to_proof_tactics(),
         effect_source_index,

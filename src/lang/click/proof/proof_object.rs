@@ -2837,9 +2837,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if !execution.replay.is_at_function_exit() {
-            return Err(self.step_error("`frame using` requires function exit"));
-        }
 
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
@@ -2870,6 +2867,54 @@ impl<'a> Proof<'a> {
             if !frame_facts.contains(&fact) {
                 frame_facts.push(fact);
             }
+        }
+        if execution.replay.loop_effect_goal.is_some() {
+            if region.is_some() {
+                return Err(
+                    self.step_error("a structural effect proof must use unqualified `frame using`")
+                );
+            }
+            let goal = execution
+                .replay
+                .loop_effect_goal
+                .as_ref()
+                .expect("the loop effect goal was observed above");
+            if goal.closed {
+                return Err(self.step_error("the structural effect goal was closed more than once"));
+            }
+            let mut loop_effect_facts = frame_facts.clone();
+            loop_effect_facts.extend(
+                execution
+                    .replay
+                    .effect_facts
+                    .iter()
+                    .map(|fact| fact.proposition().clone()),
+            );
+            loop_effect_facts.sort();
+            loop_effect_facts.dedup();
+            c_loop_effects_hold_at_back_edge(
+                &goal.before_state,
+                &execution.state,
+                std::slice::from_ref(&goal.check),
+                &loop_effect_facts,
+                &assumptions_from_propositions(&loop_effect_facts),
+            )
+            .map_err(|message| self.step_error(format!("`frame using` failed: {message}")))?;
+            execution
+                .replay
+                .loop_effect_goal
+                .as_mut()
+                .expect("the checked loop effect goal remains present")
+                .closed = true;
+            return Ok(ProofState {
+                locals: self.state.locals.clone(),
+                goals: self.state.goals.discharge_at(self.focused),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(frame_facts),
+            });
+        }
+        if !execution.replay.is_at_function_exit() {
+            return Err(self.step_error("`frame using` requires function exit"));
         }
         if let Some(region) = region {
             // Loop effect clauses are declared by frontier-local `loop`

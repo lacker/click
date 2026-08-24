@@ -1385,6 +1385,112 @@ fn frontier_effect_expansion_ignores_generated_preservation_suffix() {
 }
 
 #[test]
+fn loop_structural_effect_frame_stays_on_proof() {
+    let c_source = r#"
+            int32 count_once(int32* p) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let with_effect = r#"
+            verifying "count_once.c";
+
+            int32 count_once(int32* p) {
+                requires loadable(p[0..1]);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by frame;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let without_effect = with_effect.replace("                    immutable by frame;\n", "");
+
+    let (baseline, baseline_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&without_effect, &[("count_once.c", c_source)])
+    });
+    baseline.expect("the comparison loop without an effect should verify");
+    let (verified, effect_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(with_effect, &[("count_once.c", c_source)])
+    });
+    verified.expect("the loop structural effect should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the structural effect added compatibility replay"
+    );
+
+    let effect_offset = with_effect
+        .find("immutable by frame")
+        .expect("the effect proof should have a source position")
+        + "immutable by ".len();
+    let position = expansion::position_at_offset(with_effect, effect_offset);
+    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
+        expand_c0_tactic_source_at(
+            with_effect,
+            &[("count_once.c", c_source)],
+            position.line,
+            position.column,
+        )
+    });
+    let expanded = expanded.expect("the checked loop effect frame should expand");
+    assert!(expanded.contains("frame() using"), "{expanded}");
+    assert_eq!(
+        expansion_replays, baseline_replays,
+        "effect expansion added compatibility replay"
+    );
+
+    let (reverified, rewritten_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&expanded, &[("count_once.c", c_source)])
+    });
+    reverified.expect("the extracted loop effect should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "the rewritten effect added compatibility replay"
+    );
+
+    let empty_frame = "frame() using {\n                        }";
+    let corrupted = expanded.replacen(
+        empty_frame,
+        "frame() using {\n                            0 == 1;\n                        }",
+        1,
+    );
+    assert_ne!(
+        corrupted, expanded,
+        "the extracted frame should be corruptible"
+    );
+    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&corrupted, &[("count_once.c", c_source)])
+            .expect_err("an unavailable loop-effect frame premise must be rejected")
+    });
+    assert!(
+        error
+            .message()
+            .contains("requires an exact available premise"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        corrupted_replays <= baseline_replays,
+        "the invalid checked effect entered additional compatibility replay: baseline {baseline_replays}, invalid {corrupted_replays}"
+    );
+}
+
+#[test]
 fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
     // `frame(loop(N))` in an ensures-only proof certifies memory-preservation
     // goals from the loop's `mutable` effect summary.  With a symbolic loop
