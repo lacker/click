@@ -2597,7 +2597,26 @@ impl<'a> Proof<'a> {
         step: SimpleProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
+        self.apply_step_with_origin_mode(step, origin, false)
+    }
+
+    /// Applies one step while optionally retaining a closed structural-effect
+    /// frontier long enough for enclosing resource scopes to close. That
+    /// retained frontier is sealed: only `ProofScope::join_inner` may consume
+    /// it, and the outermost resource join retires the goal.
+    fn apply_step_with_origin_mode(
+        &self,
+        step: SimpleProofStep,
+        origin: Option<ProofStepOrigin>,
+        retain_closed_loop_effect_goal: bool,
+    ) -> Result<Self, ClickError> {
         if self.focused_discharged() {
+            return Err(self.step_error(format!(
+                "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
+                simple_step_source_name(&step)
+            )));
+        }
+        if self.focused_loop_effect_closed() {
             return Err(self.step_error(format!(
                 "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
                 simple_step_source_name(&step)
@@ -2661,7 +2680,12 @@ impl<'a> Proof<'a> {
                 if self.focused_outcome_point().is_some() {
                     self.apply_outcome_frame_using(region.as_ref(), premises)
                 } else {
-                    self.apply_execution_frame_using(region.as_ref(), premises, origin)
+                    self.apply_execution_frame_using(
+                        region.as_ref(),
+                        premises,
+                        origin,
+                        retain_closed_loop_effect_goal,
+                    )
                 }
             }
             _ => {
@@ -2877,6 +2901,7 @@ impl<'a> Proof<'a> {
         region: Option<&CodeRegionRef>,
         premises: &[ClickProposition],
         origin: Option<ProofStepOrigin>,
+        retain_closed_loop_effect_goal: bool,
     ) -> Result<ProofState, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`frame using` requires an execution proof"));
@@ -2956,9 +2981,16 @@ impl<'a> Proof<'a> {
                 .as_mut()
                 .expect("the checked loop effect goal remains present")
                 .closed = true;
+            let goals = if retain_closed_loop_effect_goal {
+                self.state
+                    .goals
+                    .replace_frontier_at(self.focused, self.facts().clone(), execution)
+            } else {
+                self.state.goals.discharge_at(self.focused)
+            };
             return Ok(ProofState {
                 locals: self.state.locals.clone(),
-                goals: self.state.goals.discharge_at(self.focused),
+                goals,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(frame_facts),
             });
@@ -13470,13 +13502,23 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        matches!(self.focused_goal(), Some(Goal::Frontier(_)))
-            .then_some(())
-            .ok_or_else(|| {
-                self.step_error(format!(
-                    "{operation} cannot advance C execution inside a proposition proof"
-                ))
-            })
+        (matches!(self.focused_goal(), Some(Goal::Frontier(_)))
+            && !self.focused_loop_effect_closed())
+        .then_some(())
+        .ok_or_else(|| {
+            self.step_error(format!(
+                "{operation} cannot advance C execution inside a proposition proof"
+            ))
+        })
+    }
+
+    /// A structural-effect frame may retain its closed frontier only while
+    /// resource scopes unwind. It remains addressable for those audited
+    /// representation transitions, but it is no longer an open semantic goal.
+    fn focused_loop_effect_closed(&self) -> bool {
+        self.goal_execution()
+            .and_then(|execution| execution.replay.loop_effect_goal.as_ref())
+            .is_some_and(|goal| goal.closed)
     }
 
     fn closed_state(&self) -> ProofState {
@@ -13537,7 +13579,7 @@ fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
 
 impl<'a> ProofScope<'a> {
     pub(super) fn is_complete(&self) -> bool {
-        self.body.is_complete()
+        self.body.is_complete() || self.body.focused_loop_effect_closed()
     }
 
     #[cfg(test)]
@@ -13595,7 +13637,10 @@ impl<'a> ProofScope<'a> {
                 .root
                 .step_error("nested proof scope is not rooted at the current scope body"));
         }
-        let body = nested.join()?;
+        // A nested resource may contain the terminal structural-effect frame.
+        // Close its representation without retiring that sealed frontier;
+        // only the outermost resource join owns final discharge.
+        let body = nested.join_inner(false)?;
         let Some(parent) = body.node.parent.as_ref() else {
             return Err(self
                 .root
@@ -13622,7 +13667,11 @@ impl<'a> ProofScope<'a> {
     /// candidates leave the enclosing scope value unchanged.
     pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
         let mut next = self.clone();
-        let body = self.body.apply_step(step)?;
+        let body = self.body.apply_step_with_origin_mode(
+            step,
+            None,
+            matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }),
+        )?;
         if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
             for fact in body.added_facts() {
                 if !next.introduced_facts.contains(fact) {
@@ -13763,12 +13812,13 @@ impl<'a> ProofScope<'a> {
         source_index: usize,
     ) -> Result<Self, ClickError> {
         let mut next = self.clone();
-        let body = self.body.apply_step_with_origin(
+        let body = self.body.apply_step_with_origin_mode(
             step,
             Some(ProofStepOrigin {
                 tactic_index,
                 source_index,
             }),
+            matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }),
         )?;
         if matches!(self.structure.as_ref(), ProofScopeStructure::Open { .. }) {
             for fact in body.added_facts() {
@@ -14028,6 +14078,13 @@ impl<'a> ProofScope<'a> {
     /// Closes a completed nested proof and makes its checked proposition
     /// available in the enclosing proof while retaining the exact body.
     pub(super) fn join(self) -> Result<Proof<'a>, ClickError> {
+        self.join_inner(true)
+    }
+
+    /// Joins one scope, optionally retiring a sealed structural-effect goal.
+    /// Nested resource joins pass `false` so all enclosing resource
+    /// representations close before the outermost join discharges the goal.
+    fn join_inner(self, discharge_closed_loop_effect: bool) -> Result<Proof<'a>, ClickError> {
         match *self.structure {
             ProofScopeStructure::Have {
                 proposition,
@@ -14085,6 +14142,7 @@ impl<'a> ProofScope<'a> {
                     unreachable!("an open scope can only be created from an execution Proof")
                 };
                 let body = self.body.certificate();
+                let loop_effect_closed = self.body.focused_loop_effect_closed();
                 let mut execution = self
                     .body
                     .goal_execution()
@@ -14133,6 +14191,9 @@ impl<'a> ProofScope<'a> {
                 state.goals = state
                     .goals
                     .replace_frontier_at(self.body.focused, facts, execution);
+                if discharge_closed_loop_effect && loop_effect_closed {
+                    state.goals = state.goals.discharge_at(self.body.focused);
+                }
                 state.added_facts = Arc::new(self.introduced_facts.clone());
                 state.checked_facts = Arc::new(self.introduced_facts);
                 // The successor's goal map came from the scope body, whose

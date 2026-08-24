@@ -54,8 +54,11 @@ and verifies the claim again. Leading proposition scopes, including quantified
 goals, now use the recursive `Proof` source capability directly rather than a
 second admission list that could route supported checked operations to replay.
 Loop structural-effect checking likewise applies every recursively simple
-operation, including nested `have` scopes, to the preservation path's typed
-effect `Proof`; only effect scripts containing structural scopes or induction
+operation, including nested `have` and `open` resource scopes, to the
+preservation path's typed effect `Proof`. A terminal frame inside nested
+resource scopes stays on that `Proof` while the checked representations close;
+it is discharged only by the outer scope and is never replayed. Only effect
+scripts containing logical or C branching, nested loop structure, or induction
 still cross that compatibility boundary.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to

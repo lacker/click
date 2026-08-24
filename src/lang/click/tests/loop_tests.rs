@@ -1674,6 +1674,153 @@ fn explicit_loop_effect_have_stays_on_proof() {
 }
 
 #[test]
+fn loop_effect_open_scope_stays_on_proof() {
+    let c_source = r#"
+            struct box { int32 value; int32 other; };
+
+            int32 count_once(struct box* owner) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource box_value(owner: struct box*) {
+                owns owner->value;
+            }
+
+            resource box_other(owner: struct box*) {
+                owns owner->other;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct box* owner) {
+                owns box_value(owner);
+                owns box_other(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        open(box_value(owner)) {
+                            open(box_other(owner)) {
+                                frame() using {};
+                            }
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        open(box_value(owner)) {
+                            open(box_other(owner)) {
+                                frame() using {};
+                            }
+                        }
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("the loop-effect open scope should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the loop-effect open scope added a compatibility replay execution"
+    );
+    assert_eq!(
+        replay_labels, baseline_labels,
+        "the loop-effect open scope changed the compatibility replay path"
+    );
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked loop effect should retain expandable provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some([ProofTactic::Open(open)]) = effect_tactics else {
+        panic!("the checked effect did not retain its open scope");
+    };
+    let [ProofTactic::Open(nested)] = open.tactics.as_slice() else {
+        panic!("the checked outer open scope did not retain its nested scope");
+    };
+    assert!(
+        matches!(nested.tactics.as_slice(), [ProofTactic::FrameUsing { .. }]),
+        "the checked nested open scope did not retain its frame operation"
+    );
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the complete proof should expand from retained provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("the rewritten source should verify normally");
+    assert_eq!(
+        rewritten_replays, baseline_replays,
+        "rewritten-source verification replayed the loop-effect open scope"
+    );
+    assert_eq!(
+        rewritten_labels, baseline_labels,
+        "rewritten-source verification changed the compatibility replay path"
+    );
+
+    let after_terminal_frame = click_source.replace(
+        "                                frame() using {};",
+        "                                frame() using {};\n                                normalize();",
+    );
+    let error = verify_c0_sources(&after_terminal_frame, &sources)
+        .expect_err("a retained terminal effect frontier must not accept another proof step");
+    assert!(
+        error
+            .message()
+            .contains("the goal was already proved by the previous step"),
+        "the sealed effect frontier produced an unexpected error: {}",
+        error.message()
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {

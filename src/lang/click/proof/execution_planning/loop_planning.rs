@@ -488,6 +488,132 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     merge_path_aligned_certificates(&claim_label, paths)
 }
 
+fn loop_effect_linear_step_supported(step: &SimpleProofStep) -> bool {
+    match step {
+        SimpleProofStep::Mark(_)
+        | SimpleProofStep::Step
+        | SimpleProofStep::StepUsing(_)
+        | SimpleProofStep::ApplyTheoremUsing { .. }
+        | SimpleProofStep::TransportUsing { .. }
+        | SimpleProofStep::UnfoldPredicate(_)
+        | SimpleProofStep::UnfoldResource(_)
+        | SimpleProofStep::FoldResource(_)
+        | SimpleProofStep::ObserveResource(_)
+        | SimpleProofStep::Choose(_)
+        | SimpleProofStep::Witness(_)
+        | SimpleProofStep::InstantiateUsing { .. }
+        | SimpleProofStep::Extract(_)
+        | SimpleProofStep::Rewrite(_)
+        | SimpleProofStep::Assumption
+        | SimpleProofStep::Normalize
+        | SimpleProofStep::Intro
+        | SimpleProofStep::Split
+        | SimpleProofStep::Left
+        | SimpleProofStep::Right
+        | SimpleProofStep::Enumerate
+        | SimpleProofStep::Contradiction(_)
+        | SimpleProofStep::CloseInvariants
+        | SimpleProofStep::FrameUsing { .. } => true,
+        SimpleProofStep::Have { proof, .. } => {
+            proof.steps().iter().all(loop_effect_linear_step_supported)
+        }
+        SimpleProofStep::Induct { .. }
+        | SimpleProofStep::ApplyInduction { .. }
+        | SimpleProofStep::CloseInduction
+        | SimpleProofStep::Open { .. }
+        | SimpleProofStep::If { .. }
+        | SimpleProofStep::Cases { .. }
+        | SimpleProofStep::Branch { .. }
+        | SimpleProofStep::Loop(_) => false,
+    }
+}
+
+fn loop_effect_scope_step_supported(step: &SimpleProofStep) -> bool {
+    match step {
+        SimpleProofStep::Open { proof, .. } => {
+            proof.steps().iter().all(loop_effect_scope_step_supported)
+        }
+        step => loop_effect_linear_step_supported(step),
+    }
+}
+
+fn loop_effect_step_source_width(step: &SimpleProofStep) -> usize {
+    match step {
+        // Resource scopes participate in the outer source-index sequence;
+        // proposition-scope bodies have their own proof site and therefore,
+        // like `source_tactic_width`, count only the enclosing `have` here.
+        SimpleProofStep::Open { proof, .. } => {
+            1 + proof
+                .steps()
+                .iter()
+                .map(loop_effect_step_source_width)
+                .sum::<usize>()
+        }
+        _ => 1,
+    }
+}
+
+fn apply_loop_effect_scope_certificate_at<'a>(
+    mut scope: ProofScope<'a>,
+    certificate: &ProofCertificate,
+    tactic_index_offset: usize,
+    source_index_offset: usize,
+) -> Result<ProofScope<'a>, ClickError> {
+    let mut source_index = source_index_offset;
+    for (local_index, step) in certificate.steps().iter().enumerate() {
+        let tactic_index = tactic_index_offset + local_index;
+        match step {
+            SimpleProofStep::Open { resource, proof } => {
+                let nested = scope.begin_open(resource.clone(), source_index)?;
+                let nested = apply_loop_effect_scope_certificate_at(
+                    nested,
+                    proof,
+                    tactic_index + 1,
+                    source_index + 1,
+                )?;
+                scope = scope.join_nested(nested)?;
+            }
+            step => {
+                scope = scope.apply_step_at(step.clone(), tactic_index, source_index)?;
+            }
+        }
+        source_index += loop_effect_step_source_width(step);
+    }
+    Ok(scope)
+}
+
+fn apply_loop_effect_certificate_at<'a>(
+    mut proof: Proof<'a>,
+    certificate: &ProofCertificate,
+    tactic_index_offset: usize,
+    source_index_offset: usize,
+) -> Result<Proof<'a>, ClickError> {
+    let mut source_index = source_index_offset;
+    for (local_index, step) in certificate.steps().iter().enumerate() {
+        let tactic_index = tactic_index_offset + local_index;
+        match step {
+            SimpleProofStep::Open {
+                resource,
+                proof: body,
+            } => {
+                let scope = proof.begin_open(resource.clone(), source_index)?;
+                let scope = apply_loop_effect_scope_certificate_at(
+                    scope,
+                    body,
+                    tactic_index + 1,
+                    source_index + 1,
+                )?;
+                proof = scope.join()?;
+            }
+            step => {
+                proof = proof.apply_step_at(step.clone(), tactic_index, source_index)?;
+            }
+        }
+        source_index += loop_effect_step_source_width(step);
+    }
+    Ok(proof)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_structural_effect_proof(
     _expansion_capture: Option<&mut ExpansionCapture>,
@@ -562,50 +688,15 @@ fn verify_structural_effect_proof(
         &source_certificate.to_proof_tactics(),
         case_path,
     )?;
-    // Every recursively simple operation supported by `Proof::apply_step`
-    // is authoritative here. Keep the capability boundary recursive so a
-    // nested `have` cannot hide a structural operation that still needs its
-    // own typed scope driver. Smart frame syntax selects its bounded explicit
-    // premises from this Proof; a search miss is a checked failure rather
-    // than permission to replay the same candidate elsewhere.
-    fn step_supported(step: &SimpleProofStep) -> bool {
-        match step {
-            SimpleProofStep::Mark(_)
-            | SimpleProofStep::Step
-            | SimpleProofStep::StepUsing(_)
-            | SimpleProofStep::ApplyTheoremUsing { .. }
-            | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::UnfoldPredicate(_)
-            | SimpleProofStep::UnfoldResource(_)
-            | SimpleProofStep::FoldResource(_)
-            | SimpleProofStep::ObserveResource(_)
-            | SimpleProofStep::Choose(_)
-            | SimpleProofStep::Witness(_)
-            | SimpleProofStep::InstantiateUsing { .. }
-            | SimpleProofStep::Extract(_)
-            | SimpleProofStep::Rewrite(_)
-            | SimpleProofStep::Assumption
-            | SimpleProofStep::Normalize
-            | SimpleProofStep::Intro
-            | SimpleProofStep::Split
-            | SimpleProofStep::Left
-            | SimpleProofStep::Right
-            | SimpleProofStep::Enumerate
-            | SimpleProofStep::Contradiction(_)
-            | SimpleProofStep::CloseInvariants
-            | SimpleProofStep::FrameUsing { .. } => true,
-            SimpleProofStep::Have { proof, .. } => proof.steps().iter().all(step_supported),
-            SimpleProofStep::Induct { .. }
-            | SimpleProofStep::ApplyInduction { .. }
-            | SimpleProofStep::CloseInduction
-            | SimpleProofStep::Open { .. }
-            | SimpleProofStep::If { .. }
-            | SimpleProofStep::Cases { .. }
-            | SimpleProofStep::Branch { .. }
-            | SimpleProofStep::Loop(_) => false,
-        }
-    }
-    let proof_steps_supported = certificate.steps().iter().all(step_supported);
+    // Every recursively simple operation and nested resource scope supported
+    // by the typed Proof APIs is authoritative here. Smart frame syntax
+    // selects its bounded explicit premises from this Proof; a search miss is
+    // a checked failure rather than permission to replay the same candidate
+    // elsewhere.
+    let proof_steps_supported = certificate
+        .steps()
+        .iter()
+        .all(loop_effect_scope_step_supported);
     if proof_steps_supported {
         let root =
             preservation.start_loop_effect_goal(&claim_label, site.clone(), before_state, check)?;
@@ -617,15 +708,7 @@ fn verify_structural_effect_proof(
                     ))
                 })?
         } else {
-            let mut checked = root;
-            for (tactic_index, step) in certificate.steps().iter().enumerate() {
-                checked = checked.apply_step_at(
-                    step.clone(),
-                    tactic_index,
-                    effect_source_index + tactic_index,
-                )?;
-            }
-            checked
+            apply_loop_effect_certificate_at(root, &certificate, 0, effect_source_index)?
         };
         if !checked.is_complete() {
             return Err(ClickError::new(format!(
