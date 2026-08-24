@@ -3694,7 +3694,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 authority,
                                 region,
                                 premises,
-                                surface_certificate,
                             } => {
                                 if authority.is_empty() {
                                     return Err(ClickError::new(format!(
@@ -3743,32 +3742,18 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             .with_checked_outcome_facts(&path_requirements)?,
                                     );
                                 }
-                                if let Some(certificate) = surface_certificate {
-                                    for tactic in certificate.to_proof_tactics() {
-                                        record_post_execution_surface_tactic(
-                                            deferred.surface_recorded,
-                                            &mut path_surface_post_tactics,
-                                            &mut path_deferred_capture_tactics,
-                                            replay.deferred_tactic_capture.as_ref(),
-                                            post_execution_index,
-                                            *tactic_index,
-                                            tactic.clone(),
-                                        );
-                                    }
-                                } else {
-                                    record_post_execution_surface_tactic(
-                                        deferred.surface_recorded,
-                                        &mut path_surface_post_tactics,
-                                        &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
-                                        post_execution_index,
-                                        *tactic_index,
-                                        ProofTactic::FrameUsing {
-                                            region: region.clone(),
-                                            premises: premises.clone(),
-                                        },
-                                    );
-                                }
+                                record_post_execution_surface_tactic(
+                                    deferred.surface_recorded,
+                                    &mut path_surface_post_tactics,
+                                    &mut path_deferred_capture_tactics,
+                                    replay.deferred_tactic_capture.as_ref(),
+                                    post_execution_index,
+                                    *tactic_index,
+                                    ProofTactic::FrameUsing {
+                                        region: region.clone(),
+                                        premises: premises.clone(),
+                                    },
+                                );
                             }
                             PostExecutionTactic::Simp => {
                                 let capturing_this_tactic = replay

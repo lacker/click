@@ -2758,12 +2758,6 @@ impl<'a> Proof<'a> {
                 authority: CheckedFrameAuthority::new(effect_indices),
                 region: region.cloned(),
                 premises: premises.to_vec(),
-                surface_certificate: Some(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::FrameUsing {
-                        region: region.cloned(),
-                        premises: premises.to_vec(),
-                    },
-                ])),
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();
@@ -2803,10 +2797,7 @@ impl<'a> Proof<'a> {
             },
         ] = certificate.steps()
         else {
-            let checkpoint = self.checkpoint();
-            let checked = self.check_flat_contextual_frame_candidate(certificate, origin)?;
-            let retained = checked.certificate_since(&checkpoint)?;
-            return checked.with_deferred_frame_surface_certificate(retained);
+            return self.check_flat_contextual_frame_candidate(certificate, origin);
         };
         let (split, record) = self.split_focused_outcome_if(condition.clone())?;
         let advanced = split
@@ -2834,10 +2825,7 @@ impl<'a> Proof<'a> {
             let ContextualFramePlan::Leaf(leaf) = plan else {
                 unreachable!()
             };
-            let checkpoint = self.checkpoint();
-            let checked = self.apply_contextual_frame_leaf_plan(leaf, origin)?;
-            let retained = checked.certificate_since(&checkpoint)?;
-            return checked.with_deferred_frame_surface_certificate(retained);
+            return self.apply_contextual_frame_leaf_plan(leaf, origin);
         };
         let (split, record) = self.split_focused_outcome_if(condition.clone())?;
         let advanced = split
@@ -2897,42 +2885,6 @@ impl<'a> Proof<'a> {
             checked = scope.join()?;
         }
         Ok(checked)
-    }
-
-    /// Associates a flat candidate's complete checked certificate with its
-    /// terminal frame deferral. This preserves the source ordering of earlier
-    /// deferred steps while allowing the drain to retain the certificate
-    /// without semantically replaying it.
-    fn with_deferred_frame_surface_certificate(
-        mut self,
-        certificate: ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        let mut execution = self.execution().cloned().ok_or_else(|| {
-            self.step_error("checked frame certificate lost its execution frontier")
-        })?;
-        let mut deferred = execution
-            .replay
-            .post_execution_tactics
-            .pop()
-            .ok_or_else(|| self.step_error("checked frame retained no terminal deferral"))?;
-        let PostExecutionTactic::CheckedFrameUsing {
-            surface_certificate,
-            ..
-        } = &mut deferred.tactic
-        else {
-            return Err(
-                self.step_error("checked frame certificate did not end in checked frame authority")
-            );
-        };
-        *surface_certificate = Some(certificate);
-        execution.replay.post_execution_tactics.push(deferred);
-        let facts = self.facts().clone();
-        let mut state = (*self.state).clone();
-        state.goals = state
-            .goals
-            .replace_frontier_at(self.focused, facts, execution);
-        self.state = Arc::new(state);
-        Ok(self)
     }
 
     /// Recovers only the latest checked branch shape from persistent Proof
@@ -3932,7 +3884,6 @@ impl<'a> Proof<'a> {
                 // forms. This deferral is semantic authority only.
                 region: None,
                 premises: Vec::new(),
-                surface_certificate: None,
             },
         );
         execution.last_step_delta = ExecutionProofStepDelta::default();

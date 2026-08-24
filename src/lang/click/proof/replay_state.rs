@@ -1473,10 +1473,6 @@ pub(super) enum PostExecutionTactic {
         authority: CheckedFrameAuthority,
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
-        /// The exact simple certificate already checked by `Proof`. Ordered
-        /// finalization may retain it at the deferred source position without
-        /// re-running its semantic transitions.
-        surface_certificate: Option<ProofCertificate>,
     },
     Simp,
 }
@@ -1486,9 +1482,9 @@ pub(super) struct DeferredPostExecutionTactic {
     pub(super) tactic_index: usize,
     pub(super) source_index: usize,
     pub(super) tactic: PostExecutionTactic,
-    /// The tactic's surface steps are already in the claim's surface record
-    /// (a constructed certificate merged them there); the exit drain performs
-    /// the deferred work but must not record the steps a second time.
+    /// The tactic's surface steps are already retained by checked `Proof`
+    /// provenance or a legacy surface record. The exit drain performs only
+    /// the deferred outcome work and must not record those steps again.
     pub(super) surface_recorded: bool,
 }
 
@@ -1508,8 +1504,8 @@ impl TacticReplayState {
             });
     }
 
-    /// Schedules ordered outcome work whose semantic proof and Surface
-    /// certificate are already owned by a checked `Proof` descendant.
+    /// Schedules ordered outcome work whose semantics and Surface provenance
+    /// are already owned by a checked `Proof` descendant.
     pub(super) fn defer_checked_post_execution(
         &mut self,
         tactic_index: usize,
