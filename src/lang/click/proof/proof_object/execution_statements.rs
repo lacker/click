@@ -249,7 +249,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if !execution.replay.loop_invariant_region {
+        if execution.replay.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(
                 self.step_error("`close_invariants` is only available in a loop-region proof")
             );
@@ -294,7 +294,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
-        if !execution.replay.loop_invariant_region {
+        if execution.replay.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("loop invariant closure requires a loop-region proof"));
         }
 

@@ -347,8 +347,6 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             ..ExecutionFrontier::default()
         },
         source_layout,
-        region_proof: true,
-        loop_invariant_region: true,
         function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
@@ -1274,8 +1272,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             ..ExecutionFrontier::default()
         },
         source_layout,
-        region_proof: true,
-        loop_invariant_region: true,
         function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()

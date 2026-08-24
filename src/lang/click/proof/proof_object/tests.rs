@@ -8043,11 +8043,11 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
 
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let make_root = |loop_invariant_region| {
-            let replay = TacticReplayState {
-                loop_invariant_region,
-                ..TacticReplayState::default()
-            };
+        let make_root = |loop_invariant_region: bool| {
+            let mut replay = TacticReplayState::default();
+            if loop_invariant_region {
+                replay.frontier.region = ExecutionRegionKind::LoopBody;
+            }
             Proof::for_execution_frontier(
                 "persistent close invariants",
                 0,

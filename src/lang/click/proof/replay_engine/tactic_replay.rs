@@ -884,7 +884,7 @@ fn try_smart_frame_on_proof<'a>(
         replay: Box::new(std::mem::take(replay)),
         branch_path: std::mem::take(branch_path),
     };
-    let ordered_deferred = context.replay.ordered_finalization
+    let ordered_deferred = context.replay.frontier.region == ExecutionRegionKind::Function
         && context.replay.is_at_function_exit()
         && context.replay.open_scopes == 0;
     let root = Proof::for_execution_frontier(
@@ -1055,18 +1055,20 @@ fn replay_linear_tactics_without_frontier_loops(
         let tactic_index = indexed_tactic.index;
         let source_index = indexed_tactic.source_index;
         let tactic = &indexed_tactic.tactic;
-        let deferred_post_execution = replay.ordered_finalization
+        let deferred_post_execution = replay.frontier.region == ExecutionRegionKind::Function
             && replay.is_at_function_exit()
             && replay.open_scopes == 0
             && tactic_is_deferred_post_execution(tactic);
-        let proof_owned_smart_frame_deferred = replay.ordered_finalization
+        let proof_owned_smart_frame_deferred = replay.frontier.region
+            == ExecutionRegionKind::Function
             && replay.is_at_function_exit()
             && replay.open_scopes == 0
             && matches!(
                 tactic,
                 ProofTactic::SmartFrame(None | Some(CodeRegionRef::Function))
             );
-        let deferred_region_simp = replay.region_proof && matches!(tactic, ProofTactic::Simp);
+        let deferred_region_simp = replay.frontier.region == ExecutionRegionKind::LoopBody
+            && matches!(tactic, ProofTactic::Simp);
         let mut scope = Some(begin_tactic_surface_scope(&mut replay));
         let capture_this_tactic =
             begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
@@ -1103,7 +1105,8 @@ fn replay_linear_tactics_without_frontier_loops(
             replay.proof_certificate_builder = construction;
         }
         let _timing = (!(deferred_post_execution
-            || replay.region_proof && matches!(tactic, ProofTactic::Simp))
+            || replay.frontier.region == ExecutionRegionKind::LoopBody
+                && matches!(tactic, ProofTactic::Simp))
             && has_independent_source_timing(tactic))
         .then(|| {
             TacticTiming::new(
@@ -2050,7 +2053,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 premises: surface_premises,
             } => {
                 if let Some(region) = region_ref
-                    && replay.ordered_finalization
+                    && replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
                     && replay.open_scopes == 0
                 {
@@ -2092,8 +2095,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 if !surface_premises.is_empty() {
                     let all_pure_facts = requirement_pure_facts.clone();
                     let pre_state = replay.old_reference_state(&state).clone();
-                    let deferred_ordered_exit =
-                        replay.ordered_finalization && replay.is_at_function_exit();
+                    let deferred_ordered_exit = replay.frontier.region
+                        == ExecutionRegionKind::Function
+                        && replay.is_at_function_exit();
                     for surface_premise in surface_premises {
                         let premise = if let Some(recorded) = replay
                             .surface_propositions
@@ -2207,7 +2211,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         )
                     })
                     .transpose()?;
-                if replay.ordered_finalization
+                if replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
                     && matches!(code_region, None | Some(CodeRegion::Function))
                 {
@@ -2292,7 +2296,9 @@ fn replay_linear_tactics_without_frontier_loops(
                         Some(CodeRegion::Statement(_)) => {}
                     }
                 }
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     let region = region_ref.clone().ok_or_else(|| {
                         ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: contextual function `frame()` should have been deferred earlier"
@@ -2306,7 +2312,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
             }
             ProofTactic::UnfoldPredicate(name) => {
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     replay.defer_post_execution(
                         tactic_index,
                         source_index,
@@ -2357,7 +2365,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     )));
                 }
                 debug_assert!(replay.is_at_function_exit());
-                if replay.ordered_finalization {
+                if replay.frontier.region == ExecutionRegionKind::Function {
                     replay.defer_post_execution(
                         tactic_index,
                         source_index,
@@ -2380,7 +2388,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     )));
                 }
                 if replay.is_at_function_exit() {
-                    if replay.ordered_finalization {
+                    if replay.frontier.region == ExecutionRegionKind::Function {
                         replay.defer_post_execution(
                             tactic_index,
                             source_index,
@@ -2431,7 +2439,7 @@ fn replay_linear_tactics_without_frontier_loops(
             }
             ProofTactic::FoldResource(resource) => {
                 if replay.is_at_function_exit() {
-                    if replay.ordered_finalization {
+                    if replay.frontier.region == ExecutionRegionKind::Function {
                         replay.defer_post_execution(
                             tactic_index,
                             source_index,
@@ -2466,7 +2474,7 @@ fn replay_linear_tactics_without_frontier_loops(
             }
             ProofTactic::Have(have) => {
                 if replay.is_at_function_exit() {
-                    if replay.ordered_finalization {
+                    if replay.frontier.region == ExecutionRegionKind::Function {
                         replay.defer_post_execution(
                             tactic_index,
                             source_index,
@@ -2673,7 +2681,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 unreachable!("frontier-local loops are replayed between linear tactic chunks")
             }
             ProofTactic::Witness(_) => {
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     let ProofTactic::Witness(witness) = tactic else {
                         unreachable!()
                     };
@@ -2691,7 +2701,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
             }
             ProofTactic::Choose(_) => {
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     let ProofTactic::Choose(choice) = tactic else {
                         unreachable!()
                     };
@@ -2709,10 +2721,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 require_function_exit(&replay, claim_label, tactic_index, "choose")?;
             }
             ProofTactic::Assumption | ProofTactic::Normalize | ProofTactic::Rewrite(_) => {
-                if !replay.region_proof {
+                if replay.frontier.region != ExecutionRegionKind::LoopBody {
                     require_function_exit(&replay, claim_label, tactic_index, tactic_name(tactic))?;
                 }
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     let post_tactic = match tactic {
                         ProofTactic::Assumption => PostExecutionTactic::Assumption,
                         ProofTactic::Normalize => PostExecutionTactic::Normalize,
@@ -2780,13 +2794,15 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::Simp => {
-                if !replay.region_proof {
+                if replay.frontier.region != ExecutionRegionKind::LoopBody {
                     require_function_exit(&replay, claim_label, tactic_index, "simp")?;
                 }
-                if replay.region_proof {
+                if replay.frontier.region == ExecutionRegionKind::LoopBody {
                     replay.region_simp = Some((tactic_index, source_index));
                 }
-                if replay.ordered_finalization && replay.is_at_function_exit() {
+                if replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                {
                     replay.defer_post_execution(
                         tactic_index,
                         source_index,

@@ -693,7 +693,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
-        ordered_finalization: true,
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),
         surface_propositions,
@@ -899,7 +898,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     let mut replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
-        ordered_finalization: true,
         grouped_contract: true,
         execution_start_facts: Arc::new(pure_facts.clone()),
         function_entry_state: Some(function_entry_state),

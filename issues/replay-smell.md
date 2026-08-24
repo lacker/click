@@ -334,7 +334,29 @@ that legitimately continue to function exit consume one explicit
 escape per region level (`continue_arm_into_parent_frontier`), driven
 by the split record; an arm that escaped is no longer at the boundary,
 so the checked-join predicates still enforce the join discipline.
-Next: unify function exit and the back-edge as instances of one
+The region-identity compatibility switches are deleted next:
+`region_proof`, `loop_invariant_region`, and `ordered_finalization` all
+duplicated "is this a preservation region or a whole function", which
+`ExecutionFrontier.region` now answers as typed identity; their readers
+consult the region kind directly.
+
+Next, the preservation port: `verify_one_loop_preservation_proof` and
+the automatic preservation planner are the remaining two production
+entry points into `execute_internal_proof` outside the whole-function
+fallbacks. The typed boundary removes what blocked the reverted
+experiment — a preservation `Proof` is an ordinary bounded-region
+frontier whose acceptance state is `is_at_region_boundary()` instead
+of function exit. The port needs, in order: a boundary-oriented
+acceptance mode in the structural drivers (which today require
+function exit and drain outcomes); case-path extraction from recorded
+split decisions on the boundary descendants instead of replay
+`case_assumptions`; the invariant bundle and structural-effect
+obligations certified on the same boundary `Proof` rather than
+re-wrapped per back-edge context; and the planner's worklist becoming
+bounded smart search over persistent boundary-region descendants,
+deleting the clone-context-per-candidate replay loop. Measure at the
+two `execute_internal_proof` call sites in `loop_planning.rs`. After
+that, unify function exit and the back-edge as instances of one
 boundary mechanism when the frontier migrates onto `Proof` (step 2).
 Each chunk scores by the replay field or fallback it deletes, never by
 adding a guarded path beside a retained fallback.
