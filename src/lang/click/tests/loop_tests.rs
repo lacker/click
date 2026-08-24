@@ -43,6 +43,74 @@ fn frontier_local_loop_verifies_and_advances_to_exit() {
 }
 
 #[test]
+fn individual_loop_proof_has_no_whole_claim_acceptance_replay() {
+    let c_source = r#"
+        int32 count_to_three() {
+            int32 i;
+            i = 0;
+            while (i < 3) {
+                i = i + 1;
+            }
+            return i;
+        }
+    "#;
+    let click_source = r#"
+        verifying "count_to_three.c";
+
+        int32 count_to_three() {
+            ensures result == 3 by {
+                step();
+                step();
+                loop as count {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                have at(count.entry, i) == 0 by simp;
+                have at(count.exit, i) == 3 by simp;
+                step();
+                simp();
+            }
+        }
+    "#;
+    let sources = [("count_to_three.c", c_source)];
+
+    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
+        proof::count_root_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
+    });
+    let verified = verified.expect("the individual loop proof should verify once");
+    assert_eq!(
+        root_replays, 1,
+        "ordinary verification must not replay the extracted whole-claim proof"
+    );
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+            if matches!(
+                name.as_str(),
+                "whole-claim certificate construction" | "whole-claim certificate replay"
+            )
+    )));
+    verified[0]
+        .expanded_proof_certificate()
+        .expect("the compatibility proof should retain expansion provenance");
+
+    let rewritten = expand_c0_claim_source(
+        click_source,
+        &sources,
+        "count_to_three",
+        CProofClaim::Ensure(0),
+    )
+    .expect("the retained individual loop proof should expand");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the rewritten individual loop proof should verify normally");
+}
+
+#[test]
 fn loop_initialization_theorem_search_retains_checked_point_proof() {
     let c_source = r#"
             int32 initialize_with_theorem(int32 x) {
@@ -1699,17 +1767,22 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
     let without_effect = with_effect.replace("                    mutable p[0..3] by frame;\n", "");
     let sources = [("bubble_pass3.c", c_source)];
 
-    let (baseline, baseline_replays) =
-        proof::count_internal_proof_executions(|| verify_c0_sources(&without_effect, &sources));
+    let ((baseline, baseline_replays), baseline_roots) =
+        proof::count_root_internal_proof_executions(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(&without_effect, &sources))
+        });
     baseline.expect("the comparison branching loop without an effect should verify");
     assert_eq!(
-        baseline_replays, 40,
-        "the checked branching preservation path was replayed as a detached certificate"
+        baseline_roots, 1,
+        "the branching source proof must not be replayed as a detached certificate"
     );
 
-    let (verified, effect_replays) =
-        proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources));
+    let ((verified, effect_replays), effect_roots) =
+        proof::count_root_internal_proof_executions(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources))
+        });
     verified.expect("the branch-shaped smart frame should verify");
+    assert_eq!(effect_roots, 1, "the smart effect added an acceptance pass");
     assert_eq!(
         effect_replays, baseline_replays,
         "the branch-shaped smart effect entered compatibility replay"
@@ -1720,19 +1793,32 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
         .expect("the mutable effect should have a source position")
         + "mutable p[0..3] by ".len();
     let position = expansion::position_at_offset(with_effect, offset);
-    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
-        expand_c0_tactic_source_at(with_effect, &sources, position.line, position.column)
-    });
+    let ((expanded, expansion_replays), expansion_roots) =
+        proof::count_root_internal_proof_executions(|| {
+            proof::count_internal_proof_executions(|| {
+                expand_c0_tactic_source_at(with_effect, &sources, position.line, position.column)
+            })
+        });
     let expanded = expanded.expect("the branch-shaped smart frame should expand");
+    assert_eq!(
+        expansion_roots, 1,
+        "provenance extraction added a detached acceptance pass"
+    );
     assert_eq!(
         expansion_replays, baseline_replays,
         "expanding the branch-shaped smart effect entered compatibility replay"
     );
     assert!(expanded.contains("if p[(j + 1)] < p[j]"), "{expanded}");
 
-    let (reverified, replays) =
-        proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources));
+    let ((reverified, replays), rewritten_roots) =
+        proof::count_root_internal_proof_executions(|| {
+            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
+        });
     reverified.expect("the branch-shaped explicit frame should verify normally");
+    assert_eq!(
+        rewritten_roots, 1,
+        "rewritten-source verification added an acceptance pass"
+    );
     assert_eq!(
         replays, baseline_replays,
         "the branch-shaped structural effect entered compatibility replay"

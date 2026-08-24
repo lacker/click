@@ -245,8 +245,14 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
     });
     verified.expect("the explicit call partition should remain on one retained Proof");
     assert_eq!(
-        flat_units, 2,
-        "the callee and caller should each retain one Proof"
+        flat_units, 1,
+        "only the caller's source proof should enter the direct Proof driver"
+    );
+    assert!(
+        replay_labels
+            .iter()
+            .any(|label| label == "replace_allocated_cell.contract"),
+        "the compatibility-backed callee should expose its real source path"
     );
     assert!(
         replay_labels

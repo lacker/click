@@ -183,10 +183,16 @@ fn source_expander_makes_theorem_application_premises_explicit() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(click_source, &[("increment.c", c_source)])
+    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
+        proof::count_root_internal_proof_executions(|| {
+            verify_c0_sources(click_source, &[("increment.c", c_source)])
+        })
     });
     verified.expect("bare theorem application should verify");
+    assert_eq!(
+        root_replays, 1,
+        "ordinary verification must not replay the extracted theorem application"
+    );
     let simple_apply_checks = events
         .iter()
         .filter(|event| {
@@ -200,8 +206,8 @@ fn source_expander_makes_theorem_application_premises_explicit() {
         })
         .count();
     assert_eq!(
-        simple_apply_checks, 1,
-        "ordinary verification should check the retained apply step once while constructing its Proof, without a second smart-path replay"
+        simple_apply_checks, 0,
+        "ordinary verification must not feed the extracted explicit application through a second acceptance pass"
     );
 
     let expanded = expand_c0_claim_source(
@@ -1102,7 +1108,7 @@ fn proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics() {
 }
 
 #[test]
-fn every_claim_proof_form_carries_a_replayable_certificate() {
+fn every_claim_proof_form_retains_expandable_provenance() {
     let c_source = r#"
             int32 clamp(int32 p[1], int32 x) {
                 if (x < 0) {
@@ -1134,7 +1140,7 @@ fn every_claim_proof_form_carries_a_replayable_certificate() {
             .expanded_proof_certificate()
             .unwrap_or_else(|error| {
                 panic!(
-                    "a verified claim must carry its whole-claim certificate: {}",
+                    "a verified claim must retain surface-expressible provenance: {}",
                     error.message()
                 )
             });
@@ -1399,22 +1405,13 @@ fn point_witness_retains_a_structural_surface_goal_for_simp() {
         verify_c0_sources(click_source, &[("witness_pair.c", c_source)])
     });
     verified.expect("witness followed by structural simp should stay on Proof");
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "post-execution smart have compatibility construction"
-                        || name.starts_with("post-execution simple have replay")
-            )),
+                if name == "post-execution smart have compatibility construction"
+                    || name.starts_with("post-execution simple have replay")
+        )),
         "the witness successor must retain the structural proof without reconstruction: {events:#?}"
     );
 
@@ -1556,21 +1553,12 @@ fn outcome_instantiate_uses_the_checked_proof_path() {
         verify_c0_sources(click_source, &[("pick.c", c_source)])
     });
     verified.expect("outcome instantiation should prove the bound directly through Proof");
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name.starts_with("post-execution simple have replay")
-            )),
+                if name.starts_with("post-execution simple have replay")
+        )),
         "outcome instantiation must remain on the checked Proof path: {events:#?}"
     );
 }

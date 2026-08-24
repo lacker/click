@@ -19,7 +19,6 @@ pub(in crate::lang::click) fn count_flat_proof_units<R>(
 
 pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) theorems: Vec<VerifiedCTheorem>,
-    pub(in crate::lang::click) proof_owned: bool,
 }
 
 fn resource_clause_is_declared(resource: &ResourceClause) -> bool {
@@ -859,10 +858,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &arguments,
             tactics,
         )?;
-        return Ok(ClaimProofResult {
-            theorems,
-            proof_owned: true,
-        });
+        return Ok(ClaimProofResult { theorems });
     }
     let contexts = execute_internal_proof(
         &program,
@@ -898,10 +894,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         &arguments,
         tactics,
     )?;
-    Ok(ClaimProofResult {
-        theorems,
-        proof_owned: false,
-    })
+    Ok(ClaimProofResult { theorems })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1076,10 +1069,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &arguments,
             tactics,
         )?;
-        return Ok(ClaimProofResult {
-            theorems,
-            proof_owned: true,
-        });
+        return Ok(ClaimProofResult { theorems });
     }
     let contexts = crate::instrumentation::measure_operation(
         function_block.signature().name(),
@@ -1129,15 +1119,12 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             )
         },
     )?;
-    Ok(ClaimProofResult {
-        theorems,
-        proof_owned: false,
-    })
+    Ok(ClaimProofResult { theorems })
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1173,8 +1160,8 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         tactics.push(ProofTactic::Simp);
     }
 
-    let mut verified = prove_claims_by_grouped_tactics(
-        expansion_capture.as_deref_mut(),
+    let verified = prove_claims_by_grouped_tactics(
+        expansion_capture,
         source_path,
         function_block,
         parsed_function,
@@ -1187,30 +1174,14 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_auto(
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
-    certify_grouped_claims_result(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claims,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &mut verified,
-        "auto",
-        &tactics,
-    )?;
     Ok(verified.theorems)
 }
 
-/// An explicit grouped proof script. A completed flat `Proof` is accepted
-/// directly; only the compatibility path still enters the whole-contract
-/// certificate gate below.
+/// An explicit grouped proof script. The completed proof unit is accepted
+/// directly; retained provenance is serialized only for expansion.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click) fn prove_claims_by_grouped_script(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1222,8 +1193,8 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_script(
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut verified = prove_claims_by_grouped_tactics(
-        expansion_capture.as_deref_mut(),
+    let verified = prove_claims_by_grouped_tactics(
+        expansion_capture,
         source_path,
         function_block,
         parsed_function,
@@ -1236,144 +1207,19 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_script(
         tactics,
         ProofTacticSource::SourceSyntax,
     )?;
-    certify_grouped_claims_result(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claims,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &mut verified,
-        "explicit proof script",
-        tactics,
-    )?;
     Ok(verified.theorems)
 }
 
-/// The grouped compatibility form of the whole-claim certificate gate (see
-/// `certify_claim_result`). A terminal `Proof` has already checked every
-/// semantic transition and skips this legacy replay. Context-backed results
-/// still require a stitched contract-level certificate that replays every
-/// verified claim.
-#[allow(clippy::too_many_arguments)]
-fn certify_grouped_claims_result(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claims: &[FunctionClaimRef<'_>],
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    verified: &mut ClaimProofResult,
-    proof_description: &str,
-    replayed_tactics: &[ProofTactic],
-) -> Result<(), ClickError> {
-    if verified.proof_owned {
-        return Ok(());
-    }
-    let verified = &mut verified.theorems;
-    if let Ok(script) = ProofCertificate::from_proof_tactics(replayed_tactics) {
-        for theorem in verified.iter_mut() {
-            theorem.expanded_proof = Some(script.clone());
-            theorem.expansion_blocker = None;
-        }
-        return Ok(());
-    }
-    let certificate = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        &format!("{}.contract", function_block.signature().name()),
-        "whole-contract certificate construction",
-        || {
-            verified
-                .first()
-                .ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{proof_description}` proved no grouped claims for `{}.contract`",
-                        function_block.signature().name()
-                    ))
-                })?
-                .expanded_proof_certificate()
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{proof_description}` succeeded internally for `{}.contract` without a whole-contract surface certificate: {}",
-                        function_block.signature().name(),
-                        error.message()
-                    ))
-                })
-        },
-    )?;
-    let certificate_tactics = certificate.to_proof_tactics();
-    if certificate_tactics.is_empty() {
-        return Err(ClickError::new(format!(
-            "`{proof_description}` stitched an empty whole-contract surface certificate for `{}.contract`",
-            function_block.signature().name()
-        )));
-    }
-    let replayed = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        &format!("{}.contract", function_block.signature().name()),
-        "whole-contract certificate replay",
-        || {
-            prove_claims_by_grouped_tactics(
-                expansion_capture.as_deref_mut(),
-                source_path,
-                function_block,
-                parsed_function,
-                claims,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                &certificate_tactics,
-                ProofTacticSource::GeneratedBy { source_index: 0 },
-            )
-        },
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{proof_description}` surface certificate failed complete replay for `{}.contract`:\n{}\n{}",
-            function_block.signature().name(),
-            format_proof_certificate(&certificate),
-            error.message()
-        ))
-    })?;
-    // The certificate may legitimately refine an abstracted join into its
-    // concrete paths, so the check is claim coverage: every verified claim
-    // must be proved again by the certificate replay.
-    for theorem in verified.iter() {
-        if !replayed
-            .theorems
-            .iter()
-            .any(|replayed| replayed.claim == theorem.claim)
-        {
-            return Err(ClickError::new(format!(
-                "`{proof_description}` surface certificate replay did not prove every grouped claim of `{}.contract` again",
-                function_block.signature().name()
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Exit-claim closure: the structural form of the settled invariant that a
-/// smart success must replay through a surface-expressible certificate
-/// before acceptance.
+/// Exit-claim closure: structural evidence that the current semantic proof
+/// unit discharged a claim. Surface tactics are retained only as provenance;
+/// they are not replayed as an ordinary-verification acceptance gate.
 ///
 /// Mid-execution the invariant is already structural — a smart operation can
 /// continue only from its accepted checked `Proof` descendant, so "accepted
 /// without a checked transition" is not synthesizable. At function exit the
 /// per-claim drain used to write closure easily:
 /// closure was `closed_claims[i] = true`, a bool any site could set, with the
-/// certificates hanging off parallel arrays and the gate re-asserted by hand
-/// at every closing site.
+/// surface records hanging off parallel arrays.
 ///
 /// `ClosedClaim` restores the mid-execution shape. Its field is private to
 /// this module, so no site outside can build one, and the variant that carries
@@ -4297,7 +4143,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         }
                                         for (_, surface_goal, equalities) in &direct_claims {
                                             // In a grouped set with resource
-                                            // padding, whole-contract replay
+                                            // padding, retained provenance
                                             // already carries pre-execution
                                             // predicate unfolds. Write the
                                             // nested have at that structural

@@ -3,9 +3,20 @@ use super::*;
 #[cfg(test)]
 thread_local! {
     static INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ROOT_INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static COLLECTED_INTERNAL_PROOF_LABELS: std::cell::RefCell<Option<Vec<String>>> = const {
         std::cell::RefCell::new(None)
     };
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_root_internal_proof_executions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = ROOT_INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = ROOT_INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
+    (result, after - before)
 }
 
 #[cfg(test)]
@@ -2581,6 +2592,10 @@ pub(in crate::lang::click::proof) fn execute_internal_proof(
     #[cfg(test)]
     INTERNAL_PROOF_EXECUTIONS.with(|executions| executions.set(executions.get() + 1));
     #[cfg(test)]
+    if INTERNAL_PROOF_REPLAY_DEPTH.with(|depth| depth.get() == 0) {
+        ROOT_INTERNAL_PROOF_EXECUTIONS.with(|executions| executions.set(executions.get() + 1));
+    }
+    #[cfg(test)]
     COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
         if let Some(labels) = labels.borrow_mut().as_mut() {
             labels.push(claim_label.to_string());
@@ -2821,9 +2836,9 @@ fn execute_internal_proof_inner(
                     continue;
                 }
                 // Record where this proof-level case split sits in the claim's
-                // surface record. Cross-context synthesis reassembles the
-                // whole-claim certificate at exactly these recorded choices,
-                // so the tactics a case runs are written inside its surface
+                // surface record. Cross-context extraction reassembles the
+                // claim's provenance at exactly these recorded choices, so
+                // the tactics a case runs are written inside its surface
                 // `if` branch instead of leaking into sibling paths.
                 if branch_context
                     .replay

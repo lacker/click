@@ -947,22 +947,13 @@ fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
         verify_c0_sources(click_source, &[("first.c", c_source)])
     });
     verified.expect("the smart have should retain its recursively checked conjunction");
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name.starts_with("post-execution simple have replay")
-                        || name == "post-execution smart have compatibility construction"
-            )),
+                if name.starts_with("post-execution simple have replay")
+                    || name == "post-execution smart have compatibility construction"
+        )),
         "the checked smart have must not construct or replay a second proof: {events:#?}"
     );
 
@@ -9842,21 +9833,12 @@ fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
         certificate_checks, 0,
         "the admitted explicit outcome have should apply directly to Proof"
     );
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name.starts_with("post-execution simple have replay")
-            )),
+                if name.starts_with("post-execution simple have replay")
+        )),
         "the explicit outcome have must retain its checked Proof without legacy replay: {events:#?}"
     );
 
@@ -9900,21 +9882,12 @@ fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
         verify_c0_sources(click_source, &[("bounded.c", c_source)])
     });
     verified.expect("the quantified outcome should verify through Proof");
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "outcome simp compatibility construction"
-            )),
+                if name == "outcome simp compatibility construction"
+        )),
         "the binder-aware outcome certificate must not use compatibility construction: {events:#?}"
     );
     let expanded = expand_c0_claim_source(
@@ -10027,13 +10000,6 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
     verified.expect("the unfolded resource-count goal should close through Proof");
     let compatibility_events = events
         .iter()
-        .take_while(|event| {
-            !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "whole-contract certificate construction"
-            )
-        })
         .filter(|event| {
             matches!(
                 event,
@@ -10105,13 +10071,6 @@ fn outcome_predicate_unfold_uses_the_checked_frame_population_transition() {
     verified.expect("the checked frame population transition should reach the outcome Proof");
     let compatibility_events = events
         .iter()
-        .take_while(|event| {
-            !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "whole-contract certificate construction"
-            )
-        })
         .filter(|event| {
             matches!(
                 event,
@@ -10907,13 +10866,6 @@ fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     verified.expect("the frame-certified ensure should close through Proof");
     let compatibility_events = events
         .iter()
-        .take_while(|event| {
-            !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "whole-contract certificate construction"
-            )
-        })
         .filter(|event| {
             matches!(
                 event,
@@ -12355,22 +12307,13 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
         verify_c0_sources(click_source, &[("set_pair.c", c_source)])
     });
     verified.expect("the unfolded conjunction should verify on the checked Proof path");
-    let source_verification_events = events.iter().take_while(|event| {
-        !matches!(
+    assert!(
+        events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name == "whole-contract certificate construction"
-        )
-    });
-    assert!(
-        source_verification_events
-            .into_iter()
-            .all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                    if name == "post-execution smart have compatibility construction"
-                        || name.starts_with("post-execution simple have replay")
-            )),
+                if name == "post-execution smart have compatibility construction"
+                    || name.starts_with("post-execution simple have replay")
+        )),
         "the checked unfold and structural simp must not reconstruct or replay their proof: {events:#?}"
     );
     let offset = click_source.find("have ordered_pair").unwrap();

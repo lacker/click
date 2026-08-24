@@ -2133,9 +2133,9 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
     }
     // A structured proof produced one replay context per logical case, and
     // each context's claim-level surface record covers only the execution
-    // paths its case owns. The whole-claim certificate is their synthesis at
-    // the recorded branch choices; a per-context record must not survive as
-    // the claim's expansion.
+    // paths its case owns. Expansion synthesizes their provenance at the
+    // recorded branch choices; a per-context record must not survive as the
+    // claim's expansion.
     if context_count > 1 {
         crate::instrumentation::measure_operation(
             function_block.signature().name(),

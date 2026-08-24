@@ -117,8 +117,25 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
     "#;
 
     let sources = [("push.c", push_c), ("caller.c", caller_c)];
-    verify_c0_sources(click_source, &sources)
-        .expect("a storage-only callee should preserve its caller's allocation authority");
+    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
+        proof::count_root_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
+    });
+    verified.expect("a storage-only callee should preserve its caller's allocation authority");
+    assert_eq!(
+        root_replays, 2,
+        "the two source contracts must each have one compatibility root, with no acceptance replay"
+    );
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+            if matches!(
+                name.as_str(),
+                "whole-claim certificate construction"
+                    | "whole-claim certificate replay"
+                    | "whole-contract certificate construction"
+                    | "whole-contract certificate replay"
+            )
+    )));
 
     let push_start = click_source.find("int32 push").unwrap();
     let simp_offset = push_start + click_source[push_start..].find("simp();").unwrap();

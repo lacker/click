@@ -30,7 +30,7 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
-use claim_proofs::{ClaimProofResult, OrderedProofUnit, finish_ordered_proof_replay};
+use claim_proofs::{OrderedProofUnit, finish_ordered_proof_replay};
 pub(super) use claim_proofs::{
     prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,
 };
@@ -73,6 +73,8 @@ pub(super) use pure_theorems::{
 pub(in crate::lang::click) use replay_engine::collect_internal_proof_execution_labels;
 #[cfg(test)]
 pub(in crate::lang::click) use replay_engine::count_internal_proof_executions;
+#[cfg(test)]
+pub(in crate::lang::click) use replay_engine::count_root_internal_proof_executions;
 use replay_engine::*;
 use replay_state::*;
 pub(super) use replay_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
@@ -2404,25 +2406,6 @@ pub(super) fn prove_claim_by_auto(
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
             Ok(mut theorems) => {
-                if let Err(error) = certify_claim_result(
-                    expansion_capture.as_deref_mut(),
-                    source_path,
-                    function_block,
-                    parsed_function,
-                    claim,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    &mut theorems,
-                    "auto",
-                    &tactics,
-                ) {
-                    loop_verification_error = Some(error);
-                    continue;
-                }
                 for theorem in &mut theorems.theorems {
                     theorem.proof_kind = ProofKind::LoopVerification;
                 }
@@ -2433,7 +2416,6 @@ pub(super) fn prove_claim_by_auto(
     }
 
     let mut bounded_error = None;
-    let mut bounded_certificate_error = None;
     for tactics in bounded_execution_tactic_candidates(claim) {
         match prove_claim_by_tactics(
             expansion_capture.as_deref_mut(),
@@ -2450,151 +2432,21 @@ pub(super) fn prove_claim_by_auto(
             &tactics,
             ProofTacticSource::GeneratedBy { source_index: 0 },
         ) {
-            Ok(mut theorems) => {
-                if let Err(error) = certify_claim_result(
-                    expansion_capture.as_deref_mut(),
-                    source_path,
-                    function_block,
-                    parsed_function,
-                    claim,
-                    claim_label,
-                    function_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    resource_environment,
-                    theorem_environment,
-                    &mut theorems,
-                    "auto",
-                    &tactics,
-                ) {
-                    bounded_certificate_error.get_or_insert(error);
-                    continue;
-                }
-                return Ok(theorems.theorems);
-            }
+            Ok(theorems) => return Ok(theorems.theorems),
             Err(error) => bounded_error = Some(error),
         }
     }
-    Err(bounded_certificate_error
-        .or(loop_verification_error)
+    Err(loop_verification_error
         .or(bounded_error)
         .unwrap_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}`: `auto` had no certificate candidate to try"
+                "`{claim_label}`: `auto` had no proof candidate to try"
             ))
         }))
 }
 
-/// The whole-claim certificate gate: a claim proof is accepted only when its
-/// stitched claim-level certificate exists, replays completely through the
-/// ordinary tactic judgment, and reproduces the verified path count. Every
-/// claim proof form — `auto`, `frame`, `simp`, and explicit scripts — runs
-/// through this gate, so "verified but not expandable" is not a reachable
-/// claim outcome.
-///
-/// When the replayed tactics are themselves a simple proof, that proof is the
-/// whole-claim certificate by definition — the replay that just succeeded was
-/// the certificate replay — so the gate records it and accepts without
-/// re-running anything.
-#[allow(clippy::too_many_arguments)]
-fn certify_claim_result(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
-    source_path: &str,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    verified: &mut ClaimProofResult,
-    proof_description: &str,
-    replayed_tactics: &[ProofTactic],
-) -> Result<(), ClickError> {
-    if verified.proof_owned {
-        return Ok(());
-    }
-    let verified = &mut verified.theorems;
-    if let Ok(script) = ProofCertificate::from_proof_tactics(replayed_tactics) {
-        for theorem in verified.iter_mut() {
-            theorem.expanded_proof = Some(script.clone());
-            theorem.expansion_blocker = None;
-        }
-        return Ok(());
-    }
-    let certificate = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        claim_label,
-        "whole-claim certificate construction",
-        || {
-            verified.first().ok_or_else(|| {
-            ClickError::new(format!(
-                "`{proof_description}` proved no paths for `{claim_label}`"
-            ))
-            })?
-            .expanded_proof_certificate()
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{proof_description}` succeeded internally for `{claim_label}` without a whole-claim surface certificate: {}",
-                    error.message()
-                ))
-            })
-        },
-    )?;
-    let certificate_tactics = certificate.to_proof_tactics();
-    if certificate_tactics.is_empty() {
-        return Err(ClickError::new(format!(
-            "`{proof_description}` stitched an empty whole-claim surface certificate for `{claim_label}`"
-        )));
-    }
-    let replayed = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        claim_label,
-        "whole-claim certificate replay",
-        || prove_claim_by_tactics(
-        expansion_capture.as_deref_mut(),
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &certificate_tactics,
-        ProofTacticSource::GeneratedBy { source_index: 0 },
-    ),
-    )
-    .map_err(|error| {
-        ClickError::new(format!(
-            "`{proof_description}` surface certificate failed complete replay for `{claim_label}`:\n{}\n{}",
-            format_proof_certificate(&certificate),
-            error.message()
-        ))
-    })?;
-    // The certificate may legitimately refine an abstracted join into its
-    // concrete paths, so the check is claim coverage: every verified claim
-    // must be proved again by the certificate replay.
-    for theorem in verified.iter() {
-        if !replayed
-            .theorems
-            .iter()
-            .any(|replayed| replayed.claim == theorem.claim)
-        {
-            return Err(ClickError::new(format!(
-                "`{proof_description}` surface certificate replay did not prove `{claim_label}` again"
-            )));
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn prove_claim_by_frame(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2614,7 +2466,7 @@ pub(super) fn prove_claim_by_frame(
 
     let tactics = [ProofTactic::SmartFrame(None)];
     let mut theorems = prove_claim_by_tactics(
-        expansion_capture.as_deref_mut(),
+        expansion_capture,
         source_path,
         function_block,
         parsed_function,
@@ -2628,22 +2480,6 @@ pub(super) fn prove_claim_by_frame(
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
-    certify_claim_result(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &mut theorems,
-        "frame",
-        &tactics,
-    )?;
     for theorem in &mut theorems.theorems {
         theorem.proof_kind = ProofKind::Frame;
     }
@@ -2651,7 +2487,7 @@ pub(super) fn prove_claim_by_frame(
 }
 
 pub(super) fn prove_claim_by_simp(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2676,7 +2512,7 @@ pub(super) fn prove_claim_by_simp(
 
     let tactics = [ProofTactic::Simp];
     let mut theorems = prove_claim_by_tactics(
-        expansion_capture.as_deref_mut(),
+        expansion_capture,
         source_path,
         function_block,
         parsed_function,
@@ -2690,34 +2526,17 @@ pub(super) fn prove_claim_by_simp(
         &tactics,
         ProofTacticSource::GeneratedBy { source_index: 0 },
     )?;
-    certify_claim_result(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &mut theorems,
-        "simp",
-        &tactics,
-    )?;
     for theorem in &mut theorems.theorems {
         theorem.proof_kind = ProofKind::Simp;
     }
     Ok(theorems.theorems)
 }
 
-/// An explicit per-claim proof script, followed by the whole-claim
-/// certificate gate: the script's stitched claim-level certificate must exist
-/// and replay completely before the claim is accepted.
+/// An explicit per-claim proof script. The completed proof unit is the
+/// semantic result; retained provenance is serialized only for expansion.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prove_claim_by_script(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    expansion_capture: Option<&mut ExpansionCapture>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -2730,8 +2549,8 @@ pub(super) fn prove_claim_by_script(
     theorem_environment: &TheoremEnvironment,
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
-    let mut theorems = prove_claim_by_tactics(
-        expansion_capture.as_deref_mut(),
+    let theorems = prove_claim_by_tactics(
+        expansion_capture,
         source_path,
         function_block,
         parsed_function,
@@ -2744,22 +2563,6 @@ pub(super) fn prove_claim_by_script(
         theorem_environment,
         tactics,
         ProofTacticSource::SourceSyntax,
-    )?;
-    certify_claim_result(
-        expansion_capture,
-        source_path,
-        function_block,
-        parsed_function,
-        claim,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &mut theorems,
-        "explicit proof script",
-        tactics,
     )?;
     Ok(theorems.theorems)
 }
