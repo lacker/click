@@ -3661,6 +3661,268 @@ impl<'a> Proof<'a> {
         Ok(Some((successor, record)))
     }
 
+    /// Tries the one bounded product needed when a proof-level condition does
+    /// not name the immediately preceding statement partition. Each logical
+    /// polarity is checked against both certified statement successors while
+    /// crossing exactly the following C `if`. The speculative product is
+    /// accepted only when each polarity immediately has exactly one survivor;
+    /// no multi-frontier family is ever published to the proof state.
+    pub(super) fn try_collapse_statement_successor_if(
+        &self,
+        condition: &ClickProposition,
+        arm_steps: [(usize, Vec<ClickProposition>); 2],
+    ) -> Result<Option<(Self, ExecutionProofCaseSplit<'a>)>, ClickError> {
+        let Some(partition) = self
+            .execution()
+            .and_then(|execution| execution.last_step_delta.statement_partition.clone())
+        else {
+            return Ok(None);
+        };
+        if self.focused != partition.ids[0]
+            || !matches!(
+                self.node.step.as_deref(),
+                Some(SimpleProofStep::Step | SimpleProofStep::StepUsing(_))
+            )
+        {
+            return Ok(None);
+        }
+
+        // The exact-partition adapter is both cheaper and more informative.
+        // Leave that case to `enter_statement_successor_if`.
+        let first_then = self.lower_surface_proposition(condition, "proof `if` condition")?;
+        let expected_then = Proposition::ConditionIs(partition.condition.clone(), true);
+        if path_condition_equivalent(&first_then, &expected_then) {
+            return Ok(None);
+        }
+
+        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+            return Ok(None);
+        };
+        let selection = frontier.selection;
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        for execution in &partition.base_executions {
+            let statement_index = execution.replay.frontier.next_statement_index;
+            let Some(region) = execution.replay.source_layout.statement(statement_index) else {
+                return Ok(None);
+            };
+            if !matches!(region.kind, SourceStatementKind::If { .. }) {
+                return Ok(None);
+            }
+        }
+
+        struct Survivor {
+            base_facts: ProofFacts,
+            base_execution: Arc<ExecutionProofState>,
+            path_fact: Proposition,
+            checked: CheckedStatementStep,
+        }
+
+        enum LaneDecision {
+            Excluded,
+            Survives(Proposition),
+        }
+
+        let else_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let mut survivors: [Option<Survivor>; 2] = [None, None];
+        for logical_arm in 0..2 {
+            let take_then = logical_arm == 0;
+            let surface_fact = if take_then {
+                condition.clone()
+            } else {
+                else_surface.clone()
+            };
+            let mut survivor = None;
+            for parent_arm in 0..2 {
+                let focused = self.focus(partition.ids[parent_arm])?;
+                let decision = crate::instrumentation::measure_operation(
+                    context.function.name(),
+                    context.claim_label,
+                    "bounded statement-successor exclusion",
+                    || -> Result<Option<LaneDecision>, ClickError> {
+                        let fact = focused.lower_surface_proposition(
+                            &surface_fact,
+                            if take_then {
+                                "proof `if` condition"
+                            } else {
+                                "proof `if` negation"
+                            },
+                        )?;
+                        // Exclusion is intentionally bounded by source
+                        // evidence. It asks only whether the arm polarity plus
+                        // explicitly named premises refute one of this lane's
+                        // exact certified partition facts; it never searches
+                        // the ambient context for a global contradiction.
+                        let mut evidence = Vec::new();
+                        for premise in &arm_steps[logical_arm].1 {
+                            let lowered = focused.lower_surface_proposition(
+                                premise,
+                                "bounded statement-successor premise",
+                            )?;
+                            if !partition.base_facts[parent_arm].contains(&lowered) {
+                                return Ok(None);
+                            }
+                            if !evidence.contains(&lowered) {
+                                evidence.push(lowered);
+                            }
+                        }
+                        let premise_context = assumptions_from_propositions(&evidence);
+                        if partition.path_facts[parent_arm].iter().any(|path_fact| {
+                            fact_conflicts_with_assumptions(path_fact, &premise_context)
+                        }) {
+                            return Ok(None);
+                        }
+                        evidence.push(fact.clone());
+                        let arm_context = assumptions_from_propositions(&evidence);
+                        let arm_refutes_parent =
+                            partition.path_facts[parent_arm].iter().any(|path_fact| {
+                                fact_conflicts_with_assumptions(path_fact, &arm_context)
+                            });
+                        evidence.pop();
+                        evidence.extend(partition.path_facts[parent_arm].iter().cloned());
+                        let parent_context = assumptions_from_propositions(&evidence);
+                        let parent_refutes_arm =
+                            fact_conflicts_with_assumptions(&fact, &parent_context);
+                        Ok(Some(if arm_refutes_parent || parent_refutes_arm {
+                            LaneDecision::Excluded
+                        } else {
+                            LaneDecision::Survives(fact)
+                        }))
+                    },
+                )?;
+                let Some(decision) = decision else {
+                    return Ok(None);
+                };
+                let LaneDecision::Survives(fact) = decision else {
+                    continue;
+                };
+                let facts = partition.base_facts[parent_arm].with_fact(fact.clone());
+                let mut execution = (*partition.base_executions[parent_arm]).clone();
+                execution.last_step_delta = ExecutionProofStepDelta::default();
+                execution
+                    .replay
+                    .surface_propositions
+                    .record_lowering(&surface_fact, &fact)?;
+                execution
+                    .replay
+                    .case_assumptions
+                    .push(ReplayCaseAssumption {
+                        tactic_index: context.tactic_index,
+                        condition: condition.clone(),
+                        value: take_then,
+                        fact: Some(fact.clone()),
+                        at_function_entry: execution.replay.is_at_function_entry(),
+                    });
+                let base_execution = Arc::new(execution.clone());
+                let mut checked = check_step_using_facts(
+                    &mut execution.replay,
+                    &mut execution.state,
+                    &facts,
+                    &arm_steps[logical_arm].1,
+                    context.function_block,
+                    context.function,
+                    context.parsed_function,
+                    context.arguments,
+                    context.function_environment,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    context.claim_label,
+                    arm_steps[logical_arm].0,
+                )?;
+                match checked.len() {
+                    0 => {}
+                    1 if survivor.is_none() => {
+                        survivor = Some(Survivor {
+                            base_facts: facts,
+                            base_execution,
+                            path_fact: fact,
+                            checked: checked.pop().expect("one successor was checked"),
+                        });
+                    }
+                    // More than one surviving parent lane, or a statement
+                    // that itself still branches, did not collapse within
+                    // the fixed four-check boundary.
+                    _ => return Ok(None),
+                }
+            }
+            let Some(survivor) = survivor else {
+                return Ok(None);
+            };
+            survivors[logical_arm] = Some(survivor);
+        }
+
+        let [Some(then_survivor), Some(else_survivor)] = survivors else {
+            unreachable!("both logical arms were required above")
+        };
+        let make_goal = |survivor: &Survivor| {
+            let mut execution = (*survivor.base_execution).clone();
+            execution.replay = survivor.checked.replay.clone();
+            execution.state = survivor.checked.state.clone().into();
+            Goal::Frontier(FrontierGoal {
+                selection,
+                context: GoalContext {
+                    facts: survivor.checked.facts.clone(),
+                    unfolded_predicates: partition.parent_unfolds.clone(),
+                    execution: Some(Arc::new(execution)),
+                },
+            })
+        };
+        let goals = self
+            .state
+            .goals
+            .replace_at(partition.ids[0], make_goal(&then_survivor))
+            .replace_at(partition.ids[1], make_goal(&else_survivor));
+        let marker_node = Arc::new(ProofNode {
+            parent: Some(self.node.clone()),
+            step: None,
+            focused: self.focused,
+            depth: self.node.depth,
+        });
+        let then_node = Arc::new(ProofNode {
+            parent: Some(marker_node.clone()),
+            step: Some(Arc::new(SimpleProofStep::StepUsing(arm_steps[0].1.clone()))),
+            focused: partition.ids[0],
+            depth: marker_node.depth + 1,
+        });
+        let else_node = Arc::new(ProofNode {
+            parent: Some(then_node),
+            step: Some(Arc::new(SimpleProofStep::StepUsing(arm_steps[1].1.clone()))),
+            focused: partition.ids[1],
+            depth: marker_node.depth + 2,
+        });
+        let then_path = vec![then_survivor.path_fact.clone()];
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals,
+                added_facts: Arc::new(then_path.clone()),
+                checked_facts: Arc::new(then_path.clone()),
+            }),
+            node: else_node,
+            focused: partition.ids[0],
+        };
+        let record = ExecutionProofCaseSplit {
+            marker: ProofCheckpoint {
+                context: self.context.clone(),
+                node: marker_node,
+            },
+            split: partition.split,
+            ids: partition.ids,
+            surface_condition: condition.clone(),
+            base_facts: [then_survivor.base_facts, else_survivor.base_facts],
+            base_executions: [then_survivor.base_execution, else_survivor.base_execution],
+            path_facts: [then_path, vec![else_survivor.path_fact]],
+            common_facts: partition.common_facts.clone(),
+            parent_unfolds: partition.parent_unfolds.clone(),
+            parent_execution: partition.parent_execution.clone(),
+            execution_start_state: partition.execution_start_state.clone(),
+            initial_continuation_depth: partition.initial_continuation_depth,
+        };
+        Ok(Some((successor, record)))
+    }
+
     /// Splits one retained execution frontier under an exhaustive proof-level
     /// condition. Both arms share the already-checked C state and receive only
     /// their respective logical polarity; subsequent statement steps remain

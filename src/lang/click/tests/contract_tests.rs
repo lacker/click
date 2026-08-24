@@ -263,6 +263,143 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
     );
 }
 
+pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'static str) {
+    let replace_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                int32* old_data;
+                int32* new_data;
+
+                old_data = owner->data;
+                new_data = malloc(4);
+                if (new_data == 0) {
+                    return 0;
+                }
+                new_data[0] = 7;
+                owner->data = new_data;
+                free(old_data);
+                return 1;
+            }
+        "#;
+    let caller_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_then_branch(struct cell_owner* owner) {
+                int32 replaced;
+
+                replaced = replace_allocated_cell(owner);
+                if (replaced == 0) {
+                    return 0;
+                } else {
+                    return 1;
+                }
+            }
+        "#;
+    let click_source = r#"
+            resource allocated_cell(owner: struct cell_owner*) {
+                owns owner->data;
+                contains allocation(owner->data, 4);
+                owns owner->data[0..1];
+            }
+
+            verifying "replace_allocated_cell.c";
+            verifying "replace_then_branch.c";
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+                ensures result == 0 implies owner->data == old(owner->data);
+                ensures owner->data == old(owner->data) implies result == 0;
+                ensures result == 1 implies not owner->data == old(owner->data);
+            } by {
+                unfold(allocated_cell(owner));
+                execute();
+                fold(allocated_cell(owner));
+                frame();
+                simp();
+            }
+
+            int32 replace_then_branch(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+            } by {
+                open(allocated_cell(owner)) {
+                }
+                step() using {
+                }
+                step() using {
+                }
+                if c(replaced) == 0 {
+                    step() using {
+                        c(replaced) == 0 implies
+                            at(statement(1).exit, owner->data) == old(owner->data);
+                    }
+                    step();
+                } else {
+                    step() using {
+                        at(statement(1).exit, owner->data) == old(owner->data)
+                            implies c(replaced) == 0;
+                    }
+                    step();
+                }
+                frame();
+                simp();
+            }
+        "#;
+
+    (replace_source, caller_source, click_source)
+}
+
+#[test]
+fn result_case_split_collapses_call_successors_at_following_c_if() {
+    let (replace_source, caller_source, click_source) = result_case_split_sources();
+    let sources = &[
+        ("replace_allocated_cell.c", replace_source),
+        ("replace_then_branch.c", caller_source),
+    ];
+
+    verify_c0_sources(click_source, sources)
+        .expect("the result split should collapse the two call successors at the next C `if`");
+    let expanded = expand_c0_claim_source(
+        click_source,
+        sources,
+        "replace_then_branch",
+        CProofClaim::Grouped,
+    )
+    .expect("the collapsed result split should retain an expandable proof");
+    verify_c0_sources(&expanded, sources)
+        .expect("the collapsed result split expansion should replay independently");
+
+    let insufficient = click_source
+        .replace(
+            "                    step() using {\n                        c(replaced) == 0 implies\n                            at(statement(1).exit, owner->data) == old(owner->data);\n                    }",
+            "                    step() using {\n                    }",
+        )
+        .replace(
+            "                    step() using {\n                        at(statement(1).exit, owner->data) == old(owner->data)\n                            implies c(replaced) == 0;\n                    }",
+            "                    step() using {\n                    }",
+        );
+    let error = verify_c0_sources(&insufficient, sources)
+        .expect_err("the adapter must decline when neither arm proves lane exclusion");
+    assert!(
+        error
+            .message()
+            .contains("does not name the preceding statement's certified partition"),
+        "{error:?}"
+    );
+}
+
 #[test]
 fn proof_if_splits_one_frontier_after_execution_has_started() {
     let c_source = r#"

@@ -1118,17 +1118,60 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     current = continuation;
                     continue;
                 }
-                let (split, record) =
-                    if let Some(existing) = proof.enter_statement_successor_if(condition)? {
-                        existing
-                    } else {
-                        proof.split_focused_execution_if(condition.clone())?
-                    };
+                let product = match (
+                    linear_execution_tactics(then_branch),
+                    linear_execution_tactics(else_branch),
+                ) {
+                    (Some(then_tactics), Some(else_tactics))
+                        if matches!(
+                            then_tactics.first().map(|indexed| &indexed.tactic),
+                            Some(ProofTactic::StepUsing(_))
+                        ) && matches!(
+                            else_tactics.first().map(|indexed| &indexed.tactic),
+                            Some(ProofTactic::StepUsing(_))
+                        ) =>
+                    {
+                        let ProofTactic::StepUsing(then_premises) = &then_tactics[0].tactic else {
+                            unreachable!("the match guard required an explicit then step")
+                        };
+                        let ProofTactic::StepUsing(else_premises) = &else_tactics[0].tactic else {
+                            unreachable!("the match guard required an explicit else step")
+                        };
+                        proof.try_collapse_statement_successor_if(
+                            condition,
+                            [
+                                (then_tactics[0].index, then_premises.clone()),
+                                (else_tactics[0].index, else_premises.clone()),
+                            ],
+                        )?
+                    }
+                    _ => None,
+                };
+                let consumed_leading_steps = product.is_some();
+                let (split, record) = if let Some(collapsed) = product {
+                    collapsed
+                } else if let Some(existing) = proof.enter_statement_successor_if(condition)? {
+                    existing
+                } else {
+                    proof.split_focused_execution_if(condition.clone())?
+                };
                 let mut advanced = split;
                 for (take_then, branch) in
                     [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
                 {
                     let focused = advanced.focus_execution_if_arm(&record, take_then)?;
+                    let branch_tail;
+                    let branch = if consumed_leading_steps {
+                        let tactics = linear_execution_tactics(branch)
+                            .expect("the bounded product accepted a linear branch");
+                        branch_tail = InternalProofNode::Linear {
+                            tactics: tactics[1..].to_vec(),
+                            continuation: Box::new(InternalProofNode::Done),
+                        };
+                        &branch_tail
+                    } else {
+                        branch
+                    };
                     let Some((next, remaining)) = advance_checked_linear_continuation(
                         focused,
                         branch,

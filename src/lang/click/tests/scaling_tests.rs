@@ -87,6 +87,52 @@ fn assert_near_linear_scaling(axis: &str, samples: &[ScalingSample]) {
     );
 }
 
+#[test]
+fn bounded_statement_successor_exclusion_ignores_unrelated_ambient_facts() {
+    let (replace_source, caller_source, base_click) =
+        super::contract_tests::result_case_split_sources();
+    let insertion = "                open(allocated_cell(owner)) {\n                }\n";
+    let mut samples = Vec::new();
+    let mut exclusion_work = Vec::new();
+    for size in [8, 16, 32, 64] {
+        let unrelated = (0..size)
+            .map(|index| {
+                format!(
+                    "                have 0 <= {index} by {{\n                    normalize();\n                }}\n"
+                )
+            })
+            .collect::<String>();
+        let click_source = base_click.replacen(insertion, &format!("{insertion}{unrelated}"), 1);
+        assert_ne!(
+            click_source, base_click,
+            "the ambient facts were not inserted"
+        );
+        let (verified, sample) = scaling_sample(size, || {
+            verify_c0_sources(
+                &click_source,
+                &[
+                    ("replace_allocated_cell.c", replace_source),
+                    ("replace_then_branch.c", caller_source),
+                ],
+            )
+        });
+        verified.expect("the bounded successor product should ignore unrelated ambient facts");
+        exclusion_work.push(
+            sample
+                .named_work
+                .get("operation `bounded statement-successor exclusion`")
+                .copied()
+                .unwrap_or(0),
+        );
+        samples.push(sample);
+    }
+    assert!(
+        exclusion_work.iter().all(|work| *work == exclusion_work[0]),
+        "lane-exclusion work changed with unrelated ambient facts: {exclusion_work:?}"
+    );
+    assert_near_linear_scaling("bounded statement-successor ambient facts", &samples);
+}
+
 fn unrelated_identity_project(function_count: usize) -> (Vec<(String, String)>, String) {
     let mut c_sources = Vec::new();
     let mut click_source = String::new();
