@@ -2530,6 +2530,209 @@ fn top_level_recursive_loop_effect_ifs_stay_on_proof() {
 }
 
 #[test]
+fn recursive_loop_effect_cases_stay_on_proof() {
+    let c_source = r#"
+            struct box { int32 value; };
+
+            int32 count_once(struct box* owner, int32 flag, int32 flag2) {
+                int32 i;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            resource box_value(owner: struct box*) {
+                owns owner->value;
+            }
+
+            verifying "count_once.c";
+
+            int32 count_once(struct box* owner, int32 flag, int32 flag2) {
+                owns box_value(owner);
+                ensures result == 1;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 1;
+                    immutable by {
+                        have flag == 0 or not (flag == 0) by {
+                            if flag == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        have flag2 == 0 or not (flag2 == 0) by {
+                            if flag2 == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        cases (flag == 0 or not (flag == 0)) {
+                            open(box_value(owner)) {
+                                cases (flag2 == 0 or not (flag2 == 0)) {
+                                    frame() using {};
+                                } {
+                                    frame() using {};
+                                }
+                            }
+                        } {
+                            cases (flag2 == 0 or not (flag2 == 0)) {
+                                frame() using {};
+                            } {
+                                open(box_value(owner)) {
+                                    frame() using {};
+                                }
+                            }
+                        }
+                    }
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+    let sources = [("count_once.c", c_source)];
+    let without_effect = click_source.replace(
+        r#"                    immutable by {
+                        have flag == 0 or not (flag == 0) by {
+                            if flag == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        have flag2 == 0 or not (flag2 == 0) by {
+                            if flag2 == 0 {
+                                left();
+                            } else {
+                                right();
+                            }
+                        }
+                        cases (flag == 0 or not (flag == 0)) {
+                            open(box_value(owner)) {
+                                cases (flag2 == 0 or not (flag2 == 0)) {
+                                    frame() using {};
+                                } {
+                                    frame() using {};
+                                }
+                            }
+                        } {
+                            cases (flag2 == 0 or not (flag2 == 0)) {
+                                frame() using {};
+                            } {
+                                open(box_value(owner)) {
+                                    frame() using {};
+                                }
+                            }
+                        }
+                    }
+"#,
+        "",
+    );
+
+    let ((baseline, baseline_labels), baseline_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&without_effect, &sources)
+            })
+        });
+    baseline.expect("the comparison loop without an effect should verify");
+
+    let ((verified, replay_labels), effect_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(click_source, &sources)
+            })
+        });
+    let verified = verified.expect("recursive loop-effect cases should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "logical cases entered compatibility replay"
+    );
+    assert_eq!(replay_labels, baseline_labels);
+
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("checked cases should retain structured provenance");
+    let effect_tactics = expanded.iter().find_map(|tactic| {
+        let ProofTactic::Loop(clause) = tactic else {
+            return None;
+        };
+        clause.items().iter().find_map(|item| {
+            (item.kind() == StructuralItemKind::Effect)
+                .then(|| item.proof().tactics())
+                .flatten()
+        })
+    });
+    let Some(
+        [
+            ProofTactic::Have(_),
+            ProofTactic::Have(_),
+            ProofTactic::Cases(outer_cases),
+        ],
+    ) = effect_tactics
+    else {
+        panic!("the loop effect lost its outer cases scope");
+    };
+    assert!(matches!(
+        outer_cases.left_tactics.as_slice(),
+        [ProofTactic::Open(open)]
+            if matches!(open.tactics.as_slice(), [ProofTactic::Cases(_)])
+    ));
+    assert!(matches!(
+        outer_cases.right_tactics.as_slice(),
+        [ProofTactic::Cases(inner_cases)]
+            if matches!(inner_cases.left_tactics.as_slice(), [ProofTactic::FrameUsing { .. }])
+                && matches!(inner_cases.right_tactics.as_slice(), [ProofTactic::Open(_)])
+    ));
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
+            .expect("the checked cases should serialize from Proof provenance");
+    let ((reverified, rewritten_labels), rewritten_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::collect_internal_proof_execution_labels(|| {
+                verify_c0_sources(&rewritten, &sources)
+            })
+        });
+    reverified.expect("serialized loop-effect cases should verify normally");
+    assert_eq!(rewritten_replays, baseline_replays);
+    assert_eq!(rewritten_labels, baseline_labels);
+
+    let corrupted = click_source.replacen(
+        "                        cases (flag == 0 or not (flag == 0)) {",
+        "                        cases (flag == 1 or not (flag == 1)) {",
+        1,
+    );
+    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(&corrupted, &sources)
+            .expect_err("cases over an unavailable disjunction must be rejected")
+    });
+    assert!(
+        error
+            .message()
+            .contains("`cases` requires its exact disjunction as an available fact"),
+        "unexpected cases diagnostic: {}",
+        error.message()
+    );
+    assert!(
+        corrupted_replays <= baseline_replays,
+        "invalid cases entered compatibility replay: baseline {baseline_replays}, invalid {corrupted_replays}"
+    );
+}
+
+#[test]
 fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
     let c_source = r#"
             int32 fill_one(int32 p[]) {

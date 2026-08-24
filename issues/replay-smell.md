@@ -66,14 +66,17 @@ further resources, close every representation from inner to outer, and retire
 their own goals before the recursive joins retain exact nested
 `Open(...Open(If(...If(...))...))` provenance. Prefix operations before a
 deeper leading scope come from that scope's checked root lineage rather than
-being reconstructed during serialization. Proof-level execution `if` trees
-also stay on `Proof` with no enclosing resource: the non-semantic source
-cursor consumes only an exact prefix aligned with an already-certified C path,
-and every remaining branch is checked through audited sibling-goal splits and
-joins. Thus all supported leading loop-effect scopes can compose on `Proof`
-without relying on an enclosing `open` to bypass certificate-path selection.
-The induction and nested-loop certificate variants are rejected in loop-effect
-proofs and are defensive unsupported forms, not valid migration targets.
+being reconstructed during serialization. Proof-level execution `if` and
+logical `cases` trees also stay on `Proof` with no enclosing resource. The
+non-semantic source cursor consumes only an exact `if` prefix aligned with an
+already-certified C path; every remaining `if` and `cases` branch is checked
+through audited sibling-goal splits and joins. A `cases` split checks its exact
+available disjunction and gives each persistent sibling only its own disjunct,
+without recording semantic path state in a replay cursor. Thus all supported
+leading loop-effect scopes compose on `Proof`, and structural-effect checking
+has no compatibility replay fallback. Induction, a C `branch` at the loop
+back-edge effect goal, and nested-loop certificate variants are rejected as
+invalid effect operations rather than treated as migration targets.
 The remaining compatibility boundaries are the duplicated proof engine to
 remove; independent internal certificate replay is not an invariant to
 preserve.

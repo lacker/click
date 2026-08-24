@@ -188,6 +188,17 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
     initial_continuation_depth: usize,
 }
 
+/// Bookkeeping for one logical `cases` split over an execution frontier.
+/// Unlike an execution `if`, this split introduces the two exact disjuncts
+/// from an already-available proposition and does not write a path choice
+/// into the compatibility replay state.
+pub(super) struct ExecutionLogicalCasesSplit<'a> {
+    marker: ProofCheckpoint<'a>,
+    split: SplitId,
+    ids: [GoalId; 2],
+    path_facts: [Vec<Proposition>; 2],
+}
+
 /// One checked branch arm's contribution to a checked execution join: the
 /// arm's structured certificate, final facts and execution snapshot,
 /// recorded condition theorem, and the introduction deltas the merge
@@ -4337,6 +4348,116 @@ impl<'a> Proof<'a> {
             initial_continuation_depth: parent_execution.replay.frontier.continuations.len(),
         };
         Ok((successor, record))
+    }
+
+    /// Splits one retained execution frontier under the two exact disjuncts
+    /// of an available proposition. The disjunction is checked once at the
+    /// split; each sibling receives only its own disjunct in its persistent
+    /// fact context, and no semantic state is exported to a replay cursor.
+    pub(super) fn split_focused_execution_cases(
+        &self,
+        disjunction: ClickProposition,
+    ) -> Result<(Self, ExecutionLogicalCasesSplit<'a>), ClickError> {
+        self.require_execution_frontier("`cases`")?;
+        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+            unreachable!("the frontier requirement was checked above")
+        };
+        let parent_execution = frontier
+            .context
+            .execution
+            .clone()
+            .expect("an execution frontier owns its checked state");
+        let lowered = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
+        if !frontier.context.facts.contains(&lowered) {
+            return Err(self.step_error(format!(
+                "`cases` requires its exact disjunction as an available fact: {lowered:?}"
+            )));
+        }
+        let Proposition::Or(left, right) = lowered else {
+            return Err(self.step_error(format!("`cases` requires a disjunction, got {lowered:?}")));
+        };
+        let arm = |disjunct: Proposition| {
+            let facts = frontier.context.facts.with_fact(disjunct.clone());
+            (
+                Goal::Frontier(FrontierGoal {
+                    selection: frontier.selection,
+                    context: GoalContext {
+                        facts,
+                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                        execution: Some(parent_execution.clone()),
+                    },
+                }),
+                vec![disjunct],
+            )
+        };
+        let (left_goal, left_path) = arm(*left);
+        let (right_goal, right_path) = arm(*right);
+        let (split, ids, goals) = self
+            .state
+            .goals
+            .split_at(self.focused, [left_goal, right_goal]);
+        let successor = Self {
+            context: self.context.clone(),
+            state: Arc::new(ProofState {
+                locals: self.state.locals.clone(),
+                goals,
+                added_facts: Arc::new(left_path.clone()),
+                checked_facts: Arc::new(left_path.clone()),
+            }),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: None,
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
+            focused: ids[0],
+        };
+        let record = ExecutionLogicalCasesSplit {
+            marker: successor.checkpoint(),
+            split,
+            ids,
+            path_facts: [left_path, right_path],
+        };
+        Ok((successor, record))
+    }
+
+    /// Focuses one arm of a logical execution-frontier `cases` split. The
+    /// arm's exact disjunct is re-presented only as this focused operation's
+    /// local fact delta.
+    pub(super) fn focus_execution_cases_arm(
+        &self,
+        record: &ExecutionLogicalCasesSplit<'a>,
+        take_left: bool,
+    ) -> Result<Self, ClickError> {
+        let arm_index = usize::from(!take_left);
+        let mut focused = self.focus(record.ids[arm_index])?;
+        let path_facts = record.path_facts[arm_index].clone();
+        focused.state = Arc::new(ProofState {
+            locals: focused.state.locals.clone(),
+            goals: focused.state.goals.clone(),
+            added_facts: Arc::new(path_facts.clone()),
+            checked_facts: Arc::new(path_facts),
+        });
+        Ok(focused)
+    }
+
+    /// Applies one recursively driven logical `cases` operation over an
+    /// execution frontier. Both callbacks must retire their sibling goals;
+    /// the returned node retains one structured `Cases` provenance step.
+    pub(super) fn apply_execution_cases_with<Left, Right>(
+        self,
+        disjunction: ClickProposition,
+        apply_left: Left,
+        apply_right: Right,
+    ) -> Result<Self, ClickError>
+    where
+        Left: FnOnce(Self) -> Result<Self, ClickError>,
+        Right: FnOnce(Self) -> Result<Self, ClickError>,
+    {
+        let (split, record) = self.split_focused_execution_cases(disjunction.clone())?;
+        let left_done = apply_left(split.focus_execution_cases_arm(&record, true)?)?;
+        let right_done = apply_right(left_done.focus_execution_cases_arm(&record, false)?)?;
+        right_done.join_focused_cases(&record.marker, record.split, record.ids, disjunction)
     }
 
     /// Applies one recursively driven proof-level execution `if` as an
@@ -13891,6 +14012,47 @@ impl<'a> ProofScope<'a> {
             |else_body| {
                 else_scope.body = else_body;
                 apply_else(else_scope)
+            },
+        )
+    }
+
+    /// Checks one logical `cases` scope within a loop-effect resource tree.
+    /// Each callback owns exactly one disjunct sibling; resource
+    /// representations close independently before the audited logical join.
+    pub(super) fn apply_loop_effect_cases<Left, Right>(
+        scopes: &[Self],
+        current: Self,
+        disjunction: ClickProposition,
+        apply_left: Left,
+        apply_right: Right,
+    ) -> Result<Proof<'a>, ClickError>
+    where
+        Left: FnOnce(Self) -> Result<Proof<'a>, ClickError>,
+        Right: FnOnce(Self) -> Result<Proof<'a>, ClickError>,
+    {
+        Self::validate_loop_effect_open_scopes(scopes)?;
+        let inner = scopes
+            .last()
+            .expect("the nonempty leading scope chain has an inner scope");
+        if !Arc::ptr_eq(&current.root.context, &inner.root.context)
+            || !Arc::ptr_eq(&current.root.state, &inner.root.state)
+            || !Arc::ptr_eq(&current.root.node, &inner.root.node)
+        {
+            return Err(inner
+                .root
+                .step_error("loop-effect cases cursor left its innermost open scope"));
+        }
+        let mut left_scope = current.clone();
+        let mut right_scope = current.clone();
+        current.body.apply_execution_cases_with(
+            disjunction,
+            |left_body| {
+                left_scope.body = left_body;
+                apply_left(left_scope)
+            },
+            |right_body| {
+                right_scope.body = right_body;
+                apply_right(right_scope)
             },
         )
     }
@@ -23606,6 +23768,119 @@ mod tests {
             assert!(
                 allocations <= bound,
                 "size {size} execution proof-if split allocated {allocations} persistent nodes (bound {bound})"
+            );
+        }
+    }
+
+    #[test]
+    fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
+        let click_file = crate::lang::click::parse(
+            r#"
+                int32 identity(int32 x) {
+                    immutable;
+                    ensures result == x;
+                } by {
+                    assumption();
+                }
+            "#,
+        )
+        .expect("test contract should parse");
+        let function_block = &click_file.function_blocks()[0];
+        let predicate_environment = PredicateEnvironment::new(&[]);
+        let click_function_environment =
+            ClickFunctionEnvironment::new(click_file.click_function_definitions());
+        let theorem_environment = TheoremEnvironment::new(click_file.theorem_definitions());
+        let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+        let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+            .expect("test C function should parse");
+        let function = parsed_function.to_kernel_function();
+        let arguments = vec![CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(72_000)),
+        ))];
+        let function_environment = CExecutionEnvironment::new();
+        let nonnegative = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::GreaterEqual,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let negative = ClickProposition::Comparison {
+            left: ContractExpression::CFragment(CExpression::Variable("x".to_string())),
+            operator: ComparisonOperator::LessThan,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        };
+        let disjunction =
+            ClickProposition::Or(Box::new(nonnegative.clone()), Box::new(negative.clone()));
+        let state = CState::new();
+        let lowered_disjunction = lower_point_proposition_with_assumptions(
+            &disjunction,
+            &PureFactContext::new(),
+            parsed_function.parameters(),
+            &arguments,
+            &state,
+            &state,
+            None,
+            &ProgramPointStates::new(),
+            &predicate_environment,
+            &click_function_environment,
+        )
+        .expect("the exact cases disjunction should lower");
+        let Proposition::Or(expected_left, expected_right) = lowered_disjunction.clone() else {
+            panic!("the cases proposition should lower to a disjunction");
+        };
+
+        let mut samples = Vec::new();
+        for size in [16_u32, 64, 256, 1024, 4096] {
+            let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
+            pure_facts.push(lowered_disjunction.clone());
+            let replay = TacticReplayState {
+                source_layout: SourceExecutionLayout::new(parsed_function.body()),
+                ..TacticReplayState::default()
+            };
+            let root = Proof::for_execution_frontier(
+                "execution proof cases scaling",
+                0,
+                ProofReplayContext {
+                    state: state.clone(),
+                    pure_facts,
+                    replay: Box::new(replay),
+                    branch_path: PersistentSequence::default(),
+                },
+                function_block,
+                &function,
+                &parsed_function,
+                &arguments,
+                &function_environment,
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+                &theorem_environment,
+            );
+            let before = fact_node_allocations();
+            let (split, record) = root
+                .split_focused_execution_cases(disjunction.clone())
+                .expect("exact cases should open two execution siblings");
+            let allocations = fact_node_allocations() - before;
+            samples.push((
+                size,
+                (u32::BITS - size.leading_zeros()) as usize,
+                allocations,
+            ));
+            let left = split
+                .focus_execution_cases_arm(&record, true)
+                .expect("the left cases sibling should focus");
+            assert_eq!(left.added_facts(), std::slice::from_ref(&*expected_left));
+            let right = left
+                .focus_execution_cases_arm(&record, false)
+                .expect("the right cases sibling should focus");
+            assert_eq!(right.added_facts(), std::slice::from_ref(&*expected_right));
+            assert!(root.certificate().steps().is_empty());
+        }
+        let (_, base_height, base_allocations) = samples[0];
+        for (size, height, allocations) in samples {
+            let bound = base_allocations + 32 * (height - base_height);
+            assert!(
+                allocations <= bound,
+                "size {size} execution cases split allocated {allocations} persistent nodes (bound {bound})"
             );
         }
     }
