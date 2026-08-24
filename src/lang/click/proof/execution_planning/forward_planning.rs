@@ -363,6 +363,24 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         .effects
                         .insert(item_index, certificate.clone());
                 }
+                if let Some(source) = environment.frontier_loop_source {
+                    let capture_site = source.proof_site.as_ref().unwrap_or(&site);
+                    let source_index = source
+                        .effect_source_indices
+                        .get(&item_index)
+                        .copied()
+                        .unwrap_or(source.loop_source_index);
+                    if selected_tactic_index_for_site(expansion_capture.as_deref(), capture_site)
+                        == Some(source_index)
+                    {
+                        record_proof_site_tactic_expansion(
+                            expansion_capture.as_deref_mut(),
+                            capture_site,
+                            source_index,
+                            &certificate.to_proof_tactics(),
+                        );
+                    }
+                }
                 finish_proof_site_expansion_capture(
                     expansion_capture.as_deref_mut(),
                     &site,

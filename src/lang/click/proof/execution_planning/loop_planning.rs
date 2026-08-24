@@ -490,7 +490,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
 
 #[allow(clippy::too_many_arguments)]
 fn verify_structural_effect_proof(
-    mut expansion_capture: Option<&mut ExpansionCapture>,
+    _expansion_capture: Option<&mut ExpansionCapture>,
     loop_index: usize,
     item_index: usize,
     item: &StructuralItem,
@@ -530,7 +530,7 @@ fn verify_structural_effect_proof(
             | SourceProof::Tactic(SmartTactic::Auto)
             | SourceProof::Tactic(SmartTactic::Frame)
     );
-    let certificate = match source_proof {
+    let source_certificate = match source_proof {
         SourceProof::Default
         | SourceProof::Tactic(SmartTactic::Auto)
         | SourceProof::Tactic(SmartTactic::Frame) => {
@@ -551,9 +551,25 @@ fn verify_structural_effect_proof(
             "`{claim_label}` produced an invalid structural-effect certificate: {error:?}"
         ))
     })?;
-    let capture_this_effect = environment.frontier_loop_source.is_some()
-        && selected_tactic_index_for_site(expansion_capture.as_deref(), &site)
-            == Some(effect_source_index);
+    let case_path = context
+        .replay
+        .case_assumptions
+        .iter()
+        .map(|choice| ProofCaseChoice {
+            condition: choice.condition.clone(),
+            value: choice.value,
+        })
+        .collect::<Vec<_>>();
+    // Structural effects are checked once per already-certified preservation
+    // path. The source cursor selects that path's syntactic leaf; it owns no
+    // facts or successor state. Every selected operation still advances the
+    // path's Proof, and the caller reconstructs the structured Surface tree
+    // from the checked leaf provenance after all paths complete.
+    let certificate = certificate_leaf_for_case_path(
+        &claim_label,
+        &source_certificate.to_proof_tactics(),
+        &case_path,
+    )?;
     // The exact linear subset is checked transactionally on one Proof. Smart
     // frame syntax selects its bounded explicit premises from that Proof;
     // explicit scripts are authoritative, including an empty `using` block.
@@ -619,25 +635,8 @@ fn verify_structural_effect_proof(
                     "`{claim_label}` structural-effect proof did not close its checked Proof goal"
                 )));
             }
-            let checked_certificate = checked.certificate();
-            if capture_this_effect {
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    &site,
-                    effect_source_index,
-                    &checked_certificate.to_proof_tactics(),
-                );
-            }
-            return Ok(checked_certificate);
+            return Ok(checked.certificate());
         }
-    }
-    if capture_this_effect {
-        record_proof_site_tactic_expansion(
-            expansion_capture.as_deref_mut(),
-            &site,
-            effect_source_index,
-            &certificate.to_proof_tactics(),
-        );
     }
     let program = build_internal_proof_from_source_index(
         &certificate.to_proof_tactics(),
@@ -659,7 +658,7 @@ fn verify_structural_effect_proof(
             replay,
             branch_path: context.branch_path.clone(),
         },
-        expansion_capture,
+        None,
         environment.function_block,
         environment.parsed_function,
         &[],

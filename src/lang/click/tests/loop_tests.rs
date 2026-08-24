@@ -1602,6 +1602,97 @@ fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
 }
 
 #[test]
+fn branch_shaped_loop_effect_certificate_stays_on_proof() {
+    let c_source = r#"
+            int32 bubble_pass3(int32 p[3]) {
+                int32 j;
+                int32 tmp;
+                j = 0;
+                while (j < 2) {
+                    if (p[j + 1] < p[j]) {
+                        tmp = p[j];
+                        p[j] = p[j + 1];
+                        p[j + 1] = tmp;
+                    }
+                    j = j + 1;
+                }
+                return 0;
+            }
+        "#;
+    let with_effect = r#"
+            verifying "bubble_pass3.c";
+
+            predicate all_le_range(p: int32[], lo: int32, hi: int32, x: int32) {
+                forall (k: int32) {
+                    0 <= k and lo <= k and k < hi implies p[k] <= x
+                }
+            }
+
+            int32 bubble_pass3(int32 p[3]) {
+                requires loadable(p[0..3]);
+                consumes p[0..3];
+                ensures all_le_range(p, 0, 2, p[2]);
+            } by {
+                step();
+                step();
+                step();
+                loop {
+                    invariant j >= 0 and j <= 2;
+                    invariant all_le_range(p, 0, j, p[j]);
+                    initialize by {
+                        unfold(all_le_range);
+                        simp();
+                    }
+                    preserve by {
+                        unfold(all_le_range);
+                    }
+                    mutable p[0..3] by frame;
+                }
+                step();
+                unfold(all_le_range);
+                simp();
+            }
+        "#;
+    let without_effect = with_effect.replace("                    mutable p[0..3] by frame;\n", "");
+    let sources = [("bubble_pass3.c", c_source)];
+
+    let (baseline, baseline_replays) =
+        proof::count_internal_proof_executions(|| verify_c0_sources(&without_effect, &sources));
+    baseline.expect("the comparison branching loop without an effect should verify");
+
+    let (verified, effect_replays) =
+        proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources));
+    verified.expect("the branch-shaped smart frame should verify");
+    assert_eq!(
+        effect_replays, baseline_replays,
+        "the branch-shaped smart effect entered compatibility replay"
+    );
+
+    let offset = with_effect
+        .find("mutable p[0..3] by frame")
+        .expect("the mutable effect should have a source position")
+        + "mutable p[0..3] by ".len();
+    let position = expansion::position_at_offset(with_effect, offset);
+    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
+        expand_c0_tactic_source_at(with_effect, &sources, position.line, position.column)
+    });
+    let expanded = expanded.expect("the branch-shaped smart frame should expand");
+    assert_eq!(
+        expansion_replays, baseline_replays,
+        "expanding the branch-shaped smart effect entered compatibility replay"
+    );
+    assert!(expanded.contains("if p[(j + 1)] < p[j]"), "{expanded}");
+
+    let (reverified, replays) =
+        proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources));
+    reverified.expect("the branch-shaped explicit frame should verify normally");
+    assert_eq!(
+        replays, baseline_replays,
+        "the branch-shaped structural effect entered compatibility replay"
+    );
+}
+
+#[test]
 fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
     // `frame(loop(N))` in an ensures-only proof certifies memory-preservation
     // goals from the loop's `mutable` effect summary.  With a symbolic loop
