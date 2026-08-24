@@ -290,6 +290,66 @@ fn leading_point_have_supported(have: &ProofHave) -> bool {
         && leading_point_source_proof_supported(&have.proof)
 }
 
+/// Classifies the one source-ordered empty-frame segment whose intervening
+/// outcome scopes are checked authoritatively on `Proof`: after the latest
+/// execution operation, every operation before the exact empty function frame
+/// must be a supported `have`. The returned indices identify those haves.
+///
+/// This is one linear source pass. In particular, admitting several haves does
+/// not rescan their shared prefix or make explicit checking quadratic.
+fn exact_empty_frame_outcome_have_indices(tactics: &[ProofTactic]) -> (bool, BTreeSet<usize>) {
+    let is_execution = |tactic: &ProofTactic| {
+        matches!(
+            tactic,
+            ProofTactic::Step
+                | ProofTactic::StepUsing(_)
+                | ProofTactic::SmartStep
+                | ProofTactic::SmartExecute
+                | ProofTactic::SmartExecuteAllPaths
+                | ProofTactic::ExecuteUntil(_)
+        )
+    };
+    let mut saw_execution = false;
+    let mut segment_supported = false;
+    let mut pending_haves = Vec::new();
+    let mut authoritative_haves = BTreeSet::new();
+    for (index, tactic) in tactics.iter().enumerate() {
+        if is_execution(tactic) {
+            saw_execution = true;
+            segment_supported = true;
+            pending_haves.clear();
+            continue;
+        }
+        if saw_execution
+            && segment_supported
+            && matches!(tactic, ProofTactic::Have(have) if leading_point_have_supported(have))
+        {
+            pending_haves.push(index);
+            continue;
+        }
+        if matches!(
+            tactic,
+            ProofTactic::FrameUsing {
+                region: None | Some(CodeRegionRef::Function),
+                premises,
+            } if premises.is_empty()
+        ) {
+            if !saw_execution || !segment_supported {
+                return (false, BTreeSet::new());
+            }
+            authoritative_haves.extend(pending_haves.drain(..));
+            // A second empty frame needs its own execution segment.
+            segment_supported = false;
+            continue;
+        }
+        if saw_execution {
+            segment_supported = false;
+            pending_haves.clear();
+        }
+    }
+    (true, authoritative_haves)
+}
+
 fn reject_grouped_top_level_existential_operations(
     proof_label: &str,
     tactics: &[ProofTactic],
@@ -326,12 +386,11 @@ fn grouped_flat_proof_supported(
     // operations already checked by Proof. Logical decomposition over value
     // propositions stays inside the nested Proof goal. Universal and
     // existential value binders also remain inside that goal; their explicit
-    // checked operations need no cursor state. An exact empty mutable frame is
-    // checked here when it immediately follows the execution operation. A
-    // post-execution logical operation before that frame still needs the
-    // ordered compatibility driver. Entry resource-relation facts use the same
-    // nested proposition scopes; top-level grouped choices preserve their
-    // compatibility cursor.
+    // checked operations need no cursor state. Exact empty mutable frames and
+    // a preceding sequence of supported post-execution `have` scopes are
+    // checked in source order on typed outcome goals. Entry resource-relation
+    // facts use the same nested proposition scopes; top-level grouped choices
+    // preserve their compatibility cursor.
     let unsupported_leading_have = tactics
         .iter()
         .take_while(|tactic| {
@@ -390,26 +449,8 @@ fn grouped_flat_proof_supported(
             .iter()
             .all(|tactic| !matches!(tactic, ProofTactic::Open(_)))
         && (!has_mutable_effect || explicit_mutable_outcome_resource_shape);
-    let unsupported_empty_mutable_frame_ordering = has_mutable_effect
-        && tactics.iter().enumerate().any(|(index, tactic)| {
-            matches!(
-                tactic,
-                ProofTactic::FrameUsing {
-                    region: None | Some(CodeRegionRef::Function),
-                    premises,
-                } if premises.is_empty()
-            ) && !index.checked_sub(1).is_some_and(|previous| {
-                matches!(
-                    tactics[previous],
-                    ProofTactic::Step
-                        | ProofTactic::StepUsing(_)
-                        | ProofTactic::SmartStep
-                        | ProofTactic::SmartExecute
-                        | ProofTactic::SmartExecuteAllPaths
-                        | ProofTactic::ExecuteUntil(_)
-                )
-            })
-        });
+    let unsupported_empty_mutable_frame_ordering =
+        has_mutable_effect && !exact_empty_frame_outcome_have_indices(tactics).0;
     let owns_one_execution_frontier =
         !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
     owns_one_execution_frontier
@@ -1387,6 +1428,9 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         OrderedProofUnit::Replay(_) => None,
     };
     let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
+    let authoritative_outcome_haves = proof_owned
+        .then(|| exact_empty_frame_outcome_have_indices(certificate_tactics).1)
+        .unwrap_or_default();
     let pure_facts = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
         (OrderedProofUnit::Replay(context), None) => context.pure_facts.clone(),
@@ -2541,11 +2585,12 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 // scripts let smart `simp` search succeed and then
                                 // fail when its generated certificate was replayed.
                                 // The migrated path first: the `have` scope
-                                // opens on this path's evolving outcome
-                                // proof, its body searches through the shared
-                                // scope drivers, and a miss restores the
-                                // untouched evolving proof for the legacy
-                                // checker.
+                                // opens on this path's evolving outcome proof.
+                                // Haves in the audited execute/have/empty-frame
+                                // segment are authoritative; other outcome
+                                // shapes retain their compatibility adapter.
+                                let authoritative_have = proof_owned
+                                    && authoritative_outcome_haves.contains(tactic_index);
                                 let Some(evolving_root) = outcome_proof.take() else {
                                     // The unconditional substrate makes this
                                     // unreachable; fail loudly rather than
@@ -2573,9 +2618,14 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 SmartTactic::Auto | SmartTactic::Simp,
                                             ) => scope.try_simp_closure()?,
                                             SourceProof::Script(tactics) => {
-                                                match scope.try_linear_script(tactics)? {
+                                                let selected = if authoritative_have {
+                                                    scope.try_authoritative_linear_script(tactics)?
+                                                } else {
+                                                    scope.try_linear_script(tactics)?
+                                                };
+                                                match selected {
                                                     Some(selected) => Some(selected),
-                                                    None => {
+                                                    None if !authoritative_have => {
                                                         let Ok(certificate) =
                                                             ProofCertificate::from_proof_tactics(
                                                                 tactics,
@@ -2589,6 +2639,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                             )?,
                                                         )
                                                     }
+                                                    None => None,
                                                 }
                                             }
                                             SourceProof::Tactic(SmartTactic::Frame) => None,

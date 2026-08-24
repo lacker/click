@@ -5707,6 +5707,120 @@ fn grouped_explicit_empty_mutable_frame_stays_on_proof() {
 }
 
 #[test]
+fn grouped_post_execution_have_before_empty_mutable_frame_stays_on_proof() {
+    let c_source = r#"
+        int32 write_first(int32 p[]) {
+            p[0] = 9;
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_first.c";
+
+        int32 write_first(int32 p[]) {
+            requires loadable(p[0..1]);
+            consumes p[0..1];
+            ensures result == 9;
+            mutable p[0..1];
+        } by {
+            execute();
+            have result == 9 by {
+                simp();
+            }
+            frame() using {};
+            simp();
+        }
+    "#;
+    let sources = [("write_first.c", c_source)];
+
+    let (
+        (
+            ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
+            flat_units,
+        ),
+        events,
+    ) = crate::instrumentation::collect(|| {
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
+                    })
+                })
+            })
+        })
+    });
+    let verified = verified.expect("the ordered outcome operations should verify on Proof");
+    assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
+    assert_eq!(replays, 0, "the post-execution have entered replay");
+    assert_eq!(
+        context_exports, 0,
+        "the outcome Proof exported semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary verification checked a certificate"
+    );
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "an explicit outcome operation fell back"
+    );
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
+                if claim == "write_first.contract"
+                    && matches!(name.as_str(), "surface certificate replay" | "grouped proof tactic replay")
+        )),
+        "the ordered outcome operations entered compatibility replay: {events:#?}"
+    );
+
+    let tactics = verified[0]
+        .expanded_proof_tactics()
+        .expect("the ordered outcome operations should retain provenance");
+    assert!(
+        tactics
+            .iter()
+            .any(|tactic| matches!(tactic, ProofTactic::Have(_))),
+        "the retained proof lost its post-execution have: {tactics:#?}"
+    );
+    assert!(
+        tactics.iter().any(|tactic| matches!(
+            tactic,
+            ProofTactic::FrameUsing { region: None, premises } if premises.is_empty()
+        )),
+        "the retained proof lost its exact empty frame: {tactics:#?}"
+    );
+
+    let rewritten =
+        expand_c0_claim_source(click_source, &sources, "write_first", CProofClaim::Grouped)
+            .expect("the ordered outcome operations should serialize");
+    verify_c0_sources(&rewritten, &sources)
+        .expect("the serialized outcome operations should independently reverify");
+
+    let corrupted = rewritten.replacen("have result == 9", "have result == 8", 1);
+    assert_ne!(
+        corrupted, rewritten,
+        "the expansion should expose the checked have"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
+        });
+    corrupted_result.expect_err("tampering with the outcome have must invalidate the proof");
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "an invalid migrated operation must not become a compatibility miss"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "invalid migrated source must not enter execute_internal_proof"
+    );
+}
+
+#[test]
 fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() {
     let c_source = r#"
         int32 increment(int32 p[]) {
