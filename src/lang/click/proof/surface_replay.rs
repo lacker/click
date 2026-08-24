@@ -2367,145 +2367,9 @@ pub(super) fn smart_simp_unfold_prefix(proof: &SourceProof) -> Option<Vec<String
         .collect()
 }
 
-/// Candidate simple bodies for a smart `have` script: each trailing smart
-/// `simp` (including one inside a proof-level `if` case) is replaced by an
-/// explicit goal-closing simple tactic. Bounded by construction — one closer
-/// choice per `simp` occurrence over a fixed closer set.
-fn simple_have_body_candidates(tactics: &[ProofTactic]) -> Vec<Vec<ProofTactic>> {
-    const CANDIDATE_LIMIT: usize = 16;
-    let mut candidates = match tactics {
-        [] => Vec::new(),
-        [ProofTactic::If(proof_if)] => {
-            let then_candidates = simple_have_body_candidates(&proof_if.then_tactics);
-            let else_candidates = simple_have_body_candidates(&proof_if.else_tactics);
-            let mut candidates = Vec::new();
-            for then_tactics in &then_candidates {
-                for else_tactics in &else_candidates {
-                    candidates.push(vec![ProofTactic::If(ProofIf {
-                        condition: proof_if.condition.clone(),
-                        then_tactics: then_tactics.clone(),
-                        else_tactics: else_tactics.clone(),
-                    })]);
-                }
-            }
-            candidates
-        }
-        [ProofTactic::Cases(proof_cases)] => {
-            let left_candidates = simple_have_body_candidates(&proof_cases.left_tactics);
-            let right_candidates = simple_have_body_candidates(&proof_cases.right_tactics);
-            let mut candidates = Vec::new();
-            for left_tactics in &left_candidates {
-                for right_tactics in &right_candidates {
-                    candidates.push(vec![ProofTactic::Cases(ProofCases {
-                        disjunction: proof_cases.disjunction.clone(),
-                        left_tactics: left_tactics.clone(),
-                        right_tactics: right_tactics.clone(),
-                    })]);
-                }
-            }
-            candidates
-        }
-        [prefix @ .., ProofTactic::Simp] => [
-            ProofTactic::Assumption,
-            ProofTactic::Normalize,
-            ProofTactic::Left,
-            ProofTactic::Right,
-        ]
-        .into_iter()
-        .map(|closer| {
-            let mut candidate = prefix.to_vec();
-            candidate.push(closer);
-            candidate
-        })
-        .collect(),
-        _ => Vec::new(),
-    };
-    candidates.truncate(CANDIDATE_LIMIT);
-    candidates
-}
-
-/// Constructs the simple certificate for a mid-execution smart `have` whose
-/// body is neither simple nor covered by the `[unfold*, simp]` or smart
-/// `apply` lowerings — a `witness`/`choose` prefix before its `simp`, or a
-/// proof-level `if` whose cases close by `simp`.
-///
-/// Every candidate is accepted only when the replay judgment
-/// (`prove_have_at_current_point`) proves it AND yields exactly the fact the
-/// smart script established. A smart `have` with no accepted candidate fails
-/// here instead of silently losing the enclosing proof's expansion.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn certify_general_smart_have(
-    have: &ProofHave,
-    fact: &Proposition,
-    theorem_environment: &TheoremEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
-    available: &[Proposition],
-    transition_facts: &[ExecutionPureFact],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: &CState,
-    program_point_states: &ProgramPointStates,
-    surface_propositions: &SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    function_requires: &[Requirement],
-) -> Result<ProofCertificate, ClickError> {
-    let SourceProof::Script(tactics) = &have.proof else {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart `have` succeeded, but its non-script body has no simple certificate"
-        )));
-    };
-    for candidate_tactics in simple_have_body_candidates(tactics) {
-        let candidate = ProofHave {
-            proposition: have.proposition.clone(),
-            proof: SourceProof::Script(candidate_tactics),
-        };
-        let Ok(proof) = ProofCertificate::from_proof_tactics(std::slice::from_ref(
-            &ProofTactic::Have(candidate.clone()),
-        )) else {
-            continue;
-        };
-        let replayed = prove_have_at_current_point(
-            &candidate,
-            theorem_environment,
-            claim_label,
-            tactic_index,
-            available,
-            transition_facts,
-            parameters,
-            arguments,
-            pre_state,
-            state,
-            program_point_states,
-            surface_propositions,
-            predicate_environment,
-            click_function_environment,
-            function_requires,
-        );
-        if replayed.is_ok_and(|replayed| replayed == *fact) {
-            return Ok(proof);
-        }
-    }
-    Err(ClickError::new(format!(
-        "`{claim_label}` tactic {tactic_index}: smart `have {}` succeeded, but no simple certificate for its proof body replayed; close each case with explicit simple tactics",
-        describe_click_proposition(&have.proposition)
-    )))
-}
-
-fn have_proof_contains_smart_apply(proof: &SourceProof) -> bool {
-    let SourceProof::Script(tactics) = proof else {
-        return false;
-    };
-    tactics
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::ApplyTheorem(_)))
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_simp_plan_proof(
-    replay: &mut TacticReplayState,
+    replay: &TacticReplayState,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2578,15 +2442,12 @@ enum PremiseForm {
     ExactlyAvailable,
 }
 
-/// The single construction event for a smart `have`/`simp` at the current
-/// proof point: kernel search selects its evidence and the same call writes
-/// that evidence as a replayable [`ProofCertificate`]. Search may only succeed
-/// through derivations the surface vocabulary can write; there is no retained
-/// plan between the two, and no separate lowering pass to disagree with the
-/// search that already succeeded.
+/// Selects a Surface-expressible operation plan for a smart `have`/`simp` at
+/// the current proof point. The caller must apply this plan to `Proof`; the
+/// planner result itself has no semantic authority.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn construct_smart_have_certificate(
-    replay: &mut TacticReplayState,
+pub(super) fn construct_smart_have_plan(
+    replay: &TacticReplayState,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2597,7 +2458,7 @@ pub(super) fn construct_smart_have_certificate(
     claim_label: &str,
     tactic_index: usize,
     unfolded_predicates: &[String],
-) -> Result<(Proposition, ProofCertificate), ClickError> {
+) -> Result<(Proposition, SourceProof), ClickError> {
     let planning_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
     let (fact, evidence) = plan_smart_have_at_current_point(
@@ -2620,9 +2481,9 @@ pub(super) fn construct_smart_have_certificate(
     let _construction_span = crate::instrumentation::OperationTiming::new(
         "have",
         claim_label,
-        "smart have certificate construction",
+        "smart have operation materialization",
     );
-    let certificate = surface_smart_have_certificate(
+    let proof = surface_smart_have_proof(
         replay,
         state,
         available,
@@ -2634,12 +2495,12 @@ pub(super) fn construct_smart_have_certificate(
         &evidence,
         unfolded_predicates,
     )?;
-    Ok((fact, certificate))
+    Ok((fact, proof))
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn surface_smart_have_certificate(
-    replay: &mut TacticReplayState,
+pub(super) fn surface_smart_have_proof(
+    replay: &TacticReplayState,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2649,7 +2510,7 @@ pub(super) fn surface_smart_have_certificate(
     have: &ProofHave,
     plan: &SimpEvidence,
     unfolded_predicates: &[String],
-) -> Result<ProofCertificate, ClickError> {
+) -> Result<SourceProof, ClickError> {
     let restricted_simp = matches!(
         &have.proof,
         SourceProof::Script(tactics) if matches!(tactics.last(), Some(ProofTactic::SimpUsing(_)))
@@ -2828,6 +2689,34 @@ pub(super) fn surface_smart_have_certificate(
             unfolded_predicates,
         )?
     };
+    Ok(proof)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn surface_smart_have_certificate(
+    replay: &TacticReplayState,
+    state: &CState,
+    available: &[Proposition],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    have: &ProofHave,
+    plan: &SimpEvidence,
+    unfolded_predicates: &[String],
+) -> Result<ProofCertificate, ClickError> {
+    let proof = surface_smart_have_proof(
+        replay,
+        state,
+        available,
+        parameters,
+        arguments,
+        predicate_environment,
+        click_function_environment,
+        have,
+        plan,
+        unfolded_predicates,
+    )?;
     let tactic = ProofTactic::Have(ProofHave {
         proposition: have.proposition.clone(),
         proof,
@@ -2837,121 +2726,4 @@ pub(super) fn surface_smart_have_certificate(
             "smart `have` produced an invalid certificate: {error:?}"
         ))
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn surface_smart_apply_have_certificate(
-    replay: &mut TacticReplayState,
-    state: &CState,
-    available: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
-    have: &ProofHave,
-    goal: &Proposition,
-) -> Result<Option<ProofCertificate>, ClickError> {
-    if !have_proof_contains_smart_apply(&have.proof) {
-        return Ok(None);
-    }
-    let SourceProof::Script(tactics) = &have.proof else {
-        unreachable!("smart apply is represented by a proof script")
-    };
-    let mut planning_replay = replay.clone();
-    let mut planning_available = available.to_vec();
-    let mut surface_tactics = Vec::with_capacity(tactics.len());
-    for tactic in tactics {
-        match tactic {
-            ProofTactic::UnfoldPredicate(name) => {
-                planning_available = unfold_available_predicate_facts(
-                    predicate_environment,
-                    click_function_environment,
-                    std::slice::from_ref(name),
-                    &planning_available,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not plan smart `apply` after `unfold`: {message}"
-                    ))
-                })?;
-                if !planning_replay.unfolded_predicates.contains(name) {
-                    planning_replay.unfolded_predicates.push(name.clone());
-                }
-                surface_tactics.push(tactic.clone());
-            }
-            ProofTactic::ApplyTheorem(application) => {
-                let premises = plan_explicit_theorem_application(
-                    theorem_environment,
-                    application,
-                    claim_label,
-                    tactic_index,
-                    &planning_available,
-                    parameters,
-                    arguments,
-                    &planning_replay,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                )?;
-                planning_available = apply_theorem_at_current_point(
-                    theorem_environment,
-                    application,
-                    claim_label,
-                    tactic_index,
-                    planning_available,
-                    parameters,
-                    arguments,
-                    planning_replay.old_reference_state(state),
-                    state,
-                    &planning_replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                    &planning_replay.unfolded_predicates,
-                    None,
-                )?;
-                surface_tactics.push(ProofTactic::ApplyTheoremUsing {
-                    application: application.clone(),
-                    premises,
-                });
-            }
-            ProofTactic::Simp => {
-                let assumptions = assumptions_from_propositions(&planning_available);
-                let plan = plan_simp_certificate(goal, &assumptions).ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not plan the `simp` suffix after smart `apply`"
-                    ))
-                })?;
-                let SourceProof::Script(lowered) = surface_simp_plan_proof(
-                    &mut planning_replay,
-                    state,
-                    &planning_available,
-                    parameters,
-                    arguments,
-                    predicate_environment,
-                    click_function_environment,
-                    &have.proposition,
-                    &plan,
-                    &[],
-                )?
-                else {
-                    unreachable!("surface simp lowering always returns a script")
-                };
-                surface_tactics.extend(lowered);
-            }
-            _ => surface_tactics.push(tactic.clone()),
-        }
-    }
-    let tactic = ProofTactic::Have(ProofHave {
-        proposition: have.proposition.clone(),
-        proof: SourceProof::Script(surface_tactics),
-    });
-    let certificate = ProofCertificate::from_proof_tactics(&[tactic]).map_err(|error| {
-        ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: smart `apply` inside `have` produced an invalid certificate: {error:?}"
-        ))
-    })?;
-    Ok(Some(certificate))
 }

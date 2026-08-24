@@ -10103,18 +10103,42 @@ impl<'a> Proof<'a> {
         &self,
         surfaces: &[ClickProposition],
     ) -> Option<Self> {
-        let goal = self.goal()?;
+        // A named restricted premise may be a leaf of one exact available
+        // conjunction (commonly after `unfold(predicate)`). Materialize that
+        // leaf through the ordinary checked `extract` transition before
+        // asking the restricted planner to use it. The returned descendant
+        // therefore owns both the semantic fact and the Surface provenance;
+        // expansion does not need to reconstruct and replay a certificate to
+        // justify the premise later.
+        let mut proof = self.clone();
+        for surface in surfaces {
+            let kernel = proof
+                .lower_surface_proposition(surface, "restricted simp premise")
+                .ok()?;
+            if !proof.facts().contains_top_level(&kernel)
+                && !normalizes_context_free(&kernel)
+                && proof.facts().contains_proper_conjunct(&kernel)
+            {
+                proof = proof
+                    .apply_step(SimpleProofStep::Extract(surface.clone()))
+                    .ok()?;
+                if proof.is_complete() {
+                    return Some(proof);
+                }
+            }
+        }
+        let goal = proof.goal()?;
         let premise_pairs = surfaces
             .iter()
             .map(|surface| {
-                let kernel = self
+                let kernel = proof
                     .lower_surface_proposition(surface, "restricted simp premise")
                     .ok()?;
                 // A listed premise that lowers to a context-free truth needs
                 // no ambient fact authority. Retaining it lets the restricted
                 // derivation erase reflexive field equalities after the
                 // outcome state has evaluated their loads.
-                (self.facts().contains_top_level(&kernel) || normalizes_context_free(&kernel))
+                (proof.facts().contains_top_level(&kernel) || normalizes_context_free(&kernel))
                     .then_some((kernel, surface.clone()))
             })
             .collect::<Option<Vec<_>>>()?;
@@ -10128,15 +10152,16 @@ impl<'a> Proof<'a> {
         };
         let theorem_application_closes_goal =
             !matches!(self.context.as_ref(), ProofContext::Execution(_));
-        self.check_typed_atomic_simp_candidate(
-            goal,
-            derivation,
-            &premise_pairs,
-            theorem_application_closes_goal,
-        )
-        .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
-        .or_else(|| self.try_outcome_anchored_order_transitivity(&premise_pairs))
-        .or_else(|| self.try_outcome_anchored_increment_order(&premise_pairs))
+        proof
+            .check_typed_atomic_simp_candidate(
+                goal,
+                derivation,
+                &premise_pairs,
+                theorem_application_closes_goal,
+            )
+            .or_else(|| proof.try_selected_equality_rewrite_chain(&premise_pairs))
+            .or_else(|| proof.try_outcome_anchored_order_transitivity(&premise_pairs))
+            .or_else(|| proof.try_outcome_anchored_increment_order(&premise_pairs))
     }
 
     fn check_typed_atomic_simp_candidate(
