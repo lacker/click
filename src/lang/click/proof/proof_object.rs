@@ -15,7 +15,7 @@ thread_local! {
     static SOURCE_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
-    static GENERATED_CERTIFICATE_CHECKS: std::cell::Cell<usize> = const {
+    static CERTIFICATE_INTERPRETATIONS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
     static EXPLICIT_LINEAR_FALLBACKS: std::cell::Cell<usize> = const {
@@ -47,12 +47,12 @@ pub(in crate::lang::click) fn count_source_certificate_checks<R>(
 }
 
 #[cfg(test)]
-pub(in crate::lang::click) fn count_generated_certificate_checks<R>(
+pub(in crate::lang::click) fn count_certificate_interpretations<R>(
     operation: impl FnOnce() -> R,
 ) -> (R, usize) {
-    let before = GENERATED_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    let before = CERTIFICATE_INTERPRETATIONS.with(std::cell::Cell::get);
     let result = operation();
-    let after = GENERATED_CERTIFICATE_CHECKS.with(std::cell::Cell::get);
+    let after = CERTIFICATE_INTERPRETATIONS.with(std::cell::Cell::get);
     (result, after - before)
 }
 
@@ -2781,9 +2781,7 @@ impl<'a> Proof<'a> {
                     scope = scope.apply_step(SimpleProofStep::Assumption)?;
                 }
             } else {
-                scope.body = scope
-                    .body
-                    .check_certificate_with_origin(proof, origin, false)?;
+                scope.body = scope.body.check_certificate_with_origin(proof, origin)?;
             }
             checked = scope.join()?;
         }
@@ -6106,39 +6104,27 @@ impl<'a> Proof<'a> {
 
     /// Checks an already-serialized simple certificate.
     ///
-    /// This remains a transitional fallback for source operations not yet
-    /// admitted by the typed Proof surface, and a boundary for untrusted
-    /// planner candidates. Ordinary admitted source scripts use
-    /// `try_linear_script`; smart tactics search with `apply_step` and the
-    /// structural branch operations directly.
+    /// This remains a transitional fallback for already-serialized source and
+    /// contextual-frame compatibility inputs not yet admitted by the typed
+    /// Proof surface. Planner candidates apply their selected operations
+    /// directly; smart tactics search with `apply_step` and the structural
+    /// branch operations.
     pub(super) fn check_certificate(
         &self,
         certificate: &ProofCertificate,
     ) -> Result<Self, ClickError> {
         #[cfg(test)]
         SOURCE_CERTIFICATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        self.check_certificate_with_origin(certificate, None, false)
-    }
-
-    /// Checks a planner-generated certificate while omitting a trailing
-    /// `assumption()` when the preceding retained step already closed the
-    /// goal. Explicit source certificates remain strict through
-    /// `check_certificate`.
-    fn check_generated_certificate(
-        &self,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        #[cfg(test)]
-        GENERATED_CERTIFICATE_CHECKS.with(|checks| checks.set(checks.get() + 1));
-        self.check_certificate_with_origin(certificate, None, true)
+        self.check_certificate_with_origin(certificate, None)
     }
 
     fn check_certificate_with_origin(
         &self,
         certificate: &ProofCertificate,
         origin: Option<ProofStepOrigin>,
-        generated: bool,
     ) -> Result<Self, ClickError> {
+        #[cfg(test)]
+        CERTIFICATE_INTERPRETATIONS.with(|checks| checks.set(checks.get() + 1));
         enum CheckFrame<'certificate, 'proof> {
             Continue {
                 steps: &'certificate [SimpleProofStep],
@@ -6230,9 +6216,6 @@ impl<'a> Proof<'a> {
                         steps = body.steps();
                         next = 0;
                     }
-                    _ if generated
-                        && matches!(step, SimpleProofStep::Assumption)
-                        && proof.is_complete() => {}
                     _ => proof = proof.apply_step_with_origin(step.clone(), origin)?,
                 }
                 continue;
@@ -9278,12 +9261,13 @@ impl<'a> Proof<'a> {
         self.try_linear_script_inner(tactics, true, false)
     }
 
-    /// Applies one planner-selected Surface script to this Proof. Generated
-    /// theorem plans may retain a final `assumption()` for outcome contexts
-    /// where the theorem sometimes adds only an anchored equivalent fact. If
-    /// an earlier checked operation closes that body exactly, only that final
-    /// generated no-op is ignored. Explicit source scripts remain strict.
-    fn try_planned_linear_script(
+    /// Applies one planner-selected or expansion-generated Surface script to
+    /// this Proof. Generated theorem plans may retain a final `assumption()`
+    /// for outcome contexts where the theorem sometimes adds only an anchored
+    /// equivalent fact. If an earlier checked operation closes that body
+    /// exactly, only that final generated no-op is ignored. Ordinary explicit
+    /// source scripts remain strict through `try_linear_script`.
+    pub(super) fn try_planned_linear_script(
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
@@ -12109,20 +12093,6 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
-    /// Checks a post-execution `have` body while accepting the historical
-    /// generated `assumption()` suffix when the preceding retained step has
-    /// already closed the goal. The returned scope contains only steps that
-    /// actually advanced this Proof, so expansion does not serialize a
-    /// no-op suffix.
-    pub(super) fn check_outcome_certificate(
-        &self,
-        certificate: &ProofCertificate,
-    ) -> Result<Self, ClickError> {
-        let mut next = self.clone();
-        next.body = self.body.check_generated_certificate(certificate)?;
-        Ok(next)
-    }
-
     /// Applies one ordinary checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
     pub(super) fn apply_step(&self, step: SimpleProofStep) -> Result<Self, ClickError> {
@@ -12450,7 +12420,7 @@ impl<'a> ProofScope<'a> {
     /// Applies a planner-selected recursive script inside this owned scope,
     /// retaining the checked body descendant without materializing a
     /// certificate.
-    fn try_planned_linear_script(
+    pub(super) fn try_planned_linear_script(
         &self,
         tactics: &[ProofTactic],
     ) -> Result<Option<Self>, ClickError> {
@@ -17148,14 +17118,14 @@ mod tests {
             );
             let retained_root = root.clone();
             let before = fact_node_allocations();
-            let (closed, generated_certificate_checks) =
-                count_generated_certificate_checks(|| root.try_simp_closure());
+            let (closed, certificate_interpretations) =
+                count_certificate_interpretations(|| root.try_simp_closure());
             let closed = closed
                 .expect("smart search must not exceed its deadline")
                 .expect("the typed path should build one checked Proof descendant");
             let allocations = fact_node_allocations() - before;
             assert_eq!(
-                generated_certificate_checks, 0,
+                certificate_interpretations, 0,
                 "the structured signed-order candidate must advance Proof directly"
             );
             let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;

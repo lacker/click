@@ -2747,18 +2747,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 match selected {
                                                     Some(selected) => Some(selected),
                                                     None if !authoritative_have => {
-                                                        let Ok(certificate) =
-                                                            ProofCertificate::from_proof_tactics(
-                                                                tactics,
-                                                            )
-                                                        else {
-                                                            return Ok(None);
-                                                        };
-                                                        Some(
-                                                            scope.check_outcome_certificate(
-                                                                &certificate,
-                                                            )?,
-                                                        )
+                                                        scope.try_planned_linear_script(tactics)?
                                                     }
                                                     None => None,
                                                 }
