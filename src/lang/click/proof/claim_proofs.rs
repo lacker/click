@@ -132,6 +132,88 @@ fn grouped_predicate_contract_supported(
         })
 }
 
+fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> bool {
+    let mut saw_predicate = false;
+    let supported = function_block.ensures().iter().all(|clause| {
+        let Ensure::Proposition(ClickProposition::PredicateCall { .. }) = clause.ensure() else {
+            return false;
+        };
+        saw_predicate = true;
+        true
+    });
+    supported && saw_predicate
+}
+
+fn grouped_heap_predicate_execute_simp_supported(
+    function_block: &FunctionBlock,
+    tactics: &[ProofTactic],
+) -> bool {
+    if !matches!(
+        tactics,
+        [
+            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths,
+            ProofTactic::Simp
+        ]
+    ) {
+        return false;
+    }
+    grouped_heap_predicate_contract_supported(function_block)
+}
+
+fn select_checked_post_execution_tactics<'a>(
+    proof: &Proof<'_>,
+    tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
+    selected: &mut Vec<&'a DeferredPostExecutionTactic>,
+) -> Result<(), ClickError> {
+    for deferred in tactics {
+        match &deferred.tactic {
+            PostExecutionTactic::If {
+                condition,
+                then_tactics,
+                else_tactics,
+            } => {
+                let arm = if proof.checked_outcome_if_value(condition)? {
+                    then_tactics
+                } else {
+                    else_tactics
+                };
+                select_checked_post_execution_tactics(proof, arm, selected)?;
+            }
+            _ => selected.push(deferred),
+        }
+    }
+    Ok(())
+}
+
+fn collect_post_execution_if_have_indices<'a>(
+    tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
+    indices: &mut BTreeSet<usize>,
+) {
+    for deferred in tactics {
+        let PostExecutionTactic::If {
+            then_tactics,
+            else_tactics,
+            ..
+        } = &deferred.tactic
+        else {
+            continue;
+        };
+        for arm in [then_tactics, else_tactics] {
+            for nested in arm {
+                match &nested.tactic {
+                    PostExecutionTactic::Have(_) => {
+                        indices.insert(nested.tactic_index);
+                    }
+                    PostExecutionTactic::If { .. } => {
+                        collect_post_execution_if_have_indices(std::iter::once(nested), indices);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
@@ -155,7 +237,28 @@ fn top_level_structural_proof_supported(
     let has_top_level_branch = tactics
         .iter()
         .any(|tactic| matches!(tactic, ProofTactic::Branch(_)));
-    if opens.is_empty() && !has_top_level_branch {
+    let has_top_level_expanded_execution_if =
+        tactics.iter().any(expanded_execution_if_tactic_supported);
+    let top_level_post_execution_if_count = tactics
+        .iter()
+        .filter(|tactic| post_execution_if_tactic_supported(tactic))
+        .count();
+    // This slice owns one terminal outcome split. Multiple successive
+    // outcome splits still rely on predicate-unfold provenance accumulated
+    // between their selected arms, so leave that larger migration on its
+    // audited compatibility path.
+    if top_level_post_execution_if_count > 1 {
+        return false;
+    }
+    let has_top_level_post_execution_if = top_level_post_execution_if_count == 1;
+    // Likewise, an outcome split following earlier execution splits still
+    // needs their inter-branch provenance threaded into its leaf operations.
+    if has_top_level_post_execution_if && has_top_level_expanded_execution_if {
+        return false;
+    }
+    let has_top_level_direct_if =
+        has_top_level_expanded_execution_if || has_top_level_post_execution_if;
+    if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
         return false;
     }
     let has_quantified_contract_resource = function_block
@@ -201,11 +304,17 @@ fn top_level_structural_proof_supported(
     let structural_tactics = tactics.iter().all(|tactic| match tactic {
         ProofTactic::Open(open) => open.tactics.iter().all(scope_body_tactic_supported),
         ProofTactic::Branch(_) => true,
+        tactic @ ProofTactic::If(_) => {
+            expanded_execution_if_tactic_supported(tactic)
+                || post_execution_if_tactic_supported(tactic)
+        }
         tactic => is_linear(tactic),
     });
     (opens.is_empty() || (!has_quantified_contract_resource && scope_definitions_are_supported))
         && structural_tactics
-        && grouped_predicate_contract_supported(function_block, predicate_environment)
+        && (grouped_predicate_contract_supported(function_block, predicate_environment)
+            || (has_top_level_post_execution_if
+                && grouped_heap_predicate_contract_supported(function_block)))
 }
 
 fn value_predicate_definition_supported(
@@ -514,7 +623,8 @@ fn grouped_flat_proof_supported(
     let owns_one_execution_frontier =
         !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
     owns_one_execution_frontier
-        && grouped_predicate_contract_supported(function_block, predicate_environment)
+        && (grouped_predicate_contract_supported(function_block, predicate_environment)
+            || grouped_heap_predicate_execute_simp_supported(function_block, tactics))
         && (!has_declared_contract_resource || declared_resource_call_shape)
 }
 
@@ -1567,9 +1677,15 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         OrderedProofUnit::Replay(_) => None,
     };
     let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
-    let authoritative_outcome_haves = proof_owned
+    let mut authoritative_outcome_haves = proof_owned
         .then(|| exact_empty_frame_outcome_segment(certificate_tactics).1)
         .unwrap_or_default();
+    if let Some(view) = &direct_view {
+        collect_post_execution_if_have_indices(
+            view.replay.post_execution_tactics.iter(),
+            &mut authoritative_outcome_haves,
+        );
+    }
     let pure_facts = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
         (OrderedProofUnit::Replay(context), None) => context.pure_facts.clone(),
@@ -2353,8 +2469,26 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         &proof_label,
                         "post-execution claim tactics",
                     );
+                    let mut selected_post_execution_tactics = Vec::new();
+                    if let Some(branch_proof) = outcome_proof.as_ref() {
+                        select_checked_post_execution_tactics(
+                            branch_proof,
+                            replay.post_execution_tactics.iter(),
+                            &mut selected_post_execution_tactics,
+                        )?;
+                    } else {
+                        if replay.post_execution_tactics.iter().any(|deferred| {
+                            matches!(deferred.tactic, PostExecutionTactic::If { .. })
+                        }) {
+                            return Err(ClickError::new(format!(
+                                "`{proof_label}` path {path_index}: post-execution `if` has no focused outcome Proof"
+                            )));
+                        }
+                        selected_post_execution_tactics
+                            .extend(replay.post_execution_tactics.iter());
+                    }
                     for (post_execution_index, deferred) in
-                        replay.post_execution_tactics.iter().enumerate()
+                        selected_post_execution_tactics.into_iter().enumerate()
                     {
                         let tactic_index = &deferred.tactic_index;
                         let source_index = &deferred.source_index;
@@ -3776,6 +3910,9 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     },
                                 );
                             }
+                            PostExecutionTactic::If { .. } => unreachable!(
+                                "post-execution branch selection must flatten control nodes before checking leaf tactics"
+                            ),
                             PostExecutionTactic::Simp => {
                                 let capturing_this_tactic = replay
                                     .deferred_tactic_capture
@@ -4044,6 +4181,34 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         let direct_base = direct_proof.checkpoint();
                                         let mut direct_available = path_requirements.clone();
                                         let mut selected = true;
+                                        // A top-level predicate outcome is opaque until the
+                                        // corresponding checked `unfold` transition refines
+                                        // this evolving outcome Proof. Smart `simp` tries
+                                        // those named operations before opening its claim
+                                        // scopes; a rejected unfold is only a candidate miss
+                                        // and leaves the persistent root unchanged.
+                                        let mut tried_predicates = BTreeSet::new();
+                                        for (_, surface_goal, _) in &direct_claims {
+                                            let ClickProposition::PredicateCall { name, .. } =
+                                                surface_goal
+                                            else {
+                                                continue;
+                                            };
+                                            if !tried_predicates.insert(name.clone()) {
+                                                continue;
+                                            }
+                                            if unfolded_predicates.contains(name) {
+                                                continue;
+                                            }
+                                            match direct_proof.apply_step(
+                                                SimpleProofStep::UnfoldPredicate(name.clone()),
+                                            ) {
+                                                Ok(unfolded) => direct_proof = unfolded,
+                                                Err(_) => {
+                                                    check_verification_deadline()?;
+                                                }
+                                            }
+                                        }
                                         for (_, surface_goal, equalities) in &direct_claims {
                                             // In a grouped set with resource
                                             // padding, whole-contract replay

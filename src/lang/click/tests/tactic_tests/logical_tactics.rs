@@ -919,10 +919,32 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
             }
         "#;
 
-    let verified = verify_c0_sources(click_source, &[("compare_swap2.c", c_source)])
-        .expect("unfolded predicate goal should prove compare-swap sortedness");
+    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+        proof::count_flat_proof_units(|| {
+            proof::count_internal_proof_executions(|| {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        verify_c0_sources(click_source, &[("compare_swap2.c", c_source)])
+                    })
+                })
+            })
+        });
+    let verified = verified.expect("unfolded predicate goal should prove compare-swap sortedness");
 
     assert_eq!(verified.len(), 2);
+    assert_eq!(flat_units, 1, "the ensure proof should retain one Proof");
+    assert_eq!(
+        replay_executions, 0,
+        "branched predicate execution must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "branched predicate execution must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "ordinary branched predicate verification must not check a certificate"
+    );
 }
 
 #[test]

@@ -1048,6 +1048,7 @@ struct ExecutionProofState {
     replay: TacticReplayState,
     branch_path: PersistentSequence<String>,
     last_step_delta: ExecutionProofStepDelta,
+    has_empty_execution_branch_leaf: bool,
 }
 
 /// Read-only terminal data borrowed from an execution `Proof` by claim
@@ -2123,6 +2124,7 @@ impl<'a> Proof<'a> {
                             replay: *replay,
                             branch_path,
                             last_step_delta: ExecutionProofStepDelta::default(),
+                            has_empty_execution_branch_leaf: false,
                         })),
                     },
                 })),
@@ -4876,6 +4878,8 @@ impl<'a> Proof<'a> {
 
         let abstract_state = (*then_abstract.state).clone();
         let mut execution = parent_execution.clone();
+        execution.has_empty_execution_branch_leaf |= then_abstract.has_empty_execution_branch_leaf
+            || else_abstract.has_empty_execution_branch_leaf;
         execution.state = abstract_state.clone().into();
         execution.replay.program_point_states = common_program_points;
         execution
@@ -5222,6 +5226,9 @@ impl<'a> Proof<'a> {
             paths,
         );
         let mut execution = parent_execution.clone();
+        execution.has_empty_execution_branch_leaf |= arms
+            .iter()
+            .any(|arm| arm.execution.has_empty_execution_branch_leaf);
         execution.state = execution_start_state.clone().into();
         execution.replay.program_point_states = common_program_points;
         execution
@@ -5290,6 +5297,39 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+
+        // Terminal arms remain distinct execution outcomes. Preserve only the
+        // two branch-anchor Surface identities in the joined read-only index;
+        // copying every arm-local lowering would also publish predicate-unfold
+        // provenance that is intentionally scoped to that arm. Outcome goals
+        // later filter these anchors through their own exact fact set. This
+        // slice owns one terminal split; a branch whose arms already completed
+        // nested splits keeps their richer provenance on the compatibility
+        // path until that whole tree can migrate together.
+        if then_replay.completed_branch_regions.len() == 0
+            && else_replay.completed_branch_regions.len() == 0
+        {
+            let arm_surfaces = [
+                surface_condition.clone(),
+                negate_click_proposition(&surface_condition),
+            ];
+            for (arm, surface_condition) in arms.iter().zip(&arm_surfaces) {
+                for fact in &arm.introduced_facts {
+                    if arm
+                        .execution
+                        .replay
+                        .surface_propositions
+                        .surfaces(fact)
+                        .any(|surface| surface == surface_condition)
+                    {
+                        execution
+                            .replay
+                            .surface_propositions
+                            .record_lowering(surface_condition, fact)?;
+                    }
+                }
+            }
+        }
 
         let mut facts = parent_facts.clone();
         let mut common_added_facts = Vec::new();
@@ -5386,6 +5426,9 @@ impl<'a> Proof<'a> {
         let then_replay = &arms[0].execution.replay;
         let else_replay = &arms[1].execution.replay;
         let mut execution = parent_execution.clone();
+        execution.has_empty_execution_branch_leaf |= arms
+            .iter()
+            .any(|arm| arm.execution.has_empty_execution_branch_leaf);
         execution.state = (**then_state).clone().into();
         execution.replay.completed_branch_regions.clear();
         execution
@@ -5739,6 +5782,7 @@ impl<'a> Proof<'a> {
         )?;
         let mut execution = view.execution.clone();
         execution.branch_path = record.parent_execution.branch_path.clone();
+        execution.has_empty_execution_branch_leaf = true;
         let parts = CheckedExecutionJoinParts {
             execution,
             facts: view.facts.clone(),
@@ -5953,7 +5997,7 @@ impl<'a> Proof<'a> {
     /// Proof transition. Source syntax supplies only its condition and simple
     /// arm operations; the split, entry validation, focused successors, and
     /// join remain owned by this Proof lineage.
-    fn apply_expanded_execution_if(
+    pub(super) fn apply_expanded_execution_if(
         &self,
         condition: &ClickProposition,
         then_steps: &[SimpleProofStep],
@@ -9577,6 +9621,15 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.replay.is_at_function_exit())
     }
 
+    /// Whether checked execution retained an infeasible sibling as an empty
+    /// logical branch. The surface driver uses this read-only Proof metadata
+    /// to keep that not-yet-expressible expansion shape on its compatibility
+    /// path without constructing a certificate during ordinary verification.
+    pub(super) fn has_empty_execution_branch_leaf(&self) -> bool {
+        self.execution()
+            .is_some_and(|execution| execution.has_empty_execution_branch_leaf)
+    }
+
     /// Every open goal in this proof, in stable id order.
     pub(super) fn goals(&self) -> impl Iterator<Item = GoalId> + '_ {
         self.state.goals.open.keys().copied()
@@ -11415,6 +11468,39 @@ impl<'a> Proof<'a> {
             Goal::FunctionOutcome(goal) => Some(&goal.point),
             Goal::Proposition(goal) => goal.outcome.as_ref(),
             Goal::Frontier(_) => None,
+        }
+    }
+
+    /// Decides one explicit post-execution `if` from the focused outcome's
+    /// exact fact context. The syntax driver may use the returned polarity to
+    /// choose which source arm to visit, but it cannot manufacture a fact or
+    /// successor: both alternatives are lowered and the kernel assumptions
+    /// must establish exactly one of them on this `Proof` path.
+    pub(super) fn checked_outcome_if_value(
+        &self,
+        condition: &ClickProposition,
+    ) -> Result<bool, ClickError> {
+        if !matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) {
+            return Err(self.step_error("post-execution `if` requires a focused outcome goal"));
+        }
+        let positive =
+            self.lower_surface_proposition(condition, "post-execution `if` condition")?;
+        let negative_surface = ClickProposition::Not(Box::new(condition.clone()));
+        let negative =
+            self.lower_surface_proposition(&negative_surface, "post-execution `if` negation")?;
+        let assumptions = self.facts().assumptions();
+        let positive_holds = self.facts().contains(&positive) || assumptions.proves(&positive);
+        let negative_holds = self.facts().contains(&negative)
+            || assumptions.proves(&negative)
+            || fact_conflicts_with_assumptions(&positive, assumptions);
+        match (positive_holds, negative_holds) {
+            (true, false) => Ok(true),
+            (false, true) => Ok(false),
+            (false, false) => Err(self
+                .step_error("focused outcome does not decide the post-execution `if` condition")),
+            (true, true) => Err(self.step_error(
+                "focused outcome proves both sides of the post-execution `if` condition",
+            )),
         }
     }
 

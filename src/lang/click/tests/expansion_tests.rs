@@ -3166,14 +3166,98 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
             .unwrap_or(0)
         + 1;
 
-    let expanded =
-        expand_c0_tactic_source_at(click_source, &[("compare_swap2.c", c_source)], line, column)
-            .expect("post-execution predicate goal should expand");
+    let (((expanded, certificate_checks), context_exports), replay_executions) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    expand_c0_tactic_source_at(
+                        click_source,
+                        &[("compare_swap2.c", c_source)],
+                        line,
+                        column,
+                    )
+                })
+            })
+        });
+    let expanded = expanded.expect("post-execution predicate goal should expand");
+    assert_eq!(
+        replay_executions, 0,
+        "branched predicate expansion must not enter execute_internal_proof"
+    );
+    assert_eq!(
+        context_exports, 0,
+        "branched predicate expansion must not export semantic state"
+    );
+    assert_eq!(
+        certificate_checks, 0,
+        "branched predicate expansion must not check a certificate"
+    );
     assert!(expanded.contains("unfold(sorted_pair);"), "{expanded}");
+    assert!(
+        expanded.contains("apply(int32_lt_implies_le("),
+        "{expanded}"
+    );
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
-        .expect("expanded predicate-goal proof should replay");
+    let ((reverified, reverify_fallbacks), reverify_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
+            })
+        });
+    reverified.expect("expanded predicate-goal proof should independently reverify");
+    assert_eq!(
+        reverify_fallbacks, 0,
+        "the expanded predicate proof must use only authoritative Proof operations"
+    );
+    assert_eq!(
+        reverify_replays, 0,
+        "the expanded predicate proof must not enter execute_internal_proof"
+    );
+
+    let corrupted = expanded.replacen("unfold(sorted_pair);", "unfold(missing);", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its checked predicate unfold"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
+            })
+        });
+    corrupted_result.expect_err("a corrupted branched predicate expansion must be rejected");
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "a corrupted predicate unfold must be rejected by Proof, not compatibility"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "a corrupted predicate expansion must not enter execute_internal_proof"
+    );
+
+    let condition = "at(statement(1).entry, p[1]) < at(statement(1).entry, p[0])";
+    let wrong_condition = "at(statement(1).entry, p[0]) < at(statement(1).entry, p[1])";
+    let corrupted = expanded.replacen(condition, wrong_condition, 1);
+    assert_ne!(
+        corrupted, expanded,
+        "the expansion should expose its checked outcome condition"
+    );
+    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
+        proof::count_internal_proof_executions(|| {
+            proof::count_explicit_linear_fallbacks(|| {
+                verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
+            })
+        });
+    corrupted_result.expect_err("a corrupted outcome condition must be rejected");
+    assert_eq!(
+        corrupted_fallbacks, 0,
+        "a corrupted outcome condition must be rejected by Proof, not compatibility"
+    );
+    assert_eq!(
+        corrupted_replays, 0,
+        "a corrupted outcome condition must not enter execute_internal_proof"
+    );
 }
 
 #[test]

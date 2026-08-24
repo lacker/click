@@ -16,32 +16,111 @@ pub(in crate::lang::click) fn count_internal_proof_executions<R>(
 }
 
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
-    // `frame()` is source sugar for the smart frame search even though the
-    // surface certificate parser can represent its empty form as a
-    // `FrameUsing`. Keep the source operation on the smart branch so mutable
-    // effects can select and retain their contextual premises.
-    if matches!(tactic, ProofTactic::SmartFrame(_)) {
-        return None;
+    match tactic {
+        ProofTactic::Mark(name) => Some(SimpleProofStep::Mark(name.clone())),
+        ProofTactic::Step => Some(SimpleProofStep::Step),
+        ProofTactic::StepUsing(premises) => Some(SimpleProofStep::StepUsing(premises.clone())),
+        ProofTactic::TransportUsing {
+            source,
+            target,
+            premises,
+        } => Some(SimpleProofStep::TransportUsing {
+            source: source.clone(),
+            target: target.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::UnfoldPredicate(name) => Some(SimpleProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::UnfoldResource(resource) => {
+            Some(SimpleProofStep::UnfoldResource(resource.clone()))
+        }
+        ProofTactic::FoldResource(resource) => {
+            Some(SimpleProofStep::FoldResource(resource.clone()))
+        }
+        ProofTactic::ObserveResource(resource) => {
+            Some(SimpleProofStep::ObserveResource(resource.clone()))
+        }
+        ProofTactic::ApplyTheoremUsing {
+            application,
+            premises,
+        } => Some(SimpleProofStep::ApplyTheoremUsing {
+            application: application.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::FrameUsing { region, premises } => Some(SimpleProofStep::FrameUsing {
+            region: region.clone(),
+            premises: premises.clone(),
+        }),
+        ProofTactic::CloseInvariants => Some(SimpleProofStep::CloseInvariants),
+        _ => None,
     }
-    let certificate = ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).ok()?;
-    let [step] = certificate.steps() else {
-        return None;
+}
+
+fn expanded_execution_arm_supported(
+    condition: &ClickProposition,
+    take_then: bool,
+    steps: &[SimpleProofStep],
+) -> bool {
+    if steps.is_empty() {
+        return true;
+    }
+    let expected = if take_then {
+        condition.clone()
+    } else {
+        negate_click_proposition(condition)
     };
+    // An empty entry-premise list is still the surface shape of this checked
+    // operation: admit it so `Proof` reports the missing branch anchor instead
+    // of silently dropping to compatibility replay. A nonempty, different
+    // premise belongs to an older certificate shape and remains unsupported.
     matches!(
-        step,
-        SimpleProofStep::Mark(_)
-            | SimpleProofStep::Step
-            | SimpleProofStep::StepUsing(_)
-            | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::UnfoldPredicate(_)
-            | SimpleProofStep::UnfoldResource(_)
-            | SimpleProofStep::FoldResource(_)
-            | SimpleProofStep::ObserveResource(_)
-            | SimpleProofStep::ApplyTheoremUsing { .. }
-            | SimpleProofStep::FrameUsing { .. }
-            | SimpleProofStep::CloseInvariants
-    )
-    .then(|| step.clone())
+        steps.first(),
+        Some(SimpleProofStep::StepUsing(premises))
+            if premises.is_empty()
+                || premises.as_slice() == std::slice::from_ref(&expected)
+    ) && matches!(steps.last(), Some(SimpleProofStep::StepUsing(_)))
+}
+
+pub(in crate::lang::click::proof) fn expanded_execution_if_tactic_supported(
+    tactic: &ProofTactic,
+) -> bool {
+    let ProofTactic::If(proof_if) = tactic else {
+        return false;
+    };
+    let arm_steps = |tactics: &[ProofTactic]| {
+        tactics
+            .iter()
+            .map(linear_execution_simple_step)
+            .collect::<Option<Vec<_>>>()
+    };
+    let Some(then_steps) = arm_steps(&proof_if.then_tactics) else {
+        return false;
+    };
+    let Some(else_steps) = arm_steps(&proof_if.else_tactics) else {
+        return false;
+    };
+    expanded_execution_arm_supported(&proof_if.condition, true, &then_steps)
+        && expanded_execution_arm_supported(&proof_if.condition, false, &else_steps)
+        && !(then_steps.is_empty() && else_steps.is_empty())
+}
+
+pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
+    tactic: &ProofTactic,
+) -> bool {
+    let ProofTactic::If(proof_if) = tactic else {
+        return false;
+    };
+    // A handwritten `if { simp() } else { simp() }` is an undecided logical
+    // split, not an expansion cursor selecting a checked execution outcome.
+    // Execution expansion leaves a stable program-point condition and
+    // explicit checked operations in both arms.
+    proof_case_is_stable_program_point_condition(&proof_if.condition)
+        && proof_if
+            .then_tactics
+            .iter()
+            .chain(&proof_if.else_tactics)
+            .all(|tactic| {
+                !matches!(tactic, ProofTactic::Simp) && flat_post_execution_tactic(tactic).is_some()
+            })
 }
 
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
@@ -382,20 +461,55 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
     }
 }
 
-fn retained_surface_has_empty_branch_leaf(proof: &Proof<'_>) -> bool {
-    fn contains_empty_leaf(tactics: &[ProofTactic]) -> bool {
-        tactics.iter().any(|tactic| match tactic {
-            ProofTactic::If(proof_if) => {
-                proof_if.then_tactics.is_empty()
-                    || proof_if.else_tactics.is_empty()
-                    || contains_empty_leaf(&proof_if.then_tactics)
-                    || contains_empty_leaf(&proof_if.else_tactics)
-            }
-            _ => false,
-        })
+/// Converts a supported post-execution syntax region into cursor metadata.
+/// This performs no proof transition and stores no semantic state; each leaf
+/// operation is checked later against the focused outcome `Proof`.
+fn deferred_post_execution_region(
+    node: &InternalProofNode,
+) -> Option<Vec<DeferredPostExecutionTactic>> {
+    match node {
+        InternalProofNode::Done => Some(Vec::new()),
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            let mut deferred = tactics
+                .iter()
+                .map(|indexed| {
+                    Some(DeferredPostExecutionTactic {
+                        tactic_index: indexed.index,
+                        source_index: indexed.source_index,
+                        tactic: flat_post_execution_tactic(&indexed.tactic)?,
+                        surface_recorded: false,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            deferred.extend(deferred_post_execution_region(continuation)?);
+            Some(deferred)
+        }
+        InternalProofNode::If {
+            index,
+            source_index,
+            condition,
+            then_branch,
+            else_branch,
+            continuation,
+        } => {
+            let mut deferred = vec![DeferredPostExecutionTactic {
+                tactic_index: *index,
+                source_index: *source_index,
+                tactic: PostExecutionTactic::If {
+                    condition: condition.clone(),
+                    then_tactics: deferred_post_execution_region(then_branch)?,
+                    else_tactics: deferred_post_execution_region(else_branch)?,
+                },
+                surface_recorded: false,
+            }];
+            deferred.extend(deferred_post_execution_region(continuation)?);
+            Some(deferred)
+        }
+        InternalProofNode::Open { .. } | InternalProofNode::Branch { .. } => None,
     }
-
-    contains_empty_leaf(&proof.certificate().to_proof_tactics())
 }
 
 fn checked_structural_execution_branch_supported(
@@ -636,13 +750,10 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     if !proof.is_at_function_exit() {
         return Ok(None);
     }
-    // Some completed smart executions retain empty infeasible C-branch
-    // leaves. They are valid semantic Proofs, but they are not yet a
-    // standalone Surface Click execution script: a fresh source proof would
-    // have to synthesize explicit operations for a path the Proof never took.
-    // Keep that narrow shape on the compatibility path until expansion owns
-    // an explicit infeasible-leaf serialization rule.
-    if retained_surface_has_empty_branch_leaf(&proof) {
+    // An infeasible sibling has no surface operations to reapply yet. Keep
+    // that exact shape on compatibility replay, using Proof-owned structural
+    // metadata rather than extracting and inspecting a certificate here.
+    if proof.has_empty_execution_branch_leaf() {
         return Ok(None);
     }
     for indexed in remaining {
@@ -827,7 +938,46 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                 }
                 current = continuation;
             }
-            InternalProofNode::If { .. } => return Ok(None),
+            InternalProofNode::If {
+                index,
+                source_index,
+                condition,
+                then_branch,
+                else_branch,
+                continuation,
+                ..
+            } => {
+                if proof.is_at_function_exit() {
+                    let Some(then_tactics) = deferred_post_execution_region(then_branch) else {
+                        return Ok(None);
+                    };
+                    let Some(else_tactics) = deferred_post_execution_region(else_branch) else {
+                        return Ok(None);
+                    };
+                    proof = proof.defer_post_execution_source_tactic(
+                        *index,
+                        *source_index,
+                        PostExecutionTactic::If {
+                            condition: condition.clone(),
+                            then_tactics,
+                            else_tactics,
+                        },
+                        staged_expansion_capture.as_mut(),
+                    )?;
+                    saw_structure = true;
+                    current = continuation;
+                    continue;
+                }
+                let Some((then_steps, else_steps)) =
+                    expanded_execution_if_steps(condition, then_branch, else_branch)
+                else {
+                    return Ok(None);
+                };
+                proof = proof.with_execution_tactic_index(*index)?;
+                proof = proof.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
+                saw_structure = true;
+                current = continuation;
+            }
         }
     }
     if !saw_structure {
@@ -1089,6 +1239,19 @@ fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofSte
         .collect()
 }
 
+fn expanded_execution_if_steps(
+    condition: &ClickProposition,
+    then_branch: &InternalProofNode,
+    else_branch: &InternalProofNode,
+) -> Option<(Vec<SimpleProofStep>, Vec<SimpleProofStep>)> {
+    let then_steps = linear_execution_steps(then_branch)?;
+    let else_steps = linear_execution_steps(else_branch)?;
+    (expanded_execution_arm_supported(condition, true, &then_steps)
+        && expanded_execution_arm_supported(condition, false, &else_steps)
+        && !(then_steps.is_empty() && else_steps.is_empty()))
+    .then_some((then_steps, else_steps))
+}
+
 /// Advances a linear resource scope one checked node at a time. A nested
 /// `have` is joined back through the scope API, so its selected theorem steps
 /// and its published proposition are retained by the same immutable proof.
@@ -1265,14 +1428,8 @@ fn advance_checked_open_scope<'a>(
         continuation,
         ..
     } = body
-        && let Some(then_steps) = linear_execution_steps(then_branch)
-        && let Some(else_steps) = linear_execution_steps(else_branch)
-        && ((matches!(then_steps.last(), Some(SimpleProofStep::StepUsing(_)))
-            && matches!(else_steps.last(), Some(SimpleProofStep::StepUsing(_))))
-            || (then_steps.is_empty()
-                && matches!(else_steps.last(), Some(SimpleProofStep::StepUsing(_))))
-            || (else_steps.is_empty()
-                && matches!(then_steps.last(), Some(SimpleProofStep::StepUsing(_)))))
+        && let Some((then_steps, else_steps)) =
+            expanded_execution_if_steps(condition, then_branch, else_branch)
     {
         let scope = scope.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
         return advance_checked_open_scope(scope, continuation, expansion_capture, proof_site);

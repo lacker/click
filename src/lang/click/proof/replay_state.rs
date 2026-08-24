@@ -1437,6 +1437,15 @@ pub(super) enum PostExecutionTactic {
         region: Option<CodeRegionRef>,
         premises: Vec<ClickProposition>,
     },
+    /// Surface-only control structure scheduled after terminal execution.
+    /// The arms contain no semantic state: ordered finalization asks the
+    /// focused outcome `Proof` to decide the condition, then applies only the
+    /// selected arm's ordinary checked operations to that same descendant.
+    If {
+        condition: ClickProposition,
+        then_tactics: Vec<DeferredPostExecutionTactic>,
+        else_tactics: Vec<DeferredPostExecutionTactic>,
+    },
     Simp,
 }
 
@@ -1849,6 +1858,7 @@ pub(super) fn post_execution_tactic_timing(
         PostExecutionTactic::FrameUsing { .. } | PostExecutionTactic::CheckedFrameUsing { .. } => {
             ("frame", "simple")
         }
+        PostExecutionTactic::If { .. } => ("if", "control"),
     }
 }
 
