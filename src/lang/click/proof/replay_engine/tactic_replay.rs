@@ -2588,70 +2588,17 @@ fn replay_linear_tactics_without_frontier_loops(
                 );
             }
             ProofTactic::UnfoldPredicate(name) => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                if replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
-                {
-                    replay.defer_post_execution(
+                if frontier_region == ExecutionRegionKind::Function && at_function_exit {
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
                         source_index,
                         PostExecutionTactic::UnfoldPredicate(name.clone()),
-                    );
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
+                        scope.take(),
+                    )?;
                     continue;
                 }
-                let arm_proof = Proof::for_execution_frontier(
-                    claim_label,
-                    tactic_index,
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                );
-                let arm_proof =
-                    arm_proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
-                let result = arm_proof.into_execution_context()?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
+                proof = proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
             }
             ProofTactic::ApplyTheorem(application) => {
                 let ProofReplayContext {
