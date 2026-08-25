@@ -1233,13 +1233,29 @@ fn replay_linear_tactics_without_frontier_loops(
     arguments: &[CExpression],
     tactics: &[IndexedTactic],
 ) -> Result<ProofReplayContext, ClickError> {
-    let ProofReplayContext {
-        mut state,
-        pure_facts: mut requirement_pure_facts,
-        mut replay,
-        mut branch_path,
-    } = context;
-    let mut assumptions = assumptions_from_propositions(&requirement_pure_facts);
+    // Transitional function-boundary wrap (`issues/replay-smell.md`, phase
+    // 1): one Proof is threaded through the tactic arms below, and the
+    // export at the end of this function is the last replay-context
+    // boundary, deleted with phase 2. An arm that still speaks the replay
+    // tuple exports the Proof for exactly its own operation and re-wraps
+    // the result; converting an arm deletes that pair.
+    let rewrap = |context: ProofReplayContext, tactic_index: usize| {
+        Proof::for_execution_frontier(
+            claim_label,
+            tactic_index,
+            context,
+            function_block,
+            function,
+            parsed_function,
+            arguments,
+            function_environment,
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+        )
+    };
+    let mut proof = rewrap(context, tactics.first().map_or(0, |indexed| indexed.index));
 
     for indexed_tactic in tactics {
         if crate::instrumentation::deadline_exceeded() {
@@ -1251,58 +1267,79 @@ fn replay_linear_tactics_without_frontier_loops(
         let tactic_index = indexed_tactic.index;
         let source_index = indexed_tactic.source_index;
         let tactic = &indexed_tactic.tactic;
-        let deferred_post_execution = replay.frontier.region == ExecutionRegionKind::Function
-            && replay.is_at_function_exit()
-            && replay.open_scopes == 0
-            && tactic_is_deferred_post_execution(tactic);
-        let proof_owned_smart_frame_deferred = replay.frontier.region
-            == ExecutionRegionKind::Function
-            && replay.is_at_function_exit()
-            && replay.open_scopes == 0
-            && matches!(
-                tactic,
-                ProofTactic::SmartFrame(None | Some(CodeRegionRef::Function))
-            );
-        let deferred_region_simp = replay.frontier.region == ExecutionRegionKind::LoopBody
-            && matches!(tactic, ProofTactic::Simp);
-        let mut scope = Some(begin_tactic_surface_scope(&mut replay));
-        let capture_this_tactic =
-            begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
-        if capture_this_tactic && (deferred_post_execution || proof_owned_smart_frame_deferred) {
-            replay.deferred_tactic_capture = Some(DeferredTacticCapture {
-                tactic_index,
-                source_index,
-                post_execution_index: replay.post_execution_tactics.len(),
-                branch_skeleton: ProofCertificate::from_steps(
-                    replay.proof_certificate_builder.steps.clone(),
-                )
-                .to_proof_tactics(),
-            });
-        }
-        if !deferred_post_execution {
-            let mut construction = std::mem::take(&mut replay.proof_certificate_builder);
-            {
-                let mut construction_context =
-                    ProofCertificateConstructionContext::new(&mut replay, &mut construction);
-                append_simple_proof_step_for_operation(
-                    &mut construction_context,
-                    &state,
-                    &requirement_pure_facts,
-                    function_block,
-                    parsed_function.parameters(),
-                    arguments,
-                    predicate_environment,
-                    click_function_environment,
-                    Some(tactic),
-                    None,
-                    None,
+        let (
+            deferred_post_execution,
+            proof_owned_smart_frame_deferred,
+            deferred_region_simp,
+            at_function_exit,
+            statement_index,
+        ) = {
+            let replay = proof.replay_cursor()?;
+            (
+                replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                    && replay.open_scopes == 0
+                    && tactic_is_deferred_post_execution(tactic),
+                replay.frontier.region == ExecutionRegionKind::Function
+                    && replay.is_at_function_exit()
+                    && replay.open_scopes == 0
+                    && matches!(
+                        tactic,
+                        ProofTactic::SmartFrame(None | Some(CodeRegionRef::Function))
+                    ),
+                replay.frontier.region == ExecutionRegionKind::LoopBody
+                    && matches!(tactic, ProofTactic::Simp),
+                replay.is_at_function_exit(),
+                replay.frontier.next_statement_index,
+            )
+        };
+        let (prepared, (scope, capture_this_tactic)) =
+            proof.edit_replay_cursor(|replay, state, facts| {
+                let scope = begin_tactic_surface_scope(replay);
+                let capture_this_tactic = begin_tactic_expansion_capture(
+                    expansion_capture.as_deref_mut(),
+                    source_index,
+                    replay,
                 );
-            }
-            replay.proof_certificate_builder = construction;
-        }
-        let _timing = (!(deferred_post_execution
-            || replay.frontier.region == ExecutionRegionKind::LoopBody
-                && matches!(tactic, ProofTactic::Simp))
+                if capture_this_tactic
+                    && (deferred_post_execution || proof_owned_smart_frame_deferred)
+                {
+                    replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                        tactic_index,
+                        source_index,
+                        post_execution_index: replay.post_execution_tactics.len(),
+                        branch_skeleton: ProofCertificate::from_steps(
+                            replay.proof_certificate_builder.steps.clone(),
+                        )
+                        .to_proof_tactics(),
+                    });
+                }
+                if !deferred_post_execution {
+                    let mut construction = std::mem::take(&mut replay.proof_certificate_builder);
+                    {
+                        let mut construction_context =
+                            ProofCertificateConstructionContext::new(replay, &mut construction);
+                        append_simple_proof_step_for_operation(
+                            &mut construction_context,
+                            state,
+                            &facts.to_vec(),
+                            function_block,
+                            parsed_function.parameters(),
+                            arguments,
+                            predicate_environment,
+                            click_function_environment,
+                            Some(tactic),
+                            None,
+                            None,
+                        );
+                    }
+                    replay.proof_certificate_builder = construction;
+                }
+                (scope, capture_this_tactic)
+            })?;
+        proof = prepared;
+        let mut scope = Some(scope);
+        let _timing = (!(deferred_post_execution || deferred_region_simp)
             && has_independent_source_timing(tactic))
         .then(|| {
             TacticTiming::new(
@@ -1310,7 +1347,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 tactic_index,
                 source_index,
                 tactic,
-                replay.frontier.next_statement_index,
+                statement_index,
             )
         })
         .flatten();
@@ -1318,8 +1355,15 @@ fn replay_linear_tactics_without_frontier_loops(
             source: surface_source,
             target: surface_target,
         } = tactic
-            && !replay.is_at_function_exit()
+            && !at_function_exit
         {
+            let ProofReplayContext {
+                state,
+                pure_facts: mut requirement_pure_facts,
+                mut replay,
+                branch_path,
+            } = proof.into_execution_context()?;
+            let assumptions = assumptions_from_propositions(&requirement_pure_facts);
             if replay.is_at_function_entry() || replay.is_at_function_exit() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
@@ -1398,7 +1442,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     )
                 ))
             })?;
-            let proof = Proof::for_point_frontier(
+            let arm_proof = Proof::for_point_frontier(
                 claim_label,
                 tactic_index,
                 &requirement_pure_facts,
@@ -1415,15 +1459,15 @@ fn replay_linear_tactics_without_frontier_loops(
                 &replay.unfolded_predicates,
                 &replay.effect_facts,
             );
-            let proof = proof.apply_step(SimpleProofStep::TransportUsing {
+            let arm_proof = arm_proof.apply_step(SimpleProofStep::TransportUsing {
                 source: surface_source.clone(),
                 target: surface_target.clone(),
                 premises,
             })?;
-            let added_facts = proof.added_facts().to_vec();
-            let checked_facts = proof.checked_facts().to_vec();
-            let certificate = proof.certificate();
-            drop(proof);
+            let added_facts = arm_proof.added_facts().to_vec();
+            let checked_facts = arm_proof.checked_facts().to_vec();
+            let certificate = arm_proof.certificate();
+            drop(arm_proof);
             let [checked_source, checked_target] = checked_facts.as_slice() else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: checked transport did not retain its source and target"
@@ -1443,24 +1487,38 @@ fn replay_linear_tactics_without_frontier_loops(
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
             }
-            assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice =
                 end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
                 finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
+            proof = rewrap(
+                ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    replay,
+                    branch_path,
+                },
+                tactic_index,
+            );
             continue;
         }
         if let ProofTactic::ApplyTheorem(application) = tactic
-            && !replay.is_at_function_exit()
+            && !at_function_exit
         {
+            let ProofReplayContext {
+                mut state,
+                pure_facts: mut requirement_pure_facts,
+                mut replay,
+                mut branch_path,
+            } = proof.into_execution_context()?;
             if theorem_environment.get(&application.name).is_none() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
                     application.name
                 )));
             }
-            let proof = Proof::for_execution_frontier(
+            let arm_proof = Proof::for_execution_frontier(
                 claim_label,
                 tactic_index,
                 ProofReplayContext {
@@ -1479,9 +1537,9 @@ fn replay_linear_tactics_without_frontier_loops(
                 click_function_environment,
                 theorem_environment,
             );
-            let proof = proof.apply_theorem_application(application)?;
-            let certificate = proof.certificate();
-            let result = proof.into_execution_context()?;
+            let arm_proof = arm_proof.apply_theorem_application(application)?;
+            let certificate = arm_proof.certificate();
+            let result = arm_proof.into_execution_context()?;
             state = result.state;
             requirement_pure_facts = result.pure_facts;
             replay = result.replay;
@@ -1489,17 +1547,31 @@ fn replay_linear_tactics_without_frontier_loops(
             for step in certificate.steps() {
                 replay.proof_certificate_builder.push_step(step.clone());
             }
-            assumptions = assumptions_from_propositions(&requirement_pure_facts);
             let slice =
                 end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
             if capture_this_tactic {
                 finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
+            proof = rewrap(
+                ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    replay,
+                    branch_path,
+                },
+                tactic_index,
+            );
             continue;
         }
         match tactic {
             ProofTactic::Mark(name) => {
-                let proof = Proof::for_execution_frontier(
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -1518,14 +1590,29 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::Mark(name.clone()))?;
-                let result = proof.into_execution_context()?;
+                let arm_proof = arm_proof.apply_step(SimpleProofStep::Mark(name.clone()))?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::UnfoldResource(resource) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 apply_resource_step_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -1544,9 +1631,23 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::ObserveResource(resource) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 apply_resource_step_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -1565,7 +1666,15 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Transport {
                 source: surface_source,
@@ -1576,6 +1685,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 target: surface_target,
                 ..
             } => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if replay.is_at_function_exit() {
                     let premises = match tactic {
                         ProofTactic::TransportUsing { premises, .. } => Some(premises.clone()),
@@ -1595,6 +1710,15 @@ fn replay_linear_tactics_without_frontier_loops(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 if replay.is_at_function_entry() {
@@ -1609,7 +1733,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 else {
                     unreachable!("mid-execution `transport` is completed by its pre-pass")
                 };
-                let proof = Proof::for_execution_frontier(
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -1628,20 +1752,34 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::TransportUsing {
+                let arm_proof = arm_proof.apply_step(SimpleProofStep::TransportUsing {
                     source: surface_source.clone(),
                     target: surface_target.clone(),
                     premises: surface_premises.clone(),
                 })?;
-                let result = proof.into_execution_context()?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::StepUsing(premises) => {
-                let proof = Proof::for_execution_frontier(
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -1660,16 +1798,31 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::StepUsing(premises.clone()))?;
-                let result = proof.into_execution_context()?;
+                let arm_proof =
+                    arm_proof.apply_step(SimpleProofStep::StepUsing(premises.clone()))?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Step => {
-                let proof = Proof::for_execution_frontier(
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -1688,15 +1841,30 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::Step)?;
-                let result = proof.into_execution_context()?;
+                let arm_proof = arm_proof.apply_step(SimpleProofStep::Step)?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::SmartStep => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 if try_smart_step_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -1714,7 +1882,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )? {
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -1726,6 +1893,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
 
@@ -1778,7 +1954,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         .iter()
                         .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
-                    let mut proof = Proof::for_execution_frontier(
+                    let mut arm_proof = Proof::for_execution_frontier(
                         claim_label,
                         tactic_index,
                         ProofReplayContext {
@@ -1797,12 +1973,12 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                         theorem_environment,
                     );
-                    let checkpoint = proof.checkpoint();
+                    let checkpoint = arm_proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_step(step.clone())?;
+                        arm_proof = arm_proof.apply_step(step.clone())?;
                     }
-                    let certificate = proof.certificate_since(&checkpoint)?;
-                    let result = proof.into_execution_context()?;
+                    let certificate = arm_proof.certificate_since(&checkpoint)?;
+                    let result = arm_proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
                     replay = result.replay;
@@ -1811,7 +1987,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay.proof_certificate_builder.push_step(step.clone());
                     }
                     replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -1823,6 +1998,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 if let Some(blocker) = construction.blocker {
@@ -1835,6 +2019,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if try_exact_execute_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -1852,7 +2042,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )? {
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -1864,6 +2053,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 let construction_environments = Some(ConstructionEnvironments {
@@ -1938,7 +2136,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         .iter()
                         .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
-                    let mut proof = Proof::for_execution_frontier(
+                    let mut arm_proof = Proof::for_execution_frontier(
                         claim_label,
                         tactic_index,
                         ProofReplayContext {
@@ -1957,12 +2155,12 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                         theorem_environment,
                     );
-                    let checkpoint = proof.checkpoint();
+                    let checkpoint = arm_proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_step(step.clone())?;
+                        arm_proof = arm_proof.apply_step(step.clone())?;
                     }
-                    let certificate = proof.certificate_since(&checkpoint)?;
-                    let result = proof.into_execution_context()?;
+                    let certificate = arm_proof.certificate_since(&checkpoint)?;
+                    let result = arm_proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
                     replay = result.replay;
@@ -1971,7 +2169,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay.proof_certificate_builder.push_step(step.clone());
                     }
                     replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -1983,6 +2180,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 // The source planner may select a whole-function C branch
@@ -2018,9 +2224,11 @@ fn replay_linear_tactics_without_frontier_loops(
                         theorem_environment,
                     );
                     let checkpoint = root.checkpoint();
-                    if let Some(proof) = root.try_planned_execution_steps(&construction.steps)? {
-                        let certificate = proof.certificate_since(&checkpoint)?;
-                        let result = proof.into_execution_context()?;
+                    if let Some(arm_proof) =
+                        root.try_planned_execution_steps(&construction.steps)?
+                    {
+                        let certificate = arm_proof.certificate_since(&checkpoint)?;
+                        let result = arm_proof.into_execution_context()?;
                         state = result.state;
                         requirement_pure_facts = result.pure_facts;
                         replay = result.replay;
@@ -2030,7 +2238,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         }
                         replay.proof_certificate_builder.last_step_entry =
                             construction.last_step_entry;
-                        assumptions = assumptions_from_propositions(&requirement_pure_facts);
                         let slice = end_tactic_surface_scope(
                             &mut replay,
                             scope.take().expect("tactic scope is open"),
@@ -2042,6 +2249,15 @@ fn replay_linear_tactics_without_frontier_loops(
                                 false,
                             );
                         }
+                        proof = rewrap(
+                            ProofReplayContext {
+                                state,
+                                pure_facts: requirement_pure_facts,
+                                replay,
+                                branch_path,
+                            },
+                            tactic_index,
+                        );
                         continue;
                     }
                 }
@@ -2055,6 +2271,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::ExecuteUntil(region_ref) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if try_linear_execute_until_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -2073,7 +2295,6 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )? {
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -2085,6 +2306,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 let code_region =
@@ -2140,7 +2370,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         .iter()
                         .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
                 {
-                    let mut proof = Proof::for_execution_frontier(
+                    let mut arm_proof = Proof::for_execution_frontier(
                         claim_label,
                         tactic_index,
                         ProofReplayContext {
@@ -2159,12 +2389,12 @@ fn replay_linear_tactics_without_frontier_loops(
                         click_function_environment,
                         theorem_environment,
                     );
-                    let checkpoint = proof.checkpoint();
+                    let checkpoint = arm_proof.checkpoint();
                     for step in &construction.steps {
-                        proof = proof.apply_step(step.clone())?;
+                        arm_proof = arm_proof.apply_step(step.clone())?;
                     }
-                    let certificate = proof.certificate_since(&checkpoint)?;
-                    let result = proof.into_execution_context()?;
+                    let certificate = arm_proof.certificate_since(&checkpoint)?;
+                    let result = arm_proof.into_execution_context()?;
                     state = result.state;
                     requirement_pure_facts = result.pure_facts;
                     replay = result.replay;
@@ -2173,7 +2403,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         replay.proof_certificate_builder.push_step(step.clone());
                     }
                     replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -2185,6 +2414,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 if let Some(blocker) = construction.blocker {
@@ -2197,6 +2435,12 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::SmartFrame(region_ref) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 let framed = try_smart_frame_on_proof(
                     &mut state,
                     &mut requirement_pure_facts,
@@ -2230,7 +2474,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         "`{claim_label}` tactic {tactic_index}: `frame` found no checked Proof candidate"
                     )));
                 }
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 let slice = end_tactic_surface_scope(
                     &mut replay,
                     scope.take().expect("tactic scope is open"),
@@ -2242,12 +2485,28 @@ fn replay_linear_tactics_without_frontier_loops(
                         false,
                     );
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
                 continue;
             }
             ProofTactic::FrameUsing {
                 region: region_ref,
                 premises: surface_premises,
             } => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 if let Some(region) = region_ref
                     && replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
@@ -2273,7 +2532,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         tactic_index,
                         source_index,
                     )?;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                     let slice = end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
@@ -2285,6 +2543,15 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 let mut frame_facts = Vec::new();
@@ -2359,7 +2626,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 if let Some(goal) = replay.loop_effect_goal.as_mut() {
                     if region_ref.is_some() {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: a structural effect proof must use unqualified `frame()`"
+                            "`{claim_label}` tactic {tactic_index}: a structural effect arm_proof must use unqualified `frame()`"
                         )));
                     }
                     if goal.closed {
@@ -2383,6 +2650,15 @@ fn replay_linear_tactics_without_frontier_loops(
                     end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
+                    );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
                     );
                     continue;
                 }
@@ -2450,6 +2726,15 @@ fn replay_linear_tactics_without_frontier_loops(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 let effect_claims = claims
@@ -2506,8 +2791,23 @@ fn replay_linear_tactics_without_frontier_loops(
                         PostExecutionTactic::FrameRegion(region),
                     );
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::UnfoldPredicate(name) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
                 {
@@ -2520,9 +2820,18 @@ fn replay_linear_tactics_without_frontier_loops(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
-                let proof = Proof::for_execution_frontier(
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -2541,15 +2850,30 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
-                let result = proof.into_execution_context()?;
+                let arm_proof =
+                    arm_proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::ApplyTheorem(application) => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 // A mid-execution smart `apply` is selected as an explicit
                 // `apply using` and applied directly to `Proof` before this
                 // match (see the `ApplyTheorem` pre-pass above), so only the
@@ -2569,14 +2893,29 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                 } else {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
+                        "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region arm_proof"
                     )));
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::ApplyTheoremUsing {
                 application,
                 premises,
             } => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
@@ -2597,13 +2936,22 @@ fn replay_linear_tactics_without_frontier_loops(
                             &mut replay,
                             scope.take().expect("tactic scope is open"),
                         );
+                        proof = rewrap(
+                            ProofReplayContext {
+                                state,
+                                pure_facts: requirement_pure_facts,
+                                replay,
+                                branch_path,
+                            },
+                            tactic_index,
+                        );
                         continue;
                     }
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region proof"
+                        "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region arm_proof"
                     )));
                 }
-                let proof = Proof::for_execution_frontier(
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -2622,18 +2970,32 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                let arm_proof = arm_proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
                     application: application.clone(),
                     premises: premises.clone(),
                 })?;
-                let result = proof.into_execution_context()?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
                 branch_path = result.branch_path;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::FoldResource(resource) => {
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
                 if replay.is_at_function_exit() {
                     if replay.frontier.region == ExecutionRegionKind::Function {
                         replay.defer_post_execution(
@@ -2643,7 +3005,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         );
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region arm_proof"
                         )));
                     }
                 } else {
@@ -2665,10 +3027,24 @@ fn replay_linear_tactics_without_frontier_loops(
                         claim_label,
                         tactic_index,
                     )?;
-                    assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Have(have) => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 if replay.is_at_function_exit() {
                     if replay.frontier.region == ExecutionRegionKind::Function {
                         replay.defer_post_execution(
@@ -2678,12 +3054,21 @@ fn replay_linear_tactics_without_frontier_loops(
                         );
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region arm_proof"
                         )));
                     }
                     end_tactic_surface_scope(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
+                    );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
                     );
                     continue;
                 }
@@ -2701,15 +3086,29 @@ fn replay_linear_tactics_without_frontier_loops(
                     claim_label,
                     tactic_index,
                 )?;
-                assumptions = assumptions_from_propositions(&requirement_pure_facts);
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
-                unreachable!("structured tactics are represented by internal proof nodes")
+                unreachable!("structured tactics are represented by internal arm_proof nodes")
             }
             ProofTactic::Loop(_) => {
                 unreachable!("frontier-local loops are replayed between linear tactic chunks")
             }
             ProofTactic::Witness(_) => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 if replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
                 {
@@ -2725,11 +3124,35 @@ fn replay_linear_tactics_without_frontier_loops(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "witness")?;
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Choose(_) => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 if replay.frontier.region == ExecutionRegionKind::Function
                     && replay.is_at_function_exit()
                 {
@@ -2745,11 +3168,35 @@ fn replay_linear_tactics_without_frontier_loops(
                         &mut replay,
                         scope.take().expect("tactic scope is open"),
                     );
+                    proof = rewrap(
+                        ProofReplayContext {
+                            state,
+                            pure_facts: requirement_pure_facts,
+                            replay,
+                            branch_path,
+                        },
+                        tactic_index,
+                    );
                     continue;
                 }
                 require_function_exit(&replay, claim_label, tactic_index, "choose")?;
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Assumption | ProofTactic::Normalize | ProofTactic::Rewrite(_) => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 if replay.frontier.region != ExecutionRegionKind::LoopBody {
                     require_function_exit(&replay, claim_label, tactic_index, tactic_name(tactic))?;
                 }
@@ -2766,6 +3213,15 @@ fn replay_linear_tactics_without_frontier_loops(
                     };
                     replay.defer_post_execution(tactic_index, source_index, post_tactic);
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Intro
             | ProofTactic::Extract(_)
@@ -2783,7 +3239,13 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::CloseInvariants => {
-                let proof = Proof::for_execution_frontier(
+                let ProofReplayContext {
+                    mut state,
+                    pure_facts: mut requirement_pure_facts,
+                    mut replay,
+                    mut branch_path,
+                } = proof.into_execution_context()?;
+                let arm_proof = Proof::for_execution_frontier(
                     claim_label,
                     tactic_index,
                     ProofReplayContext {
@@ -2802,8 +3264,8 @@ fn replay_linear_tactics_without_frontier_loops(
                     click_function_environment,
                     theorem_environment,
                 );
-                let proof = proof.apply_step(SimpleProofStep::CloseInvariants)?;
-                let result = proof.into_execution_context()?;
+                let arm_proof = arm_proof.apply_step(SimpleProofStep::CloseInvariants)?;
+                let result = arm_proof.into_execution_context()?;
                 state = result.state;
                 requirement_pure_facts = result.pure_facts;
                 replay = result.replay;
@@ -2813,16 +3275,31 @@ fn replay_linear_tactics_without_frontier_loops(
                     source_index,
                     statement_index: replay.frontier.next_statement_index,
                 });
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
             ProofTactic::Induct { .. }
             | ProofTactic::ApplyInduction { .. }
             | ProofTactic::CloseInduction => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{}` is available only in a pure theorem proof",
+                    "`{claim_label}` tactic {tactic_index}: `{}` is available only in a pure theorem arm_proof",
                     tactic_name(tactic)
                 )));
             }
             ProofTactic::Simp => {
+                let ProofReplayContext {
+                    state,
+                    pure_facts: requirement_pure_facts,
+                    mut replay,
+                    branch_path,
+                } = proof.into_execution_context()?;
                 if replay.frontier.region != ExecutionRegionKind::LoopBody {
                     require_function_exit(&replay, claim_label, tactic_index, "simp")?;
                 }
@@ -2838,10 +3315,21 @@ fn replay_linear_tactics_without_frontier_loops(
                         PostExecutionTactic::Simp,
                     );
                 }
+                proof = rewrap(
+                    ProofReplayContext {
+                        state,
+                        pure_facts: requirement_pure_facts,
+                        replay,
+                        branch_path,
+                    },
+                    tactic_index,
+                );
             }
         }
-        let slice =
-            end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
+        let (next, slice) = proof.edit_replay_cursor(|replay, _, _| {
+            end_tactic_surface_scope(replay, scope.take().expect("tactic scope is open"))
+        })?;
+        proof = next;
         if capture_this_tactic && !deferred_post_execution && !deferred_region_simp {
             finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
         }
@@ -2854,10 +3342,5 @@ fn replay_linear_tactics_without_frontier_loops(
         )));
     }
 
-    Ok(ProofReplayContext {
-        state,
-        pure_facts: requirement_pure_facts,
-        replay,
-        branch_path,
-    })
+    proof.into_execution_context()
 }

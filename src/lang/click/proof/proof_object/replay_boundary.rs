@@ -226,6 +226,85 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// Transitional read of the focused frontier's replay cursor for the
+    /// in-place interpreter conversion; the interpreter's arm guards consult
+    /// it before deciding which checked operation to apply. Deleted with
+    /// `TacticReplayState` in phase 2 of `issues/replay-smell.md`.
+    pub(in crate::lang::click::proof) fn replay_cursor(
+        &self,
+    ) -> Result<&TacticReplayState, ClickError> {
+        self.execution()
+            .map(|execution| &execution.replay)
+            .ok_or_else(|| self.step_error("replay cursor reads require an execution frontier"))
+    }
+
+    /// Transitional cursor edit for the in-place interpreter conversion
+    /// (`issues/replay-smell.md`, phase 1): runs one bookkeeping closure
+    /// over the focused frontier's replay cursor, with read access to the
+    /// frontier's C state and fact context, and retains the edited cursor on
+    /// a successor that adds no provenance node. It grants no semantic
+    /// authority: the interpreter uses it for the surface-scope, expansion
+    /// capture, and deferral bookkeeping it previously performed on the loose
+    /// replay tuple. The proof is consumed so a uniquely owned snapshot is
+    /// edited in place rather than cloned per tactic. Deleted with
+    /// `TacticReplayState` in phase 2.
+    pub(in crate::lang::click::proof) fn edit_replay_cursor<R>(
+        self,
+        edit: impl FnOnce(&mut TacticReplayState, &CState, &ProofFacts) -> R,
+    ) -> Result<(Self, R), ClickError> {
+        let Some(Goal::Frontier(goal)) = self.focused_goal().cloned() else {
+            return Err(self.step_error("replay cursor editing requires an execution frontier"));
+        };
+        let missing = self.step_error("execution-frontier proof lost its semantic state");
+        let Self {
+            context,
+            state,
+            node,
+            focused,
+        } = self;
+        let mut proof_state = Arc::unwrap_or_clone(state);
+        // Release the goal map's reference first so the execution snapshot
+        // is unique whenever this proof was.
+        proof_state.goals = ProofGoals {
+            open: proof_state.goals.open.without_key(&focused),
+            next_id: proof_state.goals.next_id,
+        };
+        let FrontierGoal {
+            selection,
+            context: goal_context,
+        } = goal;
+        let GoalContext {
+            facts,
+            unfolded_predicates,
+            execution,
+        } = goal_context;
+        let mut execution = Arc::unwrap_or_clone(execution.ok_or(missing)?);
+        let result = edit(&mut execution.replay, &execution.state, &facts);
+        proof_state.goals = ProofGoals {
+            open: proof_state.goals.open.with_inserted(
+                focused,
+                Goal::Frontier(FrontierGoal {
+                    selection,
+                    context: GoalContext {
+                        facts,
+                        unfolded_predicates,
+                        execution: Some(Arc::new(execution)),
+                    },
+                }),
+            ),
+            next_id: proof_state.goals.next_id,
+        };
+        Ok((
+            Self {
+                context,
+                state: Arc::new(proof_state),
+                node,
+                focused,
+            },
+            result,
+        ))
+    }
+
     /// Borrows the terminal execution data needed by claim finalization
     /// without exporting it into a mutable replay context.
     pub(in crate::lang::click::proof) fn finalization_view(
