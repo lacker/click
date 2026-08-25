@@ -169,10 +169,44 @@ planner — run on boundary `Proof`s with no interpreter call in
    because the broader smart-step selector treats the most recent
    step's added facts as premise candidates (canary:
    `explicit_fact_transport_can_certify_a_derived_source`). What remains
-   of this phase: the node interpreter (`execute_internal_proof`'s
-   Linear/If/Open/Branch recursion, and `replay_linear_tactics`'
-   frontier-local loop chunking) converts the same way, then the
-   `claim_proofs.rs` fallbacks and `OrderedProofUnit::Replay` delete.
+   of this phase, in order:
+
+   - **Unify the per-tactic laws before touching routing.** The
+     fallback census after the conversion (178 claims: 150 linear-only,
+     28 structural) showed the direct drivers and the interpreter run
+     different *laws* for the same tactics, so switching the flat
+     driver to the interpreter loop moved canaries on both sides.
+     Unified so far: `have` (nested Proof scope first, authoritative for
+     explicit-only scripts, shared law only when the scope declines; the
+     scope join carries the lowering, certificate fact, and function-
+     entry derivation authority the shared law published) and the
+     function-exit `frame using` (a checked step when qualified or when
+     it is the first ordered outcome operation on a frontier that still
+     owns its effect goal; otherwise deferred to the drain). Simple steps
+     stay simple: `assumption` on a nested frontier judgment closes on a
+     materialized fact or a context-free tautology, and a `transport
+     using` premise that lowers to a syntactically reflexive equality
+     needs no fact.
+   - **Smart `execute` is the open law.** The direct driver's
+     `try_linear_execute` (per-statement indexed selection) and the
+     interpreter's exact-root gate (`try_exact_execute_to_exit`, then
+     `apply_planned_smart_execute`) each win canaries the other loses:
+     linear-first with ambient facts verifies but drops the automatic
+     fact transports the planner construction records, so later outcome
+     `simp`s fail (`list_roundtrip.contract`, `zero_list_sum.contract`,
+     `owned_string_pop.contract`); planner-first with ambient facts
+     records planning transitions the effect-script canaries forbid
+     (`contextual_frame_expands_to_surface_bounds_and_exact_frame`).
+     The fix is one search that carries the transports, decided by a
+     focused regression over those shapes, not an ordering.
+   - Then the flat driver adopts the one linear law
+     (`replay_linear_tactics_on_proof`), the admission grammars
+     (`grouped_flat_proof_supported`, the structural routing) delete,
+     planner errors become terminal in the direct drivers, and the node
+     interpreter (`execute_internal_proof`'s Linear/If/Open/Branch
+     recursion) converts with the Proof structural operations, after
+     which the `claim_proofs.rs` fallbacks and `OrderedProofUnit::Replay`
+     delete.
 2. **Dissolve `TacticReplayState`.** Move the remaining semantic fields
    into typed `Proof` state (several already have typed twins — delete the
    replay copy), move source locations, expansion selection, and
