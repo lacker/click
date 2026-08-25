@@ -754,6 +754,94 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 }
 
 #[test]
+fn outcome_simp_spells_a_call_postcondition_across_two_snapshots() {
+    // `touch` may write both fields and certifies `p->x == old(p->x)`: after
+    // each call the caller's `p->x` is a fresh cell related to its previous
+    // value only by that certified fact, and no single execution point
+    // denotes both operands. Two calls make the caller's outcome a chain of
+    // two such facts, so the outcome `simp` must cite them as premises,
+    // spelled with one anchor per operand, and close through the checked
+    // linear search, never the planner.
+    let touch_source = r#"
+            void touch(struct pair* p) {
+                int32 kept;
+                kept = p->x;
+                p->y = 1;
+                p->x = kept;
+            }
+        "#;
+    let keep_source = r#"
+            int32 keep_x(struct pair* p) {
+                touch(p);
+                touch(p);
+                return p->x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "touch.c";
+            verifying "keep_x.c";
+
+            void touch(struct pair* p) {
+                requires p != 0;
+                owns p->x;
+                owns p->y;
+                mutable p->x, p->y;
+                ensures p->x == old(p->x);
+                ensures p->y == 1;
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+
+            int32 keep_x(struct pair* p) {
+                requires p != 0;
+                owns p->x;
+                owns p->y;
+                mutable p->x, p->y;
+                ensures result == old(p->x);
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+    let struct_source = "struct pair { int32 x; int32 y; };\n";
+    let touch_source = format!("{struct_source}{touch_source}");
+    let keep_source = format!("{struct_source}{keep_source}");
+    let sources = &[
+        ("touch.c", touch_source.as_str()),
+        ("keep_x.c", keep_source.as_str()),
+    ];
+
+    let ((verified, _events), planning_transitions) =
+        collect_planning_statement_transitions(|| {
+            crate::instrumentation::collect(|| verify_c0_sources(click_source, sources))
+        });
+    verified.expect("the caller should verify through the checked linear search");
+    assert!(
+        planning_transitions.is_empty(),
+        "the caller's outcome must close without planner construction: {planning_transitions:#?}"
+    );
+
+    let expanded = expand_c0_claim_source(click_source, sources, "keep_x", CProofClaim::Grouped)
+        .expect("the retained caller Proof should expand");
+    let caller_expansion = expanded
+        .split("int32 keep_x")
+        .nth(1)
+        .expect("the expanded source should retain the caller");
+    // Rewriting with the later fact leaves the earlier one as the exact
+    // goal, which closes by assumption.
+    let premise = "rewrite(at(statement(2).entry, p->x) == at(statement(1).entry, p->x));";
+    assert!(
+        caller_expansion.contains(premise),
+        "the outcome closer should cite the preserved field with one anchor per snapshot: {expanded}"
+    );
+    verify_c0_sources(&expanded, sources)
+        .expect("the rewritten caller proof should verify normally");
+}
+
+#[test]
 fn grouped_opaque_calls_keep_declared_composite_resources_on_proof() {
     let borrow_source = r#"
             int32 borrow_token(int32 key) {

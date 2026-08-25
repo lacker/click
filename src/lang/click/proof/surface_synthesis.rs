@@ -533,6 +533,70 @@ fn synthesize_surface_resource_subject(
     }))
 }
 
+/// Spells one certified equality whose operands were read at different
+/// execution points, such as a callee postcondition relating a cell after
+/// the call to its value before it. Each operand is anchored at the first
+/// listed point where it denotes a source expression; the caller lists the
+/// recorded statement entries nearest first and must re-lower the result to
+/// confirm it denotes exactly this kernel fact.
+pub(in crate::lang::click) fn synthesize_surface_equality_across_points(
+    proposition: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    points: &[(ProgramPointRef, &CState)],
+) -> Option<ClickProposition> {
+    let _scope = SurfaceSynthesisScope::enter();
+    let Proposition::ConditionIs(condition, true) = proposition else {
+        return None;
+    };
+    let bound_variables = BTreeMap::new();
+    let anchored = |synthesize: &dyn Fn(&CState) -> Option<ContractExpression>| {
+        points.iter().find_map(|(point, state)| {
+            let expression = synthesize(state)?;
+            Some(ContractExpression::At {
+                selector: VisitSelector::ProgramPoint(point.clone()),
+                expression: Box::new(expression),
+            })
+        })
+    };
+    let (left, right) = match condition {
+        ConditionTerm::Bitvector32Equal(left, right) => (
+            anchored(&|state| {
+                synthesize_surface_bitvector(left, parameters, arguments, state, &bound_variables)
+            })?,
+            anchored(&|state| {
+                synthesize_surface_bitvector(right, parameters, arguments, state, &bound_variables)
+            })?,
+        ),
+        ConditionTerm::PointerOffsetEqual(left, right) => (
+            anchored(&|state| {
+                synthesize_surface_pointer_offset(
+                    left,
+                    parameters,
+                    arguments,
+                    state,
+                    &bound_variables,
+                )
+            })?,
+            anchored(&|state| {
+                synthesize_surface_pointer_offset(
+                    right,
+                    parameters,
+                    arguments,
+                    state,
+                    &bound_variables,
+                )
+            })?,
+        ),
+        _ => return None,
+    };
+    Some(ClickProposition::Comparison {
+        left,
+        operator: ComparisonOperator::Equal,
+        right,
+    })
+}
+
 pub(super) fn synthesize_surface_pointer_offset(
     term: &PointerOffsetTerm,
     parameters: &[syntax::C0Parameter],
@@ -556,6 +620,28 @@ pub(super) fn synthesize_surface_pointer_offset(
         return Some(field);
     }
     match term {
+        // A pointer-width load variable denotes a pointer field read at any
+        // point in its epoch; spell it through that load so the form keeps
+        // its pointer type.
+        PointerOffsetTerm::Int32Scaled {
+            value,
+            byte_width: 4,
+        } if matches!(value.as_ref(), Bitvector32Term::Variable(_)) => {
+            let Bitvector32Term::Variable(variable) = value.as_ref() else {
+                unreachable!()
+            };
+            let load = registered_load_in_state(variable, state)?;
+            synthesize_surface_pointer_offset(
+                &PointerOffsetTerm::Int32Scaled {
+                    value: Box::new(load),
+                    byte_width: 4,
+                },
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )
+        }
         PointerOffsetTerm::Int32Scaled {
             value,
             byte_width: 4,
@@ -702,6 +788,24 @@ fn synthesize_parameter_field_pointer_value(
         }
     }
     None
+}
+
+/// The source load a load variable denotes at this state: the cell it
+/// names, when this state's memory lies in the variable's epoch. The
+/// kernel's own naming law decides membership, so a spelling built from
+/// the returned load lowers back to exactly this variable here.
+fn registered_load_in_state(variable: &Variable, state: &CState) -> Option<Bitvector32Term> {
+    if !crate::kernel::is_load_variable(variable) {
+        return None;
+    }
+    let (_, pointer) = crate::kernel::registered_load_for_variable(variable)?;
+    let memory = crate::kernel::intern_c_memory_ref(state.memory());
+    let Bitvector32Term::Variable(named) =
+        crate::kernel::canonical_form_of_load(memory.clone(), pointer.clone())
+    else {
+        return None;
+    };
+    (named == *variable).then(|| Bitvector32Term::MemoryLoad(memory, Box::new(pointer)))
 }
 
 fn synthesize_surface_bitvector(
@@ -858,9 +962,18 @@ fn synthesize_surface_bitvector(
                 }))
             }
         }
-        Bitvector32Term::Variable(_)
-        | Bitvector32Term::If { .. }
-        | Bitvector32Term::RangeFold { .. } => None,
+        // A load variable names one cell of one memory epoch. It denotes
+        // the source load of that cell at any execution point whose memory
+        // lies in the same epoch; the kernel's own naming law decides that,
+        // so the spelling lowers back to exactly this variable there.
+        Bitvector32Term::Variable(variable) => synthesize_surface_bitvector(
+            &registered_load_in_state(variable, state)?,
+            parameters,
+            arguments,
+            state,
+            bound_variables,
+        ),
+        Bitvector32Term::If { .. } | Bitvector32Term::RangeFold { .. } => None,
         Bitvector32Term::PureFunctionApplication {
             name,
             arguments: values,

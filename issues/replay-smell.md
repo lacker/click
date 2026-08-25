@@ -388,6 +388,73 @@ examples and the gate reduces to the existing effect-script and
 no-context cases. The second is the conformant route and is the recorded
 recommendation; it is outcome-side work, not planner porting.
 
+## Outcome spelling repair landed; the carry gap remains (2026-08-25)
+
+Decision taken: (B), the outcome-side repair, not the gate. Landed:
+
+- **Two-snapshot spelling.** `replayable_surface_fact`'s synthesis
+  fallback was extended: when no single point denotes both operands of a
+  certified equality, `synthesize_surface_equality_across_points` spells
+  each operand at the nearest recorded statement entry that denotes it
+  (`at(statement(2).entry, p->x) == at(statement(1).entry, p->x)`), and
+  the candidate is accepted only when ordinary lowering recovers the
+  exact kernel fact. Nothing is recorded at any step; the spelling is
+  reconstructed for a derivation-selected premise from state the Proof
+  already holds.
+- **Load variables are synthesizable.** Post-call cells are not cells: the
+  call havocs them and the kernel names later loads by interned load
+  variables. `registered_load_in_state` inverts that through the kernel's
+  own naming law (`canonical_form_of_load` at the point's memory equals
+  the variable exactly when the point lies in the variable's epoch), so
+  the bitvector and pointer-offset synthesizers spell such a variable as
+  the source load (`p->x`, `node->next`) with its correct type.
+- **Decided-path region.** `install_parent_frontier_after_decided`
+  restored the parent's region kind only at a region boundary; a sole
+  feasible arm that *returned* left the exit frontier tagged `BranchArm`,
+  and the interpreter's `simp` arm silently skipped deferral there
+  (`zero_list_sum`'s then branch under a linear `execute`). The region is
+  now restored on every decided path. This fix is exercised only by a
+  linear `execute` inside a proof case split, which the interpreter does
+  not yet run (below).
+- Regression: `outcome_simp_spells_a_call_postcondition_across_two_snapshots`
+  (flat driver, two calls each certifying `p->x == old(p->x)` over a
+  havocked field; no planning transitions; the expansion cites the
+  two-anchor rewrite).
+
+With the interpreter's `execute` arm switched to linear-first (the
+saved patch `spelling-plus-linear-first`, not committed), the three
+fallback examples verify **without the planner** and `list_roundtrip`
+expands to minimal `step() using { node != 0; }` calls plus two-anchor
+outcome rewrites. The remaining census under that switch is the
+planner's *carry*, not spelling:
+
+- `expanded_read_step_keeps_named_range_separation_premises`: a store
+  `owner->data[index] = 0` followed by `owner->len = index`; the outcome
+  `owner->data[owner->len] == 0` needs the data-cell fact transported
+  across the later store. Both `simp`s fail promptly on the linear
+  path; the planner's `StatementFactTransportPolicy::Automatic` carries
+  it. (The expanded proof's later `have` then misses its 100ms test
+  budget searching for the absent fact.)
+- `examples/ring-buffer` (`ring_buffer_pipeline.contract`): `frame using`
+  requires an exact `separate(...)` premise the linear route did not
+  carry to the frame.
+- `mdtests/composite_resource_clone_separate_target.md`: outcome `simp`
+  for `clone_cursor.ensures_1`.
+- `mdtests/modular_pointer_postcondition.md`: "execution replay for
+  `call_set_pointer.contract` contains a path not reproduced by kernel
+  certification" — a path-set disagreement, to be understood before any
+  carry work.
+
+So the unified `execute` law needs the carry the original brief
+described: at each statement the checked step transports the
+memory-reading facts a later outcome or frame can consume, naming them
+as premises (now spellable). Until that lands, the interpreter keeps its
+exact-root gate (checked search only with no ambient context), the
+census test `resource_example_pipelines_have_no_outcome_fallbacks` pins
+the planner's single-anchor `list_roundtrip` spelling, and the flat
+driver keeps linear-then-planner. Next: the carry, with the four shapes
+above as arbiters, then the linear-first switch on both drivers.
+
 ## State census (2026-08-24)
 
 Taken after `proof_object.rs` was mechanically split into concern modules.

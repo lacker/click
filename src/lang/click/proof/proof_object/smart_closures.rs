@@ -833,15 +833,50 @@ impl<'a> Proof<'a> {
         // not an ambient form search.
         let synthesis_context = match self.context.as_ref() {
             ProofContext::Pure(_) => None,
-            ProofContext::Point(context) => {
-                Some((context.parameters, context.arguments, context.state))
-            }
-            ProofContext::Execution(_) => self
-                .outcome_point_view()
-                .map(|view| (view.parameters, view.arguments, view.state)),
+            ProofContext::Point(context) => Some((
+                context.parameters,
+                context.arguments,
+                context.state,
+                context.program_point_states,
+            )),
+            ProofContext::Execution(_) => self.outcome_point_view().map(|view| {
+                (
+                    view.parameters,
+                    view.arguments,
+                    view.state,
+                    view.program_point_states,
+                )
+            }),
         };
-        let (parameters, arguments, state) = synthesis_context?;
-        let surface = synthesize_surface_proposition(kernel, parameters, arguments, state)?;
+        let (parameters, arguments, state, program_points) = synthesis_context?;
+        if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
+            && matches_kernel(&surface).is_some()
+        {
+            return Some(surface);
+        }
+        // A certified statement fact may relate two execution snapshots (a
+        // callee postcondition names a cell after the call and its value
+        // before it), so no single point denotes both operands. Spell each
+        // operand at the nearest recorded statement entry that denotes it,
+        // walking back from the selected premise anchor; the candidate is
+        // accepted only when ordinary lowering recovers this exact fact.
+        let anchor = premise_anchor?;
+        let CodeRegionRef::Statement(anchor_index) = &anchor.region else {
+            return None;
+        };
+        let points = (0..=*anchor_index)
+            .rev()
+            .filter_map(|index| {
+                let point = ProgramPointRef {
+                    region: CodeRegionRef::Statement(index),
+                    kind: ProgramPointKind::Entry,
+                };
+                let state = program_points.get(&point)?;
+                Some((point, state))
+            })
+            .collect::<Vec<_>>();
+        let surface =
+            synthesize_surface_equality_across_points(kernel, parameters, arguments, &points)?;
         matches_kernel(&surface).map(|()| surface)
     }
 

@@ -2359,6 +2359,11 @@ impl<'a> Proof<'a> {
         execution: &mut ExecutionProofState,
         record: &ExecutionSplit<'a>,
     ) -> Result<(), ClickError> {
+        // The decided path is the parent's frontier from here on, whether the
+        // sole arm ended at its typed boundary or returned: a function-exit
+        // frontier reached inside an arm belongs to the enclosing region, so
+        // source-ordered outcome tactics see it as the function's exit.
+        execution.replay.frontier.region = record.parent_execution.replay.frontier.region;
         if !execution.replay.is_at_region_boundary() {
             return Ok(());
         }
@@ -2368,7 +2373,6 @@ impl<'a> Proof<'a> {
             .frontier
             .continuations
             .clone();
-        execution.replay.frontier.region = record.parent_execution.replay.frontier.region;
         execution.replay.frontier.next_statement_index = record.continuation_index;
         match record.continuation_remaining.clone() {
             Some(remaining) => {
