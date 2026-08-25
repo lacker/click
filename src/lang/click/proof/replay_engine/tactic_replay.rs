@@ -1780,46 +1780,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 );
             }
             ProofTactic::Step => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                let arm_proof = Proof::for_execution_frontier(
-                    claim_label,
-                    tactic_index,
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                );
-                let arm_proof = arm_proof.apply_step(SimpleProofStep::Step)?;
-                let result = arm_proof.into_execution_context()?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
+                proof = proof.apply_step(SimpleProofStep::Step)?;
             }
             ProofTactic::SmartStep => {
                 let ProofReplayContext {
@@ -2590,7 +2551,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 if let Some(goal) = replay.loop_effect_goal.as_mut() {
                     if region_ref.is_some() {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: a structural effect arm_proof must use unqualified `frame()`"
+                            "`{claim_label}` tactic {tactic_index}: a structural effect proof must use unqualified `frame()`"
                         )));
                     }
                     if goal.closed {
@@ -2857,7 +2818,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                 } else {
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region arm_proof"
+                        "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
                     )));
                 }
                 proof = rewrap(
@@ -2912,7 +2873,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         continue;
                     }
                     return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region arm_proof"
+                        "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region proof"
                     )));
                 }
                 let arm_proof = Proof::for_execution_frontier(
@@ -2969,7 +2930,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         );
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region arm_proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region proof"
                         )));
                     }
                 } else {
@@ -3018,7 +2979,7 @@ fn replay_linear_tactics_without_frontier_loops(
                         );
                     } else {
                         return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region arm_proof"
+                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
                         )));
                     }
                     end_tactic_surface_scope(
@@ -3061,7 +3022,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 );
             }
             ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
-                unreachable!("structured tactics are represented by internal arm_proof nodes")
+                unreachable!("structured tactics are represented by internal proof nodes")
             }
             ProofTactic::Loop(_) => {
                 unreachable!("frontier-local loops are replayed between linear tactic chunks")
@@ -3253,7 +3214,7 @@ fn replay_linear_tactics_without_frontier_loops(
             | ProofTactic::ApplyInduction { .. }
             | ProofTactic::CloseInduction => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{}` is available only in a pure theorem arm_proof",
+                    "`{claim_label}` tactic {tactic_index}: `{}` is available only in a pure theorem proof",
                     tactic_name(tactic)
                 )));
             }
