@@ -776,71 +776,6 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, Some(certificate))))
 }
 
-/// Applies one explicit qualified `frame using` through its checked Proof.
-/// Premise lowering and exact availability are part of the simple transition;
-/// the ordered outcome drain receives only the resulting checked region-frame
-/// authority and never reinterprets or silently ignores the premise list.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn apply_qualified_frame_using_on_proof<'a>(
-    state: &mut CState,
-    pure_facts: &mut Vec<Proposition>,
-    replay: &mut TacticReplayState,
-    branch_path: &mut PersistentSequence<String>,
-    region: &'a CodeRegionRef,
-    premises: &[ClickProposition],
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    claim_label: &'a str,
-    tactic_index: usize,
-    source_index: usize,
-) -> Result<(), ClickError> {
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        ProofReplayContext {
-            state: std::mem::replace(state, CState::new()),
-            pure_facts: std::mem::take(pure_facts),
-            replay: Box::new(std::mem::take(replay)),
-            branch_path: std::mem::take(branch_path),
-        },
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    let proof = root.apply_step_at(
-        SimpleProofStep::FrameUsing {
-            region: Some(region.clone()),
-            premises: premises.to_vec(),
-        },
-        tactic_index,
-        source_index,
-    )?;
-    let certificate = proof.certificate();
-    let context = proof.into_execution_context()?;
-    *state = context.state;
-    *pure_facts = context.pure_facts;
-    *replay = *context.replay;
-    *branch_path = context.branch_path;
-    for step in certificate.steps() {
-        replay.proof_certificate_builder.push_step(step.clone());
-    }
-    Ok(())
-}
-
 /// Schedules one ordered outcome operation on the threaded interpreter
 /// Proof. This is cursor metadata only: finalization applies the operation
 /// to each typed outcome goal. A tactic that contributes nothing further to
@@ -1404,42 +1339,34 @@ fn replay_linear_tactics_without_frontier_loops(
                 region: region_ref,
                 premises: surface_premises,
             } => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                let assumptions = assumptions_from_propositions(&requirement_pure_facts);
                 if let Some(region) = region_ref
-                    && replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
-                    && replay.open_scopes == 0
+                    && frontier_region == ExecutionRegionKind::Function
+                    && at_function_exit
+                    && proof.replay_cursor()?.open_scopes == 0
                 {
-                    apply_qualified_frame_using_on_proof(
-                        &mut state,
-                        &mut requirement_pure_facts,
-                        &mut replay,
-                        &mut branch_path,
-                        region,
-                        surface_premises,
-                        function_block,
-                        function,
-                        parsed_function,
-                        arguments,
-                        function_environment,
-                        resource_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                        claim_label,
+                    // Premise lowering and exact availability are part of
+                    // the simple transition; the ordered outcome drain
+                    // receives only the resulting checked region-frame
+                    // authority and never reinterprets the premise list.
+                    let checkpoint = proof.checkpoint();
+                    let framed = proof.apply_step_at(
+                        SimpleProofStep::FrameUsing {
+                            region: Some(region.clone()),
+                            premises: surface_premises.to_vec(),
+                        },
                         tactic_index,
                         source_index,
                     )?;
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
+                    let certificate = framed.certificate_since(&checkpoint)?;
+                    let (next, slice) = framed
+                        .record_surface_steps(certificate.steps())?
+                        .edit_replay_cursor(|replay, _, _| {
+                            end_tactic_surface_scope(
+                                replay,
+                                scope.take().expect("tactic scope is open"),
+                            )
+                        })?;
+                    proof = next;
                     if capture_this_tactic {
                         finish_tactic_expansion_capture(
                             expansion_capture.as_deref_mut(),
@@ -1447,126 +1374,120 @@ fn replay_linear_tactics_without_frontier_loops(
                             false,
                         );
                     }
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
                     continue;
                 }
-                let mut frame_facts = Vec::new();
-                if !surface_premises.is_empty() {
-                    let all_pure_facts = requirement_pure_facts.clone();
-                    let pre_state = replay.old_reference_state(&state).clone();
-                    let deferred_ordered_exit = replay.frontier.region
-                        == ExecutionRegionKind::Function
-                        && replay.is_at_function_exit();
-                    for surface_premise in surface_premises {
-                        let premise = if let Some(recorded) = replay
-                            .surface_propositions
-                            .available_kernel_matching(surface_premise, |kernel| {
-                                assumptions.contains_assumed_exact(kernel)
-                            }) {
-                            recorded.clone()
-                        } else {
-                            lower_point_proposition(
-                                surface_premise,
-                                &all_pure_facts,
-                                parsed_function.parameters(),
-                                arguments,
-                                &pre_state,
-                                &state,
-                                None,
-                                &replay.program_point_states,
-                                predicate_environment,
-                                click_function_environment,
-                            )
-                            .map_err(|message| {
-                                ClickError::new(format!(
-                                    "`{claim_label}` tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
-                                    super::printing::source_click_proposition(surface_premise)
-                                ))
-                            })?
-                        };
-                        replay
-                            .surface_propositions
-                            .record_lowering(surface_premise, &premise)?;
-                        if !deferred_ordered_exit
-                            && !exact_fact_is_available(&premise, &all_pure_facts)
-                            && exactly_available_fact(&premise, &all_pure_facts).is_none()
-                        {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `frame using` requires an exact premise: {}",
-                                describe_missing_pure_fact(
-                                    &premise,
+                // Premise lowering records surface lowerings in the cursor;
+                // a structural effect goal is closed by the same edit.
+                let (checked, framed) = proof.edit_replay_cursor(|replay, state, facts| {
+                    let all_pure_facts = facts.to_vec();
+                    let mut frame_facts = Vec::new();
+                    if !surface_premises.is_empty() {
+                        let assumptions = assumptions_from_propositions(&all_pure_facts);
+                        let pre_state = replay.old_reference_state(state).clone();
+                        let deferred_ordered_exit =
+                            frontier_region == ExecutionRegionKind::Function && at_function_exit;
+                        for surface_premise in surface_premises {
+                            let premise = if let Some(recorded) = replay
+                                .surface_propositions
+                                .available_kernel_matching(surface_premise, |kernel| {
+                                    assumptions.contains_assumed_exact(kernel)
+                                }) {
+                                recorded.clone()
+                            } else {
+                                lower_point_proposition(
+                                    surface_premise,
                                     &all_pure_facts,
-                                    state.resources().facts(),
                                     parsed_function.parameters(),
                                     arguments,
-                                    &replay.effect_facts,
+                                    &pre_state,
+                                    state,
+                                    None,
+                                    &replay.program_point_states,
+                                    predicate_environment,
+                                    click_function_environment,
                                 )
+                                .map_err(|message| {
+                                    ClickError::new(format!(
+                                        "`{claim_label}` tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
+                                        super::printing::source_click_proposition(surface_premise)
+                                    ))
+                                })?
+                            };
+                            replay
+                                .surface_propositions
+                                .record_lowering(surface_premise, &premise)?;
+                            if !deferred_ordered_exit
+                                && !exact_fact_is_available(&premise, &all_pure_facts)
+                                && exactly_available_fact(&premise, &all_pure_facts).is_none()
+                            {
+                                return Err(ClickError::new(format!(
+                                    "`{claim_label}` tactic {tactic_index}: `frame using` requires an exact premise: {}",
+                                    describe_missing_pure_fact(
+                                        &premise,
+                                        &all_pure_facts,
+                                        state.resources().facts(),
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        &replay.effect_facts,
+                                    )
+                                )));
+                            }
+                            if !frame_facts.contains(&premise) {
+                                frame_facts.push(premise);
+                            }
+                        }
+                    } else {
+                        frame_facts = all_pure_facts;
+                    }
+                    let mut loop_effect_facts = frame_facts.clone();
+                    loop_effect_facts.extend(
+                        replay
+                            .effect_facts
+                            .iter()
+                            .map(|fact| fact.proposition().clone()),
+                    );
+                    loop_effect_facts.sort();
+                    loop_effect_facts.dedup();
+                    if let Some(goal) = replay.loop_effect_goal.as_mut() {
+                        if region_ref.is_some() {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: a structural effect proof must use unqualified `frame()`"
                             )));
                         }
-                        if !frame_facts.contains(&premise) {
-                            frame_facts.push(premise);
+                        if goal.closed {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: the structural effect goal was closed more than once"
+                            )));
                         }
-                    }
-                } else {
-                    frame_facts = requirement_pure_facts.clone();
-                }
-                let mut loop_effect_facts = frame_facts.clone();
-                loop_effect_facts.extend(
-                    replay
-                        .effect_facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
-                );
-                loop_effect_facts.sort();
-                loop_effect_facts.dedup();
-                if let Some(goal) = replay.loop_effect_goal.as_mut() {
-                    if region_ref.is_some() {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: a structural effect proof must use unqualified `frame()`"
-                        )));
-                    }
-                    if goal.closed {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: the structural effect goal was closed more than once"
-                        )));
-                    }
-                    c_loop_effects_hold_at_back_edge(
-                        &goal.before_state,
-                        &state,
-                        std::slice::from_ref(&goal.check),
-                        &loop_effect_facts,
-                        &assumptions_from_propositions(&loop_effect_facts),
-                    )
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: `frame()` failed: {message}"
-                        ))
-                    })?;
-                    goal.closed = true;
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    proof = rewrap(
-                        ProofReplayContext {
+                        c_loop_effects_hold_at_back_edge(
+                            &goal.before_state,
                             state,
-                            pure_facts: requirement_pure_facts,
+                            std::slice::from_ref(&goal.check),
+                            &loop_effect_facts,
+                            &assumptions_from_propositions(&loop_effect_facts),
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `frame()` failed: {message}"
+                            ))
+                        })?;
+                        goal.closed = true;
+                        end_tactic_surface_scope(
                             replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
+                            scope.take().expect("tactic scope is open"),
+                        );
+                        return Ok((frame_facts, true));
+                    }
+                    Ok::<_, ClickError>((frame_facts, false))
+                })?;
+                proof = checked;
+                let (frame_facts, closed_loop_effect_goal) = framed?;
+                if closed_loop_effect_goal {
                     continue;
                 }
-                require_function_exit(&replay, claim_label, tactic_index, "frame")?;
+                require_function_exit(proof.replay_cursor()?, claim_label, tactic_index, "frame")?;
+                let view = proof.finalization_view()?;
+                let replay = view.replay;
                 // A code region qualifying `frame` refers to loop effect
                 // clauses, which current syntax declares only through
                 // frontier-local `loop` tactics earlier in this proof; bind
@@ -1587,8 +1508,8 @@ fn replay_linear_tactics_without_frontier_loops(
                         )
                     })
                     .transpose()?;
-                if replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
+                if frontier_region == ExecutionRegionKind::Function
+                    && at_function_exit
                     && matches!(code_region, None | Some(CodeRegion::Function))
                 {
                     if !replay.grouped_contract {
@@ -1625,20 +1546,13 @@ fn replay_linear_tactics_without_frontier_loops(
                             premises: surface_premises.clone(),
                         }
                     };
-                    replay.defer_post_execution(tactic_index, source_index, deferred);
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
-                    );
+                        source_index,
+                        deferred,
+                        scope.take(),
+                    )?;
                     continue;
                 }
                 let effect_claims = claims
@@ -1673,7 +1587,7 @@ fn replay_linear_tactics_without_frontier_loops(
                                 tactic_index,
                                 parsed_function.parameters(),
                                 arguments,
-                                &state,
+                                view.state,
                                 &frame_facts,
                             )?;
                         }
@@ -1681,29 +1595,20 @@ fn replay_linear_tactics_without_frontier_loops(
                         Some(CodeRegion::Statement(_)) => {}
                     }
                 }
-                if replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
-                {
+                if frontier_region == ExecutionRegionKind::Function && at_function_exit {
                     let region = region_ref.clone().ok_or_else(|| {
                         ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: contextual function `frame()` should have been deferred earlier"
                         ))
                     })?;
-                    replay.defer_post_execution(
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
                         source_index,
                         PostExecutionTactic::FrameRegion(region),
-                    );
+                        None,
+                    )?;
                 }
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
             }
             ProofTactic::UnfoldPredicate(name) => {
                 if frontier_region == ExecutionRegionKind::Function && at_function_exit {
