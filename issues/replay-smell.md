@@ -115,35 +115,62 @@ branch failed with `then branch arm has not reached its shared continuation`.
 The commit and its inaccurate issue claim were reverted rather than retained
 as an unused speculative adapter.
 
-The root missing operation is a first-class execution region on `Proof`.
-Whole-function execution has a distinguished exit, but loop preservation must
-execute an arbitrary nested C region and stop at one exact back-edge. Today
-that boundary is represented by a synthetic sentinel plus replay-owned
-continuation and `completed_branch_regions` bookkeeping. Nested branch joins
-therefore cannot compose solely by typed goal and split identity. Adding more
-loop- or branch-specific syntax drivers would preserve this defect.
+The root missing operation was a first-class execution region on `Proof`.
+Whole-function execution had a distinguished exit, but loop preservation must
+execute an arbitrary nested C region and stop at one exact back-edge. That
+boundary was represented by a synthetic sentinel plus replay-owned
+continuation and `completed_branch_regions` bookkeeping, so nested branch
+joins could not compose solely by typed goal and split identity, and adding
+more loop- or branch-specific syntax drivers would have preserved the
+defect. The typed boundary that replaced this is recorded in the design
+section below.
 
-### Corrected migration order
+### Standing rules for every chunk
 
-1. Introduce a typed Proof-owned execution-region goal and boundary identity.
-   Function exit, branch join, loop back-edge, and nested-region return must be
-   instances of the same checked boundary mechanism.
-2. Move semantic frontier, region, branch, loop, effect, and freshness state
-   out of `TacticReplayState` into that typed Proof state. Leave source
-   locations, expansion selection, and diagnostics in a non-semantic cursor.
-3. Drive `InternalProofNode` through one compositional source interpreter.
-   Linear operations, scopes, branches, nested loops, and continuations must
-   return a `Proof` at a typed boundary rather than export a replay context.
-4. Move provenance construction entirely to `ProofNode` ancestry and source
-   attribution, then remove `proof_certificate_builder` and semantic path
-   reconstruction from replay state.
-5. Migrate and delete whole compatibility boundaries. A chunk counts as
-   architectural progress only when it deletes a fallback, semantic replay
-   field, or parallel interpreter path; adding another guarded `try_check_*`
-   path while retaining its fallback is not completion.
-6. Instrument exact compatibility call sites. Claim labels, total execution
-   counts, or baseline comparisons are supporting diagnostics, not proof that
-   a particular fallback was avoided.
+- Migrate and delete whole compatibility boundaries. A chunk counts as
+  architectural progress only when it deletes a fallback, semantic replay
+  field, or parallel interpreter path; adding another guarded `try_check_*`
+  path while retaining its fallback is not completion.
+- Instrument exact compatibility call sites. Claim labels, total execution
+  counts, or baseline comparisons are supporting diagnostics, not proof
+  that a particular fallback was avoided.
+
+### Remaining phases
+
+The typed execution-region boundary (the original first step) is complete:
+the sentinel, `completed_branch_regions`, the depth bookkeeping, and the
+region-identity flags are deleted, branch joins compose by split identity,
+and both loop-preservation entry points — checking and the automatic
+planner — run on boundary `Proof`s with no interpreter call in
+`loop_planning.rs`. What remains, in execution order:
+
+1. **Port whole-function proofs off the interpreter.** Admit the shapes the
+   direct structural driver still declines — chiefly functions containing
+   loops, now unblocked by `apply_frontier_local_loop` — so the two
+   fallbacks in `claim_proofs.rs` delete, then delete
+   `execute_internal_proof` itself and the `tactic_replay.rs`
+   wrap/op/unwrap round trips it strands.
+2. **Dissolve `TacticReplayState`.** Move the remaining semantic fields
+   into typed `Proof` state (several already have typed twins — delete the
+   replay copy), move source locations, expansion selection, and
+   diagnostics into the non-semantic cursor, and delete the
+   compatibility-only fields. Unify function exit and the loop back-edge
+   as instances of one boundary mechanism when the frontier moves onto
+   `Proof`, and delete `ProofReplayContext` and the `replay_boundary.rs`
+   adapters.
+3. **Retire the parallel certificate builder.** Move expansion
+   serialization entirely onto `ProofNode` ancestry and source
+   attribution, then delete `proof_certificate_builder` (the preservation
+   port still feeds it deliberately, via `record_surface_steps`, for
+   compatibility) and the finalization reads of it.
+4. **Prove it with the owed regressions.** The scoped-population witness
+   below is the acceptance test that phase 2 truly landed; the remaining
+   intended regressions (one transition authority, no ordinary certificate
+   replay, state-ownership census, provenance-only extraction,
+   deterministic scaling) land alongside phases 1–3.
+5. **Closeout.** Update user and internal documentation to describe
+   checked `Proof` transitions and verified expansion, then delete this
+   file and its Open-list line.
 
 ## State census (2026-08-24)
 
@@ -151,7 +178,7 @@ Taken after `proof_object.rs` was mechanically split into concern modules.
 The replay adapters (`for_execution_frontier`,
 `for_execution_frontier_with_effect_goals`, `start_loop_effect_goal`,
 `into_execution_context`, `finalization_view`) are co-located in
-`src/lang/click/proof/proof_object/replay_boundary.rs`, so step 5 deletes
+`src/lang/click/proof/proof_object/replay_boundary.rs`, so phase 2 deletes
 one file rather than hunting scattered methods.
 
 ### `TacticReplayState` fields by ownership
@@ -175,7 +202,7 @@ typed invariant-bundle obligation), and the semantic half of
 as source attribution).
 
 Semantic fields whose destination is deletion: `proof_certificate_builder`
-(step 4, with dependents `next_path_choice`, `open_scopes`,
+(phase 3, with dependents `next_path_choice`, `open_scopes`,
 `planned_statement_transitions`), `completed_branch_regions` and
 `has_structured_branch_history` (replaced by typed split/region identity),
 `post_execution_tactics` and `ordered_finalization` (compatibility
@@ -231,12 +258,13 @@ individual site needs its own migration.
 (`have_proofs.rs:2063`), and a non-semantic timing read
 (`proof_execution.rs:796`) that only needs the cursor split.
 
-Dependency summary: step 1 unblocks both `loop_planning.rs` sites and the
-interpreter's `Branch` join; step 2 removes every `tactic_replay.rs` round
-trip and lets the `try_check_*` roots start as `Proof`; step 3 deletes
-`execute_internal_proof` and `OrderedProofUnit::Replay`; step 4 retires the
-`proof_certificate_builder` reads inside finalization; step 5 deletes
-`replay_boundary.rs` and `ProofReplayContext` itself.
+Dependency summary, in the remaining-phase numbering: the typed boundary
+(complete) unblocked both `loop_planning.rs` sites (now deleted) and the
+interpreter's `Branch` join; phase 1 deletes `execute_internal_proof`,
+`OrderedProofUnit::Replay`, and the stranded `tactic_replay.rs` round
+trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
+`replay_boundary.rs` and `ProofReplayContext` itself; phase 3 retires the
+`proof_certificate_builder` reads inside finalization.
 
 ### Boundary representations the typed region goal must subsume
 
@@ -370,12 +398,10 @@ and the clone-context-per-candidate replay loop is deleted.
 `loop_planning.rs` contains no `execute_internal_proof` call. The
 remaining production entry points are the two whole-function fallbacks
 in `claim_proofs.rs` (plus the interpreter's internal recursion), which
-step 3's compositional source interpreter replaces before step 5
-deletes the interpreter and `ProofReplayContext`. Before or alongside
-that, unify function exit and the back-edge as instances of one
-boundary mechanism when the frontier migrates onto `Proof` (step 2).
-Each chunk scores by the replay field or fallback it deletes, never by
-adding a guarded path beside a retained fallback.
+phase 1 replaces and deletes. Function exit and the back-edge unify as
+instances of one boundary mechanism when the frontier migrates onto
+`Proof` in phase 2. Each chunk scores by the replay field or fallback
+it deletes, never by adding a guarded path beside a retained fallback.
 
 ## Scoped composite population is a replay-state witness
 
