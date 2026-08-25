@@ -506,63 +506,41 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn replay_linear_tactics(
-    mut context: ProofReplayContext,
-    mut expansion_capture: Option<&mut ExpansionCapture>,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
+pub(in crate::lang::click::proof) fn replay_linear_tactics<'a>(
+    context: ProofReplayContext,
+    expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    function: &CFunction,
-    arguments: &[CExpression],
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    resource_environment: &'a ResourceEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
     tactics: &[IndexedTactic],
 ) -> Result<ProofReplayContext, ClickError> {
-    let mut chunk_start = 0;
-    for (index, indexed_tactic) in tactics.iter().enumerate() {
-        let ProofTactic::Loop(loop_clause) = &indexed_tactic.tactic else {
-            continue;
-        };
-        context = replay_linear_tactics_without_frontier_loops(
-            context,
-            expansion_capture.as_deref_mut(),
-            function_block,
-            parsed_function,
-            claims,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            function,
-            arguments,
-            &tactics[chunk_start..index],
-        )?;
-        context = replay_frontier_local_loop_tactic(
-            context,
-            expansion_capture.as_deref_mut(),
-            loop_clause,
-            indexed_tactic.index,
-            indexed_tactic.source_index,
-            function_block,
-            parsed_function,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            arguments,
-        )?;
-        chunk_start = index + 1;
-    }
-    replay_linear_tactics_without_frontier_loops(
+    // Transitional function-boundary wrap (`issues/replay-smell.md`, phase
+    // 1): the node interpreter still hands linear segments over as a replay
+    // context. The segment itself runs on one threaded Proof.
+    let proof = Proof::for_execution_frontier(
+        claim_label,
+        tactics.first().map_or(0, |indexed| indexed.index),
         context,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
+    replay_linear_tactics_on_proof(
+        proof,
         expansion_capture,
         function_block,
         parsed_function,
@@ -571,82 +549,82 @@ pub(in crate::lang::click::proof) fn replay_linear_tactics(
         function_environment,
         predicate_environment,
         click_function_environment,
-        resource_environment,
+        theorem_environment,
+        function,
+        arguments,
+        tactics,
+    )?
+    .into_execution_context()
+}
+
+/// The one linear source driver: applies a linear tactic segment to the
+/// threaded Proof. Frontier-local `loop` tactics are single checked
+/// operations between the linear chunks they separate.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn replay_linear_tactics_on_proof<'a>(
+    mut proof: Proof<'a>,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
+    claims: &[FunctionClaimRef<'_>],
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
+    tactics: &[IndexedTactic],
+) -> Result<Proof<'a>, ClickError> {
+    let mut chunk_start = 0;
+    for (index, indexed_tactic) in tactics.iter().enumerate() {
+        let ProofTactic::Loop(loop_clause) = &indexed_tactic.tactic else {
+            continue;
+        };
+        proof = replay_linear_tactics_without_frontier_loops(
+            proof,
+            expansion_capture.as_deref_mut(),
+            function_block,
+            parsed_function,
+            claims,
+            claim_label,
+            function_environment,
+            predicate_environment,
+            click_function_environment,
+            theorem_environment,
+            function,
+            arguments,
+            &tactics[chunk_start..index],
+        )?;
+        if crate::instrumentation::deadline_exceeded() {
+            return Err(ClickError::new(format!(
+                "tactic budget exhausted: {}",
+                crate::instrumentation::deadline_context()
+            )));
+        }
+        proof = proof.start_source_tactic()?.apply_frontier_local_loop(
+            expansion_capture.as_deref_mut(),
+            loop_clause,
+            indexed_tactic.index,
+            indexed_tactic.source_index,
+        )?;
+        chunk_start = index + 1;
+    }
+    replay_linear_tactics_without_frontier_loops(
+        proof,
+        expansion_capture,
+        function_block,
+        parsed_function,
+        claims,
+        claim_label,
+        function_environment,
+        predicate_environment,
+        click_function_environment,
         theorem_environment,
         function,
         arguments,
         &tactics[chunk_start..],
     )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn replay_frontier_local_loop_tactic(
-    context: ProofReplayContext,
-    expansion_capture: Option<&mut ExpansionCapture>,
-    loop_clause: &StructuralClause,
-    tactic_index: usize,
-    source_index: usize,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    arguments: &[CExpression],
-) -> Result<ProofReplayContext, ClickError> {
-    if crate::instrumentation::deadline_exceeded() {
-        return Err(ClickError::new(format!(
-            "tactic budget exhausted: {}",
-            crate::instrumentation::deadline_context()
-        )));
-    }
-    let ProofReplayContext {
-        mut state,
-        pure_facts: mut available_pure_facts,
-        mut replay,
-        branch_path,
-    } = context;
-    let mut expansion_capture = expansion_capture;
-    let mut scope = Some(begin_tactic_surface_scope(&mut replay));
-    let capture_this_tactic =
-        begin_tactic_expansion_capture(expansion_capture.as_deref_mut(), source_index, &replay);
-    let _timing = TacticTiming::new(
-        claim_label,
-        tactic_index,
-        source_index,
-        &ProofTactic::Loop(loop_clause.clone()),
-        replay.frontier.next_statement_index,
-    );
-    execute_frontier_local_loop(
-        expansion_capture.as_deref_mut(),
-        loop_clause,
-        &mut replay,
-        &mut state,
-        &mut available_pure_facts,
-        function_block,
-        parsed_function,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        arguments,
-        claim_label,
-        tactic_index,
-        source_index,
-    )?;
-    let slice = end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
-    if capture_this_tactic {
-        finish_tactic_expansion_capture(expansion_capture, &slice, false);
-    }
-    Ok(ProofReplayContext {
-        state,
-        pure_facts: available_pure_facts,
-        replay,
-        branch_path,
-    })
 }
 
 /// Migrates point-proof paths supported by the checked proof object: direct
@@ -798,41 +776,21 @@ fn defer_post_execution_on_proof<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn replay_linear_tactics_without_frontier_loops(
-    context: ProofReplayContext,
+fn replay_linear_tactics_without_frontier_loops<'a>(
+    mut proof: Proof<'a>,
     mut expansion_capture: Option<&mut ExpansionCapture>,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
+    function_block: &'a FunctionBlock,
+    parsed_function: &'a syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
-    claim_label: &str,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    function: &CFunction,
-    arguments: &[CExpression],
+    claim_label: &'a str,
+    function_environment: &'a CExecutionEnvironment,
+    predicate_environment: &'a PredicateEnvironment,
+    click_function_environment: &'a ClickFunctionEnvironment,
+    theorem_environment: &'a TheoremEnvironment,
+    function: &'a CFunction,
+    arguments: &'a [CExpression],
     tactics: &[IndexedTactic],
-) -> Result<ProofReplayContext, ClickError> {
-    // Transitional function-boundary wrap (`issues/replay-smell.md`, phase
-    // 1): one Proof is threaded through every tactic arm below, and the
-    // export at the end of this function is the last replay-context
-    // boundary, deleted with phase 2.
-    let mut proof = Proof::for_execution_frontier(
-        claim_label,
-        tactics.first().map_or(0, |indexed| indexed.index),
-        context,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-
+) -> Result<Proof<'a>, ClickError> {
     for indexed_tactic in tactics {
         if crate::instrumentation::deadline_exceeded() {
             return Err(ClickError::new(format!(
@@ -1857,5 +1815,5 @@ fn replay_linear_tactics_without_frontier_loops(
         )));
     }
 
-    proof.into_execution_context()
+    Ok(proof)
 }
