@@ -841,116 +841,6 @@ fn apply_qualified_frame_using_on_proof<'a>(
     Ok(())
 }
 
-/// Tries smart frame candidate selection and application through the owned
-/// Proof.
-///
-/// A miss restores the exact execution context so the source driver can
-/// report that no checked candidate exists. It grants no replay fallback.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_smart_frame_on_proof<'a>(
-    state: &mut CState,
-    pure_facts: &mut Vec<Proposition>,
-    replay: &mut TacticReplayState,
-    branch_path: &mut PersistentSequence<String>,
-    region: Option<&'a CodeRegionRef>,
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    claim_label: &'a str,
-    tactic_index: usize,
-    source_index: usize,
-) -> Result<bool, ClickError> {
-    let context = ProofReplayContext {
-        state: std::mem::replace(state, CState::new()),
-        pure_facts: std::mem::take(pure_facts),
-        replay: Box::new(std::mem::take(replay)),
-        branch_path: std::mem::take(branch_path),
-    };
-    let ordered_deferred = context.replay.frontier.region == ExecutionRegionKind::Function
-        && context.replay.is_at_function_exit()
-        && context.replay.open_scopes == 0;
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        context,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    match root.try_smart_frame_at(region, tactic_index, source_index)? {
-        Some(proof) => {
-            let certificate = proof.certificate();
-            let mut context = proof.into_execution_context()?;
-            let mut ordered_region_frame = false;
-            if ordered_deferred {
-                let mut deferred = context
-                    .replay
-                    .post_execution_tactics
-                    .pop()
-                    .ok_or_else(|| {
-                        ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained no ordered deferral"
-                        ))
-                    })?;
-                ordered_region_frame =
-                    matches!(deferred.tactic, PostExecutionTactic::FrameRegion(_));
-                if !ordered_region_frame {
-                    let PostExecutionTactic::CheckedFrameUsing {
-                        surface_tactics, ..
-                    } = &mut deferred.tactic
-                    else {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
-                        )));
-                    };
-                    // Finalization still owns the outcome transition, but it
-                    // must print this complete checked contribution at the
-                    // deferred source position. Contextual frame premises can
-                    // be established by leading `have` scopes.
-                    *surface_tactics = Some(certificate.to_proof_tactics());
-                    deferred.surface_recorded = false;
-                }
-                context.replay.post_execution_tactics.push(deferred);
-            }
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            // Function frames are recorded by their checked ordered drain.
-            // A region frame contributes facts at that drain but its exact
-            // simple form is already owned by this Proof, so retain the
-            // node now just as the former construction path did.
-            if !ordered_deferred || ordered_region_frame {
-                for step in certificate.steps() {
-                    replay.proof_certificate_builder.push_step(step.clone());
-                }
-            }
-            Ok(true)
-        }
-        None => {
-            let context = root.into_execution_context()?;
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            Ok(false)
-        }
-    }
-}
-
 /// Schedules one ordered outcome operation on the threaded interpreter
 /// Proof. This is cursor metadata only: finalization applies the operation
 /// to each typed outcome goal. A tactic that contributes nothing further to
@@ -1507,33 +1397,19 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
             }
             ProofTactic::SmartFrame(region_ref) => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                let framed = try_smart_frame_on_proof(
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    &mut replay,
-                    &mut branch_path,
-                    region_ref.as_ref(),
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                    source_index,
-                )?;
-                if !framed {
-                    require_function_exit(&replay, claim_label, tactic_index, "frame")?;
+                let ordered_deferred = frontier_region == ExecutionRegionKind::Function
+                    && at_function_exit
+                    && proof.replay_cursor()?.open_scopes == 0;
+                let checkpoint = proof.checkpoint();
+                let Some(framed) =
+                    proof.try_smart_frame_at(region_ref.as_ref(), tactic_index, source_index)?
+                else {
+                    require_function_exit(
+                        proof.replay_cursor()?,
+                        claim_label,
+                        tactic_index,
+                        "frame",
+                    )?;
                     if !claims
                         .iter()
                         .any(|claim| matches!(claim, FunctionClaimRef::Effect(_, _)))
@@ -1545,11 +1421,54 @@ fn replay_linear_tactics_without_frontier_loops(
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `frame` found no checked Proof candidate"
                     )));
-                }
-                let slice = end_tactic_surface_scope(
-                    &mut replay,
-                    scope.take().expect("tactic scope is open"),
-                );
+                };
+                let certificate = framed.certificate_since(&checkpoint)?;
+                let (framed, recorded) = framed.edit_replay_cursor(|replay, _, _| {
+                    let mut ordered_region_frame = false;
+                    if ordered_deferred {
+                        let mut deferred = replay.post_execution_tactics.pop().ok_or_else(|| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained no ordered deferral"
+                            ))
+                        })?;
+                        ordered_region_frame =
+                            matches!(deferred.tactic, PostExecutionTactic::FrameRegion(_));
+                        if !ordered_region_frame {
+                            let PostExecutionTactic::CheckedFrameUsing {
+                                surface_tactics, ..
+                            } = &mut deferred.tactic
+                            else {
+                                return Err(ClickError::new(format!(
+                                    "`{claim_label}` tactic {tactic_index}: Proof-owned frame retained the wrong ordered operation"
+                                )));
+                            };
+                            // Finalization still owns the outcome transition,
+                            // but it must print this complete checked
+                            // contribution at the deferred source position.
+                            // Contextual frame premises can be established
+                            // by leading `have` scopes.
+                            *surface_tactics = Some(certificate.to_proof_tactics());
+                            deferred.surface_recorded = false;
+                        }
+                        replay.post_execution_tactics.push(deferred);
+                    }
+                    // Function frames are recorded by their checked ordered
+                    // drain. A region frame contributes facts at that drain
+                    // but its exact simple form is already owned by this
+                    // Proof, so retain the node now just as the former
+                    // construction path did.
+                    if !ordered_deferred || ordered_region_frame {
+                        for step in certificate.steps() {
+                            replay.proof_certificate_builder.push_step(step.clone());
+                        }
+                    }
+                    Ok::<(), ClickError>(())
+                })?;
+                recorded?;
+                let (next, slice) = framed.edit_replay_cursor(|replay, _, _| {
+                    end_tactic_surface_scope(replay, scope.take().expect("tactic scope is open"))
+                })?;
+                proof = next;
                 if capture_this_tactic && !proof_owned_smart_frame_deferred {
                     finish_tactic_expansion_capture(
                         expansion_capture.as_deref_mut(),
@@ -1557,15 +1476,6 @@ fn replay_linear_tactics_without_frontier_loops(
                         false,
                     );
                 }
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
                 continue;
             }
             ProofTactic::FrameUsing {
