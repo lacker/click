@@ -2029,48 +2029,25 @@ fn replay_linear_tactics_without_frontier_loops(
                 unreachable!("frontier-local loops are replayed between linear tactic chunks")
             }
             ProofTactic::Witness(_) => {
-                let ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    mut replay,
-                    branch_path,
-                } = proof.into_execution_context()?;
-                if replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
-                {
+                if frontier_region == ExecutionRegionKind::Function && at_function_exit {
                     let ProofTactic::Witness(witness) = tactic else {
                         unreachable!()
                     };
-                    replay.defer_post_execution(
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
                         source_index,
                         PostExecutionTactic::Witness(witness.clone()),
-                    );
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
+                        scope.take(),
+                    )?;
                     continue;
                 }
-                require_function_exit(&replay, claim_label, tactic_index, "witness")?;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
+                require_function_exit(
+                    proof.replay_cursor()?,
+                    claim_label,
                     tactic_index,
-                );
+                    "witness",
+                )?;
             }
             ProofTactic::Choose(_) => {
                 let ProofReplayContext {
