@@ -1702,62 +1702,25 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
             }
             ProofTactic::Have(have) => {
-                let ProofReplayContext {
-                    state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    branch_path,
-                } = proof.into_execution_context()?;
-                if replay.is_at_function_exit() {
-                    if replay.frontier.region == ExecutionRegionKind::Function {
-                        replay.defer_post_execution(
+                if at_function_exit {
+                    if frontier_region == ExecutionRegionKind::Function {
+                        proof = defer_post_execution_on_proof(
+                            proof,
                             tactic_index,
                             source_index,
                             PostExecutionTactic::Have(have.clone()),
-                        );
-                    } else {
-                        return Err(ClickError::new(format!(
-                            "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
-                        )));
+                            scope.take(),
+                        )?;
+                        continue;
                     }
-                    end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
-                    continue;
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
+                    )));
                 }
-                let _ = check_mid_execution_have(
-                    have,
-                    &mut replay,
-                    &state,
-                    &mut requirement_pure_facts,
-                    function_block,
-                    parsed_function,
-                    arguments,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                )?;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
+                // The interpreter's prelude and epilogue own this tactic's
+                // surface scope and expansion capture, so the shared law
+                // runs without a capture of its own.
+                proof = proof.apply_mid_execution_have(None, have, tactic_index, source_index)?;
             }
             ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")
