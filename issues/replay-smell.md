@@ -144,12 +144,27 @@ and both loop-preservation entry points — checking and the automatic
 planner — run on boundary `Proof`s with no interpreter call in
 `loop_planning.rs`. What remains, in execution order:
 
-1. **Port whole-function proofs off the interpreter.** Admit the shapes the
-   direct structural driver still declines — chiefly functions containing
-   loops, now unblocked by `apply_frontier_local_loop` — so the two
-   fallbacks in `claim_proofs.rs` delete, then delete
-   `execute_internal_proof` itself and the `tactic_replay.rs`
-   wrap/op/unwrap round trips it strands.
+1. **Port whole-function proofs off the interpreter.** The admission
+   census (266 fallback claims at the start of this phase; 186 after
+   admitting haves, loops, planned smart steps, and planned smart
+   executes to the checked linear driver) showed the remaining tail is
+   flat — ~176 distinct claims, each its own shape. Continuing
+   admission-by-shape would repeat the repudiated migration strategy.
+   The conformant route is the original compositional-interpreter
+   design, executed as an in-place conversion:
+   `replay_linear_tactics_without_frontier_loops` keeps its exact arm
+   order, capture wrappers, and per-arm laws, but threads one `Proof`
+   instead of `(state, facts, replay, branch_path)` — every existing
+   wrap/op/unwrap round trip collapses into the op call it already
+   contains, leaving one transitional wrap/export pair at the function
+   boundary. All 25 tactic arms have Proof-op equivalents or
+   round-trip cores to inline (`execute_until`'s planner fallback is
+   the one parked gap: its port changed which pass captures the
+   tactic's expansion and a canary caught it). After the conversion,
+   the node interpreter (`execute_internal_proof`'s Linear/If/Open/
+   Branch recursion) converts the same way, the `claim_proofs.rs`
+   fallbacks and `OrderedProofUnit::Replay` delete, and the boundary
+   wrap/export pair goes with phase 2.
 2. **Dissolve `TacticReplayState`.** Move the remaining semantic fields
    into typed `Proof` state (several already have typed twins — delete the
    replay copy), move source locations, expansion selection, and
