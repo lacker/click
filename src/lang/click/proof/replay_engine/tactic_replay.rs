@@ -1158,62 +1158,25 @@ fn try_smart_frame_on_proof<'a>(
     }
 }
 
-/// Applies one explicit resource step without growing the recursive replay
-/// driver's stack frame. Resource checking and certificate retention happen
-/// inside `Proof`; this outlined adapter only moves the checked successor back
-/// across the temporary legacy execution boundary.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn apply_resource_step_on_proof<'a>(
-    state: &mut CState,
-    pure_facts: &mut Vec<Proposition>,
-    replay: &mut TacticReplayState,
-    branch_path: &mut PersistentSequence<String>,
-    step: SimpleProofStep,
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    claim_label: &'a str,
+/// Schedules one ordered outcome operation on the threaded interpreter
+/// Proof. This is cursor metadata only: finalization applies the operation
+/// to each typed outcome goal. A tactic that contributes nothing further to
+/// its surface scope closes it here as well, skipping the interpreter's
+/// ordinary epilogue.
+fn defer_post_execution_on_proof<'a>(
+    proof: Proof<'a>,
     tactic_index: usize,
-) -> Result<(), ClickError> {
-    debug_assert!(matches!(
-        step,
-        SimpleProofStep::FoldResource(_)
-            | SimpleProofStep::UnfoldResource(_)
-            | SimpleProofStep::ObserveResource(_)
-    ));
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        ProofReplayContext {
-            state: std::mem::replace(state, CState::new()),
-            pure_facts: std::mem::take(pure_facts),
-            replay: Box::new(std::mem::take(replay)),
-            branch_path: std::mem::take(branch_path),
-        },
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    let proof = root.apply_step(step)?;
-    let context = proof.into_execution_context()?;
-    *state = context.state;
-    *pure_facts = context.pure_facts;
-    *replay = *context.replay;
-    *branch_path = context.branch_path;
-    Ok(())
+    source_index: usize,
+    tactic: PostExecutionTactic,
+    close_scope: Option<TacticSurfaceScope>,
+) -> Result<Proof<'a>, ClickError> {
+    let (proof, ()) = proof.edit_replay_cursor(|replay, _, _| {
+        replay.defer_post_execution(tactic_index, source_index, tactic);
+        if let Some(scope) = close_scope {
+            end_tactic_surface_scope(replay, scope);
+        }
+    })?;
+    Ok(proof)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1271,6 +1234,7 @@ fn replay_linear_tactics_without_frontier_loops(
             deferred_post_execution,
             proof_owned_smart_frame_deferred,
             deferred_region_simp,
+            frontier_region,
             at_function_exit,
             statement_index,
         ) = {
@@ -1289,6 +1253,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     ),
                 replay.frontier.region == ExecutionRegionKind::LoopBody
                     && matches!(tactic, ProofTactic::Simp),
+                replay.frontier.region,
                 replay.is_at_function_exit(),
                 replay.frontier.next_statement_index,
             )
@@ -2811,53 +2776,23 @@ fn replay_linear_tactics_without_frontier_loops(
                 );
             }
             ProofTactic::FoldResource(resource) => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                if replay.is_at_function_exit() {
-                    if replay.frontier.region == ExecutionRegionKind::Function {
-                        replay.defer_post_execution(
+                if at_function_exit {
+                    if frontier_region == ExecutionRegionKind::Function {
+                        proof = defer_post_execution_on_proof(
+                            proof,
                             tactic_index,
                             source_index,
                             PostExecutionTactic::Fold(resource.clone()),
-                        );
+                            None,
+                        )?;
                     } else {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: post-execution `fold` is not available in this region proof"
                         )));
                     }
                 } else {
-                    apply_resource_step_on_proof(
-                        &mut state,
-                        &mut requirement_pure_facts,
-                        &mut replay,
-                        &mut branch_path,
-                        SimpleProofStep::FoldResource(resource.clone()),
-                        function_block,
-                        function,
-                        parsed_function,
-                        arguments,
-                        function_environment,
-                        resource_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                        claim_label,
-                        tactic_index,
-                    )?;
+                    proof = proof.apply_step(SimpleProofStep::FoldResource(resource.clone()))?;
                 }
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
             }
             ProofTactic::Have(have) => {
                 let ProofReplayContext {
