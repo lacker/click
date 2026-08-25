@@ -198,7 +198,23 @@ planner — run on boundary `Proof`s with no interpreter call in
      records planning transitions the effect-script canaries forbid
      (`contextual_frame_expands_to_surface_bounds_and_exact_frame`).
      The fix is one search that carries the transports, decided by a
-     focused regression over those shapes, not an ordering.
+     focused regression over those shapes, not an ordering. The
+     mechanism, established by experiment: an explicit `step using {P}`
+     carries across a store exactly the memory facts it names, re-
+     expressed through `direct_transport_with_frame_premises` against
+     the post-state; the planner names every transportable fact
+     (including statement-introduced facts, which live in the
+     prioritized delta of `ProofFacts`, not `ordered`, and facts whose
+     Surface form it synthesizes), while `try_indexed_execute_step`
+     names only definedness premises, and its early return on a
+     resource-discharged definedness fact names nothing at all. The
+     unified `execute` step therefore computes the carried set the way
+     the transition does — a dry successor for the post-state, the
+     transport theorem per memory-reading fact over all facts, recorded
+     or synthesized Surface forms as premises — and never runs the
+     planner (the effect-script canaries count planning transitions).
+     Smart `step()` keeps its minimal selection: the author can transport
+     afterwards; an `execute` cannot be followed up.
    - Then the flat driver adopts the one linear law
      (`replay_linear_tactics_on_proof`), the admission grammars
      (`grouped_flat_proof_supported`, the structural routing) delete,
