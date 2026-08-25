@@ -18,8 +18,11 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 2
+## Other open issues: 3
 
+- [Make `step()` a simple proof step](make-step-simple.md): `step() using`
+  makes the kernel's inputs a premise list the smart tactics must search
+  for; `step()` executes in the full context and the list is deleted.
 - [Retire the parallel replay proof engine](replay-smell.md): ordinary source
   verification and expansion still advance a large mutable semantic state in
   parallel with the checked `Proof` model.

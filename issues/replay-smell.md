@@ -388,6 +388,16 @@ examples and the gate reduces to the existing effect-script and
 no-context cases. The second is the conformant route and is the recorded
 recommendation; it is outcome-side work, not planner porting.
 
+## Superseded: the smart `execute` law is `step()` made simple (2026-08-25)
+
+The "smart `execute` is the open law" item above, the typed-gate result,
+and the carry census below are resolved by a design decision recorded in
+[make-step-simple.md](make-step-simple.md): `step()` executes with the
+whole proof context visible and takes no premise list, `execute` is its
+repetition, and `step() using` is deleted. There is no premise selection
+to unify, carry, or minimize. Phase 1 continues from that issue's plan;
+its chunk 4 is this issue's flat-driver adoption and routing deletions.
+
 ## Outcome spelling repair landed; the carry gap remains (2026-08-25)
 
 Decision taken: (B), the outcome-side repair, not the gate. Landed:
