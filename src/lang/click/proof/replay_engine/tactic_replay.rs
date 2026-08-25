@@ -776,77 +776,6 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, Some(certificate))))
 }
 
-/// Tries the bounded smart statement selectors on the immutable Proof. The
-/// broader selector may retain unrelated scalar root facts, but declines
-/// resource contexts whose planner-selected evidence is not yet represented
-/// by Proof directly.
-///
-/// Keep this operation and its result outlined from the recursive proof
-/// executor. The deep pure-case regression is intentionally sensitive to
-/// growth in that caller's stack frame.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_smart_step_on_proof<'a>(
-    state: &mut CState,
-    pure_facts: &mut Vec<Proposition>,
-    replay: &mut TacticReplayState,
-    branch_path: &mut PersistentSequence<String>,
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    claim_label: &'a str,
-    tactic_index: usize,
-) -> Result<bool, ClickError> {
-    let context = ProofReplayContext {
-        state: std::mem::replace(state, CState::new()),
-        pure_facts: std::mem::take(pure_facts),
-        replay: Box::new(std::mem::take(replay)),
-        branch_path: std::mem::take(branch_path),
-    };
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        context,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    match root.try_smart_step()? {
-        Some(proof) => {
-            let certificate = proof.certificate();
-            let context = proof.into_execution_context()?;
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            for step in certificate.steps() {
-                replay.proof_certificate_builder.push_step(step.clone());
-            }
-            Ok(true)
-        }
-        None => {
-            let context = root.into_execution_context()?;
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            Ok(false)
-        }
-    }
-}
-
 /// Tries exact-root execute search directly on the owned Proof.
 ///
 /// A successful search returns the already-checked descendant and appends its
@@ -1261,7 +1190,7 @@ fn replay_linear_tactics_without_frontier_loops(
             )
         };
         let (prepared, (scope, capture_this_tactic)) =
-            proof.edit_replay_cursor(|replay, state, facts| {
+            proof.begin_source_tactic(tactic_index, |replay, state, facts| {
                 let scope = begin_tactic_surface_scope(replay);
                 let capture_this_tactic = begin_tactic_expansion_capture(
                     expansion_capture.as_deref_mut(),
@@ -1304,10 +1233,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 }
                 (scope, capture_this_tactic)
             })?;
-        // Converted arms apply their operation to the threaded Proof, so
-        // diagnostics are attributed to the current tactic here rather than
-        // by an arm-local re-wrap.
-        proof = prepared.with_execution_tactic_index(tactic_index)?;
+        proof = prepared;
         let mut scope = Some(scope);
         let _timing = (!(deferred_post_execution || deferred_region_simp)
             && has_independent_source_timing(tactic))
@@ -1596,165 +1522,15 @@ fn replay_linear_tactics_without_frontier_loops(
                 proof = proof.apply_step(SimpleProofStep::Step)?;
             }
             ProofTactic::SmartStep => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                let assumptions = assumptions_from_propositions(&requirement_pure_facts);
-                if try_smart_step_on_proof(
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    &mut replay,
-                    &mut branch_path,
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                )? {
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
-                    continue;
-                }
-
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_statement_transitions.clear();
-                planning_replay.proof_certificate_builder = ProofCertificateBuilder {
-                    last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
-                    ..ProofCertificateBuilder::default()
-                }
-                .into();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                execute_step_from_execution_point(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    &assumptions,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
-                    "step",
-                    StatementPrerequisitePolicy::Planning,
-                    StatementFactTransportPolicy::Automatic,
-                    LoopStepPolicy::EnterBody,
-                    Some(ConstructionEnvironments {
-                        predicate_environment,
-                        click_function_environment,
-                    }),
-                )?;
-                let construction =
-                    std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
-                if construction.blocker.is_none()
-                    && !construction.steps.is_empty()
-                    && construction.steps.iter().all(|step| {
-                        matches!(
-                            step,
-                            SimpleProofStep::Have { .. }
-                                | SimpleProofStep::UnfoldPredicate(_)
-                                | SimpleProofStep::TransportUsing { .. }
-                                | SimpleProofStep::StepUsing(_)
-                        )
-                    })
-                    && construction
-                        .steps
-                        .iter()
-                        .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
-                {
-                    let mut arm_proof = Proof::for_execution_frontier(
-                        claim_label,
-                        tactic_index,
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        function_block,
-                        function,
-                        parsed_function,
-                        arguments,
-                        function_environment,
-                        resource_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                    );
-                    let checkpoint = arm_proof.checkpoint();
-                    for step in &construction.steps {
-                        arm_proof = arm_proof.apply_step(step.clone())?;
-                    }
-                    let certificate = arm_proof.certificate_since(&checkpoint)?;
-                    let result = arm_proof.into_execution_context()?;
-                    state = result.state;
-                    requirement_pure_facts = result.pure_facts;
-                    replay = result.replay;
-                    branch_path = result.branch_path;
-                    for step in certificate.steps() {
-                        replay.proof_certificate_builder.push_step(step.clone());
-                    }
-                    replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
-                    continue;
-                }
-                if let Some(blocker) = construction.blocker {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: smart `step` could not construct checked Proof operations: {blocker}"
-                    )));
-                }
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: smart `step` found no checked Proof candidate"
-                )));
+                // Exact selection first, then the shared planner law; the
+                // checked delta is pushed into this tactic's surface scope.
+                let checkpoint = proof.checkpoint();
+                let stepped = match proof.try_smart_step()? {
+                    Some(stepped) => stepped,
+                    None => proof.apply_planned_smart_step(tactic_index)?,
+                };
+                let certificate = stepped.certificate_since(&checkpoint)?;
+                proof = stepped.record_surface_steps(certificate.steps())?;
             }
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => {
                 let ProofReplayContext {

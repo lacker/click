@@ -238,19 +238,53 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("replay cursor reads require an execution frontier"))
     }
 
-    /// Transitional cursor edit for the in-place interpreter conversion
-    /// (`issues/replay-smell.md`, phase 1): runs one bookkeeping closure
-    /// over the focused frontier's replay cursor, with read access to the
-    /// frontier's C state and fact context, and retains the edited cursor on
-    /// a successor that adds no provenance node. It grants no semantic
-    /// authority: the interpreter uses it for the surface-scope, expansion
-    /// capture, and deferral bookkeeping it previously performed on the loose
-    /// replay tuple. The proof is consumed so a uniquely owned snapshot is
-    /// edited in place rather than cloned per tactic. Deleted with
+    /// Transitional entry to one source tactic for the in-place interpreter
+    /// conversion (`issues/replay-smell.md`, phase 1). It reattributes
+    /// execution diagnostics to `tactic_index`, starts the tactic with no
+    /// step delta, and runs the tactic's bookkeeping closure over the replay
+    /// cursor. The empty delta reproduces the per-tactic fresh root the
+    /// interpreter used to construct: the broader smart-step selector treats
+    /// the most recent step's added facts as premise candidates, and a
+    /// previous source tactic's delta must not leak into that selection.
+    /// Deleted with `TacticReplayState` in phase 2.
+    pub(in crate::lang::click::proof) fn begin_source_tactic<R>(
+        self,
+        tactic_index: usize,
+        edit: impl FnOnce(&mut TacticReplayState, &CState, &ProofFacts) -> R,
+    ) -> Result<(Self, R), ClickError> {
+        let attributed = self.with_execution_tactic_index(tactic_index)?;
+        drop(self);
+        attributed.edit_frontier_in_place(|state, execution, facts| {
+            state.added_facts = Arc::new(Vec::new());
+            state.checked_facts = Arc::new(Vec::new());
+            execution.last_step_delta = ExecutionProofStepDelta::default();
+            edit(&mut execution.replay, &execution.state, facts)
+        })
+    }
+
+    /// Transitional cursor edit for the in-place interpreter conversion:
+    /// runs one bookkeeping closure over the focused frontier's replay
+    /// cursor, with read access to the frontier's C state and fact context,
+    /// and retains the edited cursor on a successor that adds no provenance
+    /// node. It grants no semantic authority: the interpreter uses it for
+    /// the surface-scope, expansion capture, and deferral bookkeeping it
+    /// previously performed on the loose replay tuple. Deleted with
     /// `TacticReplayState` in phase 2.
     pub(in crate::lang::click::proof) fn edit_replay_cursor<R>(
         self,
         edit: impl FnOnce(&mut TacticReplayState, &CState, &ProofFacts) -> R,
+    ) -> Result<(Self, R), ClickError> {
+        self.edit_frontier_in_place(|_, execution, facts| {
+            edit(&mut execution.replay, &execution.state, facts)
+        })
+    }
+
+    /// Edits the focused frontier goal's execution snapshot in place. The
+    /// proof is consumed so a uniquely owned snapshot is edited without a
+    /// per-tactic clone; a shared snapshot is copied on write.
+    fn edit_frontier_in_place<R>(
+        self,
+        edit: impl FnOnce(&mut ProofState, &mut ExecutionProofState, &ProofFacts) -> R,
     ) -> Result<(Self, R), ClickError> {
         let Some(Goal::Frontier(goal)) = self.focused_goal().cloned() else {
             return Err(self.step_error("replay cursor editing requires an execution frontier"));
@@ -279,7 +313,7 @@ impl<'a> Proof<'a> {
             execution,
         } = goal_context;
         let mut execution = Arc::unwrap_or_clone(execution.ok_or(missing)?);
-        let result = edit(&mut execution.replay, &execution.state, &facts);
+        let result = edit(&mut proof_state, &mut execution, &facts);
         proof_state.goals = ProofGoals {
             open: proof_state.goals.open.with_inserted(
                 focused,
