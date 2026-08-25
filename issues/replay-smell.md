@@ -261,6 +261,60 @@ planner — run on boundary `Proof`s with no interpreter call in
    checked `Proof` transitions and verified expansion, then delete this
    file and its Open-list line.
 
+## Assessment after the law unification (2026-08-25)
+
+What has held up: applying the correction mechanically — one threaded
+`Proof`, delete a boundary per chunk, canaries as the arbiters — produced
+deletions every time (the 25 interpreter arms, six wrap/op/unwrap
+adapters, the loop-tactic function) and exposed two law divergences that
+were real defects (`have` search-rescuing a tampered explicit script,
+`frame using` deferred where the frontier owned the effect goal). The
+census-first move was right: the "convert the node recursion" framing
+turned out to be 28 claims; the other 150 were a routing gate plus law
+drift between two Proof-threaded linear drivers.
+
+What does not work: unifying a law by probing canaries one build at a
+time. That closes a *policy* divergence (`have`, `frame`) and cannot
+close a *capability* divergence. The smart `execute` gap is a
+capability gap: the replay-based planner derives call prerequisites
+under its Planning policy and publishes certified call postconditions
+as `have` steps because a replay certificate needs explicit steps to
+carry them; the Proof-native linear search has neither. Probing located
+that precisely (two attempts, both recorded above) and can do no more.
+
+Two conclusions for the next chunk:
+
+1. **Check the reframing before porting anything.** On the Proof, the
+   call postconditions the planner "publishes" already exist as
+   certified execution facts on the successor frontier. If the outcome
+   path (finalization's typed outcome goals and the outcome `simp`
+   search) consulted them, the linear search would need no publication
+   step at all, and the remaining gap would be prerequisite selection
+   only. If they do not reach the outcome reasoning, that is itself a
+   parallel-representation defect of the kind this issue exists to
+   remove, and fixing it there is the conformant repair. Decide this
+   with `list_roundtrip.contract` as the specimen: after the linear
+   search, inspect which facts the outcome goal for `ensures_3` can see.
+2. **Unify the law, not the strategy.** What a `step using` means is now
+   identical on both drivers. A smart tactic's search strategy may
+   depend on the goal shape, so one `execute` law with a typed gate —
+   linear search over checked descendants when the frontier's remaining
+   obligations are effect-only or no ambient facts exist (nothing can be
+   lost), the planner construction otherwise — satisfies both canary
+   families without a heuristic ordering. This is an hour of work and is
+   the cheapest way to unblock the routing deletions. Retiring the
+   replay-based planner construction itself is phase 3 work (it is
+   certificate-builder machinery), not a prerequisite for deleting the
+   fallback.
+
+Order for the next session, from a fresh context with this file as the
+brief: the typed gate with the effect-script and example canaries as
+arbiters; the `list_roundtrip` fact-visibility check; the flat driver
+adopting `replay_linear_tactics_on_proof`; deletion of
+`grouped_flat_proof_supported` and the structural routing gate; planner
+errors terminal in the direct drivers; then the 28 structural fallbacks
+and the node interpreter on the Proof structural operations.
+
 ## State census (2026-08-24)
 
 Taken after `proof_object.rs` was mechanically split into concern modules.
