@@ -151,20 +151,28 @@ planner — run on boundary `Proof`s with no interpreter call in
    flat — ~176 distinct claims, each its own shape. Continuing
    admission-by-shape would repeat the repudiated migration strategy.
    The conformant route is the original compositional-interpreter
-   design, executed as an in-place conversion:
-   `replay_linear_tactics_without_frontier_loops` keeps its exact arm
-   order, capture wrappers, and per-arm laws, but threads one `Proof`
-   instead of `(state, facts, replay, branch_path)` — every existing
-   wrap/op/unwrap round trip collapses into the op call it already
-   contains, leaving one transitional wrap/export pair at the function
-   boundary. All 25 tactic arms have Proof-op equivalents or
-   round-trip cores to inline (`execute_until`'s planner fallback is
-   the one parked gap: its port changed which pass captures the
-   tactic's expansion and a canary caught it). After the conversion,
-   the node interpreter (`execute_internal_proof`'s Linear/If/Open/
-   Branch recursion) converts the same way, the `claim_proofs.rs`
-   fallbacks and `OrderedProofUnit::Replay` delete, and the boundary
-   wrap/export pair goes with phase 2.
+   design, executed as an in-place conversion. The tactic interpreter
+   `replay_linear_tactics_without_frontier_loops` is converted: it keeps
+   its exact arm order, capture wrappers, and per-arm laws, but threads
+   one `Proof` instead of `(state, facts, replay, branch_path)`. Every
+   former wrap/op/unwrap round trip is now the op call it contained
+   (the smart `step`/`execute` planner fallbacks are the direct driver's
+   `apply_planned_smart_step`/`apply_planned_smart_execute` laws, the
+   `execute_until` planner core is inlined on the threaded Proof, and
+   the smart `transport` pre-pass applies the explicit `transport using`
+   law). One transitional wrap/export pair remains at the function
+   boundary, plus two cursor adapters in `replay_boundary.rs`
+   (`begin_source_tactic`/`edit_replay_cursor` and `replay_cursor`) for
+   the surface-scope, capture, and deferral bookkeeping the loop used to
+   perform on the loose tuple; all go with phase 2. Threading made one
+   policy explicit: a source tactic starts with an empty step delta,
+   because the broader smart-step selector treats the most recent
+   step's added facts as premise candidates (canary:
+   `explicit_fact_transport_can_certify_a_derived_source`). What remains
+   of this phase: the node interpreter (`execute_internal_proof`'s
+   Linear/If/Open/Branch recursion, and `replay_linear_tactics`'
+   frontier-local loop chunking) converts the same way, then the
+   `claim_proofs.rs` fallbacks and `OrderedProofUnit::Replay` delete.
 2. **Dissolve `TacticReplayState`.** Move the remaining semantic fields
    into typed `Proof` state (several already have typed twins — delete the
    replay copy), move source locations, expansion selection, and
@@ -260,13 +268,11 @@ Nothing is expansion-only: `click expand` threads capture state through the
 identical verification paths, so every site above is on ordinary
 verification.
 
-`tactic_replay.rs` contains roughly twenty wrap/op/unwrap round trips
-(`try_smart_step_on_proof` and friends, plus inline per-tactic arms): each
-constructs a `ProofReplayContext` from loose locals, builds a `Proof` via
-`for_execution_frontier`, applies one checked operation, exports the state
-back through `into_execution_context`, and pushes the certificate steps
-into `proof_certificate_builder`. These are pure step-2 casualties; no
-individual site needs its own migration.
+`tactic_replay.rs` formerly contained roughly twenty wrap/op/unwrap round
+trips (`try_smart_step_on_proof` and friends, plus inline per-tactic
+arms). The phase-1 interpreter conversion deleted them: the tactic loop
+threads one `Proof`, and its only remaining boundary is the wrap/export
+pair at the function boundary, a phase-2 casualty.
 
 `finalization_view` has three readers: the ordered outcome drain
 (`claim_proofs.rs:1521`), deferred expansion capture

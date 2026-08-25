@@ -815,28 +815,23 @@ fn replay_linear_tactics_without_frontier_loops(
     tactics: &[IndexedTactic],
 ) -> Result<ProofReplayContext, ClickError> {
     // Transitional function-boundary wrap (`issues/replay-smell.md`, phase
-    // 1): one Proof is threaded through the tactic arms below, and the
+    // 1): one Proof is threaded through every tactic arm below, and the
     // export at the end of this function is the last replay-context
-    // boundary, deleted with phase 2. An arm that still speaks the replay
-    // tuple exports the Proof for exactly its own operation and re-wraps
-    // the result; converting an arm deletes that pair.
-    let rewrap = |context: ProofReplayContext, tactic_index: usize| {
-        Proof::for_execution_frontier(
-            claim_label,
-            tactic_index,
-            context,
-            function_block,
-            function,
-            parsed_function,
-            arguments,
-            function_environment,
-            resource_environment,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-        )
-    };
-    let mut proof = rewrap(context, tactics.first().map_or(0, |indexed| indexed.index));
+    // boundary, deleted with phase 2.
+    let mut proof = Proof::for_execution_frontier(
+        claim_label,
+        tactics.first().map_or(0, |indexed| indexed.index),
+        context,
+        function_block,
+        function,
+        parsed_function,
+        arguments,
+        function_environment,
+        resource_environment,
+        predicate_environment,
+        click_function_environment,
+        theorem_environment,
+    );
 
     for indexed_tactic in tactics {
         if crate::instrumentation::deadline_exceeded() {
