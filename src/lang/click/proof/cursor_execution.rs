@@ -1995,14 +1995,31 @@ fn execute_step_from_execution_point_selecting_path(
         // followed by facts from the false loop-condition path. Preserve that
         // structural association instead of searching the ambient context for
         // a proposition that happens to match.
-        let mut invariant_targets = transition.pure_facts.iter().filter(|fact| {
-            !available_pure_facts.contains(fact)
-                && !matches!(
-                    fact,
-                    Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CMemoryMutatesOnly { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
-                )
+        // Isolate the rule's exported facts as the exact successor suffix
+        // beyond the unchanged input prefix. A membership filter would
+        // misalign the positional invariant mapping whenever an exported
+        // fact is already available in a richer goal context.
+        let exported: Vec<&Proposition> = if transition.pure_facts.len()
+            >= available_pure_facts.len()
+            && transition.pure_facts[..available_pure_facts.len()] == available_pure_facts[..]
+        {
+            transition.pure_facts[available_pure_facts.len()..]
+                .iter()
+                .collect()
+        } else {
+            transition
+                .pure_facts
+                .iter()
+                .filter(|fact| !available_pure_facts.contains(fact))
+                .collect()
+        };
+        let mut invariant_targets = exported.into_iter().filter(|fact| {
+            !matches!(
+                fact,
+                Proposition::CMemoryEffectSummary { .. }
+                    | Proposition::CMemoryMutatesOnly { .. }
+                    | Proposition::CHeapLifetimeRetired { .. }
+            )
         });
         let mut mapped_invariants = Vec::new();
         for surface in loop_clause

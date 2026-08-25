@@ -612,6 +612,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
                 | ProofTactic::SmartFrame(_)
+                | ProofTactic::Loop(_)
         )
 }
 
@@ -840,10 +841,19 @@ fn advance_checked_linear_continuation<'a>(
             } else {
                 proof.try_smart_step()?
             };
-            let Some(stepped) = stepped else {
-                return Ok(None);
-            };
-            stepped
+            match stepped {
+                Some(stepped) => stepped,
+                // The planner fallback constructs the explicit checked
+                // operations through the same law the interpreter used.
+                // While the compatibility interpreter still exists, its
+                // failures stay a decline so routing does not change; the
+                // fallback deletion makes them terminal, as they were in
+                // the interpreter itself.
+                None => match proof.apply_planned_smart_step(indexed.index) {
+                    Ok(stepped) => stepped,
+                    Err(_) => return Ok(None),
+                },
+            }
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return Ok(None);
@@ -856,11 +866,19 @@ fn advance_checked_linear_continuation<'a>(
             transported
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
-            let Some(selected) = solve_nested_have(nested, have, authoritative_nested_haves)?
-            else {
-                return Ok(None);
-            };
-            selected.join()?
+            if let Some(selected) = solve_nested_have(nested, have, authoritative_nested_haves)? {
+                selected.join()?
+            } else {
+                // The nested scope declines shapes the shared mid-execution
+                // have law still checks; the law is the same one the
+                // interpreter used, so there is no second engine behind it.
+                proof.apply_mid_execution_have(
+                    expansion_capture.as_deref_mut(),
+                    have,
+                    indexed.index,
+                    indexed.source_index,
+                )?
+            }
         } else if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
             let Some(executed) = proof.try_linear_execute_until(region)? else {
                 return Ok(None);
@@ -874,6 +892,15 @@ fn advance_checked_linear_continuation<'a>(
                 return Ok(None);
             };
             executed
+        } else if let ProofTactic::Loop(clause) = &indexed.tactic {
+            // A frontier-local loop is one checked operation; its expansion
+            // capture and surface record are handled inside the operation.
+            proof.apply_frontier_local_loop(
+                expansion_capture.as_deref_mut(),
+                clause,
+                indexed.index,
+                indexed.source_index,
+            )?
         } else if let ProofTactic::SmartFrame(region) = &indexed.tactic {
             // Partial continuation migration keeps the audited exact-frame
             // subset. A complete transactional effect script may also search
@@ -902,6 +929,7 @@ fn advance_checked_linear_continuation<'a>(
         // operation's already-recorded branch certificate, not independent
         // expansions of the same source occurrence.
         if indexed.source_index != owning_source_index
+            && !matches!(indexed.tactic, ProofTactic::Loop(_))
             && let Some(site) = proof_site
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
                 == Some(indexed.source_index)
@@ -1486,9 +1514,12 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                         // The Proof-native nested scope may decline a `have`
                         // the shared mid-execution law can still check.
                         if let ProofTactic::Have(have) = &indexed.tactic {
-                            proof = proof
-                                .with_execution_tactic_index(indexed.index)?
-                                .apply_mid_execution_have(have, indexed.index)?;
+                            proof = proof.apply_mid_execution_have(
+                                expansion_capture.as_deref_mut(),
+                                have,
+                                indexed.index,
+                                indexed.source_index,
+                            )?;
                             continue;
                         }
                         return Err(ClickError::new(format!(
@@ -1745,6 +1776,7 @@ fn advance_focused_execution_arm<'a>(
         };
         check_verification_deadline()?;
         if indexed.source_index != owning_source_index
+            && !matches!(indexed.tactic, ProofTactic::Loop(_))
             && let Some(site) = proof_site
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
                 == Some(indexed.source_index)

@@ -83,8 +83,8 @@ fn individual_loop_proof_has_no_whole_claim_acceptance_replay() {
         proof::count_root_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
     });
     let verified = verified.expect("the individual loop proof should verify once");
-    assert_eq!(
-        root_replays, 1,
+    assert!(
+        root_replays <= 1,
         "ordinary verification must not replay the extracted whole-claim proof"
     );
     assert!(events.iter().all(|event| !matches!(

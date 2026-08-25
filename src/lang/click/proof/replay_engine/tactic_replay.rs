@@ -50,7 +50,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
     tactic_index: usize,
-) -> Result<(), ClickError> {
+) -> Result<Option<ProofCertificate>, ClickError> {
     let _have_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "contract have replay");
     let mut have_facts = pure_facts.clone();
@@ -157,6 +157,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             (fact, None)
         }
     };
+    let retained_certificate = surface_certificate.clone();
     if let Some(certificate) = surface_certificate {
         for step in certificate.steps() {
             replay.proof_certificate_builder.push_step(step.clone());
@@ -225,7 +226,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     if !pure_facts.contains(&fact) {
         pure_facts.push(fact.clone());
     }
-    Ok(())
+    Ok(retained_certificate)
 }
 
 pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
@@ -245,7 +246,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     claim_label: &str,
     tactic_index: usize,
     source_index: usize,
-) -> Result<(), ClickError> {
+) -> Result<StructuralClause, ClickError> {
     if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop, but execution has reached function exit"
@@ -500,8 +501,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     replay.frontier_loop_rules.push(loop_rule);
     replay
         .proof_certificate_builder
-        .push_source_tactic(ProofTactic::Loop(expanded_loop));
-    Ok(())
+        .push_source_tactic(ProofTactic::Loop(expanded_loop.clone()));
+    Ok(expanded_loop)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2686,7 +2687,7 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     continue;
                 }
-                check_mid_execution_have(
+                let _ = check_mid_execution_have(
                     have,
                     &mut replay,
                     &state,

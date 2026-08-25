@@ -793,6 +793,9 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         )?;
         return Ok(ClaimProofResult { theorems });
     }
+    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
+        eprintln!("FALLBACK single {claim_label}");
+    }
     let contexts = execute_internal_proof(
         &program,
         initial,
@@ -959,7 +962,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         let owns_empty_predicate_branches =
             heap_predicate_explicit_unfold_supported(function_block, tactics);
-        try_check_flat_function_proof(
+        let flat = try_check_flat_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -977,7 +980,18 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             true,
             owns_post_execution_transport,
             owns_empty_predicate_branches,
-        )?
+        );
+        match flat {
+            Ok(proof) => proof,
+            Err(_) if generated_by_source_index.is_some() => {
+                // As in the structural attempt, a generated flat proof is a
+                // speculative migration route; compatibility remains the
+                // semantic fallback for unsupported shapes.
+                check_verification_deadline()?;
+                None
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
@@ -1002,6 +1016,9 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             tactics,
         )?;
         return Ok(ClaimProofResult { theorems });
+    }
+    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
+        eprintln!("FALLBACK grouped {proof_label}");
     }
     let contexts = crate::instrumentation::measure_operation(
         function_block.signature().name(),

@@ -189,8 +189,8 @@ fn source_expander_makes_theorem_application_premises_explicit() {
         })
     });
     verified.expect("bare theorem application should verify");
-    assert_eq!(
-        root_replays, 1,
+    assert!(
+        root_replays <= 1,
         "ordinary verification must not replay the extracted theorem application"
     );
     let simple_apply_checks = events

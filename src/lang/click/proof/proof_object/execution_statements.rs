@@ -630,9 +630,12 @@ impl<'a> Proof<'a> {
     /// The law records its own surface certificate and lowerings.
     pub(in crate::lang::click::proof) fn apply_mid_execution_have(
         &self,
+        expansion_capture: Option<&mut ExpansionCapture>,
         have: &ProofHave,
         tactic_index: usize,
+        source_index: usize,
     ) -> Result<Self, ClickError> {
+        let mut expansion_capture = expansion_capture;
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`have` requires an execution-frontier proof"));
         };
@@ -645,7 +648,13 @@ impl<'a> Proof<'a> {
         let state = (*execution.state).clone();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
-        check_mid_execution_have(
+        let mut scope = Some(begin_tactic_surface_scope(&mut execution.replay));
+        let capture_this_tactic = begin_tactic_expansion_capture(
+            expansion_capture.as_deref_mut(),
+            source_index,
+            &execution.replay,
+        );
+        let smart_certificate = check_mid_execution_have(
             have,
             &mut execution.replay,
             &state,
@@ -659,11 +668,49 @@ impl<'a> Proof<'a> {
             context.claim_label,
             tactic_index,
         )?;
+        let slice = end_tactic_surface_scope(
+            &mut execution.replay,
+            scope.take().expect("tactic scope is open"),
+        );
+        if capture_this_tactic {
+            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
+        }
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();
         for fact in &added {
             proof_facts = proof_facts.with_fact(fact.clone());
         }
+        // Retain the checked `have` as provenance: a smart body keeps the
+        // law's selected surface operations; an explicit body keeps its own
+        // script. Expansion serializes this node, never the aftermath.
+        let have_step = match (smart_certificate, &have.proof) {
+            // The law's surface certificate is already the complete checked
+            // form, including the `have` wrapper when it selected one.
+            (Some(certificate), _) => match certificate.steps() {
+                [step @ SimpleProofStep::Have { .. }] => step.clone(),
+                _ => SimpleProofStep::Have {
+                    proposition: have.proposition.clone(),
+                    proof: Box::new(certificate),
+                },
+            },
+            (None, SourceProof::Script(tactics)) => SimpleProofStep::Have {
+                proposition: have.proposition.clone(),
+                proof: Box::new(ProofCertificate::from_proof_tactics(tactics).map_err(
+                    |error| {
+                        self.step_error(format!(
+                            "`have` body is not surface-expressible: {error:?}"
+                        ))
+                    },
+                )?),
+            },
+            (None, _) => SimpleProofStep::Have {
+                proposition: have.proposition.clone(),
+                proof: Box::new(
+                    ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
+                        .expect("assumption is a simple proof"),
+                ),
+            },
+        };
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -675,7 +722,12 @@ impl<'a> Proof<'a> {
                 added_facts: Arc::new(added),
                 checked_facts: Arc::new(Vec::new()),
             }),
-            node: self.node.clone(),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: Some(Arc::new(have_step)),
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
             focused: self.focused,
         })
     }
@@ -791,7 +843,7 @@ impl<'a> Proof<'a> {
             &ProofTactic::Loop(loop_clause.clone()),
             execution.replay.frontier.next_statement_index,
         );
-        execute_frontier_local_loop(
+        let expanded_loop = execute_frontier_local_loop(
             expansion_capture.as_deref_mut(),
             loop_clause,
             &mut execution.replay,
@@ -823,6 +875,19 @@ impl<'a> Proof<'a> {
         for fact in &added {
             proof_facts = proof_facts.with_fact(fact.clone());
         }
+        // Retain the expanded loop clause as checked provenance so
+        // whole-claim expansion serializes it without consulting the
+        // transitional builder record.
+        let loop_step = ProofCertificate::from_proof_tactics(std::slice::from_ref(
+            &ProofTactic::Loop(expanded_loop),
+        ))
+        .map_err(|error| {
+            self.step_error(format!(
+                "`loop` produced an invalid expanded clause: {error:?}"
+            ))
+        })?
+        .steps()[0]
+            .clone();
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -834,7 +899,12 @@ impl<'a> Proof<'a> {
                 added_facts: Arc::new(added),
                 checked_facts: Arc::new(Vec::new()),
             }),
-            node: self.node.clone(),
+            node: Arc::new(ProofNode {
+                parent: Some(self.node.clone()),
+                step: Some(Arc::new(loop_step)),
+                focused: self.focused,
+                depth: self.node.depth,
+            }),
             focused: self.focused,
         })
     }
