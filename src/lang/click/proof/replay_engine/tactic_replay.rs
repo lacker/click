@@ -1156,61 +1156,24 @@ fn replay_linear_tactics_without_frontier_loops(
         if let ProofTactic::ApplyTheorem(application) = tactic
             && !at_function_exit
         {
-            let ProofReplayContext {
-                mut state,
-                pure_facts: mut requirement_pure_facts,
-                mut replay,
-                mut branch_path,
-            } = proof.into_execution_context()?;
             if theorem_environment.get(&application.name).is_none() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
                     application.name
                 )));
             }
-            let arm_proof = Proof::for_execution_frontier(
-                claim_label,
-                tactic_index,
-                ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    replay,
-                    branch_path,
-                },
-                function_block,
-                function,
-                parsed_function,
-                arguments,
-                function_environment,
-                resource_environment,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-            );
-            let arm_proof = arm_proof.apply_theorem_application(application)?;
-            let certificate = arm_proof.certificate();
-            let result = arm_proof.into_execution_context()?;
-            state = result.state;
-            requirement_pure_facts = result.pure_facts;
-            replay = result.replay;
-            branch_path = result.branch_path;
-            for step in certificate.steps() {
-                replay.proof_certificate_builder.push_step(step.clone());
-            }
-            let slice =
-                end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
+            let checkpoint = proof.checkpoint();
+            let applied = proof.apply_theorem_application(application)?;
+            let certificate = applied.certificate_since(&checkpoint)?;
+            let (next, slice) = applied
+                .record_surface_steps(certificate.steps())?
+                .edit_replay_cursor(|replay, _, _| {
+                    end_tactic_surface_scope(replay, scope.take().expect("tactic scope is open"))
+                })?;
+            proof = next;
             if capture_this_tactic {
                 finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
-            proof = rewrap(
-                ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    replay,
-                    branch_path,
-                },
-                tactic_index,
-            );
             continue;
         }
         match tactic {
