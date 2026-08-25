@@ -2121,36 +2121,29 @@ fn replay_linear_tactics_without_frontier_loops(
                 )));
             }
             ProofTactic::Simp => {
-                let ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    mut replay,
-                    branch_path,
-                } = proof.into_execution_context()?;
-                if replay.frontier.region != ExecutionRegionKind::LoopBody {
-                    require_function_exit(&replay, claim_label, tactic_index, "simp")?;
+                if frontier_region != ExecutionRegionKind::LoopBody {
+                    require_function_exit(
+                        proof.replay_cursor()?,
+                        claim_label,
+                        tactic_index,
+                        "simp",
+                    )?;
                 }
-                if replay.frontier.region == ExecutionRegionKind::LoopBody {
-                    replay.region_simp = Some((tactic_index, source_index));
+                if frontier_region == ExecutionRegionKind::LoopBody {
+                    let (recorded, ()) = proof.edit_replay_cursor(|replay, _, _| {
+                        replay.region_simp = Some((tactic_index, source_index));
+                    })?;
+                    proof = recorded;
                 }
-                if replay.frontier.region == ExecutionRegionKind::Function
-                    && replay.is_at_function_exit()
-                {
-                    replay.defer_post_execution(
+                if frontier_region == ExecutionRegionKind::Function && at_function_exit {
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
                         source_index,
                         PostExecutionTactic::Simp,
-                    );
+                        None,
+                    )?;
                 }
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
             }
         }
         let (next, slice) = proof.edit_replay_cursor(|replay, _, _| {
