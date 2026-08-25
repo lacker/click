@@ -1007,150 +1007,109 @@ fn replay_linear_tactics_without_frontier_loops(
         } = tactic
             && !at_function_exit
         {
-            let ProofReplayContext {
-                state,
-                pure_facts: mut requirement_pure_facts,
-                mut replay,
-                branch_path,
-            } = proof.into_execution_context()?;
-            let assumptions = assumptions_from_propositions(&requirement_pure_facts);
-            if replay.is_at_function_entry() || replay.is_at_function_exit() {
+            if at_function_entry || at_function_exit {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                 )));
             }
-            let pre_state = replay.old_reference_state(&state).clone();
-            let source = lower_point_proposition(
-                surface_source,
-                &requirement_pure_facts,
-                parsed_function.parameters(),
-                arguments,
-                &pre_state,
-                &state,
-                None,
-                &replay.program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
-                ))
-            })?;
-            if assumptions.derive_proposition(&source).is_none() {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `transport` requires a source derivable from its ambient facts: {}",
-                    describe_missing_pure_fact(
-                        &source,
-                        &requirement_pure_facts,
-                        state.resources().facts(),
-                        parsed_function.parameters(),
-                        arguments,
-                        &replay.effect_facts,
-                    )
-                )));
-            }
-            let target = lower_point_proposition(
-                surface_target,
-                &requirement_pure_facts,
-                parsed_function.parameters(),
-                arguments,
-                &pre_state,
-                &state,
-                None,
-                &replay.program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
-                ))
-            })?;
-            let transition_facts = fact_transport_transition_facts(&replay.effect_facts, &source);
-            let premises = plan_explicit_fact_transport(
-                surface_source,
-                &source,
-                &target,
-                &requirement_pure_facts,
-                &transition_facts,
-                parsed_function.parameters(),
-                arguments,
-                &replay,
-                &state,
-                predicate_environment,
-                click_function_environment,
-            )
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: {}",
-                    fact_transport_planning_failure(
-                        surface_source,
-                        surface_target,
-                        &replay.unfolded_predicates,
-                        &error,
-                    )
-                ))
-            })?;
-            let arm_proof = Proof::for_point_frontier(
-                claim_label,
-                tactic_index,
-                &requirement_pure_facts,
-                parsed_function.parameters(),
-                arguments,
-                &pre_state,
-                &state,
-                None,
-                &replay.program_point_states,
-                &replay.surface_propositions,
-                predicate_environment,
-                click_function_environment,
-                theorem_environment,
-                &replay.unfolded_predicates,
-                &replay.effect_facts,
-            );
-            let arm_proof = arm_proof.apply_step(SimpleProofStep::TransportUsing {
+            // Premise planning reads the frontier; the checked transition is
+            // the explicit `transport using` law on the threaded Proof, which
+            // records the checker-owned lowerings itself.
+            let premises = {
+                let view = proof.finalization_view()?;
+                let (state, replay, facts) = (view.state, view.replay, &view.facts);
+                let assumptions = assumptions_from_propositions(facts);
+                let pre_state = replay.old_reference_state(state);
+                let source = lower_point_proposition(
+                    surface_source,
+                    facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    pre_state,
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
+                    ))
+                })?;
+                if assumptions.derive_proposition(&source).is_none() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `transport` requires a source derivable from its ambient facts: {}",
+                        describe_missing_pure_fact(
+                            &source,
+                            facts,
+                            state.resources().facts(),
+                            parsed_function.parameters(),
+                            arguments,
+                            &replay.effect_facts,
+                        )
+                    )));
+                }
+                let target = lower_point_proposition(
+                    surface_target,
+                    facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    pre_state,
+                    state,
+                    None,
+                    &replay.program_point_states,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
+                    ))
+                })?;
+                let transition_facts =
+                    fact_transport_transition_facts(&replay.effect_facts, &source);
+                plan_explicit_fact_transport(
+                    surface_source,
+                    &source,
+                    &target,
+                    facts,
+                    &transition_facts,
+                    parsed_function.parameters(),
+                    arguments,
+                    replay,
+                    state,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: {}",
+                        fact_transport_planning_failure(
+                            surface_source,
+                            surface_target,
+                            &replay.unfolded_predicates,
+                            &error,
+                        )
+                    ))
+                })?
+            };
+            let checkpoint = proof.checkpoint();
+            let transported = proof.apply_step(SimpleProofStep::TransportUsing {
                 source: surface_source.clone(),
                 target: surface_target.clone(),
                 premises,
             })?;
-            let added_facts = arm_proof.added_facts().to_vec();
-            let checked_facts = arm_proof.checked_facts().to_vec();
-            let certificate = arm_proof.certificate();
-            drop(arm_proof);
-            let [checked_source, checked_target] = checked_facts.as_slice() else {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: checked transport did not retain its source and target"
-                )));
-            };
-            replay
-                .surface_propositions
-                .record_lowering(surface_source, checked_source)?;
-            replay
-                .surface_propositions
-                .record_lowering(surface_target, checked_target)?;
-            for fact in &added_facts {
-                if !requirement_pure_facts.contains(fact) {
-                    requirement_pure_facts.push(fact.clone());
-                }
-            }
-            for step in certificate.steps() {
-                replay.proof_certificate_builder.push_step(step.clone());
-            }
-            let slice =
-                end_tactic_surface_scope(&mut replay, scope.take().expect("tactic scope is open"));
+            let certificate = transported.certificate_since(&checkpoint)?;
+            let (next, slice) = transported
+                .record_surface_steps(certificate.steps())?
+                .edit_replay_cursor(|replay, _, _| {
+                    end_tactic_surface_scope(replay, scope.take().expect("tactic scope is open"))
+                })?;
+            proof = next;
             if capture_this_tactic {
                 finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
             }
-            proof = rewrap(
-                ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    replay,
-                    branch_path,
-                },
-                tactic_index,
-            );
             continue;
         }
         if let ProofTactic::ApplyTheorem(application) = tactic
