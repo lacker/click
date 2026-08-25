@@ -340,23 +340,33 @@ duplicated "is this a preservation region or a whole function", which
 `ExecutionFrontier.region` now answers as typed identity; their readers
 consult the region kind directly.
 
-Next, the preservation port: `verify_one_loop_preservation_proof` and
-the automatic preservation planner are the remaining two production
-entry points into `execute_internal_proof` outside the whole-function
-fallbacks. The typed boundary removes what blocked the reverted
-experiment — a preservation `Proof` is an ordinary bounded-region
-frontier whose acceptance state is `is_at_region_boundary()` instead
-of function exit. The port needs, in order: a boundary-oriented
-acceptance mode in the structural drivers (which today require
-function exit and drain outcomes); case-path extraction from recorded
-split decisions on the boundary descendants instead of replay
-`case_assumptions`; the invariant bundle and structural-effect
-obligations certified on the same boundary `Proof` rather than
-re-wrapped per back-edge context; and the planner's worklist becoming
-bounded smart search over persistent boundary-region descendants,
-deleting the clone-context-per-candidate replay loop. Measure at the
-two `execute_internal_proof` call sites in `loop_planning.rs`. After
-that, unify function exit and the back-edge as instances of one
+Preservation checking is ported: `verify_one_loop_preservation_proof`
+no longer calls `execute_internal_proof`. A dedicated recursive driver
+(`advance_preservation_region`) interprets the preservation program on
+one boundary-region `Proof`: linear tactics run through the shared
+checked linear driver, proof-level `if` arms split through the one
+shared case-assumption law (`split_preservation_case`) and stay
+separate to their leaves, C `branch` and `open` reuse the structural
+drivers, nested frontier-local `loop` tactics apply as one checked
+operation (`apply_frontier_local_loop`), and every leaf must rest at
+the typed back-edge boundary. The invariant bundle certifies on the
+leaf `Proof` directly — the per-context re-wrap through
+`Proof::for_execution_frontier` is deleted — with the closer extracted
+by `certificate_since` a checkpoint rather than the whole lineage.
+The mid-execution `have` law was extracted (`check_mid_execution_have`)
+and is shared by the legacy interpreter and the driver's
+`apply_mid_execution_have`; the region `simp` and `close_invariants`
+attribution are cursor-only ops. Per-path surface records come from
+`record_surface_steps` pushing each tactic's checked certificate delta,
+which keeps `certificate_leaf_for_case_path` and expansion rendering
+byte-compatible with the replayed form.
+
+Remaining `execute_internal_proof` entry points: the automatic
+preservation planner's worklist (`plan_automatic_loop_preservation_body`)
+and the two whole-function fallbacks. The planner port makes its
+worklist bounded smart search over persistent boundary-region
+descendants, deleting the clone-context-per-candidate replay loop.
+After that, unify function exit and the back-edge as instances of one
 boundary mechanism when the frontier migrates onto `Proof` (step 2).
 Each chunk scores by the replay field or fallback it deletes, never by
 adding a guarded path beside a retained fallback.

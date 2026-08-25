@@ -337,7 +337,9 @@ fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]
     }
 }
 
-fn internal_proof_first_index(node: &InternalProofNode) -> Option<usize> {
+pub(in crate::lang::click::proof) fn internal_proof_first_index(
+    node: &InternalProofNode,
+) -> Option<usize> {
     match node {
         InternalProofNode::Done => None,
         InternalProofNode::Linear {
@@ -1394,6 +1396,265 @@ fn solve_nested_have<'a>(
     Ok(selected.filter(ProofScope::is_complete))
 }
 
+/// Drives one preservation program region on the typed boundary `Proof`.
+/// `pending` is the stack of continuation nodes still owed to the current
+/// path, innermost first. Proof-level `if` arms stay separate — a
+/// preservation path never rejoins across the back edge — so every leaf
+/// reaches the loop's typed boundary and is collected for the caller's
+/// per-path bundle, certificate, and effect processing. There is no
+/// compatibility fallback: a tactic outside the checked operations is a
+/// prompt failure naming the tactic.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
+    mut proof: Proof<'a>,
+    node: &InternalProofNode,
+    pending: &[&InternalProofNode],
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    claim_label: &str,
+    leaves: &mut Vec<Proof<'a>>,
+) -> Result<Proof<'a>, ClickError> {
+    check_verification_deadline()?;
+    match node {
+        InternalProofNode::Done => {
+            let Some((next, rest)) = pending.split_first() else {
+                if !proof.is_at_region_boundary() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` must execute exactly one complete loop-body iteration"
+                    )));
+                }
+                leaves.push(proof.clone());
+                return Ok(proof);
+            };
+            advance_preservation_region(
+                proof,
+                next,
+                rest,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+            )
+        }
+        InternalProofNode::Linear {
+            tactics,
+            continuation,
+        } => {
+            for indexed in tactics {
+                let handled_by_linear_driver = !matches!(
+                    indexed.tactic,
+                    ProofTactic::Loop(_) | ProofTactic::Simp | ProofTactic::SmartStep
+                );
+                if handled_by_linear_driver {
+                    let segment = InternalProofNode::Linear {
+                        tactics: vec![indexed.clone()],
+                        continuation: Box::new(InternalProofNode::Done),
+                    };
+                    let checkpoint = proof.checkpoint();
+                    let advanced = advance_checked_linear_continuation(
+                        proof.clone(),
+                        &segment,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        false,
+                        true,
+                        false,
+                        Some(claim_label),
+                    )?
+                    .filter(|(_, unconsumed)| unconsumed.is_empty());
+                    let Some((advanced, _)) = advanced else {
+                        // The Proof-native nested scope may decline a `have`
+                        // the shared mid-execution law can still check.
+                        if let ProofTactic::Have(have) = &indexed.tactic {
+                            proof = proof
+                                .with_execution_tactic_index(indexed.index)?
+                                .apply_mid_execution_have(have, indexed.index)?;
+                            continue;
+                        }
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {}: `{}` did not verify as a checked preservation operation",
+                            indexed.index,
+                            tactic_name(&indexed.tactic)
+                        )));
+                    };
+                    let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
+                    proof = advanced.record_surface_steps(&steps)?;
+                    if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
+                        proof =
+                            proof.record_invariant_closer(indexed.index, indexed.source_index)?;
+                    }
+                    continue;
+                }
+                match &indexed.tactic {
+                    ProofTactic::SmartStep => {
+                        let checkpoint = proof.checkpoint();
+                        proof = if let Some(stepped) = proof.try_smart_step()? {
+                            stepped
+                        } else {
+                            proof.apply_planned_smart_step(indexed.index)?
+                        };
+                        let steps = proof.certificate_since(&checkpoint)?.steps().to_vec();
+                        proof = proof.record_surface_steps(&steps)?;
+                        if indexed.source_index != owning_source_index
+                            && let Some(site) = proof_site
+                            && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
+                                == Some(indexed.source_index)
+                        {
+                            let certificate = proof.certificate_since(&checkpoint)?;
+                            record_proof_site_tactic_expansion(
+                                expansion_capture.as_deref_mut(),
+                                site,
+                                indexed.source_index,
+                                &certificate.to_proof_tactics(),
+                            );
+                        }
+                    }
+                    ProofTactic::Loop(clause) => {
+                        proof = proof.apply_frontier_local_loop(
+                            expansion_capture.as_deref_mut(),
+                            clause,
+                            indexed.index,
+                            indexed.source_index,
+                        )?;
+                    }
+                    ProofTactic::Simp => {
+                        // The region simp's semantic content is the bundle
+                        // closer certified at the boundary; its capture
+                        // completes with that closer.
+                        proof = proof.defer_region_simp(indexed.index, indexed.source_index)?;
+                    }
+                    tactic => {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {}: `{}` is not a checked preservation operation",
+                            indexed.index,
+                            tactic_name(tactic)
+                        )));
+                    }
+                }
+            }
+            advance_preservation_region(
+                proof,
+                continuation,
+                pending,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+            )
+        }
+        InternalProofNode::If {
+            index,
+            condition,
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let (split, ids) = proof.split_preservation_case(condition, *index)?;
+            let mut arm_pending: Vec<&InternalProofNode> = Vec::with_capacity(pending.len() + 1);
+            arm_pending.push(continuation.as_ref());
+            arm_pending.extend_from_slice(pending);
+            let mut advanced = split;
+            for (value, arm) in [(true, then_branch), (false, else_branch)] {
+                let Some(id) = ids[usize::from(!value)] else {
+                    continue;
+                };
+                let focused = advanced.focus(id)?;
+                advanced = advance_preservation_region(
+                    focused,
+                    arm,
+                    &arm_pending,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                    claim_label,
+                    leaves,
+                )?;
+            }
+            Ok(advanced)
+        }
+        InternalProofNode::Branch {
+            index,
+            ensuring,
+            then_branch,
+            else_branch,
+            continuation,
+            ..
+        } => {
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let checkpoint = proof.checkpoint();
+            let Some((advanced, _, _)) = try_advance_checked_execution_branch(
+                proof,
+                *index,
+                ensuring,
+                then_branch,
+                else_branch,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+                0,
+            )?
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {index}: `branch` did not verify as a checked preservation operation"
+                )));
+            };
+            let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
+            let advanced = advanced.record_surface_steps(&steps)?;
+            advance_preservation_region(
+                advanced,
+                continuation,
+                pending,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+            )
+        }
+        InternalProofNode::Open {
+            index,
+            source_index,
+            resource,
+            body,
+            continuation,
+        } => {
+            let proof = proof.with_execution_tactic_index(*index)?;
+            let checkpoint = proof.checkpoint();
+            let scope = proof.begin_open(resource.clone(), *source_index)?;
+            let Some(scope) = advance_checked_open_scope(
+                scope,
+                body,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+            )?
+            else {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {index}: `open` did not verify as a checked preservation operation"
+                )));
+            };
+            let proof = scope.join()?;
+            let steps = proof.certificate_since(&checkpoint)?.steps().to_vec();
+            let proof = proof.record_surface_steps(&steps)?;
+            advance_preservation_region(
+                proof,
+                continuation,
+                pending,
+                expansion_capture,
+                proof_site,
+                owning_source_index,
+                claim_label,
+                leaves,
+            )
+        }
+    }
+}
 /// Advances one sibling arm of an in-`Proof` execution split through its
 /// linear source tactics, on a proof focused at that arm's recorded goal.
 /// Every operation is the ordinary focused `Proof` form; the bounded arm
@@ -3425,7 +3686,7 @@ fn execute_internal_proof_inner(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn introduce_proof_case_assumption(
+pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     context: &mut ProofReplayContext,
     condition: &ClickProposition,
     value: bool,

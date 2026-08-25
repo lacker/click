@@ -33,7 +33,202 @@ fn tactic_is_deferred_post_execution(tactic: &ProofTactic) -> bool {
     )
 }
 
-fn execute_frontier_local_loop(
+/// The one mid-execution `have` law: checked point proof first, generated
+/// smart plan second, direct derivation last, with the entry-prerequisite,
+/// surface-lowering, and certificate-fact recording every caller shares.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::lang::click::proof) fn check_mid_execution_have(
+    have: &ProofHave,
+    replay: &mut TacticReplayState,
+    state: &CState,
+    pure_facts: &mut Vec<Proposition>,
+    function_block: &FunctionBlock,
+    parsed_function: &syntax::C0Function,
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    theorem_environment: &TheoremEnvironment,
+    claim_label: &str,
+    tactic_index: usize,
+) -> Result<(), ClickError> {
+    let _have_span =
+        crate::instrumentation::OperationTiming::new("have", claim_label, "contract have replay");
+    let mut have_facts = pure_facts.clone();
+    have_facts.extend(
+        replay
+            .effect_facts
+            .iter()
+            .map(|fact| fact.proposition().clone()),
+    );
+    for fact in replay.surface_propositions.kernel_facts() {
+        if !have_facts.contains(fact) {
+            have_facts.push(fact.clone());
+        }
+    }
+    let checked_proof_result = checked_have_with_proof(
+        have,
+        theorem_environment,
+        claim_label,
+        tactic_index,
+        &have_facts,
+        parsed_function.parameters(),
+        arguments,
+        replay.old_reference_state(&state),
+        &state,
+        None,
+        None,
+        &replay,
+        &replay.surface_propositions,
+        predicate_environment,
+        click_function_environment,
+        function_block.requires(),
+        function_block.requirement_label_indices(),
+        None,
+    )?;
+    let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
+    // Search may materialize a Surface-expressible operation
+    // plan, but the goal is proved only when those operations
+    // advance the checked point Proof below.
+    let smart_result = match (&checked_proof_result, &smart_unfolds) {
+        (Some(_), _) => None,
+        (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
+            &replay,
+            &state,
+            &have_facts,
+            parsed_function.parameters(),
+            arguments,
+            predicate_environment,
+            click_function_environment,
+            have,
+            claim_label,
+            tactic_index,
+            unfolded_predicates,
+        )?),
+        (None, None) => None,
+    };
+    let (fact, surface_certificate) = match (checked_proof_result, smart_result) {
+        (Some((fact, certificate)), _) => (fact, certificate),
+        (None, Some((fact, proof))) => {
+            let checked = checked_have_with_proof(
+                        have,
+                        theorem_environment,
+                        claim_label,
+                        tactic_index,
+                        &have_facts,
+                        parsed_function.parameters(),
+                        arguments,
+                        replay.old_reference_state(&state),
+                        &state,
+                        None,
+                        None,
+                        &replay,
+                        &replay.surface_propositions,
+                        predicate_environment,
+                        click_function_environment,
+                        function_block.requires(),
+                        function_block.requirement_label_indices(),
+                        Some((&fact, &proof)),
+                    )?
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` have proof {tactic_index}: generated smart operations did not produce a checked Proof"
+                        ))
+                    })?;
+            (checked.0, checked.1)
+        }
+        (None, None) => {
+            let fact = prove_have_at_current_point(
+                have,
+                theorem_environment,
+                claim_label,
+                tactic_index,
+                &have_facts,
+                &replay.effect_facts,
+                parsed_function.parameters(),
+                arguments,
+                replay.old_reference_state(&state),
+                &state,
+                &replay.program_point_states,
+                &replay.surface_propositions,
+                predicate_environment,
+                click_function_environment,
+                function_block.requires(),
+            )?;
+            (fact, None)
+        }
+    };
+    if let Some(certificate) = surface_certificate {
+        for step in certificate.steps() {
+            replay.proof_certificate_builder.push_step(step.clone());
+        }
+    }
+    // Carry any kernel-issued standard-theorem authority selected
+    // inside the point Proof back to the enclosing entry proof.
+    if replay
+        .frontier
+        .execution_start_state
+        .as_ref()
+        .is_none_or(|start| start == state)
+        && let SourceProof::Script(have_tactics) = &have.proof
+    {
+        for have_tactic in have_tactics {
+            let ProofTactic::ApplyTheoremUsing { application, .. } = have_tactic else {
+                continue;
+            };
+            if let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
+                theorem_environment,
+                application,
+                parsed_function.parameters(),
+                arguments,
+                replay.old_reference_state(&state),
+                &state,
+                &replay.program_point_states,
+                predicate_environment,
+                click_function_environment,
+                &have_facts,
+            )? {
+                let mut conclusion = derivation.proposition();
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                replay
+                    .function_entry_execution_prerequisites
+                    .insert(conclusion.clone());
+                replay.function_entry_derivations.insert(derivation);
+            }
+        }
+    }
+    // Record the search-time lowering only after the selected
+    // Surface operations have closed the checked Proof. Recording
+    // it earlier could make a nontrivial snapshot equality appear
+    // reflexive and circularly validate `normalize()`.
+    replay
+        .surface_propositions
+        .record_lowering(&have.proposition, &fact)?;
+    replay
+        .proof_certificate_builder
+        .certificate_facts
+        .insert(fact.clone());
+    if replay
+        .frontier
+        .execution_start_state
+        .as_ref()
+        .is_none_or(|start| start == state)
+        && let Some(derivation) =
+            prove_pure_proposition_from_context(&assumptions_from_propositions(&have_facts), &fact)
+    {
+        replay
+            .function_entry_execution_prerequisites
+            .insert(fact.clone());
+        replay.function_entry_derivations.insert(derivation);
+    }
+    if !pure_facts.contains(&fact) {
+        pure_facts.push(fact.clone());
+    }
+    Ok(())
+}
+
+pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
     replay: &mut TacticReplayState,
@@ -2491,188 +2686,21 @@ fn replay_linear_tactics_without_frontier_loops(
                     );
                     continue;
                 }
-                let _have_span = crate::instrumentation::OperationTiming::new(
-                    "have",
-                    claim_label,
-                    "contract have replay",
-                );
-                let mut have_facts = requirement_pure_facts.clone();
-                have_facts.extend(
-                    replay
-                        .effect_facts
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
-                );
-                for fact in replay.surface_propositions.kernel_facts() {
-                    if !have_facts.contains(fact) {
-                        have_facts.push(fact.clone());
-                    }
-                }
-                let checked_proof_result = checked_have_with_proof(
+                check_mid_execution_have(
                     have,
+                    &mut replay,
+                    &state,
+                    &mut requirement_pure_facts,
+                    function_block,
+                    parsed_function,
+                    arguments,
+                    predicate_environment,
+                    click_function_environment,
                     theorem_environment,
                     claim_label,
                     tactic_index,
-                    &have_facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    replay.old_reference_state(&state),
-                    &state,
-                    None,
-                    None,
-                    &replay,
-                    &replay.surface_propositions,
-                    predicate_environment,
-                    click_function_environment,
-                    function_block.requires(),
-                    function_block.requirement_label_indices(),
-                    None,
                 )?;
-                let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
-                // Search may materialize a Surface-expressible operation
-                // plan, but the goal is proved only when those operations
-                // advance the checked point Proof below.
-                let smart_result = match (&checked_proof_result, &smart_unfolds) {
-                    (Some(_), _) => None,
-                    (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
-                        &replay,
-                        &state,
-                        &have_facts,
-                        parsed_function.parameters(),
-                        arguments,
-                        predicate_environment,
-                        click_function_environment,
-                        have,
-                        claim_label,
-                        tactic_index,
-                        unfolded_predicates,
-                    )?),
-                    (None, None) => None,
-                };
-                let (fact, surface_certificate) = match (checked_proof_result, smart_result) {
-                    (Some((fact, certificate)), _) => (fact, certificate),
-                    (None, Some((fact, proof))) => {
-                        let checked = checked_have_with_proof(
-                                have,
-                                theorem_environment,
-                                claim_label,
-                                tactic_index,
-                                &have_facts,
-                                parsed_function.parameters(),
-                                arguments,
-                                replay.old_reference_state(&state),
-                                &state,
-                                None,
-                                None,
-                                &replay,
-                                &replay.surface_propositions,
-                                predicate_environment,
-                                click_function_environment,
-                                function_block.requires(),
-                                function_block.requirement_label_indices(),
-                                Some((&fact, &proof)),
-                            )?
-                            .ok_or_else(|| {
-                                ClickError::new(format!(
-                                    "`{claim_label}` have proof {tactic_index}: generated smart operations did not produce a checked Proof"
-                                ))
-                            })?;
-                        (checked.0, checked.1)
-                    }
-                    (None, None) => {
-                        let fact = prove_have_at_current_point(
-                            have,
-                            theorem_environment,
-                            claim_label,
-                            tactic_index,
-                            &have_facts,
-                            &replay.effect_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            replay.old_reference_state(&state),
-                            &state,
-                            &replay.program_point_states,
-                            &replay.surface_propositions,
-                            predicate_environment,
-                            click_function_environment,
-                            function_block.requires(),
-                        )?;
-                        (fact, None)
-                    }
-                };
-                if let Some(certificate) = surface_certificate {
-                    for step in certificate.steps() {
-                        replay.proof_certificate_builder.push_step(step.clone());
-                    }
-                }
-                // Carry any kernel-issued standard-theorem authority selected
-                // inside the point Proof back to the enclosing entry proof.
-                if replay
-                    .frontier
-                    .execution_start_state
-                    .as_ref()
-                    .is_none_or(|start| start == &state)
-                    && let SourceProof::Script(have_tactics) = &have.proof
-                {
-                    for have_tactic in have_tactics {
-                        let ProofTactic::ApplyTheoremUsing { application, .. } = have_tactic else {
-                            continue;
-                        };
-                        if let Some(derivation) =
-                            kernel_standard_theorem_derivation_at_current_point(
-                                theorem_environment,
-                                application,
-                                parsed_function.parameters(),
-                                arguments,
-                                replay.old_reference_state(&state),
-                                &state,
-                                &replay.program_point_states,
-                                predicate_environment,
-                                click_function_environment,
-                                &have_facts,
-                            )?
-                        {
-                            let mut conclusion = derivation.proposition();
-                            while let Proposition::Implies(_, body) = conclusion {
-                                conclusion = body;
-                            }
-                            replay
-                                .function_entry_execution_prerequisites
-                                .insert(conclusion.clone());
-                            replay.function_entry_derivations.insert(derivation);
-                        }
-                    }
-                }
-                // Record the search-time lowering only after the selected
-                // Surface operations have closed the checked Proof. Recording
-                // it earlier could make a nontrivial snapshot equality appear
-                // reflexive and circularly validate `normalize()`.
-                replay
-                    .surface_propositions
-                    .record_lowering(&have.proposition, &fact)?;
-                replay
-                    .proof_certificate_builder
-                    .certificate_facts
-                    .insert(fact.clone());
-                if replay
-                    .frontier
-                    .execution_start_state
-                    .as_ref()
-                    .is_none_or(|start| start == &state)
-                    && let Some(derivation) = prove_pure_proposition_from_context(
-                        &assumptions_from_propositions(&have_facts),
-                        &fact,
-                    )
-                {
-                    replay
-                        .function_entry_execution_prerequisites
-                        .insert(fact.clone());
-                    replay.function_entry_derivations.insert(derivation);
-                }
-                if !requirement_pure_facts.contains(&fact) {
-                    requirement_pure_facts.push(fact.clone());
-                    assumptions = assumptions.assume_proposition(fact);
-                }
+                assumptions = assumptions_from_propositions(&requirement_pure_facts);
             }
             ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")

@@ -1239,7 +1239,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         })
         .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
 
-    let proof_claims = [];
     let mut program = if environment
         .frontier_loop_source
         .is_some_and(|source| source.preserve_source_index.is_none())
@@ -1290,26 +1289,44 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
-    let contexts = execute_internal_proof(
-        &program,
+    let proof_site_for_driver = replay.proof_site.clone();
+    let owning_source_index = if environment
+        .frontier_loop_source
+        .is_some_and(|source| source.preserve_source_index.is_none())
+    {
+        preserve_source_index
+    } else {
+        usize::MAX
+    };
+    let root = Proof::for_execution_frontier(
+        &claim_label,
+        internal_proof_first_index(&program).unwrap_or(0),
         ProofReplayContext {
             state: preservation.state().clone(),
             pure_facts: pure_facts.to_vec(),
             replay: Box::new(replay),
             branch_path: PersistentSequence::default(),
         },
-        expansion_capture.as_deref_mut(),
         environment.function_block,
+        environment.function,
         environment.parsed_function,
-        &proof_claims,
-        &claim_label,
+        environment.arguments,
         environment.function_environment,
+        environment.resource_environment,
         environment.predicate_environment,
         environment.click_function_environment,
-        environment.resource_environment,
         environment.theorem_environment,
-        environment.function,
-        environment.arguments,
+    );
+    let mut leaves = Vec::new();
+    advance_preservation_region(
+        root,
+        &program,
+        &[],
+        expansion_capture.as_deref_mut(),
+        proof_site_for_driver.as_ref(),
+        owning_source_index,
+        &claim_label,
+        &mut leaves,
     )?;
     let effect_items = environment
         .function_block
@@ -1329,14 +1346,9 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     }
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
-    for context in contexts {
-        if !context.replay.is_at_region_boundary() {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` must execute exactly one complete loop-body iteration"
-            )));
-        }
-        let case_path = context
-            .replay
+    for leaf in leaves {
+        let context_replay = leaf.finalization_view()?.replay.clone();
+        let case_path = context_replay
             .case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
@@ -1345,14 +1357,14 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             })
             .collect::<Vec<_>>();
         let source_tactics =
-            ProofCertificate::from_steps(context.replay.proof_certificate_builder.steps.clone())
+            ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
                 .to_proof_tactics();
-        let region_simp = context.replay.region_simp;
-        let proof_site = context.replay.proof_site.clone();
-        let invariants_already_closed = context.replay.region_invariants_closed;
-        let statement_index = context.replay.frontier.next_statement_index;
+        let region_simp = context_replay.region_simp;
+        let proof_site = context_replay.proof_site.clone();
+        let invariants_already_closed = context_replay.region_invariants_closed;
+        let statement_index = context_replay.frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
-            if let Some(step) = context.replay.invariant_closer_step {
+            if let Some(step) = context_replay.invariant_closer_step {
                 (
                     step.tactic_index,
                     step.source_index,
@@ -1399,24 +1411,11 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 context: timing_context,
             }
         });
-        let root = Proof::for_execution_frontier(
-            &claim_label,
-            0,
-            context,
-            environment.function_block,
-            environment.function,
-            environment.parsed_function,
-            environment.arguments,
-            environment.function_environment,
-            environment.resource_environment,
-            environment.predicate_environment,
-            environment.click_function_environment,
-            environment.theorem_environment,
-        );
+        let bundle_checkpoint = leaf.checkpoint();
         let checked = if invariant_checks.is_empty() {
-            root
+            leaf.clone()
         } else {
-            root.certify_loop_invariant_bundle(preservation.loop_entry_state(), invariant_checks)
+            leaf.certify_loop_invariant_bundle(preservation.loop_entry_state(), invariant_checks)
                 .map_err(|error| {
                     ClickError::new(format!(
                         "`{claim_label}` (loop {loop_index} invariant bundle preservation): {}",
@@ -1427,7 +1426,10 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         let closer_tactics = if invariant_checks.is_empty() || invariants_already_closed {
             Vec::new()
         } else {
-            checked.certificate().to_proof_tactics().to_vec()
+            checked
+                .certificate_since(&bundle_checkpoint)?
+                .to_proof_tactics()
+                .to_vec()
         };
         let omitted_frontier_preservation = environment
             .frontier_loop_source
