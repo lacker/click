@@ -199,6 +199,11 @@ impl<'a> Proof<'a> {
         if !premises.is_empty() {
             return Ok(true);
         }
+        // A frontier without an effect goal cannot check a function frame;
+        // that is a decline, not a checking error.
+        if !self.frontier_owns_effect_goal() {
+            return Ok(false);
+        }
         let effect_indices = self.selected_effect_indices(context)?;
         Ok(effect_indices.iter().all(|index| {
             matches!(

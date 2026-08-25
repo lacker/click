@@ -1292,11 +1292,22 @@ fn replay_linear_tactics_without_frontier_loops<'a>(
                 region: region_ref,
                 premises: surface_premises,
             } => {
-                if let Some(region) = region_ref
-                    && frontier_region == ExecutionRegionKind::Function
+                // The one function-exit frame law: a qualified frame, or an
+                // unqualified frame arriving as the first ordered outcome
+                // operation while the frontier still owns its effect goal,
+                // is a checked step on that goal. Any other unqualified
+                // frame is an ordered outcome operation for the drain, which
+                // re-lowers its premises after the deferred `have`s that
+                // establish them.
+                let cursor = proof.replay_cursor()?;
+                let direct_function_frame = frontier_region == ExecutionRegionKind::Function
                     && at_function_exit
-                    && proof.replay_cursor()?.open_scopes == 0
-                {
+                    && cursor.open_scopes == 0
+                    && (region_ref.is_some()
+                        || cursor.post_execution_tactics.is_empty()
+                            && proof.frontier_owns_effect_goal()
+                            && proof.supports_checked_frame_using(None, surface_premises)?);
+                if direct_function_frame {
                     // Premise lowering and exact availability are part of
                     // the simple transition; the ordered outcome drain
                     // receives only the resulting checked region-frame
@@ -1304,7 +1315,7 @@ fn replay_linear_tactics_without_frontier_loops<'a>(
                     let checkpoint = proof.checkpoint();
                     let framed = proof.apply_step_at(
                         SimpleProofStep::FrameUsing {
-                            region: Some(region.clone()),
+                            region: region_ref.clone(),
                             premises: surface_premises.to_vec(),
                         },
                         tactic_index,

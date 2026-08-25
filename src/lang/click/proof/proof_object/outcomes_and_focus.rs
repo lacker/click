@@ -12,6 +12,26 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.replay.is_at_function_exit())
     }
 
+    /// Whether the focused execution frontier still owns a function effect
+    /// goal: an effect-claim site's selected effect, or every effect of a
+    /// grouped contract with effect clauses. A frame applied here is a
+    /// checked step on that goal; without one, a frame is an ordered
+    /// outcome operation for the drain.
+    pub(in crate::lang::click::proof) fn frontier_owns_effect_goal(&self) -> bool {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return false;
+        };
+        let effect_count = context.function_block.effects().len();
+        match self.focused_goal() {
+            Some(Goal::Frontier(FrontierGoal { selection, .. })) => match selection {
+                EffectGoalSelection::None => false,
+                EffectGoalSelection::One(index) => *index < effect_count,
+                EffectGoalSelection::All => effect_count > 0,
+            },
+            _ => false,
+        }
+    }
+
     /// The focused execution rests at its bounded region's typed boundary:
     /// its own statement tree is exhausted and no code lies beyond it.
     pub(in crate::lang::click::proof) fn is_at_region_boundary(&self) -> bool {
