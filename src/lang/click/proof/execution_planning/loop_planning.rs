@@ -365,17 +365,31 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ProgramPointKind::Entry,
         preservation.loop_entry_state().clone(),
     );
-    let mut pending = vec![ProofReplayContext {
-        state: preservation.state().clone(),
-        pure_facts: pure_facts.to_vec(),
-        replay: Box::new(replay),
-        branch_path: PersistentSequence::default(),
-    }];
+    let root = Proof::for_execution_frontier(
+        &claim_label,
+        0,
+        ProofReplayContext {
+            state: preservation.state().clone(),
+            pure_facts: pure_facts.to_vec(),
+            replay: Box::new(replay),
+            branch_path: PersistentSequence::default(),
+        },
+        environment.function_block,
+        environment.function,
+        environment.parsed_function,
+        environment.arguments,
+        environment.function_environment,
+        environment.resource_environment,
+        environment.predicate_environment,
+        environment.click_function_environment,
+        environment.theorem_environment,
+    );
+    let mut pending = vec![root];
     let mut completed = Vec::new();
     let mut steps = 0;
-    while let Some(context) = pending.pop() {
-        if context.replay.is_at_region_boundary() {
-            completed.push(context);
+    while let Some(proof) = pending.pop() {
+        if proof.is_at_region_boundary() {
+            completed.push(proof);
             continue;
         }
         if steps == BOUNDED_EXECUTE_STEP_LIMIT {
@@ -384,13 +398,14 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             )));
         }
         steps += 1;
-        let is_branch = context
+        let view = proof.finalization_view()?;
+        let is_branch = view
             .replay
             .source_layout
-            .statement(context.replay.frontier.next_statement_index)
+            .statement(view.replay.frontier.next_statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
-        let candidates = if is_branch {
-            let ProofExecutionPoint::StatementEntry { remaining } = &context.replay.frontier.point
+        if is_branch {
+            let ProofExecutionPoint::StatementEntry { remaining } = &view.replay.frontier.point
             else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` automatic preservation branch is not at a statement entry"
@@ -403,64 +418,24 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
                     "`{claim_label}` source branch does not match the lowered statement"
                 )));
             };
-            vec![ProofTactic::If(ProofIf {
-                condition: surface_c_condition(&condition),
-                then_tactics: vec![ProofTactic::SmartStep],
-                else_tactics: vec![ProofTactic::SmartStep],
-            })]
-        } else {
-            vec![ProofTactic::SmartStep]
-        };
-        let mut advanced = Vec::new();
-        let mut errors = Vec::new();
-        for tactic in candidates {
-            let program = if let Some(source) = environment.frontier_loop_source {
-                build_generated_certificate_proof(
-                    std::slice::from_ref(&tactic),
-                    &claim_label,
-                    source.loop_source_index,
-                )?
-            } else {
-                build_internal_proof(std::slice::from_ref(&tactic), &claim_label)?
-            };
-            match execute_internal_proof(
-                &program,
-                context.clone(),
-                None,
-                environment.function_block,
-                environment.parsed_function,
-                &[],
-                &claim_label,
-                environment.function_environment,
-                environment.predicate_environment,
-                environment.click_function_environment,
-                environment.resource_environment,
-                environment.theorem_environment,
-                environment.function,
-                environment.arguments,
-            ) {
-                Ok(contexts) => advanced.extend(contexts),
-                Err(error) => errors.push(error),
+            let condition = surface_c_condition(&condition);
+            let (split, ids) = proof.split_preservation_case(&condition, 0)?;
+            for id in ids.into_iter().flatten() {
+                pending.push(preservation_smart_step(split.focus(id)?)?);
             }
+        } else {
+            pending.push(preservation_smart_step(proof)?);
         }
-        if advanced.is_empty() {
-            return Err(errors.pop().unwrap_or_else(|| {
-                ClickError::new(format!(
-                    "`{claim_label}` automatic preservation could not advance the loop body"
-                ))
-            }));
-        }
-        pending.extend(advanced);
     }
     let mut paths = Vec::new();
-    for context in completed {
-        if let Some(blocker) = &context.replay.proof_certificate_builder.blocker {
+    for leaf in completed {
+        let context_replay = leaf.finalization_view()?.replay.clone();
+        if let Some(blocker) = &context_replay.proof_certificate_builder.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
             )));
         }
-        let case_path = context
-            .replay
+        let case_path = context_replay
             .case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
@@ -469,7 +444,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             })
             .collect::<Vec<_>>();
         let surface_tactics =
-            ProofCertificate::from_steps(context.replay.proof_certificate_builder.steps.clone())
+            ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
                 .to_proof_tactics();
         let certificate =
             certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;

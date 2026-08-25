@@ -1396,6 +1396,23 @@ fn solve_nested_have<'a>(
     Ok(selected.filter(ProofScope::is_complete))
 }
 
+/// One smart statement step on a preservation-region descendant: the exact
+/// Proof selection first, the planner construction second, with the checked
+/// certificate delta pushed into the path's surface record. Shared by the
+/// preservation driver and the automatic-preservation search.
+pub(in crate::lang::click::proof) fn preservation_smart_step<'a>(
+    proof: Proof<'a>,
+) -> Result<Proof<'a>, ClickError> {
+    let advanced = if let Some(stepped) = proof.try_smart_step()? {
+        stepped
+    } else {
+        proof.apply_planned_smart_step(0)?
+    };
+    let checkpoint = proof.checkpoint();
+    let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
+    advanced.record_surface_steps(&steps)
+}
+
 /// Drives one preservation program region on the typed boundary `Proof`.
 /// `pending` is the stack of continuation nodes still owed to the current
 /// path, innermost first. Proof-level `if` arms stay separate — a

@@ -361,12 +361,18 @@ attribution are cursor-only ops. Per-path surface records come from
 which keeps `certificate_leaf_for_case_path` and expansion rendering
 byte-compatible with the replayed form.
 
-Remaining `execute_internal_proof` entry points: the automatic
-preservation planner's worklist (`plan_automatic_loop_preservation_body`)
-and the two whole-function fallbacks. The planner port makes its
-worklist bounded smart search over persistent boundary-region
-descendants, deleting the clone-context-per-candidate replay loop.
-After that, unify function exit and the back-edge as instances of one
+The automatic preservation planner is ported too: its worklist is
+bounded smart search over persistent boundary-region `Proof`
+descendants — `split_preservation_case` at C branches,
+`preservation_smart_step` (exact selection first, planner construction
+second, checked certificate delta into the path record) elsewhere —
+and the clone-context-per-candidate replay loop is deleted.
+`loop_planning.rs` contains no `execute_internal_proof` call. The
+remaining production entry points are the two whole-function fallbacks
+in `claim_proofs.rs` (plus the interpreter's internal recursion), which
+step 3's compositional source interpreter replaces before step 5
+deletes the interpreter and `ProofReplayContext`. Before or alongside
+that, unify function exit and the back-edge as instances of one
 boundary mechanism when the frontier migrates onto `Proof` (step 2).
 Each chunk scores by the replay field or fallback it deletes, never by
 adding a guarded path beside a retained fallback.
