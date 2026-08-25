@@ -255,11 +255,28 @@ impl<'a> Proof<'a> {
         let attributed = self.with_execution_tactic_index(tactic_index)?;
         drop(self);
         attributed.edit_frontier_in_place(|state, execution, facts| {
-            state.added_facts = Arc::new(Vec::new());
-            state.checked_facts = Arc::new(Vec::new());
-            execution.last_step_delta = ExecutionProofStepDelta::default();
+            Self::clear_step_delta(state, execution);
             edit(&mut execution.replay, &execution.state, facts)
         })
+    }
+
+    /// Starts one source tactic on a threaded execution Proof: the step delta
+    /// of the previous checked transition is cleared. This is the one rule
+    /// shared by every source driver, so a source tactic's certificate step
+    /// depends on the proof state and not on which tactic textually preceded
+    /// it. The delta remains meaningful inside one smart search, where
+    /// consecutive statement transitions legitimately feed each other.
+    pub(in crate::lang::click::proof) fn start_source_tactic(self) -> Result<Self, ClickError> {
+        let (proof, ()) = self.edit_frontier_in_place(|state, execution, _| {
+            Self::clear_step_delta(state, execution);
+        })?;
+        Ok(proof)
+    }
+
+    fn clear_step_delta(state: &mut ProofState, execution: &mut ExecutionProofState) {
+        state.added_facts = Arc::new(Vec::new());
+        state.checked_facts = Arc::new(Vec::new());
+        execution.last_step_delta = ExecutionProofStepDelta::default();
     }
 
     /// Transitional cursor edit for the in-place interpreter conversion:

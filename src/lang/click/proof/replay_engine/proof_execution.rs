@@ -795,6 +795,8 @@ fn advance_checked_linear_continuation<'a>(
             return Ok(Some((proof, tactics[offset..].to_vec())));
         }
         check_verification_deadline()?;
+        // Every source driver starts a tactic with an empty step delta.
+        proof = proof.start_source_tactic()?;
         let statement_index = proof
             .finalization_view()?
             .replay

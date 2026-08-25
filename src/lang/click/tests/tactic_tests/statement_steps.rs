@@ -157,6 +157,59 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
 }
 
 #[test]
+fn smart_step_starts_each_source_tactic_with_an_empty_step_delta() {
+    // The broader smart-step selector treats the most recent checked
+    // transition's added facts as premise candidates. That delta belongs to
+    // one smart search; a preceding *source* tactic's delta (here the
+    // `unfold`) must not leak into the next tactic's certificate step, and
+    // the rule must hold on the direct driver exactly as on the interpreter.
+    let c_source = r#"
+            int32 set_third_return_second(int32 p[3]) {
+                p[2] = 9;
+                return p[1];
+            }
+        "#;
+    let click_source = r#"
+            verifying "delta.c";
+
+            predicate ordered(p: int32[]) {
+                0 <= p[0] and p[0] <= p[1]
+            }
+
+            int32 set_third_return_second(int32 p[3]) {
+                requires ordered(p);
+                consumes p[0..3];
+                mutable p[2..3];
+                produces p[0..3];
+                ensures result >= 0;
+            } by {
+                unfold(ordered);
+                step();
+                step();
+                frame();
+                simp();
+            }
+        "#;
+
+    let (verified, replay_executions) = proof::count_internal_proof_executions(|| {
+        verify_c0_sources(click_source, &[("delta.c", c_source)])
+    });
+    let verified = verified.expect("the flat proof should verify");
+    assert_eq!(
+        replay_executions, 0,
+        "this shape must be admitted by the direct driver so the rule is tested there"
+    );
+    let expanded = verified[0]
+        .expanded_proof_tactics()
+        .expect("the checked smart steps should retain their expansion");
+    assert_eq!(
+        expanded[1],
+        ProofTactic::StepUsing(Vec::new()),
+        "the unfold's added facts leaked into the first smart step: {expanded:#?}"
+    );
+}
+
+#[test]
 fn clone_field_stores_with_observed_source_resource_verify() {
     let c_source = r#"
         struct cursor {
