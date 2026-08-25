@@ -215,6 +215,22 @@ planner — run on boundary `Proof`s with no interpreter call in
      planner (the effect-script canaries count planning transitions).
      Smart `step()` keeps its minimal selection: the author can transport
      afterwards; an `execute` cannot be followed up.
+
+     Second experiment, refining the brief: a dry certification with
+     explicit premises and automatic transport reports *no* carried
+     sources for `list_roundtrip` and `zero_list_sum`. Their planner
+     premises are not condition transports: they are Planning-policy
+     prerequisite derivations (callee requirements, `loadable`
+     ranges) and call postconditions published at statement exit
+     (`at(statement(N).entry, x) == ...`, `have pushed == value`),
+     which the Explicit policy never derives and the linear indexed
+     selector never names. The effect-script canaries count every
+     transition run under the Planning policy, so the unified law is a
+     Proof-native prerequisite selection for calls (the callee's
+     instantiated requirements found as indexed available facts and
+     named) plus publication of certified call postconditions as named
+     facts, applied inside the linear search — not the planner, and not
+     a reordering.
    - Then the flat driver adopts the one linear law
      (`replay_linear_tactics_on_proof`), the admission grammars
      (`grouped_flat_proof_supported`, the structural routing) delete,
