@@ -1273,7 +1273,25 @@ impl<'a> Proof<'a> {
             proposition.clone()
         };
         let body_kernel = self.lower_surface_goal(&structural_proposition, "`have` body")?;
-        let mut body_facts = self.facts().with_selected_resource_separation(&body_kernel);
+        // A `have` stated at an execution frontier proves its goal from the
+        // frontier's facts alone; the selected-separation materialization
+        // below serves outcome and point judgments, whose separation goals
+        // are read from retained resources rather than derived in the body.
+        let at_frontier = matches!(self.focused_goal(), Some(Goal::Frontier(_)));
+        let mut body_facts = if at_frontier {
+            self.facts().clone()
+        } else {
+            self.facts().with_selected_resource_separation(&body_kernel)
+        };
+        // A `have` stated at an execution frontier may use the frontier's
+        // effect facts exactly as the shared mid-execution law offers them.
+        if at_frontier && let Some(execution) = self.execution() {
+            for fact in execution.replay.effect_facts.iter() {
+                if !body_facts.contains(fact.proposition()) {
+                    body_facts = body_facts.with_fact(fact.proposition().clone());
+                }
+            }
+        }
         let selected_surface_separation = match &structural_proposition {
             ClickProposition::Separate { .. } => true,
             ClickProposition::At { proposition, .. } => {
@@ -1281,7 +1299,8 @@ impl<'a> Proof<'a> {
             }
             _ => false,
         };
-        if selected_surface_separation
+        if !at_frontier
+            && selected_surface_separation
             && !body_facts.contains(&body_kernel)
             && body_facts.assumptions().proves(&body_kernel)
         {
@@ -1362,6 +1381,7 @@ impl<'a> Proof<'a> {
             structure: Box::new(ProofScopeStructure::Have {
                 proposition,
                 kernel,
+                script: None,
             }),
             body,
             introduced_facts: Vec::new(),

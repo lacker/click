@@ -296,12 +296,8 @@ int32 owned_split_buffer_pipeline(
             at(statement(3).entry, owner->data) == at(statement(3).entry, data);
         }
     }
-    have data[0] == left_value by {
-        assumption();
-    }
-    have data[1] == right_value by {
-        assumption();
-    }
+    have data[0] == left_value by simp;
+    have data[1] == right_value by simp;
     have at(statement(5).entry, owner->split) == 1 by simp;
     have at(statement(5).exit, owner->split) ==
         at(statement(5).entry, owner->split) + 1 by {

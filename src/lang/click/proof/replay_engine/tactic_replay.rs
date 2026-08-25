@@ -1670,10 +1670,38 @@ fn replay_linear_tactics_without_frontier_loops<'a>(
                         "`{claim_label}` tactic {tactic_index}: post-execution `have` is not available in this region proof"
                     )));
                 }
+                // The one mid-execution `have` law: the nested Proof scope is
+                // authoritative for every shape it supports, so an explicit
+                // script that fails is an error and is never search-rescued;
+                // the shared law checks only the shapes the scope declines.
                 // The interpreter's prelude and epilogue own this tactic's
-                // surface scope and expansion capture, so the shared law
-                // runs without a capture of its own.
-                proof = proof.apply_mid_execution_have(None, have, tactic_index, source_index)?;
+                // surface scope and expansion capture, so neither law
+                // captures on its own; a smart body's checked delta is
+                // recorded into the scope here.
+                let checkpoint = proof.checkpoint();
+                let nested =
+                    solve_nested_have(proof.begin_have(have.proposition.clone())?, have, true)?;
+                proof = match nested {
+                    Some(selected) => {
+                        let joined = selected.join()?;
+                        // The prelude recorded a fully simple `have` as its
+                        // own source tactic; any other body's checked delta
+                        // is recorded here.
+                        let recorded_by_prelude = ProofCertificate::from_proof_tactics(
+                            std::slice::from_ref(&ProofTactic::Have(have.clone())),
+                        )
+                        .is_ok();
+                        if recorded_by_prelude {
+                            joined
+                        } else {
+                            let certificate = joined.certificate_since(&checkpoint)?;
+                            joined.record_surface_steps(certificate.steps())?
+                        }
+                    }
+                    None => {
+                        proof.apply_mid_execution_have(None, have, tactic_index, source_index)?
+                    }
+                };
             }
             ProofTactic::If(_) | ProofTactic::Branch(_) | ProofTactic::Open(_) => {
                 unreachable!("structured tactics are represented by internal proof nodes")

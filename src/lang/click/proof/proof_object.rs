@@ -363,6 +363,11 @@ enum ProofScopeStructure {
     Have {
         proposition: ClickProposition,
         kernel: Proposition,
+        /// The explicit script proving this `have`, when the source gave
+        /// one. The join carries standard-theorem authority selected by an
+        /// explicit `apply using` at function entry into the enclosing
+        /// execution frontier, as the shared mid-execution law does.
+        script: Option<Vec<ProofTactic>>,
     },
     Open {
         resource: ResourceClause,

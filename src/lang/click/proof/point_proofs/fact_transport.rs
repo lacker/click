@@ -175,7 +175,13 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
                 ))
             })?
         };
-        if !available.exact_available_across_effects(&premise, &[]) {
+        // A premise that lowers to a syntactically reflexive equality (two
+        // snapshot reads canonicalized to one term) needs no fact. This is a
+        // constant structural check, cheap enough for smart search to run
+        // over every candidate; it is not normalization.
+        if !available.exact_available_across_effects(&premise, &[])
+            && !is_reflexive_equality(&premise)
+        {
             let available = available.to_vec();
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `transport using` requires an exact premise: {}",
@@ -856,4 +862,18 @@ pub(in crate::lang::click::proof) fn certified_fact_transport_reaches(
         unreachable!("condition transport must produce an implication")
     };
     conclusion.as_ref() == target
+}
+
+/// Whether a kernel proposition is an equality of two structurally identical
+/// operands, which holds without any fact.
+fn is_reflexive_equality(proposition: &Proposition) -> bool {
+    match proposition {
+        Proposition::ConditionIs(term, true) => match term {
+            ConditionTerm::Bitvector32Equal(left, right) => left == right,
+            ConditionTerm::PointerOffsetEqual(left, right) => left == right,
+            ConditionTerm::PointerEqual(left, right) => left == right,
+            _ => false,
+        },
+        _ => false,
+    }
 }

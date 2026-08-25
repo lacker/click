@@ -943,6 +943,15 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 self.facts().pure_replay_available(goal) || normalizes_context_free(goal)
             }
+            // A nested proposition judgment stated at an execution frontier
+            // is the point proof of its `have`: it closes on an exact
+            // materialized fact or a context-free tautology, never by
+            // search.
+            ProofContext::Execution(_)
+                if matches!(self.focused_goal(), Some(Goal::Proposition(_))) =>
+            {
+                self.facts().materialization_available(goal) || normalizes_context_free(goal)
+            }
             ProofContext::Pure(_) | ProofContext::Execution(_) => self.facts().contains(goal),
         };
         if !available {

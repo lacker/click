@@ -23,6 +23,18 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
+    /// Attaches the explicit source script proving a `have` scope so its
+    /// join can carry the script's standard-theorem authority.
+    pub(in crate::lang::click::proof) fn with_have_script(
+        mut self,
+        tactics: &[ProofTactic],
+    ) -> Self {
+        if let ProofScopeStructure::Have { script, .. } = self.structure.as_mut() {
+            *script = Some(tactics.to_vec());
+        }
+        self
+    }
+
     /// Opens another composite resource from this scope's current checked
     /// body. The returned nested scope can only rejoin through `join_nested`,
     /// which checks that it descends from this exact body.
@@ -834,6 +846,89 @@ impl<'a> ProofScope<'a> {
         self.join_inner(true)
     }
 
+    /// The enclosing-frontier bookkeeping of a checked execution `have`,
+    /// shared in meaning with `check_mid_execution_have`: lowering and
+    /// certificate fact recording, plus function-entry derivation authority
+    /// when execution has not yet left the entry state. Every lookup uses
+    /// the frontier's indexed fact context; no fact vector is rebuilt.
+    fn carry_have_into_frontier(
+        context: &ExecutionProofContext<'a>,
+        execution: &mut ExecutionProofState,
+        root_facts: &ProofFacts,
+        proposition: &ClickProposition,
+        kernel: &Proposition,
+        script: Option<&[ProofTactic]>,
+    ) -> Result<(), ClickError> {
+        execution
+            .replay
+            .surface_propositions
+            .record_lowering(proposition, kernel)?;
+        execution
+            .replay
+            .proof_certificate_builder
+            .certificate_facts
+            .insert(kernel.clone());
+        let at_entry = execution
+            .replay
+            .frontier
+            .execution_start_state
+            .as_ref()
+            .is_none_or(|start| start == &*execution.state);
+        if !at_entry {
+            return Ok(());
+        }
+        let assumptions = root_facts.assumptions();
+        for tactic in script.into_iter().flatten() {
+            let ProofTactic::ApplyTheoremUsing { application, .. } = tactic else {
+                continue;
+            };
+            let pre_state = execution
+                .replay
+                .old_reference_state(&execution.state)
+                .clone();
+            if let Some(derivation) =
+                kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+                    context.theorem_environment,
+                    application,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    &pre_state,
+                    &execution.state,
+                    &execution.replay.program_point_states,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                    assumptions,
+                )?
+            {
+                let mut conclusion = derivation.proposition();
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                execution
+                    .replay
+                    .function_entry_execution_prerequisites
+                    .insert(conclusion.clone());
+                execution
+                    .replay
+                    .function_entry_derivations
+                    .insert(derivation);
+            }
+        }
+        if let Some(derivation) =
+            crate::kernel::prove_pure_proposition_from_context(assumptions, kernel)
+        {
+            execution
+                .replay
+                .function_entry_execution_prerequisites
+                .insert(kernel.clone());
+            execution
+                .replay
+                .function_entry_derivations
+                .insert(derivation);
+        }
+        Ok(())
+    }
+
     /// Joins one scope, optionally retiring a sealed structural-effect goal.
     /// Nested resource joins pass `false` so all enclosing resource
     /// representations close before the outermost join discharges the goal.
@@ -845,6 +940,7 @@ impl<'a> ProofScope<'a> {
             ProofScopeStructure::Have {
                 proposition,
                 kernel,
+                script,
             } => {
                 if !self.body.is_complete() {
                     return Err(self
@@ -854,11 +950,42 @@ impl<'a> ProofScope<'a> {
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_fact(kernel.clone());
-                let mut goals = self
-                    .root
-                    .state
-                    .goals
-                    .with_facts_at(self.root.focused, facts);
+                let mut goals = match (self.root.context.as_ref(), self.root.focused_goal()) {
+                    // A `have` at an execution frontier publishes what the
+                    // shared mid-execution law publishes: the proposition's
+                    // lowering, its certificate fact, and any function-entry
+                    // authority the checked fact or an explicit theorem
+                    // application establishes for later statement checks.
+                    (ProofContext::Execution(context), Some(Goal::Frontier(_))) => {
+                        let mut execution = self
+                            .root
+                            .goal_execution()
+                            .cloned()
+                            .map(Arc::unwrap_or_clone)
+                            .ok_or_else(|| {
+                                self.root
+                                    .step_error("`have` scope lost its execution frontier")
+                            })?;
+                        Self::carry_have_into_frontier(
+                            context,
+                            &mut execution,
+                            self.root.facts(),
+                            &proposition,
+                            &kernel,
+                            script.as_deref(),
+                        )?;
+                        self.root.state.goals.replace_frontier_at(
+                            self.root.focused,
+                            facts,
+                            execution,
+                        )
+                    }
+                    _ => self
+                        .root
+                        .state
+                        .goals
+                        .with_facts_at(self.root.focused, facts),
+                };
                 if let Some(Goal::FunctionOutcome(outcome)) = goals.get(self.root.focused).cloned()
                 {
                     let mut updated = outcome;

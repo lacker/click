@@ -868,7 +868,7 @@ fn advance_checked_linear_continuation<'a>(
             transported
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
-            if let Some(selected) = solve_nested_have(nested, have, authoritative_nested_haves)? {
+            if let Some(selected) = solve_nested_have(nested, have, true)? {
                 selected.join()?
             } else {
                 // The nested scope declines shapes the shared mid-execution
@@ -1410,7 +1410,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     Ok(Some(proof))
 }
 
-fn solve_nested_have<'a>(
+pub(super) fn solve_nested_have<'a>(
     nested: ProofScope<'a>,
     have: &ProofHave,
     authoritative: bool,
@@ -1420,7 +1420,12 @@ fn solve_nested_have<'a>(
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
-            if authoritative {
+            // An explicit script is checked by its simple steps alone: a
+            // step that fails is an error, never a miss for search to
+            // rescue. A script containing smart tactics may decline to the
+            // shared law.
+            let nested = nested.with_have_script(body);
+            if authoritative && !script_contains_linear_search(body) {
                 nested.try_authoritative_linear_script(body)?
             } else {
                 nested.try_linear_script(body)?
