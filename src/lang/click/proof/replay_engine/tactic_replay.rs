@@ -776,73 +776,6 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     Ok(Some((goal, Some(certificate))))
 }
 
-/// Tries one top-level `execute_until` directly on checked Proof descendants.
-/// A miss exports the unchanged persistent root so the compatibility planner
-/// can retain behavior for unsupported prefixes.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)]
-fn try_linear_execute_until_on_proof<'a>(
-    state: &mut CState,
-    pure_facts: &mut Vec<Proposition>,
-    replay: &mut TacticReplayState,
-    branch_path: &mut PersistentSequence<String>,
-    region: &CodeRegionRef,
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    claim_label: &'a str,
-    tactic_index: usize,
-) -> Result<bool, ClickError> {
-    let context = ProofReplayContext {
-        state: std::mem::replace(state, CState::new()),
-        pure_facts: std::mem::take(pure_facts),
-        replay: Box::new(std::mem::take(replay)),
-        branch_path: std::mem::take(branch_path),
-    };
-    let root = Proof::for_execution_frontier(
-        claim_label,
-        tactic_index,
-        context,
-        function_block,
-        function,
-        parsed_function,
-        arguments,
-        function_environment,
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-        theorem_environment,
-    );
-    match root.try_linear_execute_until(region)? {
-        Some(proof) => {
-            let certificate = proof.certificate();
-            let context = proof.into_execution_context()?;
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            for step in certificate.steps() {
-                replay.proof_certificate_builder.push_step(step.clone());
-            }
-            Ok(true)
-        }
-        None => {
-            let context = root.into_execution_context()?;
-            *state = context.state;
-            *pure_facts = context.pure_facts;
-            *replay = *context.replay;
-            *branch_path = context.branch_path;
-            Ok(false)
-        }
-    }
-}
-
 /// Applies one explicit qualified `frame using` through its checked Proof.
 /// Premise lowering and exact availability are part of the simple transition;
 /// the ordered outcome drain receives only the resulting checked region-frame
@@ -1478,168 +1411,100 @@ fn replay_linear_tactics_without_frontier_loops(
                 proof = executed.record_surface_steps(certificate.steps())?;
             }
             ProofTactic::ExecuteUntil(region_ref) => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                if try_linear_execute_until_on_proof(
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    &mut replay,
-                    &mut branch_path,
-                    region_ref,
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                )? {
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
-                        tactic_index,
-                    );
-                    continue;
-                }
-                let code_region =
-                    resolve_code_region_ref(function_block, region_ref, claim_label, tactic_index)?;
-                let CodeRegion::Statement(statement_index) = code_region else {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
-                    )));
-                };
-                let mut planning_replay = replay.clone();
-                planning_replay.planned_statement_transitions.clear();
-                planning_replay.proof_certificate_builder = ProofCertificateBuilder {
-                    last_step_entry: replay.proof_certificate_builder.last_step_entry.clone(),
-                    certificate_facts: ProofFactStore::from_ordered(requirement_pure_facts.clone()),
-                    ..ProofCertificateBuilder::default()
-                }
-                .into();
-                let mut planning_state = state.clone();
-                let mut planning_facts = requirement_pure_facts.clone();
-                execute_until_statement(
-                    &mut planning_replay,
-                    &mut planning_state,
-                    &mut planning_facts,
-                    function_block,
-                    function,
-                    parsed_function.parameters(),
-                    arguments,
-                    function_environment,
-                    statement_index,
-                    claim_label,
-                    tactic_index,
-                    StatementPrerequisitePolicy::Planning,
-                    Some(ConstructionEnvironments {
-                        predicate_environment,
-                        click_function_environment,
-                    }),
-                )?;
-                let construction =
-                    std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
-                if construction.blocker.is_none()
-                    && !construction.steps.is_empty()
-                    && construction.steps.iter().all(|step| {
-                        matches!(
-                            step,
-                            SimpleProofStep::Have { .. }
-                                | SimpleProofStep::UnfoldPredicate(_)
-                                | SimpleProofStep::TransportUsing { .. }
-                                | SimpleProofStep::StepUsing(_)
-                        )
-                    })
-                    && construction
-                        .steps
-                        .iter()
-                        .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
-                {
-                    let mut arm_proof = Proof::for_execution_frontier(
+                let checkpoint = proof.checkpoint();
+                if let Some(executed) = proof.try_linear_execute_until(region_ref)? {
+                    let certificate = executed.certificate_since(&checkpoint)?;
+                    proof = executed.record_surface_steps(certificate.steps())?;
+                } else {
+                    // The planner constructs the explicit checked operations
+                    // from a scratch copy of the frontier; this Proof then
+                    // applies exactly those operations.
+                    let code_region = resolve_code_region_ref(
+                        function_block,
+                        region_ref,
                         claim_label,
                         tactic_index,
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
+                    )?;
+                    let CodeRegion::Statement(target_statement_index) = code_region else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
+                        )));
+                    };
+                    let (mut planning_replay, mut planning_state, mut planning_facts) = {
+                        let view = proof.finalization_view()?;
+                        let mut planning_replay = view.replay.clone();
+                        planning_replay.planned_statement_transitions.clear();
+                        planning_replay.proof_certificate_builder = ProofCertificateBuilder {
+                            last_step_entry: view
+                                .replay
+                                .proof_certificate_builder
+                                .last_step_entry
+                                .clone(),
+                            certificate_facts: ProofFactStore::from_ordered(view.facts.clone()),
+                            ..ProofCertificateBuilder::default()
+                        }
+                        .into();
+                        (planning_replay, view.state.clone(), view.facts)
+                    };
+                    execute_until_statement(
+                        &mut planning_replay,
+                        &mut planning_state,
+                        &mut planning_facts,
                         function_block,
                         function,
-                        parsed_function,
+                        parsed_function.parameters(),
                         arguments,
                         function_environment,
-                        resource_environment,
-                        predicate_environment,
-                        click_function_environment,
-                        theorem_environment,
-                    );
-                    let checkpoint = arm_proof.checkpoint();
-                    for step in &construction.steps {
-                        arm_proof = arm_proof.apply_step(step.clone())?;
-                    }
-                    let certificate = arm_proof.certificate_since(&checkpoint)?;
-                    let result = arm_proof.into_execution_context()?;
-                    state = result.state;
-                    requirement_pure_facts = result.pure_facts;
-                    replay = result.replay;
-                    branch_path = result.branch_path;
-                    for step in certificate.steps() {
-                        replay.proof_certificate_builder.push_step(step.clone());
-                    }
-                    replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
-                    let slice = end_tactic_surface_scope(
-                        &mut replay,
-                        scope.take().expect("tactic scope is open"),
-                    );
-                    if capture_this_tactic {
-                        finish_tactic_expansion_capture(
-                            expansion_capture.as_deref_mut(),
-                            &slice,
-                            false,
-                        );
-                    }
-                    proof = rewrap(
-                        ProofReplayContext {
-                            state,
-                            pure_facts: requirement_pure_facts,
-                            replay,
-                            branch_path,
-                        },
+                        target_statement_index,
+                        claim_label,
                         tactic_index,
-                    );
-                    continue;
+                        StatementPrerequisitePolicy::Planning,
+                        Some(ConstructionEnvironments {
+                            predicate_environment,
+                            click_function_environment,
+                        }),
+                    )?;
+                    let construction =
+                        std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+                    if construction.blocker.is_none()
+                        && !construction.steps.is_empty()
+                        && construction.steps.iter().all(|step| {
+                            matches!(
+                                step,
+                                SimpleProofStep::Have { .. }
+                                    | SimpleProofStep::UnfoldPredicate(_)
+                                    | SimpleProofStep::TransportUsing { .. }
+                                    | SimpleProofStep::StepUsing(_)
+                            )
+                        })
+                        && construction
+                            .steps
+                            .iter()
+                            .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                    {
+                        let mut executed = proof;
+                        for step in &construction.steps {
+                            executed = executed.apply_step(step.clone())?;
+                        }
+                        let certificate = executed.certificate_since(&checkpoint)?;
+                        let (recorded, ()) = executed.edit_replay_cursor(|replay, _, _| {
+                            for step in certificate.steps() {
+                                replay.proof_certificate_builder.push_step(step.clone());
+                            }
+                            replay.proof_certificate_builder.last_step_entry =
+                                construction.last_step_entry;
+                        })?;
+                        proof = recorded;
+                    } else if let Some(blocker) = construction.blocker {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `execute_until` could not construct checked Proof operations: {blocker}"
+                        )));
+                    } else {
+                        return Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: `execute_until` found no checked Proof candidate"
+                        )));
+                    }
                 }
-                if let Some(blocker) = construction.blocker {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `execute_until` could not construct checked Proof operations: {blocker}"
-                    )));
-                }
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `execute_until` found no checked Proof candidate"
-                )));
             }
             ProofTactic::SmartFrame(region_ref) => {
                 let ProofReplayContext {
