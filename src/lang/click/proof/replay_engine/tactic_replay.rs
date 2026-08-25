@@ -1574,39 +1574,7 @@ fn replay_linear_tactics_without_frontier_loops(
                 proof = proof.apply_step(SimpleProofStep::UnfoldResource(resource.clone()))?;
             }
             ProofTactic::ObserveResource(resource) => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
-                apply_resource_step_on_proof(
-                    &mut state,
-                    &mut requirement_pure_facts,
-                    &mut replay,
-                    &mut branch_path,
-                    SimpleProofStep::ObserveResource(resource.clone()),
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                    claim_label,
-                    tactic_index,
-                )?;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
+                proof = proof.apply_step(SimpleProofStep::ObserveResource(resource.clone()))?;
             }
             ProofTactic::Transport {
                 source: surface_source,
