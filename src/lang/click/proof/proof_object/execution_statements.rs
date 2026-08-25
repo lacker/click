@@ -625,6 +625,141 @@ impl<'a> Proof<'a> {
         })
     }
 
+    /// The planner fallback for a smart `execute`: a scratch planning pass
+    /// constructs the explicit checked operations for the remaining
+    /// execution (a linear sequence, or a planned `if` tree for
+    /// whole-function branches), and this Proof applies exactly those
+    /// operations. Mirrors the replayed smart-execute law; a construction
+    /// the Proof driver cannot apply stays a decline while the
+    /// compatibility interpreter exists.
+    pub(in crate::lang::click::proof) fn apply_planned_smart_execute(
+        &self,
+        force_all_paths: bool,
+        tactic_index: usize,
+    ) -> Result<Option<Self>, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        self.require_execution_frontier("`execute`")?;
+        let execution = self
+            .execution()
+            .cloned()
+            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        let facts_vec = self.facts().to_vec();
+        let planning_builder = |certificate_facts: &[Proposition]| ProofCertificateBuilder {
+            last_step_entry: execution
+                .replay
+                .proof_certificate_builder
+                .last_step_entry
+                .clone(),
+            certificate_facts: ProofFactStore::from_ordered(certificate_facts.to_vec()),
+            ..ProofCertificateBuilder::default()
+        };
+        let construction_environments = Some(ConstructionEnvironments {
+            predicate_environment: context.predicate_environment,
+            click_function_environment: context.click_function_environment,
+        });
+        let mut planning_replay = execution.replay.clone();
+        planning_replay.planned_statement_transitions.clear();
+        planning_replay.proof_certificate_builder = planning_builder(&facts_vec).into();
+        let mut planning_state = (*execution.state).clone();
+        let mut planning_facts = facts_vec.clone();
+        let direct_result = (!force_all_paths).then(|| {
+            execute_rest_from_execution_point(
+                &mut planning_replay,
+                &mut planning_state,
+                &mut planning_facts,
+                context.function_block,
+                context.function,
+                context.parsed_function.parameters(),
+                context.arguments,
+                context.function_environment,
+                context.claim_label,
+                tactic_index,
+                construction_environments,
+            )
+        });
+        if direct_result.is_none_or(|result| result.is_err()) {
+            planning_replay = execution.replay.clone();
+            planning_replay.planned_statement_transitions.clear();
+            planning_replay.proof_certificate_builder = planning_builder(&facts_vec).into();
+            planning_state = (*execution.state).clone();
+            planning_facts = facts_vec.clone();
+            bounded_execute_from_execution_point(
+                &mut planning_replay,
+                &mut planning_state,
+                &mut planning_facts,
+                context.function_block,
+                context.function,
+                context.parsed_function.parameters(),
+                context.arguments,
+                context.function_environment,
+                context.claim_label,
+                tactic_index,
+                StatementPrerequisitePolicy::Planning,
+                construction_environments,
+            )?;
+        }
+        let construction =
+            std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+        if construction.blocker.is_some() || construction.steps.is_empty() {
+            return Ok(None);
+        }
+        let linear_supported = construction.steps.iter().all(|step| {
+            matches!(
+                step,
+                SimpleProofStep::Have { .. }
+                    | SimpleProofStep::UnfoldPredicate(_)
+                    | SimpleProofStep::TransportUsing { .. }
+                    | SimpleProofStep::StepUsing(_)
+            )
+        }) && construction
+            .steps
+            .iter()
+            .any(|step| matches!(step, SimpleProofStep::StepUsing(_)));
+        let applied = if linear_supported {
+            let mut proof = self.clone();
+            for step in &construction.steps {
+                proof = proof.apply_step(step.clone())?;
+            }
+            Some(proof)
+        } else if construction
+            .steps
+            .iter()
+            .any(|step| matches!(step, SimpleProofStep::If { .. }))
+        {
+            self.try_planned_execution_steps(&construction.steps)?
+        } else {
+            None
+        };
+        let Some(proof) = applied else {
+            return Ok(None);
+        };
+        let mut successor_execution = proof
+            .execution()
+            .cloned()
+            .ok_or_else(|| proof.step_error("smart `execute` lost its semantic state"))?;
+        successor_execution
+            .replay
+            .proof_certificate_builder
+            .last_step_entry = construction.last_step_entry;
+        Ok(Some(Self {
+            context: proof.context.clone(),
+            state: Arc::new(ProofState {
+                locals: proof.state.locals.clone(),
+                goals: proof.state.goals.replace_frontier_at(
+                    proof.focused,
+                    proof.facts().clone(),
+                    successor_execution,
+                ),
+                added_facts: proof.state.added_facts.clone(),
+                checked_facts: proof.state.checked_facts.clone(),
+            }),
+            node: proof.node.clone(),
+            focused: proof.focused,
+        }))
+    }
+
     /// The mid-execution `have` for a bounded region path, applied through
     /// the one shared have law when the Proof-native nested scope declines.
     /// The law records its own surface certificate and lowerings.

@@ -888,10 +888,21 @@ fn advance_checked_linear_continuation<'a>(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
         ) {
-            let Some(executed) = proof.try_linear_execute()? else {
-                return Ok(None);
-            };
-            executed
+            match proof.try_linear_execute()? {
+                Some(executed) => executed,
+                None => {
+                    // The planner fallback constructs the explicit checked
+                    // operations through the same law the interpreter used.
+                    let force_all_paths =
+                        matches!(indexed.tactic, ProofTactic::SmartExecuteAllPaths);
+                    match proof.apply_planned_smart_execute(force_all_paths, indexed.index) {
+                        Ok(Some(executed)) => executed,
+                        Ok(None) | Err(_) => {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
         } else if let ProofTactic::Loop(clause) = &indexed.tactic {
             // A frontier-local loop is one checked operation; its expansion
             // capture and surface record are handled inside the operation.
