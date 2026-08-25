@@ -1887,12 +1887,6 @@ fn replay_linear_tactics_without_frontier_loops(
                 proof = proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone()))?;
             }
             ProofTactic::ApplyTheorem(application) => {
-                let ProofReplayContext {
-                    state,
-                    pure_facts: requirement_pure_facts,
-                    mut replay,
-                    branch_path,
-                } = proof.into_execution_context()?;
                 // A mid-execution smart `apply` is selected as an explicit
                 // `apply using` and applied directly to `Proof` before this
                 // match (see the `ApplyTheorem` pre-pass above), so only the
@@ -1903,27 +1897,20 @@ fn replay_linear_tactics_without_frontier_loops(
                         application.name
                     )));
                 }
-                debug_assert!(replay.is_at_function_exit());
-                if replay.frontier.region == ExecutionRegionKind::Function {
-                    replay.defer_post_execution(
+                debug_assert!(at_function_exit);
+                if frontier_region == ExecutionRegionKind::Function {
+                    proof = defer_post_execution_on_proof(
+                        proof,
                         tactic_index,
                         source_index,
                         PostExecutionTactic::Apply(application.clone()),
-                    );
+                        None,
+                    )?;
                 } else {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: post-execution `apply` is not available in this region proof"
                     )));
                 }
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
             }
             ProofTactic::ApplyTheoremUsing {
                 application,
