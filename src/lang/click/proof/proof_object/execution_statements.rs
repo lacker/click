@@ -629,17 +629,18 @@ impl<'a> Proof<'a> {
     /// constructs the explicit checked operations for the remaining
     /// execution (a linear sequence, or a planned `if` tree for
     /// whole-function branches), and this Proof applies exactly those
-    /// operations. Mirrors the replayed smart-execute law; a construction
-    /// the Proof driver cannot apply stays a decline while the
-    /// compatibility interpreter exists.
+    /// operations. This is the one smart-execute planner law: the source
+    /// interpreter reports its errors directly, while the direct driver
+    /// treats any error as a decline.
     pub(in crate::lang::click::proof) fn apply_planned_smart_execute(
         &self,
         force_all_paths: bool,
         tactic_index: usize,
-    ) -> Result<Option<Self>, ClickError> {
+    ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Ok(None);
+            return Err(self.step_error("smart `execute` requires an execution-frontier proof"));
         };
+        let claim_label = context.claim_label;
         self.require_execution_frontier("`execute`")?;
         let execution = self
             .execution()
@@ -702,8 +703,18 @@ impl<'a> Proof<'a> {
         }
         let construction =
             std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
-        if construction.blocker.is_some() || construction.steps.is_empty() {
-            return Ok(None);
+        if let Some(blocker) = &construction.blocker {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: smart `execute` could not construct checked Proof operations: {blocker}"
+            )));
+        }
+        let no_candidate = || {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: smart `execute` found no checked Proof candidate"
+            ))
+        };
+        if construction.steps.is_empty() {
+            return Err(no_candidate());
         }
         let linear_supported = construction.steps.iter().all(|step| {
             matches!(
@@ -733,7 +744,7 @@ impl<'a> Proof<'a> {
             None
         };
         let Some(proof) = applied else {
-            return Ok(None);
+            return Err(no_candidate());
         };
         let mut successor_execution = proof
             .execution()
@@ -743,7 +754,7 @@ impl<'a> Proof<'a> {
             .replay
             .proof_certificate_builder
             .last_step_entry = construction.last_step_entry;
-        Ok(Some(Self {
+        Ok(Self {
             context: proof.context.clone(),
             state: Arc::new(ProofState {
                 locals: proof.state.locals.clone(),
@@ -757,7 +768,7 @@ impl<'a> Proof<'a> {
             }),
             node: proof.node.clone(),
             focused: proof.focused,
-        }))
+        })
     }
 
     /// The mid-execution `have` for a bounded region path, applied through

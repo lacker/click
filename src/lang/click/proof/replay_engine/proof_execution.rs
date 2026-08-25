@@ -896,8 +896,8 @@ fn advance_checked_linear_continuation<'a>(
                     let force_all_paths =
                         matches!(indexed.tactic, ProofTactic::SmartExecuteAllPaths);
                     match proof.apply_planned_smart_execute(force_all_paths, indexed.index) {
-                        Ok(Some(executed)) => executed,
-                        Ok(None) | Err(_) => {
+                        Ok(executed) => executed,
+                        Err(_) => {
                             return Ok(None);
                         }
                     }
