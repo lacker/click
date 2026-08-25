@@ -315,6 +315,79 @@ adopting `replay_linear_tactics_on_proof`; deletion of
 errors terminal in the direct drivers; then the 28 structural fallbacks
 and the node interpreter on the Proof structural operations.
 
+## Typed `execute` gate: result (2026-08-25)
+
+The `list_roundtrip` fact-visibility check was done first, on a forced
+flat route (the routing gate itself rejects the claim; both drivers
+currently reach it only through the interpreter, whose exact-root gate
+declines on the ambient facts and runs the planner). Findings:
+
+- **The facts reach the outcome goal.** After the linear `execute`, every
+  call postcondition is a certified path fact on the successor frontier
+  (`pushed == value`, `node->next` after the push `== tail`, `node->next`
+  after the pop `==` its value before the pop, ...), and
+  `focus_function_outcomes` extends each outcome goal's context with
+  exactly those path facts. Nothing is missing from the goal.
+- **The outcome `simp` finds the kernel derivation and cannot write it.**
+  `selected_simp_derivation` returns a derivation with eight context
+  premises for `result == value`; only the two requirement-derived
+  premises resolve through `replayable_surface_fact`. The certified call
+  postconditions have no Surface spelling in `surface_propositions`, and
+  the checked certificate vocabulary (`Rewrite`, `ApplyTheoremUsing`,
+  nested `have`) can cite only spelled facts. `ensures_3`
+  (`node->next == tail`) needs a two-hop pointer-equality chain through
+  two unspelled facts and fails. The compatibility
+  `check_function_claim_by_simp` closes the same goal from the same facts
+  (it runs first at the error site and passes).
+- So the gap is a parallel-representation defect of exactly the kind this
+  issue exists to remove: the kernel fact exists and its Surface twin does
+  not. The planner's remedy is to name synthesized `at(statement(N).entry,
+  ...)` forms as step premises, which records the spellings as certificate
+  facts. The conformant repair is on the outcome side: a checked statement
+  step that certifies a callee postcondition (or any statement-introduced
+  fact) records its Surface spelling anchored at that statement, so the
+  outcome operations can cite it without a publication step.
+
+The gate itself was then implemented as specified (one
+`Proof::apply_smart_execute` law on both drivers: checked linear search
+when the frontier's remaining obligations are effect-only — an
+`EffectGoalSelection::One` site, or `All` on a block with no `ensures` —
+or when no ambient context exists; planner construction otherwise; a
+checked-search miss falls to the planner, which is the one authority that
+reports why execution cannot advance — a strict miss-is-error variant
+broke the `signed overflow` and `uninitialized storage` diagnostics
+tests). Census: the three effect-script canaries pass, the three example
+projects verify with unchanged fallback counts, and two direct-driver
+canaries move:
+
+- `grouped_calls_keep_contract_transitions_on_proof`: ambient facts plus
+  `ensures`, so the planner runs and the retained call certificate becomes
+  `step() using { permit >= 1; loadable(data[0..1]); }` plus carried
+  `at(statement(1).entry, ...)` premises instead of the linear selector's
+  minimal `step() using { permit >= 1; }`. The proof still verifies with
+  no replay, export, or certificate check, and removing the prerequisite
+  still invalidates it; only certificate minimality changes.
+- `linear_execute_until_retains_its_checked_execution_proof`: an
+  `ensures` script whose checked `execute_until` prefix introduced
+  `value == 0`; that prefix delta is ambient context at the `execute`, so
+  the planner runs and the test's `planning_transitions == 0` assertion
+  fails. This one is decisive: the direct driver's ensures-script canaries
+  forbid planning transitions just as the effect-script canaries do, and
+  no typed gate on "ambient facts" can honor both them and
+  `list_roundtrip`, because the loss condition is not the presence of
+  ambient facts but an outcome operation needing to cite a
+  statement-introduced certified fact that has no Surface spelling.
+
+Consequently the gate is not the cheap unblock the assessment expected.
+The saved implementation is a working patch (four files) but is not
+committed; the decision it needs is whether to accept planner-sized
+certificates and planning transitions on ensures scripts with ambient
+context (and rewrite those two canaries), or to close the spelling gap
+first, after which the checked linear search suffices for the fallback
+examples and the gate reduces to the existing effect-script and
+no-context cases. The second is the conformant route and is the recorded
+recommendation; it is outcome-side work, not planner porting.
+
 ## State census (2026-08-24)
 
 Taken after `proof_object.rs` was mechanically split into concern modules.
