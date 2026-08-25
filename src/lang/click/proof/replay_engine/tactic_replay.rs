@@ -2643,84 +2643,34 @@ fn replay_linear_tactics_without_frontier_loops(
                 application,
                 premises,
             } => {
-                let ProofReplayContext {
-                    mut state,
-                    pure_facts: mut requirement_pure_facts,
-                    mut replay,
-                    mut branch_path,
-                } = proof.into_execution_context()?;
                 if theorem_environment.get(&application.name).is_none() {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: unknown theorem `{}`",
                         application.name
                     )));
                 }
-                if replay.is_at_function_exit() {
-                    if replay.frontier.region == ExecutionRegionKind::Function {
-                        replay.defer_post_execution(
+                if at_function_exit {
+                    if frontier_region == ExecutionRegionKind::Function {
+                        proof = defer_post_execution_on_proof(
+                            proof,
                             tactic_index,
                             source_index,
                             PostExecutionTactic::ApplyUsing {
                                 application: application.clone(),
                                 premises: premises.clone(),
                             },
-                        );
-                        end_tactic_surface_scope(
-                            &mut replay,
-                            scope.take().expect("tactic scope is open"),
-                        );
-                        proof = rewrap(
-                            ProofReplayContext {
-                                state,
-                                pure_facts: requirement_pure_facts,
-                                replay,
-                                branch_path,
-                            },
-                            tactic_index,
-                        );
+                            scope.take(),
+                        )?;
                         continue;
                     }
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: post-execution `apply using` is not available in this region proof"
                     )));
                 }
-                let arm_proof = Proof::for_execution_frontier(
-                    claim_label,
-                    tactic_index,
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    function_block,
-                    function,
-                    parsed_function,
-                    arguments,
-                    function_environment,
-                    resource_environment,
-                    predicate_environment,
-                    click_function_environment,
-                    theorem_environment,
-                );
-                let arm_proof = arm_proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
+                proof = proof.apply_step(SimpleProofStep::ApplyTheoremUsing {
                     application: application.clone(),
                     premises: premises.clone(),
                 })?;
-                let result = arm_proof.into_execution_context()?;
-                state = result.state;
-                requirement_pure_facts = result.pure_facts;
-                replay = result.replay;
-                branch_path = result.branch_path;
-                proof = rewrap(
-                    ProofReplayContext {
-                        state,
-                        pure_facts: requirement_pure_facts,
-                        replay,
-                        branch_path,
-                    },
-                    tactic_index,
-                );
             }
             ProofTactic::FoldResource(resource) => {
                 if at_function_exit {
