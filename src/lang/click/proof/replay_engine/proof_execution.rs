@@ -738,12 +738,9 @@ fn advance_checked_linear_continuation<'a>(
                     // operations through the same law the interpreter used.
                     let force_all_paths =
                         matches!(indexed.tactic, ProofTactic::SmartExecuteAllPaths);
-                    match proof.apply_planned_smart_execute(force_all_paths, indexed.index) {
-                        Ok(executed) => executed,
-                        Err(_) => {
-                            return Ok(None);
-                        }
-                    }
+                    // The planner's failure is the answer: it applies the
+                    // same statement steps with nothing more to see.
+                    proof.apply_planned_smart_execute(force_all_paths, indexed.index)?
                 }
             }
         } else if let ProofTactic::Loop(clause) = &indexed.tactic {

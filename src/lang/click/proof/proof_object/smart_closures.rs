@@ -2459,13 +2459,10 @@ impl<'a> Proof<'a> {
         if matches!(statement, CStatement::If { .. } | CStatement::While { .. }) {
             return Ok(None);
         }
-        match self.apply_step(SimpleProofStep::Step) {
-            Ok(proof) => Ok(Some(proof)),
-            Err(_) => {
-                check_verification_deadline()?;
-                Ok(None)
-            }
-        }
+        // The statement runs in the whole proof context; nothing can supply
+        // more than the step already sees, so its failure is the answer,
+        // with the step's diagnostic.
+        self.apply_step(SimpleProofStep::Step).map(Some)
     }
 
     pub(super) fn try_indexed_statement_step_with_unrelated_context(

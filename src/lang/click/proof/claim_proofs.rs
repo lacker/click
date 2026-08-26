@@ -383,10 +383,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         &arguments,
     ) {
         Ok(proof) => proof,
-        Err(_) if generated_by_source_index.is_some() => {
-            check_verification_deadline()?;
-            None
-        }
         Err(error) => return Err(error),
     };
     let direct_proof = if structural.is_some() {
@@ -414,10 +410,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             owns_empty_predicate_branches,
         ) {
             Ok(proof) => proof,
-            Err(_) if generated_by_source_index.is_some() => {
-                check_verification_deadline()?;
-                None
-            }
             Err(error) => return Err(error),
         }
     };
@@ -596,10 +588,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         &arguments,
     ) {
         Ok(proof) => proof,
-        Err(_) if generated_by_source_index.is_some() => {
-            check_verification_deadline()?;
-            None
-        }
         Err(error) => return Err(error),
     };
     let direct_proof = if structural.is_some() {
@@ -628,10 +616,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             owns_empty_predicate_branches,
         ) {
             Ok(proof) => proof,
-            Err(_) if generated_by_source_index.is_some() => {
-                check_verification_deadline()?;
-                None
-            }
             Err(error) => return Err(error),
         }
     };
