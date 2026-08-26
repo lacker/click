@@ -783,11 +783,11 @@ fn replay_linear_tactics_without_frontier_loops<'a>(
     parsed_function: &'a syntax::C0Function,
     claims: &[FunctionClaimRef<'_>],
     claim_label: &'a str,
-    function_environment: &'a CExecutionEnvironment,
+    _function_environment: &'a CExecutionEnvironment,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
     theorem_environment: &'a TheoremEnvironment,
-    function: &'a CFunction,
+    _function: &'a CFunction,
     arguments: &'a [CExpression],
     tactics: &[IndexedTactic],
 ) -> Result<Proof<'a>, ClickError> {
@@ -900,94 +900,9 @@ fn replay_linear_tactics_without_frontier_loops<'a>(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one execution step"
                 )));
             }
-            // Premise planning reads the frontier; the checked transition is
-            // the explicit `transport using` law on the threaded Proof, which
-            // records the checker-owned lowerings itself.
-            let premises = {
-                let view = proof.finalization_view()?;
-                let (state, replay, facts) = (view.state, view.replay, &view.facts);
-                let assumptions = assumptions_from_propositions(facts);
-                let pre_state = replay.old_reference_state(state);
-                let source = lower_point_proposition(
-                    surface_source,
-                    facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    pre_state,
-                    state,
-                    None,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
-                    ))
-                })?;
-                if assumptions.derive_proposition(&source).is_none() {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: `transport` requires a source derivable from its ambient facts: {}",
-                        describe_missing_pure_fact(
-                            &source,
-                            facts,
-                            state.resources().facts(),
-                            parsed_function.parameters(),
-                            arguments,
-                            &replay.effect_facts,
-                        )
-                    )));
-                }
-                let target = lower_point_proposition(
-                    surface_target,
-                    facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    pre_state,
-                    state,
-                    None,
-                    &replay.program_point_states,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
-                    ))
-                })?;
-                let transition_facts =
-                    fact_transport_transition_facts(&replay.effect_facts, &source);
-                plan_explicit_fact_transport(
-                    surface_source,
-                    &source,
-                    &target,
-                    facts,
-                    &transition_facts,
-                    parsed_function.parameters(),
-                    arguments,
-                    replay,
-                    state,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: {}",
-                        fact_transport_planning_failure(
-                            surface_source,
-                            surface_target,
-                            &replay.unfolded_predicates,
-                            &error,
-                        )
-                    ))
-                })?
-            };
             let checkpoint = proof.checkpoint();
-            let transported = proof.apply_step(SimpleProofStep::TransportUsing {
-                source: surface_source.clone(),
-                target: surface_target.clone(),
-                premises,
-            })?;
+            let transported =
+                proof.apply_planned_fact_transport(surface_source, surface_target, tactic_index)?;
             let certificate = transported.certificate_since(&checkpoint)?;
             let (next, slice) = transported
                 .record_surface_steps(certificate.steps())?

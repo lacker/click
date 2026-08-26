@@ -1099,7 +1099,11 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_)
                 if matches!(self.focused_goal(), Some(Goal::Proposition(_))) =>
             {
-                self.facts().materialization_available(goal) || normalizes_context_free(goal)
+                self.facts().materialization_available(goal)
+                    || self
+                        .facts()
+                        .contains_discharged_implication_consequent(goal)
+                    || normalizes_context_free(goal)
             }
             ProofContext::Pure(_) | ProofContext::Execution(_) => self.facts().contains(goal),
         };

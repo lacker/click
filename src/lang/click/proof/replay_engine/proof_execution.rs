@@ -703,8 +703,9 @@ fn advance_checked_linear_continuation<'a>(
             };
             applied
         } else if let ProofTactic::Transport { source, target } = &indexed.tactic {
-            let Some(transported) = proof.try_execution_fact_transport(source, target)? else {
-                return Ok(None);
+            let transported = match proof.try_execution_fact_transport(source, target)? {
+                Some(transported) => transported,
+                None => proof.apply_planned_fact_transport(source, target, indexed.index)?,
             };
             transported
         } else if let ProofTactic::Have(have) = &indexed.tactic {

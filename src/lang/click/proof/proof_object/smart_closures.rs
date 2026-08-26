@@ -1852,6 +1852,9 @@ impl<'a> Proof<'a> {
             .or_else(|| proof.try_selected_equality_rewrite_chain(&premise_pairs))
             .or_else(|| proof.try_outcome_anchored_order_transitivity(&premise_pairs))
             .or_else(|| proof.try_outcome_anchored_increment_order(&premise_pairs))
+            // With the listed premises materialized, the goal may close
+            // directly: a discharged implication's consequent is available.
+            .or_else(|| proof.try_direct_logical_closure().ok().flatten())
     }
 
     pub(super) fn check_typed_atomic_simp_candidate(

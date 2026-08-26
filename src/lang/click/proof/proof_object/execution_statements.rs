@@ -656,6 +656,114 @@ impl<'a> Proof<'a> {
     /// operations. This is the one smart-execute planner law: the source
     /// interpreter reports its errors directly, while the direct driver
     /// treats any error as a decline.
+    /// The one mid-execution `transport` premise law, shared by the drivers:
+    /// the source and target are lowered at the frontier, the premise
+    /// planner names the premises, and this Proof applies the explicit
+    /// `transport using` transition. The planner's failure is the answer,
+    /// with its diagnostic.
+    pub(in crate::lang::click::proof) fn apply_planned_fact_transport(
+        &self,
+        surface_source: &ClickProposition,
+        surface_target: &ClickProposition,
+        tactic_index: usize,
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`transport` requires an execution-frontier proof"));
+        };
+        let claim_label = context.claim_label;
+        let premises = {
+            let view = self.finalization_view()?;
+            let (state, replay, facts) = (view.state, view.replay, &view.facts);
+            if replay.is_at_function_entry() || replay.is_at_function_exit() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one completed execution step"
+                )));
+            }
+            let assumptions = assumptions_from_propositions(facts);
+            let pre_state = replay.old_reference_state(state);
+            let source = lower_point_proposition(
+                surface_source,
+                facts,
+                context.parsed_function.parameters(),
+                context.arguments,
+                pre_state,
+                state,
+                None,
+                &replay.program_point_states,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: could not lower `transport` source: {message}"
+                ))
+            })?;
+            if assumptions.derive_proposition(&source).is_none() {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `transport` requires a source derivable from its ambient facts: {}",
+                    describe_missing_pure_fact(
+                        &source,
+                        facts,
+                        state.resources().facts(),
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        &replay.effect_facts,
+                    )
+                )));
+            }
+            let target = lower_point_proposition(
+                surface_target,
+                facts,
+                context.parsed_function.parameters(),
+                context.arguments,
+                pre_state,
+                state,
+                None,
+                &replay.program_point_states,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
+                ))
+            })?;
+            let transition_facts = super::super::cursor_execution::fact_transport_transition_facts(
+                &replay.effect_facts,
+                &source,
+            );
+            plan_explicit_fact_transport(
+                surface_source,
+                &source,
+                &target,
+                facts,
+                &transition_facts,
+                context.parsed_function.parameters(),
+                context.arguments,
+                replay,
+                state,
+                context.predicate_environment,
+                context.click_function_environment,
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: {}",
+                    fact_transport_planning_failure(
+                        surface_source,
+                        surface_target,
+                        &replay.unfolded_predicates,
+                        &error,
+                    )
+                ))
+            })?
+        };
+        self.apply_step(SimpleProofStep::TransportUsing {
+            source: surface_source.clone(),
+            target: surface_target.clone(),
+            premises,
+        })
+    }
+
     /// The one `execute_until` planner law, shared by the drivers: the
     /// planner constructs the explicit checked operations from a scratch
     /// copy of the frontier, and this Proof applies exactly those operations,
