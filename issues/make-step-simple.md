@@ -200,10 +200,11 @@ and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
 counts what still reaches the interpreter: no example claim (quarantined
-`owned-vector` aside) and 23 mdtest claims in 21 files (down from 53 once
-a bare step's failure, the planner's failure, and a generated proof's
-failure became terminal on the checked route with their own diagnostics:
-the negative tests' expected messages come from the checked route now). Gaps closed on the
+`owned-vector` aside) and 11 mdtest claims (down from 53 once a bare step's failure, the
+planner's failure, and a generated proof's failure became terminal on the
+checked route with their own diagnostics — the negative tests' expected
+messages come from the checked route now — and the empty-execution-leaf
+shape gate on the flat driver was deleted). Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split

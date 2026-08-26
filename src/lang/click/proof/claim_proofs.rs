@@ -33,19 +33,6 @@ fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> 
     supported && saw_predicate
 }
 
-fn heap_predicate_explicit_unfold_supported(
-    function_block: &FunctionBlock,
-    tactics: &[ProofTactic],
-) -> bool {
-    matches!(
-        tactics,
-        [
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths,
-            ProofTactic::UnfoldPredicate(_),
-            ProofTactic::Simp
-        ]
-    ) && grouped_heap_predicate_contract_supported(function_block)
-}
 
 fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
@@ -388,8 +375,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     let direct_proof = if structural.is_some() {
         structural
     } else {
-        let owns_empty_predicate_branches =
-            heap_predicate_explicit_unfold_supported(function_block, tactics);
         match try_check_flat_function_proof(
             &initial,
             &program,
@@ -407,7 +392,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &arguments,
             false,
             false,
-            owns_empty_predicate_branches,
         ) {
             Ok(proof) => proof,
             Err(error) => return Err(error),
@@ -594,8 +578,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         structural
     } else {
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
-        let owns_empty_predicate_branches =
-            heap_predicate_explicit_unfold_supported(function_block, tactics);
         match try_check_flat_function_proof(
             &initial,
             &program,
@@ -613,7 +595,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &arguments,
             true,
             owns_post_execution_transport,
-            owns_empty_predicate_branches,
         ) {
             Ok(proof) => proof,
             Err(error) => return Err(error),

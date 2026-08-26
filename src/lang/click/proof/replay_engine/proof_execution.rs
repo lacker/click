@@ -834,7 +834,6 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     arguments: &'a [CExpression],
     complete_grouped_authority: bool,
     allow_indexed_smart_step: bool,
-    allow_empty_execution_branch_leaf: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     // A compatibility miss must leave the expansion cursor untouched just as
     // it leaves the semantic root untouched. Only publish cursor metadata
@@ -876,9 +875,6 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     };
     check_verification_deadline()?;
     if !proof.is_at_function_exit() {
-        return Ok(None);
-    }
-    if proof.has_empty_execution_branch_leaf() && !allow_empty_execution_branch_leaf {
         return Ok(None);
     }
     for indexed in remaining {
