@@ -270,29 +270,58 @@ way, all in the drivers or the kernel, no script changes:
 
 ### Unification progress (2026-08-26)
 
-The branch arm-advancing law is now one core (`advance_checked_branch_arms`)
-shared by the `Proof` branch driver and the open-scope branch handler;
-only the split and join stay target-specific. This deleted the scope's
-weaker third copy (it had bailed on mixed-ending arms) — a nested terminal
-C branch inside an `open` scope now verifies on the checked route (master
-`5b1a7445`).
+Landed on master (`96d0e40f`), each green through `scripts/check.sh`:
 
-Two duplications remain, each its own chunk:
+- The branch arm-advancing law is one core (`advance_checked_branch_arms`)
+  shared by the `Proof` branch driver and the open-scope branch handler.
+- The entire **expanded-execution walker family** is deleted (~300 lines);
+  the recursive source walker subsumes it. One representation gone.
+- Post-exit outcome tactics interleave with a following node (a
+  post-execution `if`): they defer onto the exit Proof and the continuation
+  runs after, via a shared `defer_post_exit_outcome_tactic`.
+- A non-terminal execution-frontier `If` node (arms reach a shared
+  continuation, e.g. a loop/nested-branch/scope in an arm) is driven through
+  the branch core like a `Branch`, in both the top-level driver and the
+  recursive region walker.
 
-- The **expanded-execution walker** (`advance_expanded_execution_*`) is a
-  second representation — it walks a proof after expansion (flat `step()` /
-  explicit branch-entry forms) and threads `post_execution` deferrals — and
-  its branch handler is the weakest copy (always
-  `join_focused_execution_split(&record, false, None)`: no `empty`, no
-  `ensuring`, no mixed-arm continuation). The 5 blocker tests are all
-  `expand`-and-re-verify tests whose fallback is here. Folding this into
-  the shared arm-advance core is the main remaining unification.
-- **Route parity**: a proof can verify on the grouped route but decline on
-  the single-claim route (`compare_swap2.ensures_0`), and an expansion made
-  through one entry point (`CProofClaim::Ensure(0)`) can produce a form that
-  falls back while a tactic-position expansion of the same proof does not.
-  The single-claim and grouped drivers, and the two expansion entry points,
-  should reach the same checked route.
+### Interpreter deletion: current failure set
+
+Replacing both interpreter fallbacks in `claim_proofs.rs` with a terminal
+`unsupported_proof_shape` error (the deletion) fails **17** unit tests. The
+deletion is atomic: the driver's decline must become a terminal error with
+the right diagnostic, which cannot land while the interpreter still catches
+that decline. The 17 split into:
+
+- ~12 diagnostic/provenance fixes, worked out before in the stash
+  `chunk4-interpreter-deletion-wip` (based on an older master, so re-apply
+  fresh): a smart `frame` miss is terminal with the
+  exit/effect-goal/no-candidate diagnostic; the flat and structural drivers
+  publish their expansion capture on a terminal error as well as on
+  retention; `simp` before exit is terminal; the `branch` capture guard is
+  dropped. Tests: `bare_frame_tactic_rejects_ensure_claim`,
+  `frame_rejects_ensure_clause`, `expands_qualified_frame_tactic`,
+  `branch_arms_retain_bare_fact_transports_on_proof`,
+  `linear_open_retains_a_direct_bare_fact_transport`,
+  `mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate`,
+  `selected_post_execution_frame_stays_inside_open_scope`,
+  `smart_execute_crosses_terminal_c_branch_before_checked_frame`,
+  `execute_step_expands_call_assign_fact_from_internal_snapshot`,
+  `proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics`,
+  `grouped_mutable_composite_calls_{continue_on_proof_after_preparatory_scope,keep_open_scopes_on_proof}`.
+- ~5 deeper driver-capability gaps (nested/recursive terminal branches and
+  loop-in-branch through the expansion re-verify path):
+  `smart_execute_retains_nested_terminal_c_branches_before_checked_frame`,
+  `recursive_zero_list_branch_frames_stay_on_proof`,
+  `frontier_local_loop_verifies_at_a_branch_local_frontier`,
+  `branch_continuation_claims_retain_their_selected_outcome_step`,
+  `expanded_execute_and_frame_replay_after_resource_branch`.
+
+The deletion is one focused push: re-apply the diagnostic fixes, close the
+5, then delete `execute_internal_proof`, `replay_linear_tactics_*`, the
+planner construction entries, and the `OrderedProofUnit::Replay` arm in one
+green commit.
+
+## Interpreter deletion: driver-gap blockers (2026-08-26)
 
 ## Interpreter deletion: driver-gap blockers (2026-08-26)
 
