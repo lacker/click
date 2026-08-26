@@ -231,14 +231,21 @@ planner — run on boundary `Proof`s with no interpreter call in
      named) plus publication of certified call postconditions as named
      facts, applied inside the linear search — not the planner, and not
      a reordering.
-   - Then the flat driver adopts the one linear law
-     (`replay_linear_tactics_on_proof`), the admission grammars
-     (`grouped_flat_proof_supported`, the structural routing) delete,
-     planner errors become terminal in the direct drivers, and the node
-     interpreter (`execute_internal_proof`'s Linear/If/Open/Branch
-     recursion) converts with the Proof structural operations, after
-     which the `claim_proofs.rs` fallbacks and `OrderedProofUnit::Replay`
-     delete.
+   - **Done (2026-08-27).** The node interpreter is deleted:
+     `execute_internal_proof`, its depth guard, the
+     `replay_linear_tactics*` loop, `OrderedProofUnit::Replay`, the
+     `claim_proofs.rs` fallbacks (a shape no driver accepts is the
+     terminal `unsupported_proof_shape`), and the interpreter-only
+     helpers (`apply_branch_interface`, `require_function_exit`,
+     `try_exact_execute_to_exit`, the `replay_boundary.rs` cursor
+     adapters `into_execution_context` / `replay_cursor` /
+     `begin_source_tactic`, and others) — 2,485 lines. The checked
+     drivers are the single engine; the last shapes were closed by
+     treating a proof `if` as a case split (see
+     [make-step-simple.md](make-step-simple.md)). Examples and mdtests
+     had zero fallbacks before the cut, and the whole unit suite passed
+     with the fallbacks made terminal, so no diagnostic depended on the
+     interpreter.
 2. **Dissolve `TacticReplayState`.** Move the remaining semantic fields
    into typed `Proof` state (several already have typed twins — delete the
    replay copy), move source locations, expansion selection, and
@@ -520,7 +527,8 @@ with the compatibility routing it gates.
 
 ### Replay call-site map
 
-`execute_internal_proof` (`replay_engine/proof_execution.rs:2576`) has four
+*Historical (the interpreter is deleted as of 2026-08-27; kept for the
+phase-2/3 dependency notes below).* `execute_internal_proof` had four
 production entry points, plus its internal recursion:
 
 - `claim_proofs.rs:797` — single-claim fallback once
@@ -551,9 +559,9 @@ pair at the function boundary, a phase-2 casualty.
 
 Dependency summary, in the remaining-phase numbering: the typed boundary
 (complete) unblocked both `loop_planning.rs` sites (now deleted) and the
-interpreter's `Branch` join; phase 1 deletes `execute_internal_proof`,
-`OrderedProofUnit::Replay`, and the stranded `tactic_replay.rs` round
-trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
+interpreter's `Branch` join; phase 1 (complete) deleted
+`execute_internal_proof`, `OrderedProofUnit::Replay`, and the stranded
+`tactic_replay.rs` round trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
 `replay_boundary.rs` and `ProofReplayContext` itself; phase 3 retires the
 `proof_certificate_builder` reads inside finalization.
 

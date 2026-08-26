@@ -1,85 +1,6 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn close_open_resource_at_current_point(
-    resource_environment: &ResourceEnvironment,
-    resource: &ResourceClause,
-    claim_label: &str,
-    tactic_index: usize,
-    available_pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    unfolded_predicates: &[String],
-    preserve_exposed_body: bool,
-) -> Result<CState, ClickError> {
-    close_or_initialize_composite_resource_at_current_point(
-        resource_environment,
-        resource,
-        claim_label,
-        tactic_index,
-        available_pure_facts,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        ResourceBodyClosure::CloseOpen {
-            preserve_exposed_body,
-        },
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn close_or_initialize_composite_resource_at_current_point(
-    resource_environment: &ResourceEnvironment,
-    resource: &ResourceClause,
-    claim_label: &str,
-    tactic_index: usize,
-    available_pure_facts: &[Proposition],
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    state: CState,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    unfolded_predicates: &[String],
-    closure: ResourceBodyClosure,
-) -> Result<CState, ClickError> {
-    let surface_propositions = SurfacePropositionMap::default();
-    let outcome = CFunctionOutcome::Return {
-        value: CValue::Int32(Bitvector32Term::Constant(0)),
-        state,
-    };
-    let outcome = fold_composite_resources_on_outcome(
-        resource_environment,
-        std::slice::from_ref(resource),
-        claim_label,
-        tactic_index,
-        &[],
-        available_pure_facts,
-        &surface_propositions,
-        parameters,
-        arguments,
-        pre_state,
-        outcome,
-        predicate_environment,
-        click_function_environment,
-        unfolded_predicates,
-        closure,
-    )?;
-    let CFunctionOutcome::Return { state, .. } = outcome else {
-        unreachable!("folding a synthetic return outcome preserves its outcome kind")
-    };
-    Ok(state)
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn lower_point_proposition(
     proposition: &ClickProposition,
     available: &[Proposition],
@@ -2061,7 +1982,6 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
         context_count += 1;
         let replay = match &unit {
             OrderedProofUnit::Checked(proof) => proof.finalization_view()?.replay,
-            OrderedProofUnit::Replay(context) => context.replay.as_ref(),
         };
         let path_choices = replay.deferred_expansion_path_choices.to_vec();
         resume_deferred_tactic_expansion_capture(expansion_capture.as_deref_mut(), replay)?;

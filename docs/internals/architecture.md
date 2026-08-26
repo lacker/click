@@ -37,13 +37,14 @@ same operations transactionally on persistent `Proof` descendants; they can't
 construct semantic successors directly. Kernel APIs expose the primitive
 logical, execution, memory, and resource operations needed for that checking.
 
-The migration to this model isn't complete. `ProofReplayContext` and
-`TacticReplayState` still duplicate facts, `CState`, the execution frontier,
-branch and scope state, and certificate-construction bookkeeping for some
-source and expansion paths. `execute_internal_proof` advances those contexts
-and sometimes imports or exports state across the `Proof` boundary. This is a
-compatibility architecture tracked by `issues/replay-smell.md`, not a second
-concept contributors should extend.
+The checked drivers are the single verification engine: a source or
+generated proof tree is checked by advancing a persistent `Proof`, and a
+shape no driver accepts is a terminal error, never a reason to run a second
+engine. `ProofReplayContext` and `TacticReplayState` still hold the
+execution frontier, marks, structural context, loop rules, deferrals, and
+certificate-construction bookkeeping *inside* a `Proof`'s execution snapshot;
+their remaining duplication of facts and `CState` is tracked by
+`issues/replay-smell.md`, not a second concept contributors should extend.
 
 `ProofCertificate` is the current structured form for a surface-expressible
 explicit proof. In the intended architecture it is serialization: expansion

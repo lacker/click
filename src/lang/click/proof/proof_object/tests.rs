@@ -2861,10 +2861,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             .expect("the retained ancestor should support another checked descendant");
         assert_eq!(alternative.certificate(), applied.certificate());
         assert!(root.certificate().steps().is_empty());
-        let result = applied
-            .into_execution_context()
-            .expect("the checked successor should export at the compatibility boundary");
-        assert!(result.pure_facts.contains(&kernel_conclusion));
+        assert!(applied.facts().contains(&kernel_conclusion));
     }
 }
 
@@ -6904,16 +6901,13 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
             "unfold does not copy unrelated effect history"
         );
 
-        let context = successor
-            .into_execution_context()
-            .expect("a sole successor should materialize its legacy boundary context");
         assert!(
-            context
+            successor_execution
                 .replay
                 .unfolded_predicates
                 .contains(&"selected".to_string())
         );
-        assert!(context.pure_facts.len() > size as usize + 1);
+        assert!(successor.facts().to_vec().len() > size as usize + 1);
     }
 }
 
@@ -7998,13 +7992,9 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
                 .shares_nonlocal_storage_with(&completed_execution.state),
             "a return step should not copy unchanged memory, resources, or populations"
         );
-        let retained_completed = completed.clone();
-        let exported = completed
-            .into_execution_context()
-            .expect("a shared checked successor should export at the legacy boundary");
-        assert!(exported.replay.is_at_function_exit());
+        assert!(completed.is_at_function_exit());
         assert!(matches!(
-            retained_completed.certificate().steps(),
+            completed.certificate().steps(),
             [SimpleProofStep::Step]
         ));
     }

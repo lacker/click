@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 /// Identifies the `close_invariants` step of a replayed certificate well
 /// enough to emit a `click timing:` line for the work its caller does on its
-/// behalf: the same claim-relative indices `replay_linear_tactics` would use.
+/// behalf: the same claim-relative indices the checked drivers use.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct InvariantCloserStep {
     pub(super) tactic_index: usize,

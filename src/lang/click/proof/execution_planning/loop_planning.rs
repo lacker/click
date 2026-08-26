@@ -223,8 +223,8 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
             let invariant_start = certificate.to_proof_tactics().len() - invariant_items.len();
             for (certificate_index, tactic) in certificate.to_proof_tactics().iter().enumerate() {
                 // Certificate replay for the initialize phase never reaches
-                // `replay_linear_tactics`, so time each step here in the same
-                // format and let `source_tactic_class` classify it.
+                // the checked drivers' tactic loop, so time each step here in
+                // the same format and let `source_tactic_class` classify it.
                 let _timing = TacticTiming::new(
                     &claim_label,
                     certificate_index,

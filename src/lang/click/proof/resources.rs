@@ -1670,40 +1670,6 @@ fn resource_value_substitutions(
         .collect())
 }
 
-/// Applies the owned-composite equivalence from the folded fact to one
-/// instantiated body. This is a definition law, not primitive consumption
-/// behavior of the kernel's folded composite fact.
-pub(super) fn unfold_composite_resource(
-    resource_environment: &ResourceEnvironment,
-    resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    state: CState,
-    available_pure_facts: &mut Vec<Proposition>,
-    surface_propositions: &mut SurfacePropositionMap,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
-    access: ResourceBodyAccess,
-) -> Result<UnfoldedCompositeResource, ClickError> {
-    let mut facts = LegacyResourcePureFacts::new(available_pure_facts);
-    unfold_composite_resource_with_facts(
-        resource_environment,
-        resource,
-        parameters,
-        arguments,
-        state,
-        &mut facts,
-        surface_propositions,
-        predicate_environment,
-        click_function_environment,
-        claim_label,
-        tactic_index,
-        access,
-    )
-}
-
 pub(super) struct CheckedResourceUnfold {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,

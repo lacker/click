@@ -43,33 +43,6 @@ pub(super) fn validate_loop_code_region(
     Ok(())
 }
 
-pub(super) fn validate_frame_code_region(
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    code_region: Option<CodeRegion>,
-    claim: &FunctionClaimRef<'_>,
-    claim_label: &str,
-    tactic_index: usize,
-) -> Result<(), ClickError> {
-    match code_region {
-        None | Some(CodeRegion::Function) => {
-            if matches!(claim, FunctionClaimRef::Ensure(_, _)) {
-                return Err(ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `frame()` proves function-level effect claims; use `frame(loop(N))` or a code region label to use loop effect summaries in an `ensures` proof"
-                )));
-            }
-            Ok(())
-        }
-        Some(code_region) => validate_qualified_frame_code_region(
-            function_block,
-            parsed_function,
-            code_region,
-            claim_label,
-            tactic_index,
-        ),
-    }
-}
-
 /// Validates a code-region-qualified frame independently of the surrounding
 /// function claim. Qualified frames contribute preservation facts for later
 /// proposition checking; unlike an unqualified function frame, their

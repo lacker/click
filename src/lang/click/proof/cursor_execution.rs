@@ -2,46 +2,6 @@ use super::*;
 use crate::kernel::abstract_c_state_for_join_across;
 use std::sync::Arc;
 
-pub(super) fn apply_branch_interface(
-    target: &ProgramPointRef,
-    assertions: &[ProofAssertion],
-    tactic_index: usize,
-    replay: &mut TacticReplayState,
-    state: &mut CState,
-    available_pure_facts: &mut Vec<Proposition>,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    claim_label: &str,
-    stable_join_locals: &BTreeMap<String, CValue>,
-    needs_abstraction: bool,
-) -> Result<(), ClickError> {
-    let mut indexed_facts = ProofFacts::from_ordered(available_pure_facts);
-    apply_branch_interface_with_proof_facts(
-        target,
-        assertions,
-        tactic_index,
-        replay,
-        state,
-        &mut indexed_facts,
-        parameters,
-        arguments,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        claim_label,
-        stable_join_locals,
-        None,
-        needs_abstraction,
-    )?;
-    *available_pure_facts = indexed_facts.to_vec();
-    Ok(())
-}
-
-/// Checks and applies one explicit branch interface against an incrementally
-/// indexed proof fact context.
 ///
 /// The legacy cursor wrapper above materializes its vector at the boundary.
 /// Proof-owned structural joins call this operation directly, so checking an
@@ -3233,19 +3193,5 @@ fn set_replay_execution(
     }
     replay.frontier.execution_start_state = Some(execution_start_state);
     replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
-    Ok(())
-}
-
-pub(super) fn require_function_exit(
-    replay: &TacticReplayState,
-    claim_label: &str,
-    tactic_index: usize,
-    tactic_name: &str,
-) -> Result<(), ClickError> {
-    if !replay.is_at_function_exit() {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires execution to reach function exit first"
-        )));
-    }
     Ok(())
 }

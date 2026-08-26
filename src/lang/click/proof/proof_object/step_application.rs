@@ -803,18 +803,6 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Reports whether a source-owned terminal frame can advance this exact
-    /// checked Proof. This is a capability query only; a false result leaves
-    /// the proof unchanged so a larger transactional Proof attempt can
-    /// decline without publishing a partial transition.
-    pub(in crate::lang::click::proof) fn supports_checked_frame_using(
-        &self,
-        region: Option<&CodeRegionRef>,
-        premises: &[ClickProposition],
-    ) -> Result<bool, ClickError> {
-        self.supports_checked_execution_frame_using(region, premises)
-    }
-
     /// Applies one source-attributed simple step to this Proof. The source
     /// coordinates schedule already-checked ordered outcome work; they grant
     /// no additional semantic authority.

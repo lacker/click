@@ -93,8 +93,8 @@ pub(super) use surface_synthesis::{
     synthesize_surface_equality_across_points, synthesize_surface_proposition,
 };
 use theorem_application::*;
+use timing::TacticTiming;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
-use timing::{TacticTiming, has_independent_source_timing};
 
 /// Checked kernel evidence used as the input to constructing one
 /// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of

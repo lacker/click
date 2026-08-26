@@ -99,13 +99,13 @@ fn collect_post_execution_if_have_indices<'a>(
 /// Diagnostic for the migration census: a checked driver erred and the claim
 /// goes to the compatibility interpreter. Printed only under
 /// `CLICK_DBG_FALLBACK=1`.
-fn note_checked_driver_fallback(driver: &str, claim_label: &str, error: &ClickError) {
-    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
-        eprintln!(
-            "DRIVER {driver} {claim_label}: {}",
-            error.message().chars().take(200).collect::<String>()
-        );
-    }
+/// The terminal diagnostic for a proof no checked driver accepts. The
+/// drivers are the single verification engine; a shape they decline is a
+/// gap to close in a driver, never a reason to run a second engine.
+fn unsupported_proof_shape(proof_label: &str) -> ClickError {
+    ClickError::new(format!(
+        "`{proof_label}`: this proof shape is not accepted by the checked proof drivers"
+    ))
 }
 
 fn leading_point_have_supported(have: &ProofHave) -> bool {
@@ -390,7 +390,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &function,
             &arguments,
             false,
-            false,
         ) {
             Ok(proof) => proof,
             Err(error) => return Err(error),
@@ -422,44 +421,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             Err(error) => return Err(error),
         }
     }
-    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
-        eprintln!("FALLBACK single {claim_label}");
-    }
-    let contexts = execute_internal_proof(
-        &program,
-        initial,
-        expansion_capture.as_deref_mut(),
-        function_block,
-        parsed_function,
-        &proof_claims,
-        claim_label,
-        function_environment,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        &function,
-        &arguments,
-    )?;
-
-    let theorems = finish_ordered_proof_units(
-        expansion_capture,
-        contexts.into_iter().map(OrderedProofUnit::Replay).collect(),
-        source_path,
-        function_block,
-        parsed_function,
-        &proof_claims,
-        false,
-        predicate_environment,
-        click_function_environment,
-        resource_environment,
-        theorem_environment,
-        function_environment,
-        &function,
-        &arguments,
-        tactics,
-    )?;
-    Ok(ClaimProofResult { theorems })
+    Err(unsupported_proof_shape(claim_label))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -592,7 +554,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             theorem_environment,
             &function,
             &arguments,
-            true,
             owns_post_execution_transport,
         ) {
             Ok(proof) => proof,
@@ -625,58 +586,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             Err(error) => return Err(error),
         }
     }
-    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
-        eprintln!("FALLBACK grouped {proof_label}");
-    }
-    let contexts = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        &proof_label,
-        "grouped proof tactic replay",
-        || {
-            execute_internal_proof(
-                &program,
-                initial,
-                expansion_capture.as_deref_mut(),
-                function_block,
-                parsed_function,
-                claims,
-                &proof_label,
-                function_environment,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                &function,
-                &arguments,
-            )
-        },
-    )?;
-
-    let theorems = crate::instrumentation::measure_operation(
-        function_block.signature().name(),
-        &proof_label,
-        "grouped proof finishing",
-        || {
-            finish_ordered_proof_units(
-                expansion_capture,
-                contexts.into_iter().map(OrderedProofUnit::Replay).collect(),
-                source_path,
-                function_block,
-                parsed_function,
-                claims,
-                true,
-                predicate_environment,
-                click_function_environment,
-                resource_environment,
-                theorem_environment,
-                function_environment,
-                &function,
-                &arguments,
-                tactics,
-            )
-        },
-    )?;
-    Ok(ClaimProofResult { theorems })
+    Err(unsupported_proof_shape(&proof_label))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -997,7 +907,6 @@ pub(in crate::lang::click) fn clear_independent_execution_cache() {
 /// supply the replay context they currently own.
 pub(super) enum OrderedProofUnit<'a> {
     Checked(Proof<'a>),
-    Replay(ProofReplayContext),
 }
 
 /// Places a path-independent terminal frame on each explicit execution leaf.
@@ -1142,7 +1051,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     // every drain before the legacy vector retires.
     let direct_view = match &unit {
         OrderedProofUnit::Checked(proof) => Some(proof.finalization_view()?),
-        OrderedProofUnit::Replay(_) => None,
     };
     let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
     let mut authoritative_outcome_haves = proof_owned
@@ -1156,38 +1064,15 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     }
     let pure_facts = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
-        (OrderedProofUnit::Replay(context), None) => context.pure_facts.clone(),
         _ => unreachable!("ordered proof unit and finalization view must agree"),
     };
     let requirement_facts =
         Arc::new(pure_facts[..function_block.requires().len().min(pure_facts.len())].to_vec());
     let outcome_substrate = match &unit {
         OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
-        OrderedProofUnit::Replay(context) => Proof::for_execution_frontier_with_effect_goals(
-            &proof_label,
-            0,
-            context.clone(),
-            EffectGoalSelection::None,
-            function_block,
-            function,
-            parsed_function,
-            arguments,
-            function_environment,
-            resource_environment,
-            predicate_environment,
-            click_function_environment,
-            theorem_environment,
-        )
-        .focus_function_outcomes(requirement_facts)
-        .ok(),
     };
     let (state, replay, branch_path) = match (&unit, &direct_view) {
         (OrderedProofUnit::Checked(_), Some(view)) => (view.state, view.replay, view.branch_path),
-        (OrderedProofUnit::Replay(context), None) => (
-            &context.state,
-            context.replay.as_ref(),
-            &context.branch_path,
-        ),
         _ => unreachable!("ordered proof unit and finalization view must agree"),
     };
     let retained_surface = match &unit {
@@ -1196,7 +1081,6 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             retained.steps = surface_steps_from_checked_proof(proof)?;
             retained
         }
-        OrderedProofUnit::Replay(_) => replay.proof_certificate_builder.clone(),
     };
     let pre_state = replay.execution_start_state(state);
     let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {

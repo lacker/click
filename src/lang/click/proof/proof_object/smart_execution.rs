@@ -112,27 +112,6 @@ impl<'a> Proof<'a> {
             .map(|(proof, _)| proof))
     }
 
-    /// Runs top-level `execute` from an exact execution root. With no ambient
-    /// proof facts, resources, or effect facts to transport, the existing
-    /// checked branch container may own structural C forks as well as linear
-    /// statements without guessing what a later continuation will need.
-    pub(in crate::lang::click::proof) fn try_exact_execute_to_exit(
-        &self,
-    ) -> Result<Option<Self>, ClickError> {
-        let Some(execution) = self.execution() else {
-            return Ok(None);
-        };
-        if !self.facts().ordered.is_empty()
-            || self.facts().prioritized.is_some()
-            || !execution.state.resources().facts().is_empty()
-            || !execution.replay.effect_facts.is_empty()
-            || !execution.replay.case_assumptions.is_empty()
-        {
-            return Ok(None);
-        }
-        self.try_linear_execute()
-    }
-
     /// Searches explicit premise forms for one point fact transport.
     ///
     /// Every candidate is checked by applying the corresponding simple step

@@ -32,19 +32,16 @@ branches. It can be rendered back to surface tactics for expansion. The
 serialization carries no semantic authority of its own and need not exist
 during ordinary verification in the intended architecture.
 
-## Compatibility replay state
+## Replay state inside a proof
 
-The migration is incomplete. `ProofReplayContext` still owns a `CState`, pure
-facts, branch history, and a boxed `TacticReplayState`. That nested state owns
-an execution frontier, fact and resource metadata, marks, structural context,
-loop rules, deferrals, and certificate builders. `execute_internal_proof`
-interprets source or generated proof trees by advancing this parallel context.
-
-Several migrated paths construct a temporary `Proof`, apply checked operations,
-and then export the result back into replay-owned state. Legacy smart paths can
-also construct a `ProofCertificate`, run it through the same compatibility
-engine, and merge returned replay contexts. These adapters preserve current
-behavior, but they duplicate semantic ownership and are tracked for removal in
+`ProofReplayContext` still owns a `CState`, pure facts, branch history, and a
+boxed `TacticReplayState`; that nested state owns an execution frontier, fact
+and resource metadata, marks, structural context, loop rules, deferrals, and
+certificate builders. It lives only as the execution snapshot of a `Proof`
+goal: the checked drivers advance a `Proof`, and every source or generated
+proof tree is checked that way. The earlier interpreter that advanced this
+context as a parallel engine is gone; the remaining duplication of facts and
+`CState` between the snapshot and the `Proof` is tracked for removal in
 `issues/replay-smell.md`.
 
 A surviving source or expansion cursor may own syntax position, focus,

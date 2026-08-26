@@ -134,10 +134,9 @@ state and both to be made lazy or indexed, not worked around:
    `linear_execute_until_retains_its_checked_execution_proof`, and their
    kin) move to the new output; the corpus's `frame() using` lists that
    cite step-carried facts are re-expanded.
-4. **Both drivers run the same trivial law.** The interpreter's `execute`
-   arm and the flat driver call the same repetition; the routing gates
-   (`grouped_flat_proof_supported`, the structural routing) and the
-   planner's step construction delete, per the replay issue's phase 1.
+4. **Both drivers run the same trivial law.** *Done 2026-08-27:* the
+   interpreter is deleted and the checked drivers are the single engine
+   (see "Interpreter deleted" under Progress).
 5. **Delete `step() using`.** Parser, `SimpleProofStep::StepUsing`,
    `check_step_using_facts`, the `Selected` transport policy, the premise
    spelling machinery whose only consumer was step selection
@@ -391,26 +390,35 @@ each with a small, general fix:
   its own spelling (`source_expander_recalls_a_fact_at_a_recorded_statement_entry`
   pins `assumption();`).
 
-### Interpreter deletion: starting set (2026-08-27)
+### Interpreter deleted (2026-08-27, landed)
 
-Examples and mdtests: **zero** fallbacks (`CLICK_DBG_FALLBACK=1`). The unit
-suite still reaches the interpreter from these proofs (census on master
-after the four shapes landed; several are deliberate-failure diagnostic
-tests whose expected message the driver must now produce itself):
+Chunk 4 is complete. With both `claim_proofs.rs` fallbacks replaced by
+the terminal `unsupported_proof_shape`, the whole unit suite passed
+unchanged (the fallback census above was proofs whose *outcome* did not
+depend on the interpreter: every deliberate-failure diagnostic already
+came from a driver), examples and mdtests had zero fallbacks, so the
+interpreter was dead code. Deleted in one commit, 2,485 lines:
+`execute_internal_proof` and `execute_internal_proof_inner`, the replay
+depth guard and its tests, `replay_linear_tactics` /
+`replay_linear_tactics_on_proof` /
+`replay_linear_tactics_without_frontier_loops`,
+`defer_post_execution_on_proof`, `tactic_is_deferred_post_execution`,
+`OrderedProofUnit::Replay` and its finalization arms,
+`note_checked_driver_fallback`, `apply_branch_interface`,
+`require_function_exit`, the `replay_boundary.rs` cursor adapters
+(`into_execution_context`, `replay_cursor`, `begin_source_tactic`),
+`try_exact_execute_to_exit`, `unfold_composite_resource`,
+`validate_frame_code_region`, `Proof::supports_checked_frame_using`,
+the two `*_at_current_point` resource closers, and the drivers' dead
+`allow_contextual_frame` / `authoritative_nested_haves` /
+`complete_grouped_authority` parameters. Landed with it, from the
+preserved attempt: a smart `frame` miss is terminal
+(`smart_frame_miss_error`), the drivers publish their expansion capture
+on a terminal error as well as on retention, a `frame using` is always
+attempted (a scope defers one it cannot check at function exit), and
+`pre_exit_outcome_tactic_error` covers `simp` and `frame`.
 
-    3 single  identity.ensures_0        1 single  identity.returns_argument
-    3 single  bad.ensures_0             1 grouped set_wrapped_seven.contract
-    2 single  identity.immutable_0      1 grouped set_second_return_first.contract
-    1 single  set_cell.mutable_0        1 grouped set_choice_return_first.contract
-    1 single  identity.returns_x        1 grouped prepare_then_set_seven.contract
-
-The deletion chunk: apply the four still-valid fixes from
-`wip/interpreter-deletion-branch-core` (frame-miss terminal, capture
-wrappers, frame-guard removal, pre-exit diagnostics), replace both
-fallbacks with the terminal `unsupported_proof_shape`, close whatever of
-the set above remains, then remove `execute_internal_proof`,
-`replay_linear_tactics_*`, the planner construction entries, and the
-`OrderedProofUnit::Replay` arm, in one green commit.
+Remaining: chunk 5 (delete `step() using`).
 
 ## Record of the abandoned carry (2026-08-25)
 
