@@ -1,5 +1,6 @@
 //! Smart closure search and linear script interpretation.
 
+use super::outcomes_and_focus::frontier_premise_anchor;
 use super::*;
 use fact_index::collect_surface_conjunct_leaves;
 
@@ -601,6 +602,7 @@ impl<'a> Proof<'a> {
         Vec<(Proposition, ClickProposition)>,
         bool,
     )> {
+        let frontier_anchor: Option<ProgramPointRef>;
         let (surface_facts, theorem_application_closes_goal, premise_anchor) =
             match self.context.as_ref() {
                 ProofContext::Pure(context) => {
@@ -614,18 +616,29 @@ impl<'a> Proof<'a> {
                 // A judgment stated at a function outcome supplies the
                 // outcome's recorded lowerings and statement-entry anchor.
                 ProofContext::Execution(_) => {
-                    let Some(point) = self.focused_outcome_point() else {
-                        return None;
-                    };
-                    (
-                        &point.surface_propositions,
-                        // Entry-anchored premises can add a replay-equivalent
-                        // outcome fact without discharging the exact goal
-                        // form. Keep the ordinary trailing assumption so
-                        // the checked successor decides whether it is needed.
-                        false,
-                        point.premise_anchor.as_ref(),
-                    )
+                    if let Some(point) = self.focused_outcome_point() {
+                        (
+                            &point.surface_propositions,
+                            // Entry-anchored premises can add a replay-equivalent
+                            // outcome fact without discharging the exact goal
+                            // form. Keep the ordinary trailing assumption so
+                            // the checked successor decides whether it is needed.
+                            false,
+                            point.premise_anchor.as_ref(),
+                        )
+                    } else {
+                        // A judgment stated mid-execution (a `have` before
+                        // function exit) supplies the frontier's recorded
+                        // lowerings and the entry of the last executed
+                        // statement, exactly as an outcome point does.
+                        let execution = self.execution()?;
+                        frontier_anchor = frontier_premise_anchor(execution);
+                        (
+                            &execution.replay.surface_propositions,
+                            false,
+                            frontier_anchor.as_ref(),
+                        )
+                    }
                 }
             };
         let goal = self.goal()?.clone();

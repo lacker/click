@@ -135,6 +135,45 @@ impl<'a> ProofScope<'a> {
         self.body.split_focused_execution_branch()
     }
 
+    /// Opens a proof-level case split at this scope body's frontier. The
+    /// returned proof advances by focusing each recorded case;
+    /// `join_execution_if_terminal` accepts the direct joined successor.
+    pub(in crate::lang::click::proof) fn split_execution_if(
+        &self,
+        condition: ClickProposition,
+    ) -> Result<(Proof<'a>, ExecutionProofCaseSplit<'a>), ClickError> {
+        self.body.split_focused_execution_if(condition)
+    }
+
+    /// Joins the two completed cases of an in-`Proof` case split as the next
+    /// direct structural node of this scope, with the same provenance check
+    /// as `join_execution_split`.
+    pub(in crate::lang::click::proof) fn join_execution_if_terminal(
+        &self,
+        advanced: &Proof<'a>,
+        record: &ExecutionProofCaseSplit<'a>,
+    ) -> Result<Self, ClickError> {
+        let body = advanced.join_focused_execution_if_terminal(record)?;
+        let Some(parent) = body.node.parent.as_ref() else {
+            return Err(self
+                .root
+                .step_error("case split join produced a root without provenance"));
+        };
+        if !Arc::ptr_eq(parent, &self.body.node) {
+            return Err(self
+                .root
+                .step_error("case split join did not produce one direct checked successor"));
+        }
+        let mut next = self.clone();
+        for fact in body.added_facts() {
+            if !next.introduced_facts.contains(fact) {
+                next.introduced_facts.push(fact.clone());
+            }
+        }
+        next.body = body;
+        Ok(next)
+    }
+
     /// Joins an advanced in-`Proof` execution split as the next direct
     /// structural node of this scope. The split's marker identity prevents
     /// a region searched from a sibling scope from being spliced here, and
@@ -806,8 +845,17 @@ impl<'a> ProofScope<'a> {
         let Some(mut body) = self.body.try_simp_closure()? else {
             return Ok(None);
         };
+        // At an outcome or pure point a bare assumption may cite an ambient
+        // fact the certificate cannot spell, so a derivation from spelled
+        // premises is preferred. Mid-execution, an available fact is its own spelling:
+        // `assumption();` replays by re-checking the judgment, and the
+        // frontier derivation exists for what the direct closer cannot
+        // prove, not to replace what it can.
+        let mid_execution = matches!(self.body.context.as_ref(), ProofContext::Execution(_))
+            && self.body.focused_outcome_point().is_none();
         if body.node.depth == 1
             && matches!(body.node.step.as_deref(), Some(SimpleProofStep::Assumption))
+            && !mid_execution
             && let Some(replayable) = self.body.try_simp_closure_after_direct(true)?
         {
             body = replayable;

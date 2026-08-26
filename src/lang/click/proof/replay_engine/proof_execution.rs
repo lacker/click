@@ -1038,7 +1038,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                         || checked_execution_region_contains_source(else_branch, wanted)
                 });
                 if !selected_source_index.is_none_or(|wanted| {
-                    wanted == *source_index || capture_in_continuation || capture_in_nested_branch
+                    wanted <= *source_index || capture_in_continuation || capture_in_nested_branch
                 }) {
                     return Ok(None);
                 }
@@ -2059,9 +2059,6 @@ fn advance_focused_execution_region<'a>(
             continuation,
             ..
         } => {
-            if !matches!(continuation.as_ref(), InternalProofNode::Done) {
-                return Ok(None);
-            }
             if proof.is_at_function_exit() {
                 let Some(then_tactics) = deferred_post_execution_region(then_branch) else {
                     return Ok(None);
@@ -2075,7 +2072,15 @@ fn advance_focused_execution_region<'a>(
                     &else_tactics,
                 ) && !proof.post_execution_if_is_path_decided(condition)?
                 {
-                    return Ok(None);
+                    // A proof-level case split on some outcome path, as at
+                    // the top level: fork those paths, one per polarity.
+                    match proof.split_outcome_paths_by_case(condition) {
+                        Ok(split) => proof = split,
+                        Err(_) => {
+                            check_verification_deadline()?;
+                            return Ok(None);
+                        }
+                    }
                 }
                 let proof = proof.defer_post_execution_source_tactic(
                     *index,
@@ -2409,7 +2414,23 @@ fn advance_linear_open_scope<'a>(
         if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             scope = if let SimpleProofStep::FrameUsing { region, premises } = &step {
                 if !scope.supports_checked_frame_using(region.as_ref(), premises)? {
-                    return Ok(None);
+                    if !scope.is_at_function_exit() {
+                        return Ok(None);
+                    }
+                    // Execution inside the scope reached function exit and
+                    // this frame is not checkable here: defer it through the
+                    // scope to finalization, as the arm walker defers a
+                    // post-exit outcome tactic on a `Proof`.
+                    let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+                        return Ok(None);
+                    };
+                    scope = scope.defer_post_execution_source_tactic(
+                        indexed.index,
+                        indexed.source_index,
+                        post_tactic,
+                        expansion_capture.as_deref_mut(),
+                    )?;
+                    continue;
                 }
                 scope.apply_step_at(step, indexed.index, indexed.source_index)?
             } else {
@@ -2693,6 +2714,73 @@ fn advance_checked_open_scope<'a>(
         return advance_checked_open_scope(
             scope,
             continuation,
+            expansion_capture,
+            proof_site,
+            owning_source_index,
+        );
+    }
+    if let InternalProofNode::If {
+        index,
+        condition,
+        then_branch,
+        else_branch,
+        continuation,
+        ..
+    } = body
+    {
+        // A proof `if` inside a resource scope is the same case split as
+        // outside one: each case runs its arm and then the shared
+        // continuation to its own function exit, and the cases join
+        // terminally as the scope's next node.
+        let scope = scope.with_execution_tactic_index(*index)?;
+        let (split, record) = scope.split_execution_if(condition.clone())?;
+        let mut advanced = split;
+        let mut consumed_continuation = false;
+        for (take_then, branch) in [(true, then_branch.as_ref()), (false, else_branch.as_ref())] {
+            let focused = advanced.focus_execution_if_arm(&record, take_then)?;
+            let Some(mut next) = advance_focused_execution_region(
+                focused,
+                None,
+                branch,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+                1,
+            )?
+            else {
+                return Ok(None);
+            };
+            if !next.is_at_function_exit()
+                && !matches!(continuation.as_ref(), InternalProofNode::Done)
+            {
+                let Some(continued) = advance_focused_execution_region(
+                    next,
+                    None,
+                    continuation,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                    1,
+                )?
+                else {
+                    return Ok(None);
+                };
+                next = continued;
+                consumed_continuation = true;
+            }
+            if !next.is_at_function_exit() {
+                return Ok(None);
+            }
+            advanced = next;
+        }
+        let scope = scope.join_execution_if_terminal(&advanced, &record)?;
+        return advance_checked_open_scope(
+            scope,
+            if consumed_continuation {
+                &InternalProofNode::Done
+            } else {
+                continuation
+            },
             expansion_capture,
             proof_site,
             owning_source_index,

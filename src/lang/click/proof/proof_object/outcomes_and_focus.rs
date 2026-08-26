@@ -258,40 +258,9 @@ impl<'a> Proof<'a> {
             .as_ref()
             .map(|execution| execution.replay.surface_propositions.clone())
             .unwrap_or_default();
-        let frontier_anchor = frontier_snapshot.as_ref().and_then(|execution| {
-            execution
-                .replay
-                .proof_certificate_builder
-                .last_step_entry
-                .clone()
-                .or_else(|| {
-                    execution
-                        .replay
-                        .program_point_states
-                        .keys()
-                        .next_back()
-                        .cloned()
-                })
-        });
-        // Premises established across one statement use its entry snapshot
-        // as their stable Surface Click spelling. A retained Proof may carry
-        // the equivalent exit point as its most recent provenance marker;
-        // prefer the matching recorded entry without changing the kernel
-        // proposition or the outcome state being checked.
-        let frontier_anchor = frontier_anchor.map(|anchor| {
-            if anchor.kind != ProgramPointKind::Exit {
-                return anchor;
-            }
-            let entry = ProgramPointRef {
-                region: anchor.region.clone(),
-                kind: ProgramPointKind::Entry,
-            };
-            frontier_snapshot
-                .as_ref()
-                .is_some_and(|execution| execution.replay.program_point_states.contains_key(&entry))
-                .then_some(entry)
-                .unwrap_or(anchor)
-        });
+        let frontier_anchor = frontier_snapshot
+            .as_ref()
+            .and_then(|execution| frontier_premise_anchor(execution));
         let requirement_surfaces = match self.context.as_ref() {
             ProofContext::Execution(context) => requirement_facts
                 .iter()
@@ -465,4 +434,42 @@ impl<'a> Proof<'a> {
         Ok((!execution.replay.is_at_function_exit())
             .then_some(execution.replay.frontier.next_statement_index))
     }
+}
+
+/// The premise anchor of an execution frontier: the entry of the last
+/// executed statement (or the most recent recorded program point), with an
+/// exit marker mapped to the matching recorded entry. Premises established
+/// across one statement use its entry snapshot as their stable Surface Click
+/// spelling; a retained Proof may carry the equivalent exit point as its most
+/// recent provenance marker. Outcome points and mid-execution judgments
+/// anchor their premises by this one law.
+pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option<ProgramPointRef> {
+    let anchor = execution
+        .replay
+        .proof_certificate_builder
+        .last_step_entry
+        .clone()
+        .or_else(|| {
+            execution
+                .replay
+                .program_point_states
+                .keys()
+                .next_back()
+                .cloned()
+        })?;
+    if anchor.kind != ProgramPointKind::Exit {
+        return Some(anchor);
+    }
+    let entry = ProgramPointRef {
+        region: anchor.region.clone(),
+        kind: ProgramPointKind::Entry,
+    };
+    Some(
+        execution
+            .replay
+            .program_point_states
+            .contains_key(&entry)
+            .then_some(entry)
+            .unwrap_or(anchor),
+    )
 }

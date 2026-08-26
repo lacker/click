@@ -359,27 +359,58 @@ interpreter.
 `branch_count` now verifies through the checked driver with no interpreter
 fallback (`CLICK_DBG_FALLBACK=1`).
 
-**Remaining fallbacks** (from `CLICK_DBG_FALLBACK` / `CLICK_DBG_SHAPE`):
+### The four remaining shapes (2026-08-27, landed)
 
-- `recursive_zero_list_branch_frames` / `zero_list_sum`:
-  `Lin[observe]->If{Lin[execute]->If{Lin[frame]|Lin[frame]}->Lin[simp] | Lin[execute,frame,simp]}`.
-  A terminal outer case split whose then-arm contains a *nested* `if`.
-- `smart_execute_retains_nested_terminal_c_branches` / `write_nested`:
-  `Open{If{Lin[step]->If{...}|Lin[step,step,step]}->Lin[frame]}->Lin[have,assumption,assumption]`.
-  A nested `if` inside an `open` scope.
-- `branch_continuation_claims_retain_their_selected_outcome_step` /
-  `joined_increment`: `Lin[step]->Br{Lin[step]|Lin[step]}->Lin[step,step,simp]`.
-  An explicit `Br` with a non-Done continuation.
-- `expanded_execute_and_frame_replay_after_resource_branch` /
-  `vector_replace_if`:
-  `Lin[step,step,step,have]->Br{Lin[step,have,have,have]|...}->Lin[execute,have,frame,simp]`.
-  A `Br` whose arms carry mid-execution `have`s and reach a continuation
-  that itself `execute`s.
+All four now verify on the checked drivers with no interpreter fallback,
+each with a small, general fix:
 
-The deletion finishes by closing these, then removing
-`execute_internal_proof`, `replay_linear_tactics_*`, the planner
-construction entries, and the `OrderedProofUnit::Replay` arm, in one green
-commit.
+- `zero_list_sum` (a nested `if` inside a case, after `execute` reached
+  exit): the region walker's post-exit `If` forks outcome paths by case
+  (`split_outcome_paths_by_case`) exactly as the top-level handler does,
+  and its stale "non-`Done` continuation" entry gate is gone.
+- `joined_increment` (`branch` + continuation under expansion): the
+  `Branch` handler's expansion-capture gate declined when the selected
+  tactic *preceded* the branch (already recorded); it now accepts
+  `wanted <= source_index`.
+- `write_nested` (a nested `if` inside an `open` scope): the scope driver
+  runs the same case split (`ProofScope::split_execution_if` /
+  `join_execution_if_terminal`, mirroring `split_execution_branch` /
+  `join_execution_split`), and a `frame using` the scope cannot check at
+  function exit is deferred through the scope
+  (`defer_post_execution_source_tactic`) as the arm walker defers a
+  post-exit outcome tactic.
+- `vector_replace_if` (a mid-execution `have index < index + 1 by simp`
+  inside an arm): `selected_simp_derivation` had no premise anchor or
+  surface spellings for an execution frontier without an outcome point,
+  so any mid-execution `have by simp` beyond the direct closer was
+  unprovable on the checked route. A frontier now supplies its recorded
+  lowerings and `frontier_premise_anchor` (the one anchor law, shared with
+  outcome points; extracted from `focus_function_outcomes`). The scope's
+  "prefer a derivation over a depth-1 assumption" rule is kept for outcome
+  and pure points and skipped mid-execution, where an available fact is
+  its own spelling (`source_expander_recalls_a_fact_at_a_recorded_statement_entry`
+  pins `assumption();`).
+
+### Interpreter deletion: starting set (2026-08-27)
+
+Examples and mdtests: **zero** fallbacks (`CLICK_DBG_FALLBACK=1`). The unit
+suite still reaches the interpreter from these proofs (census on master
+after the four shapes landed; several are deliberate-failure diagnostic
+tests whose expected message the driver must now produce itself):
+
+    3 single  identity.ensures_0        1 single  identity.returns_argument
+    3 single  bad.ensures_0             1 grouped set_wrapped_seven.contract
+    2 single  identity.immutable_0      1 grouped set_second_return_first.contract
+    1 single  set_cell.mutable_0        1 grouped set_choice_return_first.contract
+    1 single  identity.returns_x        1 grouped prepare_then_set_seven.contract
+
+The deletion chunk: apply the four still-valid fixes from
+`wip/interpreter-deletion-branch-core` (frame-miss terminal, capture
+wrappers, frame-guard removal, pre-exit diagnostics), replace both
+fallbacks with the terminal `unsupported_proof_shape`, close whatever of
+the set above remains, then remove `execute_internal_proof`,
+`replay_linear_tactics_*`, the planner construction entries, and the
+`OrderedProofUnit::Replay` arm, in one green commit.
 
 ## Record of the abandoned carry (2026-08-25)
 
