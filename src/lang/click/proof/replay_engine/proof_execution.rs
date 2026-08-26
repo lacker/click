@@ -175,6 +175,10 @@ fn checked_execution_arm_tactics_end(
     initial: CheckedExecutionRegionEnd,
 ) -> Option<CheckedExecutionRegionEnd> {
     let mut at_function_exit = initial == CheckedExecutionRegionEnd::FunctionExit;
+    // A `step()` may execute a `return`; a post-execution tactic after one
+    // classifies the arm as reaching function exit. The driver checks the
+    // actual frontier.
+    let mut may_exit = false;
     for indexed in tactics {
         if at_function_exit {
             flat_post_execution_tactic(&indexed.tactic)?;
@@ -187,15 +191,20 @@ fn checked_execution_arm_tactics_end(
             at_function_exit = true;
             continue;
         }
+        if matches!(indexed.tactic, ProofTactic::SmartStep) {
+            may_exit = true;
+            continue;
+        }
         if linear_execution_simple_step(&indexed.tactic).is_none()
             && !matches!(
                 indexed.tactic,
-                ProofTactic::SmartStep
-                    | ProofTactic::ApplyTheorem(_)
-                    | ProofTactic::Transport { .. }
-                    | ProofTactic::Have(_)
+                ProofTactic::ApplyTheorem(_) | ProofTactic::Transport { .. } | ProofTactic::Have(_)
             )
         {
+            if may_exit && flat_post_execution_tactic(&indexed.tactic).is_some() {
+                at_function_exit = true;
+                continue;
+            }
             return None;
         }
     }
@@ -279,6 +288,22 @@ fn checked_execution_region_pair(
 ) -> Option<CheckedExecutionRegionEnd> {
     let then_end = checked_execution_region_end(then_branch)?;
     (checked_execution_region_end(else_branch)? == then_end).then_some(then_end)
+}
+
+/// A `branch` whose arms end differently: one returns, the other reaches
+/// the shared continuation. The driver runs the continuation inside the
+/// continuing arm and joins both arms terminally.
+fn checked_execution_region_pair_is_mixed(
+    then_branch: &InternalProofNode,
+    else_branch: &InternalProofNode,
+) -> bool {
+    matches!(
+        (
+            checked_execution_region_end(then_branch),
+            checked_execution_region_end(else_branch),
+        ),
+        (Some(then_end), Some(else_end)) if then_end != else_end
+    )
 }
 
 fn checked_execution_region_is_empty(node: &InternalProofNode) -> bool {
@@ -581,7 +606,8 @@ fn checked_structural_execution_branch_supported(
     else_branch: &InternalProofNode,
     continuation: &InternalProofNode,
 ) -> bool {
-    checked_execution_region_pair(then_branch, else_branch).is_some()
+    (checked_execution_region_pair(then_branch, else_branch).is_some()
+        || checked_execution_region_pair_is_mixed(then_branch, else_branch))
         && (!internal_proof_contains_frame(continuation)
             || checked_linear_continuation_reaches_frame(continuation))
 }
@@ -1061,17 +1087,19 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                 ) {
                     return Ok(None);
                 }
-                let Some((advanced, _, certificate)) = try_advance_checked_execution_branch(
-                    proof,
-                    *index,
-                    ensuring,
-                    then_branch,
-                    else_branch,
-                    staged_expansion_capture.as_mut(),
-                    proof_site.as_ref(),
-                    owning_source_index,
-                    0,
-                )?
+                let Some((advanced, _, certificate, consumed_continuation)) =
+                    try_advance_checked_execution_branch(
+                        proof,
+                        *index,
+                        ensuring,
+                        then_branch,
+                        else_branch,
+                        continuation,
+                        staged_expansion_capture.as_mut(),
+                        proof_site.as_ref(),
+                        owning_source_index,
+                        0,
+                    )?
                 else {
                     return Ok(None);
                 };
@@ -1090,7 +1118,11 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                             .to_proof_tactics(),
                     );
                 }
-                current = continuation;
+                current = if consumed_continuation {
+                    &InternalProofNode::Done
+                } else {
+                    continuation
+                };
             }
             InternalProofNode::If {
                 index,
@@ -1576,17 +1608,19 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
         } => {
             let proof = proof.with_execution_tactic_index(*index)?;
             let checkpoint = proof.checkpoint();
-            let Some((advanced, _, _)) = try_advance_checked_execution_branch(
-                proof,
-                *index,
-                ensuring,
-                then_branch,
-                else_branch,
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                owning_source_index,
-                0,
-            )?
+            let Some((advanced, _, _, consumed_continuation)) =
+                try_advance_checked_execution_branch(
+                    proof,
+                    *index,
+                    ensuring,
+                    then_branch,
+                    else_branch,
+                    continuation,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                    0,
+                )?
             else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {index}: `branch` did not verify as a checked preservation operation"
@@ -1596,7 +1630,11 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
             let advanced = advanced.record_surface_steps(&steps)?;
             advance_preservation_region(
                 advanced,
-                continuation,
+                if consumed_continuation {
+                    &InternalProofNode::Done
+                } else {
+                    continuation
+                },
                 pending,
                 expansion_capture,
                 proof_site,
@@ -1934,17 +1972,19 @@ fn advance_focused_execution_region<'a>(
             continuation,
         } => {
             let owner = proof.clone();
-            let Some((nested, _, certificate)) = try_advance_checked_execution_branch(
-                proof,
-                *index,
-                ensuring,
-                then_branch,
-                else_branch,
-                expansion_capture.as_deref_mut(),
-                proof_site,
-                owning_source_index,
-                depth,
-            )?
+            let Some((nested, _, certificate, consumed_continuation)) =
+                try_advance_checked_execution_branch(
+                    proof,
+                    *index,
+                    ensuring,
+                    then_branch,
+                    else_branch,
+                    continuation,
+                    expansion_capture.as_deref_mut(),
+                    proof_site,
+                    owning_source_index,
+                    depth,
+                )?
             else {
                 return Ok(None);
             };
@@ -1967,7 +2007,11 @@ fn advance_focused_execution_region<'a>(
             advance_focused_execution_region(
                 proof,
                 enclosing_record,
-                continuation,
+                if consumed_continuation {
+                    &InternalProofNode::Done
+                } else {
+                    continuation
+                },
                 expansion_capture,
                 proof_site,
                 owning_source_index,
@@ -2148,17 +2192,21 @@ fn advance_focused_execution_region<'a>(
 /// Proof split/join API. Callers may choose different source-driving
 /// boundaries, but branch entry, arm advancement, interface checking, and the
 /// semantic join have one implementation.
+/// The fourth result reports that the branch's continuation was consumed:
+/// one arm returned and the other ran the continuation to function exit
+/// inside the arm, so the caller must not run the continuation again.
 fn try_advance_checked_execution_branch<'a>(
     proof: Proof<'a>,
     tactic_index: usize,
     ensuring: &Option<Vec<ProofAssertion>>,
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
+    continuation: &InternalProofNode,
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
     depth: usize,
-) -> Result<Option<(Proof<'a>, bool, Option<ProofCertificate>)>, ClickError> {
+) -> Result<Option<(Proof<'a>, bool, Option<ProofCertificate>, bool)>, ClickError> {
     if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH {
         return Ok(None);
     }
@@ -2191,6 +2239,41 @@ fn try_advance_checked_execution_branch<'a>(
         };
         advanced = next;
     }
+    let mut consumed_continuation = false;
+    if !has_sole_feasible_arm {
+        let then_exit = advanced.arm_at_function_exit(&record, true);
+        let else_exit = advanced.arm_at_function_exit(&record, false);
+        if then_exit != else_exit && ensuring.is_some() {
+            // An interface join needs both arms at the boundary; a returned
+            // arm with an `ensuring` interface stays with the interpreter.
+            return Ok(None);
+        }
+        if then_exit != else_exit {
+            // One arm returned. The other continues past its boundary into
+            // the shared continuation, which it runs to function exit; the
+            // two arms then join terminally.
+            let continuing = advanced
+                .focus_split_arm(&record, !then_exit)?
+                .continue_arm_into_parent_frontier(&record)?;
+            let Some(next) = advance_focused_execution_region(
+                continuing,
+                Some(&record),
+                continuation,
+                expansion_capture.as_deref_mut(),
+                proof_site,
+                owning_source_index,
+                depth + 1,
+            )?
+            else {
+                return Ok(None);
+            };
+            if !next.is_at_function_exit() {
+                return Ok(None);
+            }
+            advanced = next;
+            consumed_continuation = true;
+        }
+    }
     let empty = checked_execution_region_is_empty(then_branch)
         && checked_execution_region_is_empty(else_branch);
     let joined = advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
@@ -2198,7 +2281,12 @@ fn try_advance_checked_execution_branch<'a>(
         .is_some()
         .then(|| joined.certificate_since(&checkpoint))
         .transpose()?;
-    Ok(Some((joined, has_sole_feasible_arm, certificate)))
+    Ok(Some((
+        joined,
+        has_sole_feasible_arm,
+        certificate,
+        consumed_continuation,
+    )))
 }
 
 fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {

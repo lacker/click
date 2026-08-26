@@ -199,9 +199,9 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: 1 example claim
-(`refcount_pipeline`) plus quarantined `owned-vector`; the remaining
-capability is listed below. Gaps closed on the
+counts what still reaches the interpreter: no example claim (quarantined
+`owned-vector` aside); the mdtest corpus census is the next gate before
+the interpreter is deleted. Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split
@@ -245,12 +245,13 @@ way, all in the drivers or the kernel, no script changes:
   deferred arm registers its expansion capture by tactic index
   (`DeferredTacticCapture::NESTED`).
 
-Remaining driver capability:
-
-- A `branch` whose then arm returns while the else arm continues
-  (`refcount_pipeline`): `checked_execution_region_pair` requires both
-  arms to end alike; the continuation state is simply the continuing
-  arm's, so admit the mixed shape as a one-arm join.
+- A `branch` whose then arm returns while the else arm continues runs the
+  continuation inside the continuing arm to function exit and joins the
+  arms terminally, as `execute()` already represents such a C `if`
+  (`mdtests/branch_with_one_returning_arm.md`, `refcount_pipeline`). With
+  an `ensuring` interface the shape still declines to the interpreter: an
+  interface join needs both arms at the boundary
+  (`mdtests/frontier_branch_return.md`).
 
 ## Record of the abandoned carry (2026-08-25)
 

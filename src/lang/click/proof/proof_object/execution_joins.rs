@@ -2509,6 +2509,21 @@ impl<'a> Proof<'a> {
 
     /// True when the split recorded two feasible arms and both sibling
     /// goals completed at function exit.
+    /// Whether one arm of the split reached function exit.
+    pub(in crate::lang::click::proof) fn arm_at_function_exit(
+        &self,
+        record: &ExecutionSplit<'a>,
+        take_then: bool,
+    ) -> bool {
+        record.arm_id(take_then).is_some_and(|id| {
+            self.state
+                .goals
+                .get(id)
+                .and_then(|goal| goal.context().execution.as_deref())
+                .is_some_and(|execution| execution.replay.is_at_function_exit())
+        })
+    }
+
     pub(in crate::lang::click::proof) fn split_arms_at_function_exit(
         &self,
         record: &ExecutionSplit<'a>,
