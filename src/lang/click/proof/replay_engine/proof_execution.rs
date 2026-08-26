@@ -1143,6 +1143,42 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     current = continuation;
                     continue;
                 }
+                // An execution-frontier C `if` with a shared continuation
+                // (its arms are not all terminal) whose arms are not the flat
+                // linear form (a loop, nested branch, or scope inside an arm)
+                // is driven like a `branch`: the branch core splits it,
+                // advances each arm's region, handles a returning arm, and
+                // joins at the shared continuation. A terminal `if` (no
+                // continuation) stays a proof-level case split below.
+                if !matches!(continuation.as_ref(), InternalProofNode::Done)
+                    && proof.frontier_is_execution_branch(condition)?
+                {
+                    let owner = proof.clone();
+                    if let Some((advanced, _, certificate, consumed_continuation)) =
+                        try_advance_checked_execution_branch(
+                            proof.clone(),
+                            *index,
+                            &None,
+                            then_branch,
+                            else_branch,
+                            continuation,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                            0,
+                        )?
+                    {
+                        proof = advanced.restore_execution_tactic_attribution(&owner)?;
+                        let _ = certificate;
+                        saw_structure = true;
+                        current = if consumed_continuation {
+                            &InternalProofNode::Done
+                        } else {
+                            continuation
+                        };
+                        continue;
+                    }
+                }
                 let arm_steps = match (
                     execution_region_leading_tactic(then_branch),
                     execution_region_leading_tactic(else_branch),
@@ -2062,6 +2098,43 @@ fn advance_focused_execution_region<'a>(
             }
             let owner = proof.clone();
             let proof = proof.with_execution_tactic_index(*index)?;
+            // An execution-frontier C `if` with a shared continuation is
+            // driven like a `branch`, as at the top level.
+            if !matches!(continuation.as_ref(), InternalProofNode::Done)
+                && proof.frontier_is_execution_branch(condition)?
+            {
+                let branch_owner = proof.clone();
+                if let Some((advanced, _, certificate, consumed_continuation)) =
+                    try_advance_checked_execution_branch(
+                        proof.clone(),
+                        *index,
+                        &None,
+                        then_branch,
+                        else_branch,
+                        continuation,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth,
+                    )?
+                {
+                    let proof = advanced.restore_execution_tactic_attribution(&branch_owner)?;
+                    let _ = certificate;
+                    return advance_focused_execution_region(
+                        proof,
+                        enclosing_record,
+                        if consumed_continuation {
+                            &InternalProofNode::Done
+                        } else {
+                            continuation
+                        },
+                        expansion_capture,
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    );
+                }
+            }
             let arm_steps = match (
                 execution_region_leading_tactic(then_branch),
                 execution_region_leading_tactic(else_branch),
