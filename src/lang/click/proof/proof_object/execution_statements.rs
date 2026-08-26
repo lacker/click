@@ -656,6 +656,108 @@ impl<'a> Proof<'a> {
     /// operations. This is the one smart-execute planner law: the source
     /// interpreter reports its errors directly, while the direct driver
     /// treats any error as a decline.
+    /// The one `execute_until` planner law, shared by the drivers: the
+    /// planner constructs the explicit checked operations from a scratch
+    /// copy of the frontier, and this Proof applies exactly those operations,
+    /// recording them as the tactic's surface. The planner's failure is the
+    /// answer.
+    pub(in crate::lang::click::proof) fn apply_planned_execute_until(
+        &self,
+        region_ref: &CodeRegionRef,
+        tactic_index: usize,
+    ) -> Result<Self, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("`execute_until` requires an execution-frontier proof"));
+        };
+        let claim_label = context.claim_label;
+        let checkpoint = self.checkpoint();
+        let code_region = super::super::structural::resolve_code_region_ref(
+            context.function_block,
+            region_ref,
+            claim_label,
+            tactic_index,
+        )?;
+        let CodeRegion::Statement(target_statement_index) = code_region else {
+            return Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
+            )));
+        };
+        let (mut planning_replay, mut planning_state, mut planning_facts) = {
+            let view = self.finalization_view()?;
+            let mut planning_replay = view.replay.clone();
+            planning_replay.planned_statement_transitions.clear();
+            planning_replay.proof_certificate_builder = ProofCertificateBuilder {
+                last_step_entry: view
+                    .replay
+                    .proof_certificate_builder
+                    .last_step_entry
+                    .clone(),
+                certificate_facts: ProofFactStore::from_ordered(view.facts.clone()),
+                ..ProofCertificateBuilder::default()
+            }
+            .into();
+            (planning_replay, view.state.clone(), view.facts)
+        };
+        super::super::cursor_execution::execute_until_statement(
+            &mut planning_replay,
+            &mut planning_state,
+            &mut planning_facts,
+            context.function_block,
+            context.function,
+            context.parsed_function.parameters(),
+            context.arguments,
+            context.function_environment,
+            target_statement_index,
+            claim_label,
+            tactic_index,
+            StatementPrerequisitePolicy::Planning,
+            Some(ConstructionEnvironments {
+                predicate_environment: context.predicate_environment,
+                click_function_environment: context.click_function_environment,
+            }),
+        )?;
+        let construction =
+            std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+        if construction.blocker.is_none()
+            && !construction.steps.is_empty()
+            && construction.steps.iter().all(|step| {
+                matches!(
+                    step,
+                    SimpleProofStep::Have { .. }
+                        | SimpleProofStep::UnfoldPredicate(_)
+                        | SimpleProofStep::TransportUsing { .. }
+                        | SimpleProofStep::StepUsing(_)
+                        | SimpleProofStep::Step
+                )
+            })
+            && construction
+                .steps
+                .iter()
+                .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step))
+        {
+            let mut executed = self.clone();
+            for step in &construction.steps {
+                executed = executed.apply_step(step.clone())?;
+            }
+            let certificate = executed.certificate_since(&checkpoint)?;
+            let (recorded, ()) = executed.edit_replay_cursor(|replay, _, _| {
+                for step in certificate.steps() {
+                    replay.proof_certificate_builder.push_step(step.clone());
+                }
+                replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
+            })?;
+            Ok(recorded)
+        } else if let Some(blocker) = construction.blocker {
+            Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `execute_until` could not construct checked Proof operations: {blocker}"
+            )))
+        } else {
+            Err(ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `execute_until` found no checked Proof candidate"
+            )))
+        }
+    }
+
     pub(in crate::lang::click::proof) fn apply_planned_smart_execute(
         &self,
         force_all_paths: bool,

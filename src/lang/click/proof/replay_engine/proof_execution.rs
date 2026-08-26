@@ -723,10 +723,10 @@ fn advance_checked_linear_continuation<'a>(
                 )?
             }
         } else if let ProofTactic::ExecuteUntil(region) = &indexed.tactic {
-            let Some(executed) = proof.try_linear_execute_until(region)? else {
-                return Ok(None);
-            };
-            executed
+            match proof.try_linear_execute_until(region)? {
+                Some(executed) => executed,
+                None => proof.apply_planned_execute_until(region, indexed.index)?,
+            }
         } else if matches!(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
@@ -875,6 +875,12 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     };
     check_verification_deadline()?;
     if !proof.is_at_function_exit() {
+        if let Some(error) = remaining
+            .first()
+            .and_then(|indexed| pre_exit_outcome_tactic_error(&indexed.tactic))
+        {
+            return Err(error);
+        }
         return Ok(None);
     }
     for indexed in remaining {
@@ -927,6 +933,9 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
             })?;
             proof = framed;
             continue;
+        }
+        if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
+            return Err(error);
         }
         let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
             return Ok(None);
@@ -1288,6 +1297,12 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     }
     check_verification_deadline()?;
     if !proof.is_at_function_exit() {
+        if let Some(error) = remaining
+            .first()
+            .and_then(|indexed| pre_exit_outcome_tactic_error(&indexed.tactic))
+        {
+            return Err(error);
+        }
         return Ok(None);
     }
     for indexed in remaining {
@@ -1340,6 +1355,9 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
             })?;
             proof = framed;
             continue;
+        }
+        if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
+            return Err(error);
         }
         let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
             return Ok(None);
@@ -1736,6 +1754,9 @@ fn advance_focused_execution_arm<'a>(
                 })?;
                 proof = next;
                 continue;
+            }
+            if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
+                return Err(error);
             }
             let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
                 return Ok(None);
@@ -4115,4 +4136,36 @@ mod depth_guard_tests {
         InternalProofReplayDepthGuard::enter("next_claim")
             .expect("dropping a replay must restore the thread-local depth");
     }
+}
+
+/// The diagnostic for an execution tactic written after execution already
+/// reached function exit: the tactic has no statement to run.
+fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
+    let name = match tactic {
+        ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::SmartStep => {
+            "step()".to_string()
+        }
+        ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => "execute()".to_string(),
+        ProofTactic::ExecuteUntil(region) => format!(
+            "execute_until({})",
+            crate::lang::click::diagnostics::describe_code_region_ref(region)
+        ),
+        _ => return None,
+    };
+    Some(ClickError::new(format!(
+        "`{name}` cannot run after execution already reached function exit"
+    )))
+}
+
+/// The diagnostic for a function-exit tactic written before execution
+/// reached function exit.
+fn pre_exit_outcome_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
+    let name = match tactic {
+        ProofTactic::Witness(_) => "witness",
+        ProofTactic::Choose(_) => "choose",
+        _ => return None,
+    };
+    Some(ClickError::new(format!(
+        "`{name}` requires execution to reach function exit first"
+    )))
 }

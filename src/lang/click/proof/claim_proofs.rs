@@ -33,7 +33,6 @@ fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> 
     supported && saw_predicate
 }
 
-
 fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
     tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
