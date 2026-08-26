@@ -2228,6 +2228,65 @@ fn try_advance_checked_execution_branch<'a>(
     let proof = proof.with_execution_tactic_index(tactic_index)?;
     let checkpoint = proof.checkpoint();
     let (split, record) = proof.split_focused_execution_branch()?;
+    let has_sole_feasible_arm = record.sole_feasible_arm().is_some();
+    let Some(arms) = advance_checked_branch_arms(
+        split,
+        &record,
+        ensuring,
+        then_branch,
+        else_branch,
+        continuation,
+        expansion_capture.as_deref_mut(),
+        proof_site,
+        owning_source_index,
+        depth,
+    )?
+    else {
+        return Ok(None);
+    };
+    let joined =
+        arms.advanced
+            .join_focused_execution_split(&record, arms.empty, arms.join_interface)?;
+    let certificate = proof_site
+        .is_some()
+        .then(|| joined.certificate_since(&checkpoint))
+        .transpose()?;
+    Ok(Some((
+        joined,
+        has_sole_feasible_arm,
+        certificate,
+        arms.consumed_continuation,
+    )))
+}
+
+/// The result of advancing a branch's two arms, ready for the caller to join
+/// on its own target (`Proof` or `ProofScope`).
+struct AdvancedBranchArms<'a> {
+    advanced: Proof<'a>,
+    consumed_continuation: bool,
+    empty: bool,
+    join_interface: Option<Vec<ProofAssertion>>,
+}
+
+/// The single branch arm-advancing law, shared by the `Proof` branch driver
+/// and the open-scope branch handler: it advances both feasible arms, runs
+/// the shared continuation inside a continuing arm when the arms end
+/// differently (checking any `ensuring` interface there), and reports whether
+/// the continuation was consumed. The caller splits and joins on its own
+/// target; only the arm interiors, which are always `Proof`s, live here.
+#[allow(clippy::too_many_arguments)]
+fn advance_checked_branch_arms<'a>(
+    split: Proof<'a>,
+    record: &ExecutionSplit<'a>,
+    ensuring: &Option<Vec<ProofAssertion>>,
+    then_branch: &InternalProofNode,
+    else_branch: &InternalProofNode,
+    continuation: &InternalProofNode,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+    proof_site: Option<&ProofSite>,
+    owning_source_index: usize,
+    depth: usize,
+) -> Result<Option<AdvancedBranchArms<'a>>, ClickError> {
     if ensuring
         .as_ref()
         .is_some_and(|_| !record.supports_interface_branch())
@@ -2241,8 +2300,8 @@ fn try_advance_checked_execution_branch<'a>(
             continue;
         }
         let Some(next) = advance_focused_execution_region(
-            advanced.focus_split_arm(&record, take_then)?,
-            Some(&record),
+            advanced.focus_split_arm(record, take_then)?,
+            Some(record),
             region,
             expansion_capture.as_deref_mut(),
             proof_site,
@@ -2256,24 +2315,24 @@ fn try_advance_checked_execution_branch<'a>(
     }
     let mut consumed_continuation = false;
     if !has_sole_feasible_arm {
-        let then_exit = advanced.arm_at_function_exit(&record, true);
-        let else_exit = advanced.arm_at_function_exit(&record, false);
+        let then_exit = advanced.arm_at_function_exit(record, true);
+        let else_exit = advanced.arm_at_function_exit(record, false);
         if then_exit != else_exit {
             // One arm returned. The other continues past its boundary into
             // the shared continuation, which it runs to function exit; the
             // two arms then join terminally. An `ensuring` interface is
             // checked on the continuing arm at its boundary; the retained
             // state is the arm's own, which is stronger than the interface.
-            let continuing = advanced.focus_split_arm(&record, !then_exit)?;
+            let continuing = advanced.focus_split_arm(record, !then_exit)?;
             if let Some(assertions) = ensuring
                 && !continuing.interface_facts_established(assertions)?
             {
                 return Ok(None);
             }
-            let continuing = continuing.continue_arm_into_parent_frontier(&record)?;
+            let continuing = continuing.continue_arm_into_parent_frontier(record)?;
             let Some(next) = advance_focused_execution_region(
                 continuing,
-                Some(&record),
+                Some(record),
                 continuation,
                 expansion_capture.as_deref_mut(),
                 proof_site,
@@ -2297,17 +2356,12 @@ fn try_advance_checked_execution_branch<'a>(
     } else {
         ensuring.clone()
     };
-    let joined = advanced.join_focused_execution_split(&record, empty, join_interface)?;
-    let certificate = proof_site
-        .is_some()
-        .then(|| joined.certificate_since(&checkpoint))
-        .transpose()?;
-    Ok(Some((
-        joined,
-        has_sole_feasible_arm,
-        certificate,
+    Ok(Some(AdvancedBranchArms {
+        advanced,
         consumed_continuation,
-    )))
+        empty,
+        join_interface,
+    }))
 }
 
 fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
@@ -2931,41 +2985,31 @@ fn advance_checked_open_scope<'a>(
     else {
         return Ok(None);
     };
-    if checked_execution_region_pair(then_branch, else_branch).is_none() {
-        return Ok(None);
-    }
     let (split, record) = scope.split_execution_branch()?;
-    if ensuring
-        .as_ref()
-        .is_some_and(|_| !record.supports_interface_branch())
-    {
+    let Some(arms) = advance_checked_branch_arms(
+        split,
+        &record,
+        ensuring,
+        then_branch,
+        else_branch,
+        continuation,
+        expansion_capture.as_deref_mut(),
+        proof_site,
+        owning_source_index,
+        0,
+    )?
+    else {
         return Ok(None);
-    }
-    let empty = checked_execution_region_is_empty(then_branch)
-        && checked_execution_region_is_empty(else_branch);
-    let mut advanced = split;
-    for (take_then, region) in [(true, then_branch), (false, else_branch)] {
-        if record.arm_id(take_then).is_none() {
-            continue;
-        }
-        let Some(next) = advance_focused_execution_region(
-            advanced.focus_split_arm(&record, take_then)?,
-            Some(&record),
-            region,
-            expansion_capture.as_deref_mut(),
-            proof_site,
-            owning_source_index,
-            0,
-        )?
-        else {
-            return Ok(None);
-        };
-        advanced = next;
-    }
-    let scope = scope.join_execution_split(&advanced, &record, empty, ensuring.clone())?;
+    };
+    let scope =
+        scope.join_execution_split(&arms.advanced, &record, arms.empty, arms.join_interface)?;
     advance_checked_open_scope(
         scope,
-        continuation,
+        if arms.consumed_continuation {
+            &InternalProofNode::Done
+        } else {
+            continuation
+        },
         expansion_capture,
         proof_site,
         owning_source_index,
