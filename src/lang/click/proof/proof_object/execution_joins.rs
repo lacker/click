@@ -995,12 +995,14 @@ impl<'a> Proof<'a> {
         proof_case_condition: Option<ClickProposition>,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
-        if !arms[0]
-            .execution
-            .state
-            .resources()
-            .shares_storage_with(arms[1].execution.state.resources())
-        {
+        // The join law for resources is the one for facts: what is identical
+        // in both arms survives. Storage identity is the cheap witness;
+        // arms that each unfolded the same resource hold equal contents in
+        // distinct storage and pass by content.
+        if !resource_contexts_agree(
+            arms[0].execution.state.resources(),
+            arms[1].execution.state.resources(),
+        ) {
             return Err(self.step_error(
                 "checked `branch ensuring` cannot yet retain a proper common resource delta",
             ));
@@ -1645,11 +1647,10 @@ impl<'a> Proof<'a> {
             &record.base_executions[1],
             None,
         )?;
-        Ok(then_view
-            .execution
-            .state
-            .resources()
-            .shares_storage_with(else_view.execution.state.resources()))
+        Ok(resource_contexts_agree(
+            then_view.execution.state.resources(),
+            else_view.execution.state.resources(),
+        ))
     }
 
     pub(in crate::lang::click::proof) fn join_focused_execution_if_terminal(
@@ -2697,4 +2698,10 @@ fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]
             || (matches!(actual, SimpleProofStep::Step)
                 && matches!(expected, SimpleProofStep::StepUsing(premises) if premises.is_empty()))
     })
+}
+
+/// Whether two arms' resource contexts are the same resource state: shared
+/// storage, or identical facts.
+fn resource_contexts_agree(left: &ResourceContext, right: &ResourceContext) -> bool {
+    left.shares_storage_with(right) || left.facts() == right.facts()
 }

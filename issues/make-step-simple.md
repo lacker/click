@@ -231,9 +231,30 @@ way, all in the drivers or the kernel, no script changes:
   `detachable_buffer_pipeline`, `ring_buffer_pipeline`). The crossing is
   memoized per edge and pointer; without that memo the branch-shaped
   fixture did 22x the work.
-- A terminal proof-`if` join whose arms end with resource contexts that do
-  not share storage is declined (kernel certification does not reproduce
-  it yet); those are `list_destroy` and `item_destroy` above.
+- A terminal proof-`if` join whose arms end with different resource
+  contexts is declined; those are `list_destroy` and `item_destroy`. The
+  join law for resources is the one for facts (identical contents
+  survive; `resource_contexts_agree`), but the actual gap is downstream:
+  the join merges both cases into one execution and clears
+  `case_assumptions`, so the unit's single kernel certification runs
+  without the case fact (`item != 0`) and the arm's `unfold`, and
+  `free(item)` certifies as `InvalidFree`. The interpreter certifies each
+  case as its own context with the case fact at entry. Fix: certify a
+  checked unit once per group of outcome paths with the same recorded
+  case decisions (`outcome_branch_decisions`), adding that group's
+  lowered case facts at entry, and pair outcomes within the group.
+
+Remaining driver capabilities, each contained:
+
+- Outcome-level case split (`list_prepend`, `pool_init`): a post-exit
+  proof `if` whose condition a return path does not decide. The
+  interpreter forks the context with the case fact; `PostExecutionTactic::If`
+  finalization only selects a decided arm. Fork the path in place when
+  `checked_outcome_if_value` cannot decide, with the case fact added.
+- A `branch` whose then arm returns while the else arm continues
+  (`refcount_pipeline`): `checked_execution_region_pair` requires both
+  arms to end alike; the continuation state is simply the continuing
+  arm's, so admit the mixed shape as a one-arm join.
 
 ## Record of the abandoned carry (2026-08-25)
 
