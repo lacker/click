@@ -290,8 +290,7 @@ theorem int32_sign_split(x: int32) {
 
 The same construct can appear before or after C execution in a function proof.
 It splits proof reasoning only; it does not itself execute a C `if` statement.
-Inside a case, smart `step()` uses the exact case fact to enter the selected C
-arm. Expansion prints the corresponding explicit `step() using { ... }` tactic.
+Inside a case, `step()` uses the case fact to enter the selected C arm.
 
 When a C `if` is at the execution frontier, use `branch` instead of repeating
 its condition as a logical case split:
@@ -315,17 +314,16 @@ following proof continues once from one joined state. An arm that returns
 closes its own outcome inside the arm; it does not run the continuation after
 `branch`. The tactic fails if the current frontier is not a C `if`.
 
-When one transition needs contextual pure facts, list them explicitly:
+A transition sees every fact in the proof context. When a statement's
+prerequisite is not yet available, establish it with `have` before the step:
 
 <!-- verified-example: mdtests/simple_statement_step_requires_exact_prerequisite.md -->
 ```click
-step() using {
-    x < 2147483647;
-}
+step();
 ```
 
-Only those listed pure facts are visible to that C transition. Other facts stay
-in the proof context for later tactics.
+The migration spelling `step() using { P; ... }` checks that each listed fact
+is available and then steps; it is being retired.
 
 At a loop entry, `loop { ... }` verifies initialization and one arbitrary
 iteration, constructs the kernel loop rule, applies it, and reaches the

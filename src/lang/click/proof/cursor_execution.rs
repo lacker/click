@@ -454,6 +454,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     complete_empty_branch: bool,
     arm_mode: BranchArmMode,
     construction: Option<ConstructionEnvironments<'_>>,
+    context: Option<&PureFactContext>,
 ) -> Result<bool, ClickError> {
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
@@ -516,6 +517,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         &transition_label,
         prerequisite_policy,
         true,
+        context,
     )?;
     let condition_was_proven = condition_transitions.len() == 1;
     if matches!(branch_step_policy, BranchStepPolicy::RequireProven)
@@ -834,6 +836,7 @@ fn execute_concrete_loop_head_step(
         &transition_label,
         prerequisite_policy,
         true,
+        None,
     )?;
     if condition_transitions.len() != 1 {
         return Err(ClickError::new(format!(
@@ -1484,6 +1487,7 @@ pub(super) fn execute_step_from_execution_point(
         loop_step_policy,
         construction,
         None,
+        None,
     )
 }
 
@@ -1525,6 +1529,7 @@ pub(super) fn execute_step_successors_from_execution_point(
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
+    context: Option<&PureFactContext>,
 ) -> Result<Vec<ExecutionPointStepSuccessor>, ClickError> {
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
         replay,
@@ -1557,6 +1562,7 @@ pub(super) fn execute_step_successors_from_execution_point(
             &mut preview_next_kernel_variable,
             prerequisite_policy,
             fact_transport_policy,
+            context,
         )?
         .0;
         (preview.len() == 2
@@ -1605,6 +1611,7 @@ pub(super) fn execute_step_successors_from_execution_point(
             loop_step_policy,
             None,
             selected.as_ref(),
+            context,
         )?;
         successors.push(ExecutionPointStepSuccessor {
             replay: successor_replay,
@@ -1636,6 +1643,7 @@ fn execute_step_from_execution_point_selecting_path(
     loop_step_policy: LoopStepPolicy,
     construction: Option<ConstructionEnvironments<'_>>,
     selected_path_fact: Option<&Proposition>,
+    context: Option<&PureFactContext>,
 ) -> Result<Vec<Proposition>, ClickError> {
     #[cfg(test)]
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
@@ -1671,6 +1679,7 @@ fn execute_step_from_execution_point_selecting_path(
             false,
             BranchArmMode::Inline,
             construction,
+            context,
         )?;
         debug_assert!(entered);
         return Ok(Vec::new());
@@ -1769,6 +1778,7 @@ fn execute_step_from_execution_point_selecting_path(
         &mut replay.next_kernel_variable,
         prerequisite_policy,
         fact_transport_policy,
+        context,
     )?
     .0;
     if let Some(selected_path_fact) = selected_path_fact {
@@ -2749,6 +2759,7 @@ pub(super) fn bounded_execute_from_execution_point(
                     false,
                     BranchArmMode::Inline,
                     construction,
+                    None,
                 )?;
                 if entered {
                     pending.push(branch);
@@ -2780,6 +2791,7 @@ pub(super) fn bounded_execute_from_execution_point(
             &mut preview_next_kernel_variable,
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
+            None,
         )?
         .0;
         if preview_transitions.len() > 1
@@ -2814,6 +2826,7 @@ pub(super) fn bounded_execute_from_execution_point(
                     LoopStepPolicy::EnterBody,
                     construction,
                     Some(&selected_path_fact),
+                    None,
                 )?;
                 identity_branches.push((branch, value));
             }

@@ -66,11 +66,13 @@ It may not, by default:
 - use a bounded linear cache with deep structural comparison as the durable
   identity mechanism.
 
-A statement step is the canonical instance. It attempts to carry exactly the
-facts it is told to (`step() using`), one bounded frame check per fact
-against the statement's declared effect, with ownership consulted by direct
-lookup only. A fact it cannot carry stays at its pre-step snapshot; an
-explicit `transport` pays for anything more. Term comparison performs no
+A statement step is the canonical instance. It carries no fact by list: the
+kernel executes the statement with the whole proof context visible, reading
+it through the proof object's persistent indexed `PureFactContext` (no
+materialized fact list), and a cell the context proves outside the effect
+keeps its name, with ownership consulted by direct lookup only. A fact about
+a cell it cannot prove untouched stays at its pre-step snapshot; an explicit
+`transport` pays for anything more. Term comparison performs no
 frame reasoning. The user-facing statement of this rule is
 [What a step carries](../concepts/proof-state.md#what-a-step-carries).
 

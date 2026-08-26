@@ -1,7 +1,9 @@
-# Simple statement branch step requires an exact condition fact
+# A statement step decides a branch from the proof context
 
-Contextual arithmetic can imply a branch condition without providing the exact
-condition fact. That reasoning belongs to smart `step()`, not `step() using {}`.
+Every statement step executes with the proof context visible to the
+kernel. `requires flag > 0` does not state `flag != 0` exactly, but the
+kernel decides the condition from it, so both the explicit `step() using
+{}` and the bare `step()` enter the selected arm.
 
 ```c filename=simple_statement_step_branch_requires_exact_fact.c
 int32 positive_branch(int32 flag) {
@@ -27,5 +29,5 @@ int32 positive_branch(int32 flag) {
 ```
 
 ```expect
-fail: `step` could not prove that the next C `if` condition `flag` is one exact truth value
+pass
 ```

@@ -17,6 +17,10 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
+        // Every statement step executes in the whole proof context. A
+        // `step() using` list is checked for availability and recorded as
+        // spellings, but does not narrow what the kernel sees.
+        let fact_context = Some(self.facts().assumptions());
         let checked = check_step_using_facts(
             &mut execution.replay,
             &mut execution.state,
@@ -31,6 +35,7 @@ impl<'a> Proof<'a> {
             context.click_function_environment,
             context.claim_label,
             context.tactic_index,
+            fact_context,
         )?;
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             unreachable!("the frontier requirement was checked above");
@@ -542,12 +547,13 @@ impl<'a> Proof<'a> {
                         | SimpleProofStep::UnfoldPredicate(_)
                         | SimpleProofStep::TransportUsing { .. }
                         | SimpleProofStep::StepUsing(_)
+                        | SimpleProofStep::Step
                 )
             })
             && construction
                 .steps
                 .iter()
-                .any(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step))
         {
             let mut proof = self.clone();
             for step in &construction.steps {
@@ -723,11 +729,12 @@ impl<'a> Proof<'a> {
                     | SimpleProofStep::UnfoldPredicate(_)
                     | SimpleProofStep::TransportUsing { .. }
                     | SimpleProofStep::StepUsing(_)
+                    | SimpleProofStep::Step
             )
         }) && construction
             .steps
             .iter()
-            .any(|step| matches!(step, SimpleProofStep::StepUsing(_)));
+            .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step));
         let applied = if linear_supported {
             let mut proof = self.clone();
             for step in &construction.steps {

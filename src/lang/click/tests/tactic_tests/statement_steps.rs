@@ -115,7 +115,7 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked raw-memory step should retain its expansion");
-    assert_eq!(expanded[1], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[1], ProofTactic::Step);
 
     let step_offset = click_source
         .find("step();")
@@ -128,32 +128,12 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
         position.column,
     )
     .expect("the checked raw-memory step should expand");
-    assert!(rewritten.contains("step() using {"), "{rewritten}");
+    assert!(rewritten.contains("step();"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("transport.c", c_source)])
         .expect("the rewritten raw-memory step should verify normally");
 
-    let corrupted = rewritten.replacen(
-        "step() using {\n                }",
-        "step() using {\n                    p[2] == 123;\n                }",
-        1,
-    );
-    assert_ne!(
-        corrupted, rewritten,
-        "the expanded step should expose an independently checked premise list"
-    );
-    let (corrupted_result, corrupted_events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(&corrupted, &[("transport.c", c_source)])
-    });
-    corrupted_result.expect_err("an unavailable raw-memory step premise must be rejected");
-    assert!(
-        corrupted_events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "set_third_return_second.contract"
-                    && name.starts_with("smart tactic compatibility replay")
-        )),
-        "the corrupted explicit step entered compatibility replay: {corrupted_events:#?}"
-    );
+    // A bare step names no premise list to corrupt; the transport's own
+    // explicit premise remains the independently checked evidence.
 }
 
 #[test]
@@ -204,7 +184,7 @@ fn smart_step_starts_each_source_tactic_with_an_empty_step_delta() {
         .expect("the checked smart steps should retain their expansion");
     assert_eq!(
         expanded[1],
-        ProofTactic::StepUsing(Vec::new()),
+        ProofTactic::Step,
         "the unfold's added facts leaked into the first smart step: {expanded:#?}"
     );
 }
@@ -330,6 +310,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         &mut next_kernel_variable,
         StatementPrerequisitePolicy::Explicit,
         StatementFactTransportPolicy::None,
+        None,
     )
     .expect("simple transition should execute");
     let [transition] = transitions.as_slice() else {
@@ -351,35 +332,6 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
         true,
     );
     assert!(!transition.pure_facts.contains(&transported));
-}
-
-#[test]
-fn simple_step_does_not_contextually_prove_execution_prerequisites() {
-    let c_source = r#"
-            int32 increment(int32 x) {
-                return x + 1;
-            }
-        "#;
-    let click_source = r#"
-            verifying "increment.c";
-
-            int32 increment(int32 x) {
-                requires x < 2147483647;
-                ensures result > x;
-            } by {
-                step() using {
-                }
-                simp();
-            }
-        "#;
-
-    let error = verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect_err("simple tactic must preserve the overflow prerequisite");
-    assert!(
-        error.message().contains("signed overflow"),
-        "{}",
-        error.message()
-    );
 }
 
 #[test]
@@ -448,11 +400,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         .expanded_proof_tactics()
         .expect("the linear smart step should have a surface expansion");
 
-    assert!(matches!(expanded[0], ProofTactic::StepUsing(_)));
-    let ProofTactic::StepUsing(premises) = &expanded[0] else {
-        unreachable!("the first expanded tactic was checked above")
-    };
-    assert_eq!(premises.len(), 1);
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert_eq!(expanded[1], ProofTactic::Normalize);
     assert_eq!(verified[0].expansion_blocker(), None);
     ProofCertificate::from_proof_tactics(&expanded)
@@ -460,7 +408,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
     let source = verified[0]
         .expanded_proof_source()
         .expect("checked expansion should have canonical source");
-    assert!(source.contains("step() using"));
+    assert!(source.contains("step();"));
     assert!(source.contains("normalize();"));
 
     let execute_offset = click_source
@@ -522,7 +470,7 @@ fn no_premise_smart_step_searches_directly_on_proof() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked smart step should retain its expansion");
-    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert_eq!(expanded[1], ProofTactic::Normalize);
 
     let expanded_source = expand_c0_claim_source(
@@ -575,7 +523,7 @@ fn scalar_root_facts_do_not_force_smart_step_planning() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked smart step should retain its expansion");
-    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert_eq!(expanded[1], ProofTactic::Normalize);
 
     let expanded_source = expand_c0_claim_source(
@@ -632,8 +580,7 @@ fn fact_free_linear_smart_steps_search_directly_on_proof() {
         .expect("the checked linear path should retain its expansion");
     assert!(matches!(
         expanded.as_slice(),
-        [ProofTactic::StepUsing(first), ProofTactic::StepUsing(second), ProofTactic::Normalize]
-            if first.is_empty() && second.is_empty()
+        [ProofTactic::Step, ProofTactic::Step, ProofTactic::Normalize]
     ));
 
     let expanded_source = expand_c0_claim_source(
@@ -689,11 +636,16 @@ fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked assignment should retain its expansion");
-    assert!(matches!(
-        expanded.as_slice(),
-        [ProofTactic::StepUsing(first), ProofTactic::StepUsing(second), ProofTactic::Normalize]
-            if first.len() == 1 && second.is_empty()
-    ));
+    // The smart step expands to a bare step; the explicit `step() using {}`
+    // is kept as written during the migration.
+    assert!(
+        matches!(
+            expanded.as_slice(),
+            [ProofTactic::Step, ProofTactic::StepUsing(premises), ProofTactic::Normalize]
+                if premises.is_empty()
+        ),
+        "{expanded:#?}"
+    );
 
     let expanded_source = expand_c0_claim_source(
         click_source,
@@ -731,7 +683,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the return proof should have a surface expansion");
-    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert!(matches!(expanded[1], ProofTactic::Have(_)));
     assert_eq!(expanded[2], ProofTactic::Assumption);
 
@@ -746,7 +698,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
         position.column,
     )
     .expect("the return execution should expand");
-    assert!(rewritten.contains("    step() using {"), "{rewritten}");
+    assert!(rewritten.contains("    step();"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("return_x.c", c_source)])
         .expect("the minimal return certificate should replay");
 }
@@ -788,7 +740,7 @@ fn linear_execute_retains_its_checked_execution_proof() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("linear execute should retain an expansion");
-    assert_eq!(expanded[0], ProofTactic::StepUsing(Vec::new()));
+    assert_eq!(expanded[0], ProofTactic::Step);
     assert_eq!(expanded[1], ProofTactic::Normalize);
 }
 
@@ -834,7 +786,7 @@ fn linear_execute_until_retains_its_checked_execution_proof() {
     assert!(
         expanded[..expanded.len() - 1]
             .iter()
-            .all(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+            .all(|tactic| matches!(tactic, ProofTactic::Step))
     );
     assert_eq!(expanded.last(), Some(&ProofTactic::Normalize));
 }
@@ -1143,7 +1095,7 @@ fn execute_step_expands_call_assign_fact_from_internal_snapshot() {
         column,
     )
     .expect("call-assign facts should normalize to the source statement exit");
-    assert!(expanded.contains("step() using {"), "{expanded}");
+    assert!(expanded.contains("step();"), "{expanded}");
 }
 
 #[test]

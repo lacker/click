@@ -1190,6 +1190,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     pure_facts: &[Proposition],
     invariant_checks: &[CLoopInvariantCheck],
     effect_checks: &[CLoopEffectCheck],
+    condition: &CExpression,
     body: &CStatement,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<LoopPreservationProofResult, ClickError> {
@@ -1264,6 +1265,51 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
+    // The invariants and the loop condition are available at the body entry
+    // as kernel facts. Record their Surface spellings so a later frame can
+    // cite them at this point even when their memory reads have no readable
+    // spelling in the body.
+    let loop_condition = surface_c_condition(condition);
+    let invariant_surfaces = environment
+        .function_block
+        .structural_clauses()
+        .iter()
+        .find(|clause| clause.region() == &CodeRegion::Loop(loop_index))
+        .into_iter()
+        .flat_map(|clause| {
+            clause
+                .items()
+                .iter()
+                .filter(|item| item.kind() == StructuralItemKind::Invariant)
+                .filter_map(StructuralItem::proposition)
+        });
+    {
+        for surface in invariant_surfaces.chain(std::iter::once(&loop_condition)) {
+            if let Ok(lowered) = lower_point_proposition(
+                surface,
+                pure_facts,
+                environment.parsed_function.parameters(),
+                environment.arguments,
+                environment.initial_state,
+                preservation.state(),
+                None,
+                &replay.program_point_states,
+                environment.predicate_environment,
+                environment.click_function_environment,
+            ) {
+                let surface = surface_with_source_site(
+                    surface,
+                    &ProgramPointRef {
+                        region: CodeRegionRef::Statement(loop_body_statement_index),
+                        kind: ProgramPointKind::Entry,
+                    },
+                )?;
+                replay
+                    .surface_propositions
+                    .record_lowering(&surface, &lowered)?;
+            }
+        }
+    }
     let proof_site_for_driver = replay.proof_site.clone();
     let owning_source_index = if environment
         .frontier_loop_source

@@ -91,13 +91,16 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
     context_label: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     filter_assumption_conflicts: bool,
+    context: Option<&PureFactContext>,
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
     let transition_pure_facts = pure_facts.to_vec();
     let planning_assumptions = assumptions_from_propositions(pure_facts);
     let mut assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact
         | StatementPrerequisitePolicy::Explicit
-        | StatementPrerequisitePolicy::Contextual => assumptions_from_propositions(pure_facts),
+        | StatementPrerequisitePolicy::Contextual => context
+            .cloned()
+            .unwrap_or_else(|| assumptions_from_propositions(pure_facts)),
         StatementPrerequisitePolicy::Planning => {
             assumptions_from_propositions(pure_facts).defer_non_exact_loadability_obligations()
         }
@@ -142,7 +145,15 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
         .map(|path| {
             let mut successor_facts = transition_pure_facts.clone();
             successor_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
-            let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
+            let prerequisite_assumptions = match context {
+                Some(context) => successor_facts
+                    .iter()
+                    .filter(|fact| !pure_facts.contains(fact))
+                    .fold(context.clone(), |assumptions, fact| {
+                        assumptions.assume_proposition(fact.clone())
+                    }),
+                None => assumptions_from_propositions(&successor_facts),
+            };
             let mut prerequisite_derivations = Vec::new();
             let mut planning_exact_premises = Vec::new();
             if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
@@ -292,9 +303,15 @@ pub(in crate::lang::click) fn certified_statement_transitions(
     next_kernel_variable: &mut u64,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
+    context: Option<&PureFactContext>,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let transition_pure_facts = pure_facts.to_vec();
-    let mut assumptions = assumptions_from_propositions(pure_facts);
+    // A statement executed in a proof context sees that context as the
+    // kernel already keeps it: incrementally indexed, shared by clone. The
+    // slice then carries only the statement-local delta bookkeeping.
+    let mut assumptions = context
+        .cloned()
+        .unwrap_or_else(|| assumptions_from_propositions(pure_facts));
     if matches!(
         prerequisite_policy,
         StatementPrerequisitePolicy::Exact | StatementPrerequisitePolicy::Explicit
@@ -375,6 +392,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
         prerequisite_policy,
         fact_transport_policy,
         statement_contains_call(statement),
+        context,
     )?;
     for transition in &mut transitions {
         transition.planning_premises = planning_premises.clone();
@@ -470,6 +488,7 @@ pub(in crate::lang::click::proof) fn certified_loop_exit_transitions_with_proven
         StatementPrerequisitePolicy::Contextual,
         StatementFactTransportPolicy::Automatic,
         statement_contains_call(statement),
+        None,
     )
 }
 
@@ -538,6 +557,7 @@ fn certified_transitions_from_execution(
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     normalize_statement_facts_to_exit: bool,
+    context: Option<&PureFactContext>,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
@@ -587,7 +607,14 @@ fn certified_transitions_from_execution(
                     .map(|fact| fact.proposition().clone()),
             );
             let transport_assumptions = assumptions_for_direct_fact_transport(&transport_facts);
-            let prerequisite_assumptions = assumptions_from_propositions(&successor_facts);
+            let prerequisite_assumptions = match context {
+                Some(context) => statement_facts
+                    .iter()
+                    .fold(context.clone(), |assumptions, fact| {
+                        assumptions.assume_proposition(fact.clone())
+                    }),
+                None => assumptions_from_propositions(&successor_facts),
+            };
             let planning_assumptions = assumptions_from_propositions(pure_facts);
             let mut prerequisite_derivations = Vec::new();
             if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
@@ -770,7 +797,25 @@ fn certified_transitions_from_execution(
                         }
                     }
                     StatementPrerequisitePolicy::Contextual => {
-                        if prerequisite_assumptions.proves(proposition) {
+                        // The whole context proves it, or the exact structural
+                        // rules the explicit law used do (a listed premise
+                        // covering a loadability, a matching separation, an
+                        // atomic derivation over the context).
+                        if prerequisite_assumptions.proves(proposition)
+                            || exact_fact_is_available(proposition, pure_facts)
+                            || exactly_available_fact(proposition, pure_facts).is_some()
+                            || directly_matching_separation_fact(proposition, pure_facts).is_some()
+                            || directly_covering_loadability_fact(proposition, pure_facts).is_some()
+                            || matches!(normalize_proposition(proposition), SimpProposition::True)
+                            || (matches!(
+                                proposition,
+                                Proposition::CResourceContains { .. }
+                                    | Proposition::CResourceSeparate { .. }
+                                    | Proposition::CMemoryLoadable { .. }
+                            ) && prerequisite_assumptions
+                                .derive_atomic_proposition(proposition)
+                                .is_some())
+                        {
                             None
                         } else {
                             return Err(ClickError::new(format!(

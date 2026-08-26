@@ -737,6 +737,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &arguments,
         ) {
             Ok(proof) => proof,
+
             Err(_) if generated_by_source_index.is_some() => {
                 // Generated certificates may use a broader surface shape
                 // than the currently migrated structural Proof driver owns.
@@ -746,7 +747,9 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
                 check_verification_deadline()?;
                 None
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                return Err(error);
+            }
         }
     } else {
         let owns_empty_predicate_branches =

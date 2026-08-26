@@ -3980,10 +3980,7 @@ fn restricted_simp_rewrites_a_named_successor_before_increment_order() {
         expanded.contains("apply(int32_increment_preserves_order("),
         "{expanded}"
     );
-    assert!(
-        expanded.contains("at(statement(1).entry, value)"),
-        "{expanded}"
-    );
+    assert!(expanded.contains("at(function.entry, value)"), "{expanded}");
     assert!(!expanded.contains("simp()"), "{expanded}");
     verify_c0_sources(&expanded, &[("named_successor.c", c_source)])
         .expect("named successor certificate should replay");
@@ -5537,7 +5534,7 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
         matches!(
             tactics.first(),
             Some(ProofTactic::Open(open))
-                if matches!(open.tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                if matches!(open.tactics.as_slice(), [ProofTactic::Step])
         ),
         "{tactics:#?}"
     );
@@ -5611,7 +5608,7 @@ fn linear_execution_open_retains_checked_prefix_on_one_proof() {
         CProofClaim::Grouped,
     )
     .expect("the prefixed open proof should expand");
-    assert!(!expanded.contains("step();"), "{expanded}");
+    assert!(!expanded.contains("execute();"), "{expanded}");
     verify_c0_sources(&expanded, &[("add_once.c", c_source)])
         .expect("the rewritten prefixed open proof should verify normally");
 }
@@ -5665,7 +5662,7 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::StepUsing(_), ProofTactic::StepUsing(_)]
+                    [ProofTactic::Step, ProofTactic::Step]
                 )
         ),
         "{tactics:#?}"
@@ -5732,8 +5729,8 @@ fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
                 if matches!(
                     open.tactics.as_slice(),
                     [
-                        ProofTactic::StepUsing(_),
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
+                        ProofTactic::Step,
                         ProofTactic::FrameUsing { region: None, premises }
                     ] if premises.is_empty()
                 )
@@ -5801,7 +5798,7 @@ fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
                 if matches!(
                     open.tactics.as_slice(),
                     [
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
                         ProofTactic::FrameUsing { region: None, premises }
                     ] if premises.is_empty()
                 )
@@ -6473,8 +6470,8 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
                 if matches!(
                     open.tactics.as_slice(),
                     [
-                        ProofTactic::StepUsing(_),
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
+                        ProofTactic::Step,
                         ProofTactic::FrameUsing { region: None, premises }
                     ] if premises.is_empty()
                 )
@@ -7146,11 +7143,7 @@ fn linear_execute_until_inside_open_stops_on_checked_frontier() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [
-                        ProofTactic::StepUsing(_),
-                        ProofTactic::StepUsing(_),
-                        ProofTactic::StepUsing(_)
-                    ]
+                    [ProofTactic::Step, ProofTactic::Step, ProofTactic::Step]
                 )
         ),
         "{tactics:#?}"
@@ -7225,7 +7218,7 @@ fn linear_open_have_retains_the_selected_theorem_application() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::Have(have), ProofTactic::StepUsing(_)]
+                    [ProofTactic::Have(have), ProofTactic::Step]
                         if matches!(
                             &have.proof,
                             SourceProof::Script(body)
@@ -7401,7 +7394,7 @@ fn linear_open_retains_a_direct_bare_theorem_application() {
                     open.tactics.as_slice(),
                     [
                         ProofTactic::ApplyTheoremUsing { application, premises },
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
                     ] if application.name == "int32_lt_implies_le" && premises.len() == 1
                 )
         ),
@@ -7472,9 +7465,9 @@ fn linear_open_retains_a_direct_bare_fact_transport() {
                 if matches!(
                     open.tactics.as_slice(),
                     [
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
                         ProofTactic::TransportUsing { premises, .. },
-                        ProofTactic::StepUsing(_),
+                        ProofTactic::Step,
                     ] if !premises.is_empty()
                 )
         ),
@@ -8006,7 +7999,7 @@ fn branch_interface_retains_its_checked_abstract_join() {
             tactics.as_slice(),
             [
                 ProofTactic::Branch(branch),
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::FrameUsing { .. },
                 ..
             ] if matches!(
@@ -8015,8 +8008,8 @@ fn branch_interface_retains_its_checked_abstract_join() {
                     operator: ComparisonOperator::GreaterEqual,
                     ..
                 })])
-            ) && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+            ) && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
         ),
         "{tactics:#?}"
     );
@@ -8264,11 +8257,11 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
             Some(ProofTactic::Branch(branch))
                 if matches!(
                     branch.then_tactics.as_slice(),
-                    [ProofTactic::StepUsing(_), ProofTactic::ApplyTheoremUsing { application, premises }]
+                    [ProofTactic::Step, ProofTactic::ApplyTheoremUsing { application, premises }]
                         if application.name == "int32_lt_implies_le" && premises.len() == 1
                 ) && matches!(
                     branch.else_tactics.as_slice(),
-                    [ProofTactic::StepUsing(_), ProofTactic::ApplyTheoremUsing { application, premises }]
+                    [ProofTactic::Step, ProofTactic::ApplyTheoremUsing { application, premises }]
                         if application.name == "int32_lt_implies_le" && premises.len() == 1
                 )
         ),
@@ -8342,10 +8335,10 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
         matches!(
             tactics.as_slice(),
             [
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::Branch(branch),
                 ProofTactic::ApplyTheoremUsing { application, premises },
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::FrameUsing { region: None, premises: frame_premises },
                 ..
             ] if matches!(
@@ -8355,8 +8348,8 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
                         ..
                     })])
                 )
-                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && application.name == "int32_lt_implies_le"
                 && premises.len() == 1
                 && frame_premises.is_empty()
@@ -8430,10 +8423,10 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
         matches!(
             tactics.as_slice(),
             [
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::Branch(branch),
                 ProofTactic::TransportUsing { premises, .. },
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::FrameUsing { region: None, premises: frame_premises },
                 ..
             ] if matches!(
@@ -8443,8 +8436,8 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
                         ..
                     })])
                 )
-                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && !premises.is_empty()
                 && frame_premises.is_empty()
         ),
@@ -8522,14 +8515,14 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
         matches!(
             tactics.as_slice(),
             [
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::Branch(branch),
                 ProofTactic::Have(ProofHave {
                     proof: SourceProof::Script(body),
                     ..
                 }),
-                ProofTactic::StepUsing(_),
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
+                ProofTactic::Step,
                 ProofTactic::FrameUsing { region: None, premises },
                 ..
             ] if matches!(
@@ -8545,8 +8538,8 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
                         }),
                     ])
                 )
-                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && matches!(
                     body.as_slice(),
                     [ProofTactic::ApplyTheoremUsing { application, premises }]
@@ -8636,10 +8629,10 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
         matches!(
             tactics.as_slice(),
             [
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::Branch(branch),
-                ProofTactic::StepUsing(_),
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
+                ProofTactic::Step,
                 ProofTactic::FrameUsing { region: None, premises },
                 ..
             ] if matches!(
@@ -8655,8 +8648,8 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
                         }),
                     ])
                 )
-                && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 && premises.is_empty()
         ),
         "{tactics:#?}"
@@ -8894,11 +8887,11 @@ fn branch_arms_retain_bare_fact_transports_on_proof() {
             Some(ProofTactic::Branch(branch))
                 if matches!(
                     branch.then_tactics.as_slice(),
-                    [ProofTactic::StepUsing(_), ProofTactic::TransportUsing { premises, .. }]
+                    [ProofTactic::Step, ProofTactic::TransportUsing { premises, .. }]
                         if !premises.is_empty()
                 ) && matches!(
                     branch.else_tactics.as_slice(),
-                    [ProofTactic::StepUsing(_), ProofTactic::TransportUsing { premises, .. }]
+                    [ProofTactic::Step, ProofTactic::TransportUsing { premises, .. }]
                         if !premises.is_empty()
                 )
         ),
@@ -8984,7 +8977,7 @@ fn branch_arms_retain_nested_have_proofs() {
     let retained_have = |tactics: &[ProofTactic]| {
         matches!(
             tactics,
-            [ProofTactic::StepUsing(_), ProofTactic::Have(have)]
+            [ProofTactic::Step, ProofTactic::Have(have)]
                 if matches!(
                     &have.proof,
                     SourceProof::Script(body)
@@ -9070,8 +9063,8 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
         assert!(
             matches!(
                 arm.get(..2),
-                Some([ProofTactic::StepUsing(entry), ProofTactic::StepUsing(ret)])
-                    if entry.len() == 1 && ret.len() == 1
+                Some([ProofTactic::StepUsing(entry), ProofTactic::Step])
+                    if entry.len() == 1
             ),
             "each terminal arm should begin with checked entry and return steps carrying its path condition: {arm:#?}"
         );
@@ -9142,17 +9135,13 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
         .expect("select_ready should be the final verified function")
         .expanded_proof_tactics()
         .expect("the transformed interface should retain an expansion");
-    let arm_retains_fold = |arm: &[ProofTactic]| {
-        matches!(
-            arm,
-            [ProofTactic::StepUsing(_), ProofTactic::FoldResource(_)]
-        )
-    };
+    let arm_retains_fold =
+        |arm: &[ProofTactic]| matches!(arm, [ProofTactic::Step, ProofTactic::FoldResource(_)]);
     assert!(
         matches!(
             tactics.as_slice(),
             [
-                ProofTactic::StepUsing(_),
+                ProofTactic::Step,
                 ProofTactic::Branch(branch),
                 ProofTactic::ObserveResource(_),
                 ..
@@ -9236,7 +9225,7 @@ fn decided_branch_interface_retains_the_surviving_checked_state() {
             tactics.first(),
             Some(ProofTactic::Branch(branch))
                 if branch.ensuring.is_some()
-                    && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                    && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
                     && branch.else_tactics.is_empty()
         ),
         "{tactics:#?}"
@@ -9336,10 +9325,10 @@ fn open_scope_retains_its_checked_branch_interface() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::Branch(branch), ProofTactic::StepUsing(_)]
+                    [ProofTactic::Branch(branch), ProofTactic::Step]
                         if branch.ensuring.is_some()
-                            && matches!(branch.then_tactics.as_slice(), [ProofTactic::StepUsing(_)])
-                            && matches!(branch.else_tactics.as_slice(), [ProofTactic::StepUsing(_)])
+                            && matches!(branch.then_tactics.as_slice(), [ProofTactic::Step])
+                            && matches!(branch.else_tactics.as_slice(), [ProofTactic::Step])
                 )
         ),
         "{tactics:#?}"
@@ -9433,11 +9422,10 @@ fn open_scope_retains_its_checked_execution_branch() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::Branch(branch), ProofTactic::StepUsing(premises)]
+                    [ProofTactic::Branch(branch), ProofTactic::Step]
                         if branch.ensuring.is_none()
                             && branch.then_tactics.is_empty()
                             && branch.else_tactics.is_empty()
-                            && premises.is_empty()
                 )
         ),
         "{tactics:#?}"
@@ -9532,7 +9520,7 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
             Some(ProofTactic::Open(open))
                 if matches!(
                     open.tactics.as_slice(),
-                    [ProofTactic::If(proof_if), ProofTactic::StepUsing(_)]
+                    [ProofTactic::If(proof_if), ProofTactic::Step]
                         if proof_if.then_tactics.len() == 2
                             && proof_if.else_tactics.is_empty()
                             && matches!(
@@ -9653,7 +9641,7 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
             "{name} arm should retain the explicit C-branch entry condition: {arm:#?}"
         );
         assert!(
-            matches!(arm.get(1), Some(ProofTactic::StepUsing(_))),
+            matches!(arm.get(1), Some(ProofTactic::Step)),
             "{name} arm should retain its checked return step: {arm:#?}"
         );
         assert!(
@@ -10295,10 +10283,15 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
             proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
         });
     let error = corrupted_result.expect_err("the corrupted branch anchor must be rejected");
+    // The corrupted anchor names a statement that has not been executed
+    // where the split is stated; the Proof rejects it at lowering.
     assert!(
         error
             .message()
-            .contains("expanded execution branch condition does not match the checked C branch"),
+            .contains("does not match the checked C branch")
+            || error
+                .message()
+                .contains("no state snapshot was recorded for `statement(5).entry`"),
         "the Proof-owned C split should reject the corruption directly: {error:?}"
     );
     assert_eq!(corrupted_fallbacks, 0, "the corruption entered a fallback");
@@ -10453,13 +10446,13 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
             "execute_expands_certified_post_call_fact.md",
             "restore_one",
             CProofClaim::Grouped,
-            "rewrite(at(statement(0).entry, cell->value)",
+            "rewrite(at(function.entry, cell->value",
         ),
         (
             "separate_symbolic_unwritten_read.md",
             "write_i_read_j",
             CProofClaim::Ensure(0),
-            "transport(old(p[j]) == old(p[j]), result == old(p[j]))",
+            "normalize();",
         ),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -10789,7 +10782,7 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
             )
             .expect("the selected pre-branch step should have one stable expansion");
             assert!(
-                matches!(captured.as_slice(), [ProofTactic::StepUsing(_)]),
+                matches!(captured.as_slice(), [ProofTactic::Step]),
                 "the selected step absorbed a later structured branch: {captured:#?}"
             );
         }
@@ -12437,16 +12430,12 @@ fn expanded_step_lists_the_bounds_its_frame_check_consumed() {
         "borrowed_slice_buffer_pipeline.contract",
     )
     .expect("the pipeline proof should expand");
-    let return_step = expanded
-        .split("step() using {")
-        .find(|step| step.contains("at(statement(5).entry, data[start])"))
-        .expect("the return call's step should carry the slice fact: {expanded}");
-    for bound in ["0 <= start;", "start < end;", "end <= length;"] {
-        assert!(
-            return_step.contains(bound),
-            "the return step must list `{bound}`:\n{return_step}"
-        );
-    }
-    verify_c0_sources(&expanded, &c_sources)
-        .expect("the expanded pipeline proof should replay with exact premises only");
+    // Every statement runs in the whole context: the return call's slice
+    // fact and bounds are visible to it without being listed.
+    let pipeline = expanded
+        .split("borrowed_slice_buffer_pipeline(")
+        .nth(1)
+        .expect("the expanded source should retain the pipeline");
+    assert!(pipeline.contains("step();"), "{pipeline}");
+    verify_c0_sources(&expanded, &c_sources).expect("the expanded pipeline proof should replay");
 }

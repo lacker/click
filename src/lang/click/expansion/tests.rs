@@ -63,7 +63,7 @@ int32 identity(int32 x) {
     .expect("the first grouped tactic should expand");
 
     assert!(!expanded.contains("execute();"));
-    assert!(expanded.contains("    step() using {\n    }\n    simp();"));
+    assert!(expanded.contains("    step();\n    simp();"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the source with one expanded tactic should re-verify");
 }
@@ -95,7 +95,7 @@ int32 read_first(int32 p[1]) {
     .expect("the grouped immutable read should have one common expansion");
 
     assert!(!expanded.contains("execute();"));
-    assert!(expanded.contains("step() using {"), "{expanded}");
+    assert!(expanded.contains("step();"), "{expanded}");
     verify_c0_sources(&expanded, &[("read.c", c_source)])
         .expect("the expanded immutable read should re-verify every grouped claim");
 }
@@ -140,7 +140,7 @@ int32 identity(int32 x) {
 
     assert_eq!(expanded.matches("execute();").count(), 1);
     assert!(
-        expanded.contains("    if x == x {\n        step() using {"),
+        expanded.contains("    if x == x {\n        step();"),
         "{expanded}"
     );
     let ((reverified, reverify_replays), reverify_flat_units) =
@@ -649,17 +649,11 @@ int32 caller(int32 x) {
     let expanded =
         expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
             .expect("the call should expand with its consumed precondition");
-    let step_using = expanded
-        .split("step() using {")
-        .skip(1)
-        .filter_map(|rest| rest.split_once('}').map(|(block, _)| block))
-        .nth(1)
-        .expect("the opaque call should be the second statement step");
-    assert!(!step_using.is_empty(), "{expanded}");
-    assert!(step_using.contains("0 < x;"), "{expanded}");
-    assert!(!step_using.contains("x < 100;"), "{expanded}");
-    assert!(!step_using.contains("x != 37;"), "{expanded}");
-    verify_c0_sources(&expanded, &sources).expect("the precise call premises should replay");
+    // Both statements run in the whole context; the call's precondition is
+    // proved from it and the expansion names no premise.
+    assert_eq!(expanded.matches("step();").count(), 3, "{expanded}");
+    assert!(!expanded.contains("step() using"), "{expanded}");
+    verify_c0_sources(&expanded, &sources).expect("the call steps should replay");
 }
 
 #[test]
@@ -700,14 +694,10 @@ int32 caller(struct box* p, int32 x) {
     let expanded =
         expand_top_level_tactic_for_test(click_source, &sources, "caller", CProofClaim::Grouped, 0)
             .expect("the memory-reading precondition should expand");
-    let step_using = expanded
-        .split("step() using {")
-        .skip(1)
-        .filter_map(|rest| rest.split_once('}').map(|(block, _)| block))
-        .nth(1)
-        .expect("the opaque call should be the second statement step");
-    assert!(step_using.contains("0 < p->value;"), "{expanded}");
-    assert!(!step_using.contains("x < 100;"), "{expanded}");
+    // Both statements run in the whole context; the call's memory-reading
+    // precondition is proved from it and the expansion names no premise.
+    assert_eq!(expanded.matches("step();").count(), 3, "{expanded}");
+    assert!(!expanded.contains("step() using"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the condition and its ambient view should verify normally");
 }
@@ -1035,45 +1025,13 @@ int32 inspect(struct box* owner) {
     )
     .expect("the declaration should expand with unfolded surface facts");
 
-    // The assertions below are about the emitted `step() using` premises,
-    // not the resource declaration echoed above them; scope to the block
-    // so a form surviving only in the declaration cannot pass.
-    let step_using = expanded
-        .split("step() using {")
-        .nth(1)
-        .and_then(|rest| rest.split_once('}'))
-        .map(|(block, _)| block)
-        .expect("the expansion should emit a step() using block");
-    assert!(
-        step_using.contains("separate(memory(object(owner)), memory(owner->data[0..owner->cap]));"),
-        "{expanded}"
-    );
-    // The aggregate premise replaces its per-field decomposition.
-    assert!(
-        !step_using.contains("memory(owner->len), memory(owner->data["),
-        "{expanded}"
-    );
-    assert!(
-        !step_using.contains("memory(owner->cap), memory(owner->data["),
-        "{expanded}"
-    );
-    assert!(
-        !step_using.contains("memory(owner->data), memory(owner->data["),
-        "{expanded}"
-    );
-    // Non-call statement expansion retains its established ambient-condition
-    // behavior; this issue narrows opaque-call dependencies only.
-    assert!(
-        step_using.contains("owner->data[owner->len] == 0;"),
-        "{expanded}"
-    );
-    assert!(!step_using.contains("terminated_at"), "{expanded}");
-    assert!(
-        expanded.contains("fact terminated_at(owner->data, owner->len);"),
-        "{expanded}"
-    );
+    // A bare `step()` runs in the whole context: the unfolded resource and
+    // predicate facts are visible to it without being spelled as premises,
+    // and the expansion keeps the step as written.
+    assert!(expanded.contains("step();"), "{expanded}");
+    assert!(!expanded.contains("step() using"), "{expanded}");
     verify_c0_sources(&expanded, &[("inspect.c", c_source)])
-        .expect("the re-folded aggregate premise should re-verify");
+        .expect("the expansion with unfolded facts in context should verify");
 }
 
 #[test]
@@ -1549,7 +1507,8 @@ int32 increment(int32 x) {
     )
     .expect("contract-let proof should expand");
 
-    assert!(expanded.contains("(let max = 2147483647; 2147483647)"));
+    // The step runs in the whole context; the contract `let` needs no
+    // spelling as a premise. The expansion must still verify.
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
         .expect("parenthesized contract lets should re-verify");
     c0_tactic_source_position(

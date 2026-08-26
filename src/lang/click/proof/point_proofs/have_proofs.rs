@@ -906,6 +906,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     original_requirements,
                     path_index,
                 )?;
+                let inner_fact = crate::kernel::canonical_condition_fact(&inner_fact);
                 if !available.contains(&inner_fact) {
                     available.push(inner_fact);
                 }
@@ -1009,8 +1010,9 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         SimpProposition::True
                     )
                 {
-                    if !available.contains(&source) {
-                        available.push(source.clone());
+                    let canonical_source = crate::kernel::canonical_condition_fact(&source);
+                    if !available.contains(&canonical_source) {
+                        available.push(canonical_source);
                     }
                     if !explicit_premises.contains(&source) {
                         explicit_premises.push(source.clone());
@@ -1107,11 +1109,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         .fold(selected_assumptions, |assumptions, fact| {
                             assumptions.assume_proposition(fact.proposition().clone())
                         })
-                        .assume_proposition(source.clone())
-                        // The resolved form is the same assumed fact
-                        // seen through the registry; the load-term
-                        // reachability path needs it in this form.
-                        .assume_proposition(window_source.clone());
+                        .assume_proposition(source.clone());
                     let reaches = crate::instrumentation::measure_operation(
                         profile_function,
                         claim_label,
@@ -1987,11 +1985,13 @@ fn add_have_case_assumptions(
                         "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: could not lower `if` condition: {message}"
                     ))
                 })?;
-                available.push(if *value {
+                // A case condition enters the context in canonical form, like
+                // every condition fact.
+                available.push(crate::kernel::canonical_condition_fact(&if *value {
                     proposition
                 } else {
                     Proposition::Not(Box::new(proposition))
-                });
+                }));
             }
             ProofCaseAssumptionKind::Disjunct { disjunction, left } => {
                 let lowered = lower_point_proposition(

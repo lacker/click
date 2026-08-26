@@ -367,17 +367,7 @@ void pool_transfer_pipeline(
     step();
     unfold(valid_pool);
     mark pools_initialized;
-    step() using {
-        source != destination;
-        loadable(source->checked_out);
-        loadable(source->capacity);
-        0 <= source->checked_out;
-        source->checked_out == count(pool_object(source, _));
-        source->capacity ==
-            source->checked_out + count(pool_slot(source));
-        source->capacity == 1;
-        destination->capacity == 1;
-    }
+    step();
     transport(
         at(pools_initialized,
             0 <= destination->checked_out and
@@ -389,56 +379,8 @@ void pool_transfer_pipeline(
         destination->capacity ==
             destination->checked_out + count(pool_slot(destination))
     );
-    step() using {
-        source != destination;
-        loadable(source->checked_out);
-        loadable(source->capacity);
-        loadable(destination->checked_out);
-        loadable(destination->capacity);
-        0 <= source->checked_out;
-        source->checked_out == count(pool_object(source, _));
-        source->capacity ==
-            source->checked_out + count(pool_slot(source));
-        0 <= destination->checked_out;
-        destination->checked_out == count(pool_object(destination, _));
-        destination->capacity ==
-            destination->checked_out + count(pool_slot(destination));
-        count(pool_object(source, object)) == 1;
-        count(pool_object(destination, object)) == 0;
-        source->capacity == 1;
-        destination->capacity == 1;
-    }
+    step();
     step() using {};
     frame();
-    have source->checked_out == 0 by {
-        assumption();
-    }
-    have source->capacity == 1 by {
-        assumption();
-    }
-    have destination->checked_out == 1 by {
-        assumption();
-    }
-    have destination->capacity == 1 by {
-        assumption();
-    }
-    have valid_pool(source) by {
-        unfold(valid_pool);
-        simp();
-    }
-    have valid_pool(destination) by {
-        unfold(valid_pool);
-        simp();
-    }
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
-    assumption();
+    simp();
 }

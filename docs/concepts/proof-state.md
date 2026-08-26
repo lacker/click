@@ -37,17 +37,17 @@ about the current state. The rule is fixed and cheap:
 
 - A fact that mentions no memory is unaffected by the step and stays
   available as it is.
-- A fact that mentions memory (a load term or a load variable) crosses the
-  step only if the step's frame check shows the loaded cell is outside the
-  statement's declared effect. `step() using { ... }` lists exactly the
-  facts the step attempts to carry; `execute()` attempts every available
-  fact, and its expansion writes the list it found. Each attempt is one
-  bounded, deterministic check against the effect: distinct blocks, offset
-  arithmetic, constant ranges, and a direct lookup of ownership (two owned
-  resources are disjoint, including memory owned through a resource's
-  footprint). The check does not search.
-- A fact the step could not carry is not lost, but it remains a fact about
-  the pre-step snapshot. Relating it to the current state afterwards takes
+- A fact that mentions memory (a load term or a load variable) stays true
+  across the step when the kernel, executing the statement with the whole
+  proof context visible, proves the loaded cell is outside the statement's
+  effect: the cell keeps its name, so the fact is literally unchanged. Nothing
+  is carried by list; `execute()` is the repetition of `step()`. That
+  disjointness is one bounded, deterministic check against the effect:
+  distinct blocks, offset arithmetic, constant ranges, and a direct lookup of
+  ownership (two owned resources are disjoint, including memory owned through
+  a resource's footprint). The check does not search.
+- A fact about a cell the context cannot prove untouched is not lost, but it
+  remains a fact about the pre-step snapshot. Relating it to the current state afterwards takes
   an explicit `transport`, which may do more reasoning because that operation
   names the relationship to establish.
 - Comparing two terms never does frame reasoning. Two load variables for

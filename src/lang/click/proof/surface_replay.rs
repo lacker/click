@@ -1503,10 +1503,22 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 Ok(premises)
             })();
+            // A step into a C `if` keeps the condition it selected; every
+            // other retained step runs in the whole proof context, with the
+            // premises' spellings recorded above for later closers.
+            let enters_branch = matches!(
+                &replay.frontier.point,
+                ProofExecutionPoint::StatementEntry { remaining }
+                    if split_next_source_operation(remaining)
+                        .is_ok_and(|(statement, _)| matches!(statement, CStatement::If { .. }))
+            );
             match premises {
-                Ok(premises) => replay
+                Ok(premises) if enters_branch => replay
                     .proof_certificate_builder
                     .push_step(SimpleProofStep::StepUsing(premises)),
+                Ok(_) => replay
+                    .proof_certificate_builder
+                    .push_step(SimpleProofStep::Step),
                 Err(error) => replay.proof_certificate_builder.block(format!(
                     "could not express a statement-step premise at the current proof point: {}",
                     error.message()

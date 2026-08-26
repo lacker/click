@@ -15,6 +15,69 @@ impl<'a> Proof<'a> {
     /// kernel condition transitions, and each feasible arm's checked facts,
     /// snapshot, path-fact delta, and condition theorem. There is exactly
     /// one implementation of this branch-entry law.
+    /// Whether the execution frontier is a C `if` whose condition, spelled
+    /// at the statement entry, is `surface_condition`. A proof `if` whose
+    /// arms begin with statement steps has the same shape whether it enters
+    /// a C branch or splits the proof logically; only the frontier decides.
+    /// The C condition anchored at a different statement entry is a checked
+    /// branch spelling that names the wrong statement; that is an error, not
+    /// a logical split.
+    pub(in crate::lang::click::proof) fn frontier_is_execution_branch(
+        &self,
+        surface_condition: &ClickProposition,
+    ) -> Result<bool, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(false);
+        };
+        let Some(execution) = self.execution() else {
+            return Ok(false);
+        };
+        if self.state.goals.is_discharged()
+            || !matches!(self.focused_goal(), Some(Goal::Frontier(_)))
+        {
+            return Ok(false);
+        }
+        let statement_index = execution.replay.frontier.next_statement_index;
+        if !execution
+            .replay
+            .source_layout
+            .statement(statement_index)
+            .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }))
+        {
+            return Ok(false);
+        }
+        let Ok((_, _, CStatement::If { condition, .. }, _)) =
+            next_top_level_statement_from_execution_point(
+                &execution.replay,
+                &execution.state,
+                context.function,
+                context.arguments,
+                context.claim_label,
+                context.tactic_index,
+                "branch",
+            )
+        else {
+            return Ok(false);
+        };
+        let entry_point = ProgramPointRef {
+            region: CodeRegionRef::Statement(statement_index),
+            kind: ProgramPointKind::Entry,
+        };
+        let checked = surface_with_source_site(&surface_c_condition(&condition), &entry_point)?;
+        if checked == *surface_condition {
+            return Ok(true);
+        }
+        if proposition_contains_at_expression(surface_condition)
+            && surface_with_source_site(surface_condition, &entry_point)
+                .is_ok_and(|reanchored| reanchored == checked)
+        {
+            return Err(self.step_error(
+                "expanded execution branch condition does not match the checked C branch",
+            ));
+        }
+        Ok(false)
+    }
+
     pub(super) fn prepare_execution_branch(&self) -> Result<PreparedExecutionBranch, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
@@ -2063,7 +2126,7 @@ impl<'a> Proof<'a> {
             // this particular outcome. Validate that prefix exactly before
             // declining to apply the remaining, structurally classified
             // syntax: there is no successor Proof on which it could act.
-            if !steps.is_empty() && steps.get(..entry_steps) != Some(expected.as_slice()) {
+            if !steps.is_empty() && !arm_entry_steps_match(steps, &expected) {
                 return Err(self.step_error(format!(
                     "expanded execution infeasible {} arm does not begin with its {entry_steps} checked branch-entry step(s)",
                     if take_then { "then" } else { "else" },
@@ -2071,7 +2134,7 @@ impl<'a> Proof<'a> {
             }
             return Ok(None);
         }
-        if steps.get(..entry_steps) != Some(expected.as_slice()) {
+        if !arm_entry_steps_match(steps, &expected) {
             return Err(self.step_error(format!(
                 "expanded execution {} arm does not begin with its {entry_steps} checked branch-entry step(s)",
                 if take_then { "then" } else { "else" },
@@ -2125,7 +2188,8 @@ impl<'a> Proof<'a> {
             SimpleProofStep::Have { .. }
             | SimpleProofStep::UnfoldPredicate(_)
             | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::StepUsing(_) => true,
+            | SimpleProofStep::StepUsing(_)
+            | SimpleProofStep::Step => true,
             SimpleProofStep::If {
                 then_proof,
                 else_proof,
@@ -2148,7 +2212,7 @@ impl<'a> Proof<'a> {
 
     pub(super) fn planned_execution_steps_contain_transition(steps: &[SimpleProofStep]) -> bool {
         steps.iter().any(|step| match step {
-            SimpleProofStep::StepUsing(_) => true,
+            SimpleProofStep::StepUsing(_) | SimpleProofStep::Step => true,
             SimpleProofStep::If {
                 then_proof,
                 else_proof,
@@ -2177,7 +2241,9 @@ impl<'a> Proof<'a> {
             if !escaped
                 && matches!(
                     step,
-                    SimpleProofStep::StepUsing(_) | SimpleProofStep::If { .. }
+                    SimpleProofStep::StepUsing(_)
+                        | SimpleProofStep::Step
+                        | SimpleProofStep::If { .. }
                 )
                 && proof.is_at_region_boundary()
             {
@@ -2257,6 +2323,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let arm_premises = [then_steps, else_steps].map(|steps| match steps.first() {
             Some(SimpleProofStep::StepUsing(premises)) => Some(premises.clone()),
+            Some(SimpleProofStep::Step) => Some(Vec::new()),
             _ => None,
         });
         if let [Some(then_premises), Some(else_premises)] = arm_premises {
@@ -2296,9 +2363,9 @@ impl<'a> Proof<'a> {
                 .checked_expanded_execution_arm_entry_steps(&record, take_then, None)?
                 .len();
             if steps.len() < entry_steps
-                || !steps[..entry_steps]
-                    .iter()
-                    .all(|step| matches!(step, SimpleProofStep::StepUsing(_)))
+                || !steps[..entry_steps].iter().all(|step| {
+                    matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step)
+                })
             {
                 return Err(self.step_error(format!(
                     "planned execution {} arm does not begin with its {entry_steps} C branch-entry step(s)",
@@ -2336,7 +2403,11 @@ impl<'a> Proof<'a> {
             }
             if !matches!(
                 steps.last(),
-                Some(SimpleProofStep::StepUsing(_) | SimpleProofStep::If { .. })
+                Some(
+                    SimpleProofStep::StepUsing(_)
+                        | SimpleProofStep::Step
+                        | SimpleProofStep::If { .. }
+                )
             ) {
                 return Err(self.step_error(format!(
                     "expanded execution {} arm does not end in a checked C step",
@@ -2581,4 +2652,14 @@ impl<'a> Proof<'a> {
         };
         Ok((successor, record))
     }
+}
+
+/// Whether an arm's leading steps are its checked branch-entry steps. A bare
+/// `step()` is the entry step that lists no premise.
+fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]) -> bool {
+    steps.len() >= expected.len() && steps.iter().zip(expected).all(|(actual, expected)| {
+        actual == expected
+            || (matches!(actual, SimpleProofStep::Step)
+                && matches!(expected, SimpleProofStep::StepUsing(premises) if premises.is_empty()))
+    })
 }

@@ -437,6 +437,7 @@ impl<'a> Proof<'a> {
                     context.click_function_environment,
                     context.claim_label,
                     arm_steps[logical_arm].0,
+                    None,
                 )?;
                 match checked.len() {
                     0 => {}

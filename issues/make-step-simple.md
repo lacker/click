@@ -167,6 +167,33 @@ checker, expansion, docs, and corpus; the replay issue's "smart `execute`"
 section is replaced by a pointer here; the scaling regression above is in
 the gate.
 
+## Progress
+
+Chunks 1–3 landed together (2026-08-26). `certified_statement_transitions`
+and `certified_condition_transitions` take the proof object's incremental
+`PureFactContext`; every statement step on the Proof runs in the whole
+context (`Contextual` prerequisites, no transport for a bare step); source
+`step();` is the bare `SimpleProofStep::Step`, and the planner retains
+`Step` for every statement except a step into a C `if`, which keeps the
+condition it selected as `step() using { cond }` until the branch-entry
+law is unified in chunk 4. Findings worth keeping:
+
+- A proof `if` whose arms begin with steps no longer tells the drivers by
+  shape whether it enters a C branch or splits the proof logically; only
+  the frontier decides (`Proof::frontier_is_execution_branch`). The C
+  condition anchored at a wrong statement entry is rejected as a mismatched
+  checked branch; any other non-matching condition is a logical split.
+- Loop preservation records the invariants' and the loop condition's
+  Surface spellings at the body entry, so the loop-effect frame can cite
+  `i < owner->len` when `owner->len` has no readable spelling inside the
+  body (`composite_resource_vector_fill_loop_snapshot`).
+- The point transport's duplicate assumption of the registry-resolved
+  source form was a non-canonical creation once sources are spelled with
+  load variables; the reachability walk did not need it
+  (`input_cursor_creates_only_canonical_terms`).
+- The interpreter's `execute` arm still tries the exact selector before
+  the planner; chunk 4 makes both drivers the same repetition of `step()`.
+
 ## Record of the abandoned carry (2026-08-25)
 
 Before this design was chosen, a "carry" was prototyped in the linear

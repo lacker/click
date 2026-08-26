@@ -704,6 +704,18 @@ impl CState {
         &self.memory
     }
 
+    /// The values held by memory-resident scalar locals: each `local:NAME`
+    /// block's cell at offset zero.
+    pub fn local_cell_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
+        self.memory.cells.iter().filter_map(|(pointer, value)| {
+            let PointerBlock::Concrete(block) = &pointer.block else {
+                return None;
+            };
+            let name = block.strip_prefix("local:")?;
+            (pointer.offset == PointerOffsetTerm::Constant(0)).then_some((name, value))
+        })
+    }
+
     pub fn resources(&self) -> &ResourceContext {
         &self.resources
     }

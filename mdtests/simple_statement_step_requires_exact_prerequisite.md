@@ -1,7 +1,8 @@
-# simple statement transition requires an exact prerequisite
+# a statement step proves its prerequisites from the proof context
 
-The bound implies that addition cannot overflow, but `step() using {}` does not
-ask the contextual solver to derive that execution prerequisite.
+A bare `step()` executes the next statement with every fact in the proof
+context visible to the kernel. The requirement bounds `x`, so the kernel
+proves the addition cannot overflow without the step naming any premise.
 
 ```c filename=simple_statement_step_requires_exact_prerequisite.c
 int32 increment(int32 x) {
@@ -14,13 +15,13 @@ verifying "simple_statement_step_requires_exact_prerequisite.c";
 
 int32 increment(int32 x) {
     requires x < 2147483647;
-    ensures result > x;
+    ensures result == x + 1;
 } by {
-    step() using {}
+    step();
     simp();
 }
 ```
 
 ```expect
-fail: `step() using` produced undefined behavior: signed overflow
+pass
 ```

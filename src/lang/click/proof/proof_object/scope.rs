@@ -169,6 +169,15 @@ impl<'a> ProofScope<'a> {
 
     /// Applies an already-expanded logical C branch inside this resource
     /// scope without constructing or comparing a parallel certificate.
+    /// Whether the scope body's frontier is the C `if` whose condition is
+    /// `surface_condition`.
+    pub(in crate::lang::click::proof) fn frontier_is_execution_branch(
+        &self,
+        surface_condition: &ClickProposition,
+    ) -> Result<bool, ClickError> {
+        self.body.frontier_is_execution_branch(surface_condition)
+    }
+
     pub(in crate::lang::click::proof) fn apply_expanded_execution_if(
         &self,
         condition: &ClickProposition,

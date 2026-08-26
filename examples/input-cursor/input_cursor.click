@@ -263,14 +263,7 @@ int32 input_cursor_clone(
         at(statement(1).entry, source->pos) <= at(statement(1).entry, source->len);
         at(statement(1).entry, 0) <= at(statement(1).entry, source->len);
     }
-    step() using {
-        separate(memory(object(target)), memory(object(source)));
-        separate(memory(object(target)), memory(source->data[0..source->len]));
-        loadable(old(object(target)));
-        loadable(old(source->pos));
-        loadable(old(source->len));
-        loadable(old(source->data));
-    }
+    step();
     fold(input_cursor(target));
     frame();
     simp();
@@ -331,30 +324,7 @@ int32 input_cursor_shared_pipeline(
         }
         assumption();
     }
-    step() using {
-        at(statement(4).entry, 1) <= at(statement(4).entry, length);
-        at(statement(3).entry, separate(memory(object(left)), memory(data[0..length])));
-        at(statement(3).entry, separate(memory(object(right)), memory(data[0..length])));
-        at(statement(3).entry, loadable(old(left[0..4])));
-        at(statement(3).entry, loadable(old(right[0..4])));
-        at(statement(3).entry, loadable(old(data[0..length])));
-        at(statement(4).entry, 0) <= at(statement(4).entry, length);
-        at(statement(4).entry, ignored) == at(statement(4).entry, 0);
-        at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
-        ignored == 0;
-        right->pos == 0;
-        right->len == length;
-        right->data == data;
-        left->pos == 0;
-        left->len == length;
-        left->data == data;
-        left->pos < left->len;
-        at(statement(4).entry, left->pos) == at(statement(4).entry, 0);
-        at(statement(4).entry, left->len) == at(statement(4).entry, length);
-        at(statement(4).entry, left->data) == at(statement(4).entry, data);
-        at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
-        right->pos < right->len;
-    }
+    step();
     have left->len == left->len by {
         normalize();
     }
@@ -397,44 +367,7 @@ int32 input_cursor_shared_pipeline(
         at(statement(5).entry, left->pos),
         left->pos
     ));
-    step() using {
-        at(statement(5).entry, left->pos) == 0;
-        left->pos == (at(statement(5).entry, left->pos) + 1);
-        left->pos == 1;
-        at(statement(5).entry, 1) <= at(statement(5).entry, length);
-        at(statement(3).entry, separate(memory(object(left)), memory(data[0..length])));
-        at(statement(3).entry, separate(memory(object(right)), memory(data[0..length])));
-        at(statement(3).entry, loadable(old(left[0..4])));
-        at(statement(3).entry, loadable(old(right[0..4])));
-        at(statement(3).entry, loadable(old(data[0..length])));
-        at(statement(5).entry, 0) <= at(statement(5).entry, length);
-        at(statement(4).entry, ignored) == at(statement(4).entry, 0);
-        at(statement(4).entry, separate(memory(object(right)), memory(left->data[0..left->len])));
-        at(statement(5).entry, ignored) == at(statement(5).entry, 0);
-        at(statement(5).entry, left->pos) == at(statement(5).entry, 0);
-        at(statement(5).entry, left->len) == at(statement(5).entry, length);
-        at(statement(4).entry, left->data) == at(statement(4).entry, data);
-        at(statement(4).entry, left->pos) < at(statement(4).entry, left->len);
-        at(statement(5).entry, left_value) == at(statement(5).entry, left->data[left->pos]);
-        left->len == at(statement(5).entry, left->len);
-        left->data == at(statement(5).entry, left->data);
-        right->pos == 0;
-        right->len == length;
-        right->data == data;
-        left->data == data;
-        at(statement(5).entry, left->pos) < left->len;
-        right->pos < right->len;
-        at(statement(5).entry, right->pos) == at(statement(5).entry, 0);
-        at(statement(5).entry, right->len) == length;
-        at(statement(5).entry, right->data) == at(statement(5).entry, data);
-        at(statement(5).entry, left->len) == length;
-        at(statement(5).entry, left->data) == at(statement(5).entry, data);
-        at(statement(5).entry, left->pos) < at(statement(5).entry, left->len);
-        at(statement(5).entry, right->pos) < at(statement(5).entry, right->len);
-        left->len == left->len;
-        left->data == left->data;
-        left->len == length;
-    }
+    step();
     have right_value == right->data[right->pos] by {
         assumption();
     }

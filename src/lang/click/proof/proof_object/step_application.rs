@@ -855,17 +855,83 @@ impl<'a> Proof<'a> {
         let mut dependency_names = BTreeSet::new();
         collect_statement_variable_names(body, &mut dependency_names);
         let mut candidates = BTreeSet::new();
-        for name in dependency_names {
+        // The body's C variables denote kernel values here: a local's current
+        // value or a parameter's argument. Context facts about those values
+        // are the frame's candidate premises; the checked frame decides.
+        let mut value_keys = Vec::new();
+        for name in &dependency_names {
             for kernel in execution
                 .replay
                 .surface_propositions
-                .current_c_variable_kernel_facts(&name)
+                .current_c_variable_kernel_facts(name)
             {
                 if self
                     .facts()
                     .replay_available_across_effects(kernel, &execution.replay.effect_facts)
                 {
                     candidates.insert(kernel.clone());
+                }
+            }
+            let ProofContext::Execution(context) = self.context.as_ref() else {
+                continue;
+            };
+            let value = execution
+                .state
+                .locals()
+                .object_values()
+                .find(|(local, _)| local == name)
+                .map(|(_, value)| format!("{value:?}"))
+                .or_else(|| {
+                    context
+                        .parsed_function
+                        .parameters()
+                        .iter()
+                        .position(|parameter| parameter.name() == name)
+                        .and_then(|index| context.arguments.get(index))
+                        .map(|argument| format!("{argument:?}"))
+                });
+            if let Some(value) = value {
+                for key in kernel_variable_keys(&value) {
+                    if !value_keys.contains(&key) {
+                        value_keys.push(key);
+                    }
+                }
+            }
+        }
+        if !value_keys.is_empty() {
+            for fact in self.facts().to_vec() {
+                if !matches!(
+                    fact,
+                    Proposition::ConditionIs(_, _)
+                        | Proposition::And(_, _)
+                        | Proposition::CMemoryLoadable { .. }
+                        | Proposition::CResourceSeparate { .. }
+                ) || candidates.contains(&fact)
+                {
+                    continue;
+                }
+                let rendered = format!("{fact:?}");
+                if value_keys.iter().any(|key| rendered.contains(key.as_str())) {
+                    // A conjunction invariant is available leaf by leaf.
+                    fn leaves(fact: &Proposition, out: &mut Vec<Proposition>) {
+                        match fact {
+                            Proposition::And(left, right) => {
+                                leaves(left, out);
+                                leaves(right, out);
+                            }
+                            fact => out.push(fact.clone()),
+                        }
+                    }
+                    let mut atoms = Vec::new();
+                    leaves(&fact, &mut atoms);
+                    for atom in atoms {
+                        if self
+                            .facts()
+                            .replay_available_across_effects(&atom, &execution.replay.effect_facts)
+                        {
+                            candidates.insert(atom);
+                        }
+                    }
                 }
             }
         }
@@ -924,13 +990,29 @@ impl<'a> Proof<'a> {
         {
             return Some(surface.clone());
         }
-        let surface = synthesize_surface_proposition(
+        if let Some(surface) = synthesize_surface_proposition(
             kernel,
             context.parsed_function.parameters(),
             context.arguments,
             &execution.state,
-        )?;
-        matches(&surface).then_some(surface)
+        ) && matches(&surface)
+        {
+            return Some(surface);
+        }
+        // A fact about an earlier value of a body variable denotes at the
+        // recorded entry of the statement that read it.
+        let anchor = ProgramPointRef {
+            region: CodeRegionRef::Statement(execution.replay.frontier.next_statement_index),
+            kind: ProgramPointKind::Entry,
+        };
+        let candidates = super::smart_closures::synthesize_surface_at_recorded_points(
+            kernel,
+            context.parsed_function.parameters(),
+            context.arguments,
+            &execution.replay.program_point_states,
+            &anchor,
+        );
+        candidates.into_iter().find(|surface| matches(surface))
     }
 
     // Each primitive rule stays outlined so adding a rule-local proposition
@@ -1124,4 +1206,24 @@ impl<'a> Proof<'a> {
         }
         Ok(self.closed_state())
     }
+}
+
+/// The kernel variable identities named in a rendered kernel value, as
+/// substrings that identify them in a rendered proposition. Candidate
+/// selection only; every selected premise is still checked.
+fn kernel_variable_keys(rendered_value: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut rest = rendered_value;
+    while let Some(start) = rest.find("Variable(Variable(") {
+        let after = &rest[start + "Variable(Variable(".len()..];
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        if !digits.is_empty() {
+            let key = format!("Variable(Variable({digits}))");
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        rest = after;
+    }
+    keys
 }

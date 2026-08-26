@@ -40,16 +40,16 @@ condition facts and pairs until it finds sufficient explicit premises or reaches
 the active smart-tactic deadline. It does not discard facts after an arbitrary
 context prefix. A normal miss reports the summarized target and recommends
 smaller execution steps or exact premises; `simp() using { ... }` constrains
-pure search to named facts, while `step() using { ... }` names one exact
-execution transition.
+pure search to named facts, while a shorter run of `step();` lines isolates
+the one execution transition that fails.
 
 ## Execution
 
 | Surface form | Class | Valid state and transition | Failure, checking, and tools | Verified success |
 | --- | --- | --- | --- | --- |
 | `mark name;` | simple | At any live execution frontier, add a proof-local name for the current snapshot without advancing C. | A duplicate name fails. Click records the exact snapshot; expansion leaves the simple tactic unchanged, and profiling attributes only its bounded checking work. | [`proof_mark_current_frontier.md`](https://github.com/lacker/click/blob/master/mdtests/proof_mark_current_frontier.md) |
-| `step()` | smart | At a live C frontier, advance one small transition while selecting prerequisites and supported fact transports from context. | An unsupported transition, missing obligation, or bounded search miss fails promptly. Click checks the selected operations; expansion prints `step() using`, and profiling reports the smart site and its generated leaves. | [`smart_step_carries_prior_call_facts.md`](https://github.com/lacker/click/blob/master/mdtests/smart_step_carries_prior_call_facts.md) |
-| `step() using { P; ... }` | simple | At a live C frontier, perform one transition using only the listed pure premises. An empty block is valid. | A missing or irrelevant required premise fails at that transition. Click performs no premise search; expansion leaves the step unchanged, and profiling charges its explicit input and transition. | [`proof_branch_interface_continuation.md`](https://github.com/lacker/click/blob/master/mdtests/proof_branch_interface_continuation.md) |
+| `step()` | simple | At a live C frontier, execute the next statement with every fact in the proof context visible to the kernel. At a C `if`, an available condition fact selects and enters one arm; at a loop head, it evaluates the condition once and enters one iteration or advances past the loop. | A prerequisite the context cannot prove, or an unsupported transition, fails at that statement with that diagnostic. Click performs no premise search and carries no fact by list: a fact about a cell the context proves untouched keeps that cell's name. Expansion leaves the step unchanged, and profiling charges its one transition. | [`smart_step_carries_prior_call_facts.md`](https://github.com/lacker/click/blob/master/mdtests/smart_step_carries_prior_call_facts.md) |
+| `step() using { P; ... }` | simple (migration) | At a live C frontier, check that each listed fact is available, then `step()`. An empty block is valid. | An unavailable listed fact fails before the transition. The form is being retired: expansion no longer emits it, and new proofs should write `step();`. | [`proof_branch_interface_continuation.md`](https://github.com/lacker/click/blob/master/mdtests/proof_branch_interface_continuation.md) |
 | `execute()` | smart | From a live frontier, execute to function exit, following verified loop summaries and planning explicit branch alternatives. | A path that needs an unavailable rule or proof makes the tactic fail without a partial result. Click checks the complete planned execution; expansion emits explicit execution steps, and profiling attributes the smart plan and leaves. | [`tactic_execute.md`](https://github.com/lacker/click/blob/master/mdtests/tactic_execute.md) |
 | `execute_until(statement(N))` | smart | From a live frontier, execute forward to the selected statement entry without creating a proof interface. | A backward, unreachable, branch-hidden, or function-exit target fails. Click checks every crossed transition; expansion prints those steps, and profiling reports the selected site. | [`execute_until_current_frontier.md`](https://github.com/lacker/click/blob/master/mdtests/execute_until_current_frontier.md) |
 | `branch { [ensuring { ... }] then { ... } else { ... } }` | control | At a C `if` frontier, prove every feasible arm and join nonreturning arms into one continuation. The optional interface exports changed facts and resources. | A non-`if` frontier, overshot arm, unproved interface item, or nondeterministic join fails. Click follows the spelled arms and interface; expansion recurses into smart descendants, and profiling classifies those descendants. | [`frontier_branch.md`](https://github.com/lacker/click/blob/master/mdtests/frontier_branch.md) |
@@ -66,8 +66,8 @@ an already-reached state; they are not source labels, execution targets, or
 saved states that can be restored. In particular, `execute_until(name)` does
 not target a proof mark.
 
-Expansion of execution automation uses `step() using`, including empty
-`using {}` blocks. Expansion recurses through `loop` and materializes omitted
+Expansion of execution automation emits one `step();` line per executed
+statement, followed by the outcome closers. Expansion recurses through `loop` and materializes omitted
 phase proofs at the loop keyword. The older numbered-loop summary syntax
 remains migration compatibility and should not be used in new proofs.
 

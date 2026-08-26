@@ -115,18 +115,18 @@ Current tactics. The [proof tactics reference](../reference/tactics/index.md) is
 authoritative inventory and classifies each spelling as simple, smart, or
 control flow.
 
-- `step() using { P; ... }`: advance one small C transition using exactly
-  the listed execution premises and selected fact transports. A listed
-  memory-dependent fact crosses the statement only when the direct frame check
-  proves that the statement leaves its loaded cells unchanged. Use an explicit
-  `transport(source, target)` when establishing a different target form needs
-  more reasoning than that statement-local check. At a C `if`, an exact
-  condition fact selects and enters one arm. At a loop head, it evaluates the
-  condition once and enters one iteration or advances past the loop.
-- `step()`: execute one small C transition from the current execution frontier
-  with contextual prerequisite reasoning and automatic supported fact
-  transport. It uses the same branch and loop-head transitions as
-  `step() using`.
+- `step()`: execute the next C statement with every fact in the proof
+  context visible to the kernel. A fact about a cell the context proves the
+  statement leaves untouched keeps that cell's name and stays true; a fact
+  about a cell the statement may write is renamed. Use an explicit
+  `transport(source, target)` when relating such a fact to the new state
+  needs more reasoning than the context gives the step. At a C `if`, an
+  available condition fact selects and enters one arm. At a loop head, it
+  evaluates the condition once and enters one iteration or advances past the
+  loop.
+- `step() using { P; ... }`: migration spelling that checks each listed fact
+  is available and then performs `step()`. It is being retired; write
+  `step();`.
 - `execute()`: build symbolic verification paths from the current execution
   frontier to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.
@@ -406,7 +406,7 @@ by {
 ```
 
 `have` does not re-execute the function prefix. It sees the exact facts and
-resources established by preceding `step() using`, `unfold`, `fold`, and other
+resources established by preceding `step()`, `unfold`, `fold`, and other
 ordinary proof tactics. It proves its proposition on every active proof path
 and adds the resulting fact to the following context.
 

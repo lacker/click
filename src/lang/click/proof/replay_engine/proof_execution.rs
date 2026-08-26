@@ -50,6 +50,15 @@ pub(in crate::lang::click) fn collect_internal_proof_execution_labels<R>(
     (result, labels)
 }
 
+/// A simple step written in an execution arm. A source `step()` is the bare
+/// statement step; the other simple statement forms map as themselves.
+fn arm_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+    match tactic {
+        ProofTactic::SmartStep => Some(SimpleProofStep::Step),
+        tactic => linear_execution_simple_step(tactic),
+    }
+}
+
 fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     match tactic {
         ProofTactic::Mark(name) => Some(SimpleProofStep::Mark(name.clone())),
@@ -107,12 +116,18 @@ fn expanded_execution_arm_supported(
     // operation: admit it so `Proof` reports the missing branch anchor instead
     // of silently dropping to compatibility replay. A nonempty, different
     // premise belongs to an older certificate shape and remains unsupported.
-    matches!(
-        steps.first(),
-        Some(SimpleProofStep::StepUsing(premises))
-            if premises.is_empty()
-                || premises.as_slice() == std::slice::from_ref(&expected)
-    ) && matches!(steps.last(), Some(SimpleProofStep::StepUsing(_)))
+    let entry_supported = match steps.first() {
+        Some(SimpleProofStep::Step) => true,
+        Some(SimpleProofStep::StepUsing(premises)) => {
+            premises.is_empty() || premises.as_slice() == std::slice::from_ref(&expected)
+        }
+        _ => false,
+    };
+    entry_supported
+        && matches!(
+            steps.last(),
+            Some(SimpleProofStep::StepUsing(_) | SimpleProofStep::Step)
+        )
 }
 
 pub(in crate::lang::click::proof) fn expanded_execution_if_tactic_supported(
@@ -121,10 +136,14 @@ pub(in crate::lang::click::proof) fn expanded_execution_if_tactic_supported(
     let ProofTactic::If(proof_if) = tactic else {
         return false;
     };
+    // A source `step()` retains the bare statement step.
     let arm_steps = |tactics: &[ProofTactic]| {
         tactics
             .iter()
-            .map(linear_execution_simple_step)
+            .map(|tactic| match tactic {
+                ProofTactic::SmartStep => Some(SimpleProofStep::Step),
+                tactic => linear_execution_simple_step(tactic),
+            })
             .collect::<Option<Vec<_>>>()
     };
     let Some(then_steps) = arm_steps(&proof_if.then_tactics) else {
@@ -268,11 +287,14 @@ fn expanded_execution_tree_arm_supported(
     } else {
         negate_click_proposition(condition)
     };
-    if !matches!(
-        tactics.first(),
-        Some(ProofTactic::StepUsing(premises))
-            if premises.as_slice() == std::slice::from_ref(&expected)
-    ) {
+    let entry_supported = match tactics.first() {
+        Some(ProofTactic::Step) => true,
+        Some(ProofTactic::StepUsing(premises)) => {
+            premises.as_slice() == std::slice::from_ref(&expected)
+        }
+        _ => false,
+    };
+    if !entry_supported {
         return false;
     }
     let nested = tactics
@@ -283,7 +305,8 @@ fn expanded_execution_tree_arm_supported(
     match nested.as_slice() {
         [] => {
             tactics.iter().all(|tactic| {
-                linear_execution_simple_step(tactic).is_some()
+                matches!(tactic, ProofTactic::SmartStep)
+                    || linear_execution_simple_step(tactic).is_some()
                     || (!matches!(tactic, ProofTactic::Simp)
                         && flat_post_execution_tactic(tactic).is_some())
             }) && tactics.iter().any(|tactic| {
@@ -291,10 +314,10 @@ fn expanded_execution_tree_arm_supported(
             })
         }
         [index] if *index + 1 == tactics.len() => {
-            tactics[..*index]
-                .iter()
-                .all(|tactic| linear_execution_simple_step(tactic).is_some())
-                && expanded_execution_tree_tactic_supported_at(&tactics[*index], depth + 1)
+            tactics[..*index].iter().all(|tactic| {
+                matches!(tactic, ProofTactic::SmartStep)
+                    || linear_execution_simple_step(tactic).is_some()
+            }) && expanded_execution_tree_tactic_supported_at(&tactics[*index], depth + 1)
         }
         _ => false,
     }
@@ -1287,6 +1310,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                 proof = proof.with_execution_tactic_index(*index)?;
                 if let Some((then_steps, else_steps)) =
                     expanded_execution_if_steps(condition, then_branch, else_branch)
+                    && proof.frontier_is_execution_branch(condition)?
                 {
                     proof =
                         proof.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
@@ -2235,7 +2259,7 @@ fn try_advance_checked_execution_branch<'a>(
 fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
     linear_execution_tactics(node)?
         .iter()
-        .map(|indexed| linear_execution_simple_step(&indexed.tactic))
+        .map(|indexed| arm_simple_step(&indexed.tactic))
         .collect()
 }
 
@@ -2291,17 +2315,20 @@ fn expanded_execution_internal_arm_supported(
     } else {
         negate_click_proposition(condition)
     };
-    if !matches!(
-        tactics.first().map(|indexed| &indexed.tactic),
-        Some(ProofTactic::StepUsing(premises))
-            if premises.as_slice() == std::slice::from_ref(&expected)
-    ) {
+    let entry_supported = match tactics.first().map(|indexed| &indexed.tactic) {
+        Some(ProofTactic::Step) => true,
+        Some(ProofTactic::StepUsing(premises)) => {
+            premises.as_slice() == std::slice::from_ref(&expected)
+        }
+        _ => false,
+    };
+    if !entry_supported {
         return false;
     }
     match continuation.as_ref() {
         InternalProofNode::Done => {
             tactics.iter().all(|indexed| {
-                linear_execution_simple_step(&indexed.tactic).is_some()
+                arm_simple_step(&indexed.tactic).is_some()
                     || (!matches!(indexed.tactic, ProofTactic::Simp)
                         && flat_post_execution_tactic(&indexed.tactic).is_some())
             }) && tactics.iter().any(|indexed| {
@@ -2312,7 +2339,7 @@ fn expanded_execution_internal_arm_supported(
         nested @ InternalProofNode::If { .. } => {
             tactics
                 .iter()
-                .all(|indexed| linear_execution_simple_step(&indexed.tactic).is_some())
+                .all(|indexed| arm_simple_step(&indexed.tactic).is_some())
                 && expanded_execution_internal_if_supported(nested, depth + 1)
         }
         InternalProofNode::Linear { .. }
@@ -2360,13 +2387,13 @@ fn advance_expanded_execution_linear_region<'a>(
                 post_execution,
             }));
         }
-        let Some(step) = linear_execution_simple_step(&indexed.tactic) else {
+        let Some(step) = arm_simple_step(&indexed.tactic) else {
             return Ok(None);
         };
         // A terminal arm's source steps may continue past its typed
         // boundary into the parent continuation, consuming the one escape
         // the enclosing split record supplies.
-        if matches!(step, SimpleProofStep::StepUsing(_))
+        if matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step)
             && proof.is_at_region_boundary()
             && let Some(record) = enclosing.take()
         {
@@ -2393,7 +2420,7 @@ fn expanded_execution_region_leading_steps(
         .map_while(|indexed| {
             flat_post_execution_tactic(&indexed.tactic)
                 .is_none()
-                .then(|| linear_execution_simple_step(&indexed.tactic))
+                .then(|| arm_simple_step(&indexed.tactic))
                 .flatten()
         })
         .collect();
@@ -2419,6 +2446,9 @@ fn advance_expanded_execution_if_region<'a>(
         && let Some(record) = enclosing.take()
     {
         proof = proof.continue_arm_into_parent_frontier(record)?;
+    }
+    if !proof.frontier_is_execution_branch(condition)? {
+        return Ok(None);
     }
     let (split, record) = proof.split_focused_execution_branch()?;
     let mut advanced = split;
@@ -2768,6 +2798,7 @@ fn advance_checked_open_scope<'a>(
     } = body
         && let Some((then_steps, else_steps)) =
             expanded_execution_if_steps(condition, then_branch, else_branch)
+        && scope.frontier_is_execution_branch(condition)?
     {
         let scope = scope.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
         return advance_checked_open_scope(
@@ -3348,11 +3379,7 @@ fn execute_internal_proof_inner(
                             tactic_offset: branch_surface_start,
                         },
                     );
-                    let entry_step =
-                        ProofCertificate::from_proof_tactics(&[ProofTactic::StepUsing(Vec::new())])
-                            .expect("a plain step is a simple tactic")
-                            .steps()[0]
-                            .clone();
+                    let entry_step = SimpleProofStep::Step;
                     for _ in 0..entry_steps {
                         let insertion = branch_surface_start.min(builder.steps.len());
                         builder.steps.insert(insertion, entry_step.clone());
@@ -3385,6 +3412,7 @@ fn execute_internal_proof_inner(
                     BranchStepPolicy::Explore,
                     true,
                     BranchArmMode::Inline,
+                    None,
                     None,
                 )
                 .map_err(|error| add_proof_branch_path(error, &branch_context.branch_path))?;

@@ -46,10 +46,6 @@ mark that boundary:
 
 <!-- verified-example: mdtests/pure_theorem.md -->
 ```click
-step() using {
-    x < 2147483647;
-}
-
 frame() using {
     i >= 0;
     i < n;
@@ -57,9 +53,10 @@ frame() using {
 ```
 
 An empty `using {}` block is valid. It means the simple rule needs no pure
-premises; it is not the same spelling as the contextual bare tactic.
-`execute_until(statement(N))` is smart; expansion replaces it with the
-corresponding sequence of simple `step() using { ... }` tactics.
+premises. `step()` takes no `using` block: it is simple, and executes the
+next statement with the whole proof context visible to the kernel.
+`execute()` and `execute_until(statement(N))` are its repetitions; expansion
+replaces them with the corresponding sequence of `step();` tactics.
 
 `simp() using { ... }` is still smart: the listed facts restrict its search,
 and expansion replaces it with named simple rules. Common simple proposition

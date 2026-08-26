@@ -908,7 +908,15 @@ fn synthesize_surface_bitvector(
             synthesize_surface_bitvector(value, parameters, arguments, state, bound_variables)?,
         ))),
         Bitvector32Term::MemoryLoad(_, kernel_pointer) => {
-            if let Some(field) =
+            if let PointerBlock::Concrete(block) = &kernel_pointer.block
+                && let Some(name) = block.strip_prefix("local:")
+                && kernel_pointer.offset == PointerOffsetTerm::Constant(0)
+            {
+                // A memory-resident scalar local reads as its own name.
+                Some(ContractExpression::CFragment(CExpression::Variable(
+                    name.to_string(),
+                )))
+            } else if let Some(field) =
                 synthesize_parameter_field_load(kernel_pointer, CType::Int32, parameters, arguments)
             {
                 Some(field)
@@ -966,13 +974,24 @@ fn synthesize_surface_bitvector(
         // the source load of that cell at any execution point whose memory
         // lies in the same epoch; the kernel's own naming law decides that,
         // so the spelling lowers back to exactly this variable there.
-        Bitvector32Term::Variable(variable) => synthesize_surface_bitvector(
-            &registered_load_in_state(variable, state)?,
-            parameters,
-            arguments,
-            state,
-            bound_variables,
-        ),
+        Bitvector32Term::Variable(variable) => {
+            // A memory-resident scalar local holding exactly this variable
+            // reads as its own name here.
+            if let Some((name, _)) = state.local_cell_values().find(|(_, value)| {
+                matches!(value, CValue::Int32(held) | CValue::UInt8(held) if held == term)
+            }) {
+                return Some(ContractExpression::CFragment(CExpression::Variable(
+                    name.to_string(),
+                )));
+            }
+            synthesize_surface_bitvector(
+                &registered_load_in_state(variable, state)?,
+                parameters,
+                arguments,
+                state,
+                bound_variables,
+            )
+        }
         Bitvector32Term::If { .. } | Bitvector32Term::RangeFold { .. } => None,
         Bitvector32Term::PureFunctionApplication {
             name,

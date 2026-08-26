@@ -128,7 +128,7 @@ fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
         .expect("the rewritten individual open proof should verify normally");
 
-    let checked_step = "                        step() using {\n                        }\n";
+    let checked_step = "                        step();\n";
     let corrupted = expanded.replacen(checked_step, "", 1);
     assert_ne!(
         corrupted, expanded,
@@ -739,18 +739,19 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
     assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
-    assert!(caller_expansion.contains("step() using"), "{expanded}");
+    assert!(caller_expansion.contains("step();"), "{expanded}");
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten grouped call proof should verify normally");
 
-    let checked_call = "step() using {\n                    permit >= 1;\n                }";
-    assert!(
-        expanded.contains(checked_call),
-        "the call expansion should retain its exact prerequisite: {expanded}"
+    // The call step runs in the caller's context; its prerequisite is the
+    // caller's requirement, and removing that requirement invalidates it.
+    let corrupted = expanded.replacen("requires permit >= 1;", "", 1);
+    assert_ne!(
+        corrupted, expanded,
+        "the caller's requirement should be present"
     );
-    let corrupted = expanded.replacen(checked_call, "step() using {\n                }", 1);
     verify_c0_sources(&corrupted, sources)
-        .expect_err("removing the extracted call prerequisite must invalidate the proof");
+        .expect_err("removing the call prerequisite from the context must invalidate the proof");
 }
 
 #[test]
@@ -928,14 +929,14 @@ fn grouped_opaque_calls_keep_declared_composite_resources_on_proof() {
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     assert_eq!(
-        caller_expansion.matches("step() using {").count(),
+        caller_expansion.matches("step();").count(),
         4,
         "each caller statement should retain one checked step: {expanded}"
     );
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten declared-resource call proof should verify normally");
 
-    let checked_step = "                step() using {\n                }\n";
+    let checked_step = "                step();\n";
     let corrupted = expanded.replacen(checked_step, "", 1);
     assert_ne!(
         corrupted, expanded,
@@ -1046,7 +1047,7 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten scoped composite-call proof should verify normally");
 
-    let checked_step = "                    step() using {\n                    }\n";
+    let checked_step = "                    step();\n";
     let corrupted = expanded.replacen(checked_step, "", 1);
     assert_ne!(
         corrupted, expanded,
@@ -1234,14 +1235,13 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
         2,
         "both top-level scopes should be serialized: {expanded}"
     );
-    assert!(!caller_expansion.contains("step();"), "{expanded}");
     assert!(!caller_expansion.contains("execute();"), "{expanded}");
     assert!(!caller_expansion.contains("frame();"), "{expanded}");
     assert!(!caller_expansion.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, sources)
         .expect("the rewritten sequential-scope proof should verify normally");
 
-    let checked_step = "                    step() using {\n                    }\n";
+    let checked_step = "                    step();\n";
     let corrupted = expanded.replacen(checked_step, "", 1);
     assert_ne!(
         corrupted, expanded,
@@ -2131,11 +2131,12 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
         position.column,
     )
     .expect("unwritten read should expand through explicit transport");
-    assert!(expanded.contains("transport("), "{expanded}");
-    assert!(expanded.contains("separate("), "{expanded}");
+    // The steps run in the whole context, so the separation keeps the read
+    // cell's name across the write and no explicit transport is needed.
+    assert!(!expanded.contains("transport("), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("write_i_read_j.c", c_source)])
-        .expect("expanded unwritten-read transport should replay");
+        .expect("expanded unwritten read should replay");
 }
 
 #[test]
@@ -2198,7 +2199,8 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
     let statement_steps = expanded
         .iter()
         .filter_map(|tactic| match tactic {
-            ProofTactic::StepUsing(premises) => Some(premises),
+            ProofTactic::StepUsing(premises) => Some(premises.as_slice()),
+            ProofTactic::Step => Some(&[][..]),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -2311,7 +2313,7 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::StepUsing(_)))
             .count(),
         2,
         "the grouped store and return should each be retained exactly once: {expanded:#?}"
@@ -2390,7 +2392,7 @@ fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::StepUsing(_)))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::StepUsing(_)))
             .count(),
         3,
         "both stores and the return should be retained exactly once: {expanded:#?}"

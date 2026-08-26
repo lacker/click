@@ -259,9 +259,10 @@ tactics prepare facts and resources before the next C statement. At function exi
 whose meaning depends on `result` or the post-state are checked separately for
 each completed execution path.
 
-`step() using { P; ... }` is the simple execution tactic. It advances by one
-supported transition using exactly the listed premises. Bare `step()` is its
-smart, contextual counterpart.
+`step()` is the simple execution tactic. It advances by one supported
+transition with the whole proof context visible to the kernel.
+`step() using { P; ... }` is a migration spelling that checks each `P` is
+available and then steps.
 
 `branch { ensuring { Q } then { ... } else { ... } }` is the sequencing rule
 for a C conditional whose arms need an explicit common resource interface.

@@ -31,10 +31,22 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
+    context: Option<&PureFactContext>,
 ) -> Result<Vec<CheckedStatementStep>, ClickError> {
     let assumptions = requirement_pure_facts.assumptions();
-    let tactic_name = "step() using";
-    let prerequisite_policy = StatementPrerequisitePolicy::Explicit;
+    // A bare `step()` executes in the whole proof context: prerequisites
+    // are proved from it, and nothing is transported per step because the
+    // kernel keeps cell names it can prove unwritten from that context.
+    let tactic_name = if context.is_some() && premises.is_empty() {
+        "step()"
+    } else {
+        "step() using"
+    };
+    let prerequisite_policy = if context.is_some() {
+        StatementPrerequisitePolicy::Contextual
+    } else {
+        StatementPrerequisitePolicy::Explicit
+    };
     let loop_step_policy = LoopStepPolicy::EnterBody;
     // Resuming from a completed branch region reaches this
     // statement without recording its entry snapshot; a premise
@@ -254,7 +266,10 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
             explicit_premises.push(branch_fact);
         }
     }
-    let explicit_assumptions = assumptions_from_propositions(&explicit_premises);
+    let explicit_assumptions = match context {
+        Some(context) => context.clone(),
+        None => assumptions_from_propositions(&explicit_premises),
+    };
     for resource_fact in state
         .resources()
         .observable_facts_assuming_valid(&explicit_assumptions)
@@ -280,9 +295,15 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         // cross this statement boundary. Transport only those
         // listed facts through the certified statement effect;
         // ambient facts are restored below at their original
-        // snapshots.
-        StatementFactTransportPolicy::Selected,
+        // snapshots. A bare step transports nothing: the kernel keeps the
+        // names of cells it proves unwritten from the whole context.
+        if premises.is_empty() {
+            StatementFactTransportPolicy::None
+        } else {
+            StatementFactTransportPolicy::Selected
+        },
         loop_step_policy,
+        context,
     )?;
     Ok(successors
         .into_iter()

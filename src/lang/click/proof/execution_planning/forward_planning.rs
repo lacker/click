@@ -199,6 +199,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                             &pure_facts,
                             invariant_checks,
                             effect_checks,
+                            condition,
                             body,
                             environment,
                         )?;
@@ -457,6 +458,7 @@ fn split_execution_proof_branch_contexts(
             "execution proof traversal",
             StatementPrerequisitePolicy::Contextual,
             true,
+            None,
         )? {
             let next = ExecutionProofContext {
                 state: context.state.clone(),
@@ -796,6 +798,7 @@ fn advance_execution_proof_statement(
                 &mut context.next_kernel_variable,
                 StatementPrerequisitePolicy::Contextual,
                 StatementFactTransportPolicy::Automatic,
+                None,
             )?,
             _ => certified_loop_exit_transitions_with_proven_phases(
                 &context.state,

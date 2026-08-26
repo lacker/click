@@ -766,6 +766,33 @@ impl<'a> Proof<'a> {
         {
             return Some(anchored);
         }
+        // Before accepting an unanchored recorded form, which may have been
+        // stated at an earlier value of a variable that later changed,
+        // spell the fact at the recorded point where it was read.
+        if let Some(anchor) = premise_anchor
+            && let Some((parameters, arguments, program_points)) = match self.context.as_ref() {
+                ProofContext::Pure(_) => None,
+                ProofContext::Point(context) => Some((
+                    context.parameters,
+                    context.arguments,
+                    context.program_point_states,
+                )),
+                ProofContext::Execution(_) => self
+                    .outcome_point_view()
+                    .map(|view| (view.parameters, view.arguments, view.program_point_states)),
+            }
+            && let Some(anchored) = synthesize_surface_at_recorded_points(
+                kernel,
+                parameters,
+                arguments,
+                program_points,
+                anchor,
+            )
+            .into_iter()
+            .find(|surface| matches_kernel(surface).is_some())
+        {
+            return Some(anchored);
+        }
         // A checked branch interface can export a kernel fact whose arm-local
         // Surface recording does not survive as a common map entry. The
         // statement-entry anchor still names the exact retained state. Rebuild
@@ -860,24 +887,15 @@ impl<'a> Proof<'a> {
         // operand at the nearest recorded statement entry that denotes it,
         // walking back from the selected premise anchor; the candidate is
         // accepted only when ordinary lowering recovers this exact fact.
-        let anchor = premise_anchor?;
-        let CodeRegionRef::Statement(anchor_index) = &anchor.region else {
-            return None;
-        };
-        let points = (0..=*anchor_index)
-            .rev()
-            .filter_map(|index| {
-                let point = ProgramPointRef {
-                    region: CodeRegionRef::Statement(index),
-                    kind: ProgramPointKind::Entry,
-                };
-                let state = program_points.get(&point)?;
-                Some((point, state))
-            })
-            .collect::<Vec<_>>();
-        let surface =
-            synthesize_surface_equality_across_points(kernel, parameters, arguments, &points)?;
-        matches_kernel(&surface).map(|()| surface)
+        synthesize_surface_at_recorded_points(
+            kernel,
+            parameters,
+            arguments,
+            program_points,
+            premise_anchor?,
+        )
+        .into_iter()
+        .find(|surface| matches_kernel(surface).is_some())
     }
 
     /// Tries equalities attached to terms occurring in the current goal.
@@ -2360,7 +2378,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn try_indexed_statement_step(
         &self,
     ) -> Result<Option<Self>, ClickError> {
-        self.try_indexed_statement_step_with_unrelated_context(false)
+        self.try_indexed_execute_step()
     }
 
     /// Selects one source smart statement step on this exact checked Proof.
@@ -2368,28 +2386,8 @@ impl<'a> Proof<'a> {
     /// cannot advance may unrelated retained effects or facts be shared by
     /// the broader checked selector. Both paths return only an accepted
     /// `StepUsing` descendant, never planning aftermath.
+    /// A smart `step()` is the bare statement step in the whole context.
     pub(in crate::lang::click::proof) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
-        let Some(execution) = self.execution() else {
-            return Ok(None);
-        };
-        // A raw-memory transition with no preceding call effect is fully
-        // decided by the checked statement operation: the kernel retains
-        // exactly the permissions and facts that survive it, so the returned
-        // descendant is authoritative. A named entry resource may already
-        // have been unfolded out of the current resource context, while a
-        // call effect may carry a post-call surface fact needed by a later
-        // statement. Both still require continuation-aware search (or an
-        // explicit owned scope) before a standalone `step()` can select a
-        // sufficient representation.
-        if execution.replay.has_resource_surface_history
-            || execution.state.resources().has_named_resources()
-            || !execution.replay.effect_facts.is_empty()
-        {
-            return Ok(None);
-        }
-        if let Some(proof) = self.try_indexed_statement_step()? {
-            return Ok(Some(proof));
-        }
         self.try_indexed_execute_step()
     }
 
@@ -2399,10 +2397,38 @@ impl<'a> Proof<'a> {
     /// from standalone smart `step` so `execute` can traverse an open resource
     /// scope without changing `step`'s established explicit-certificate
     /// selection policy.
+    /// The smart execution step: one bare `step()` in the whole proof
+    /// context. There is no premise selection; a checked step either
+    /// advances the frontier or reports why the statement cannot run here.
     pub(in crate::lang::click::proof) fn try_indexed_execute_step(
         &self,
     ) -> Result<Option<Self>, ClickError> {
-        self.try_indexed_statement_step_with_unrelated_context(true)
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        let Some(execution) = self.execution() else {
+            return Err(self.step_error("execution-frontier proof lost its semantic state"));
+        };
+        // Structural frontiers belong to the branch and loop operations.
+        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            &execution.replay,
+            &execution.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "smart step selection",
+        )?;
+        if matches!(statement, CStatement::If { .. } | CStatement::While { .. }) {
+            return Ok(None);
+        }
+        match self.apply_step(SimpleProofStep::Step) {
+            Ok(proof) => Ok(Some(proof)),
+            Err(_) => {
+                check_verification_deadline()?;
+                Ok(None)
+            }
+        }
     }
 
     pub(super) fn try_indexed_statement_step_with_unrelated_context(
@@ -2580,4 +2606,62 @@ impl<'a> Proof<'a> {
             }
         }
     }
+}
+
+/// Candidate spellings of one kernel fact from the recorded execution points,
+/// nearest first: the fact synthesized at a point where its cells are
+/// readable and re-read there (`at(statement(n).entry, ...)`), then, for an
+/// equality whose operands were read at different points, one anchor per
+/// operand. Callers must re-lower each candidate and accept it only when it
+/// denotes exactly `kernel`.
+pub(super) fn synthesize_surface_at_recorded_points(
+    kernel: &Proposition,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    program_points: &ProgramPointStates,
+    anchor: &ProgramPointRef,
+) -> Vec<ClickProposition> {
+    let anchor_index = match &anchor.region {
+        CodeRegionRef::Statement(index) => *index,
+        _ => usize::MAX,
+    };
+    // Recorded statement entries: those at or before the anchor, nearest
+    // first, then any recorded later (a loop body's statements lie beyond
+    // the loop's own index).
+    let mut indices = program_points
+        .keys()
+        .filter_map(|point| match (&point.region, point.kind) {
+            (CodeRegionRef::Statement(index), ProgramPointKind::Entry) => Some(*index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices.dedup();
+    let (before, after): (Vec<usize>, Vec<usize>) = indices
+        .into_iter()
+        .partition(|index| *index <= anchor_index);
+    let points = before
+        .into_iter()
+        .rev()
+        .chain(after)
+        .filter_map(|index| {
+            let point = ProgramPointRef {
+                region: CodeRegionRef::Statement(index),
+                kind: ProgramPointKind::Entry,
+            };
+            let state = program_points.get(&point)?;
+            Some((point, state))
+        })
+        .collect::<Vec<_>>();
+    let mut candidates = points
+        .iter()
+        .filter_map(|(point, state)| {
+            let surface = synthesize_surface_proposition(kernel, parameters, arguments, state)?;
+            surface_with_source_site(&surface, point).ok()
+        })
+        .collect::<Vec<_>>();
+    candidates.extend(synthesize_surface_equality_across_points(
+        kernel, parameters, arguments, &points,
+    ));
+    candidates
 }

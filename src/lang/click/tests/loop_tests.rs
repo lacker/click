@@ -815,7 +815,8 @@ fn frontier_loop_step_expansion_uses_the_current_invariant_lowering() {
         expand_c0_tactic_source_at(click_source, &[("fill_n.c", c_source)], line, column)
             .expect("the preservation store should expand");
 
-    assert_ne!(expanded, click_source);
+    // A bare `step()` is a simple tactic: its expansion is the source.
+    assert_eq!(expanded, click_source);
     verify_c0_sources(&expanded, &[("fill_n.c", c_source)])
         .expect("the expanded store should use the invariant at the current frontier");
 }
@@ -1315,7 +1316,9 @@ fn frontier_local_loop_expands_a_tactic_inside_preservation_at_its_own_location(
     )
     .expect("preservation step should expand at its own source location");
 
-    assert_ne!(expanded, click_source);
+    // A bare `step()` is a simple tactic: expanding it leaves the source as
+    // written, and the loop's other phases stay untouched.
+    assert_eq!(expanded, click_source);
     assert!(expanded.contains("initialize by simp"), "{expanded}");
     verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
         .expect("expanded preservation step should freshly replay");
