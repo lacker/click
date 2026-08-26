@@ -2509,6 +2509,28 @@ impl<'a> Proof<'a> {
 
     /// True when the split recorded two feasible arms and both sibling
     /// goals completed at function exit.
+    /// Checks a `branch ensuring` interface on this arm's frontier: every
+    /// fact is lowered here and must be available or proved by the context.
+    /// A resource item is not checked this way (`Ok(false)`).
+    pub(in crate::lang::click::proof) fn interface_facts_established(
+        &self,
+        assertions: &[ProofAssertion],
+    ) -> Result<bool, ClickError> {
+        for assertion in assertions {
+            let ProofAssertion::Fact(surface) = assertion else {
+                return Ok(false);
+            };
+            let fact = self.lower_surface_proposition(surface, "`branch ensuring` fact")?;
+            if !self.facts().contains(&fact) && !self.facts().assumptions().proves(&fact) {
+                return Err(self.step_error(format!(
+                    "`branch ensuring` did not establish fact `{}`",
+                    describe_click_proposition(surface)
+                )));
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether one arm of the split reached function exit.
     pub(in crate::lang::click::proof) fn arm_at_function_exit(
         &self,

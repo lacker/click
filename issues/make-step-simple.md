@@ -199,8 +199,8 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: no example claim (quarantined
-`owned-vector` aside) and 1 mdtest claim (down from 53 once a bare step's failure, the
+counts what still reaches the interpreter: nothing in the examples
+(quarantined `owned-vector` aside) or the mdtests (down from 53 once a bare step's failure, the
 planner's failure, and a generated proof's failure became terminal on the
 checked route with their own diagnostics — the negative tests' expected
 messages come from the checked route now — the empty-execution-leaf
@@ -214,7 +214,9 @@ arms' bare steps coincide; an `assumption` on a proposition judgment
 accepts a discharged implication's consequent and a restricted `simp`
 falls back to direct closure; mid-execution `transport` shares one
 premise law, `Proof::apply_planned_fact_transport`, between the drivers).
-The 1: the `branch ensuring` with a returned arm (`frontier_branch_return`). Gaps closed on the
+A `branch ensuring` with a returned arm checks the interface on the
+continuing arm at its boundary and joins terminally
+(`frontier_branch_return`). Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split

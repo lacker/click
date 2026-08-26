@@ -2258,18 +2258,19 @@ fn try_advance_checked_execution_branch<'a>(
     if !has_sole_feasible_arm {
         let then_exit = advanced.arm_at_function_exit(&record, true);
         let else_exit = advanced.arm_at_function_exit(&record, false);
-        if then_exit != else_exit && ensuring.is_some() {
-            // An interface join needs both arms at the boundary; a returned
-            // arm with an `ensuring` interface stays with the interpreter.
-            return Ok(None);
-        }
         if then_exit != else_exit {
             // One arm returned. The other continues past its boundary into
             // the shared continuation, which it runs to function exit; the
-            // two arms then join terminally.
-            let continuing = advanced
-                .focus_split_arm(&record, !then_exit)?
-                .continue_arm_into_parent_frontier(&record)?;
+            // two arms then join terminally. An `ensuring` interface is
+            // checked on the continuing arm at its boundary; the retained
+            // state is the arm's own, which is stronger than the interface.
+            let continuing = advanced.focus_split_arm(&record, !then_exit)?;
+            if let Some(assertions) = ensuring
+                && !continuing.interface_facts_established(assertions)?
+            {
+                return Ok(None);
+            }
+            let continuing = continuing.continue_arm_into_parent_frontier(&record)?;
             let Some(next) = advance_focused_execution_region(
                 continuing,
                 Some(&record),
@@ -2291,7 +2292,12 @@ fn try_advance_checked_execution_branch<'a>(
     }
     let empty = checked_execution_region_is_empty(then_branch)
         && checked_execution_region_is_empty(else_branch);
-    let joined = advanced.join_focused_execution_split(&record, empty, ensuring.clone())?;
+    let join_interface = if consumed_continuation {
+        None
+    } else {
+        ensuring.clone()
+    };
+    let joined = advanced.join_focused_execution_split(&record, empty, join_interface)?;
     let certificate = proof_site
         .is_some()
         .then(|| joined.certificate_since(&checkpoint))
