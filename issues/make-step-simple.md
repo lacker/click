@@ -199,9 +199,9 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: 3 example claims
-(`list_prepend`, `pool_init`, `refcount_pipeline`) plus quarantined
-`owned-vector`; the remaining capabilities are listed below. Gaps closed on the
+counts what still reaches the interpreter: 1 example claim
+(`refcount_pipeline`) plus quarantined `owned-vector`; the remaining
+capability is listed below. Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split
@@ -235,13 +235,18 @@ way, all in the drivers or the kernel, no script changes:
   own context (`mdtests/terminal_case_split_certifies_each_case.md`,
   `list_destroy`, `item_destroy`).
 
-Remaining driver capabilities, each contained:
+- A post-exit proof `if` whose condition a return path does not decide
+  forks that path, one copy per polarity, each carrying the case fact and
+  a recorded proof-case decision (`Proof::split_outcome_paths_by_case`);
+  the deferred `if` is then decided on every path and certification runs
+  once per case (`mdtests/outcome_case_split_forks_undecided_paths.md`,
+  `list_prepend`, `pool_init`). A bare `frame()` inside a deferred arm is
+  the ambient function frame checked per path; a tactic nested in a
+  deferred arm registers its expansion capture by tactic index
+  (`DeferredTacticCapture::NESTED`).
 
-- Outcome-level case split (`list_prepend`, `pool_init`): a post-exit
-  proof `if` whose condition a return path does not decide. The
-  interpreter forks the context with the case fact; `PostExecutionTactic::If`
-  finalization only selects a decided arm. Fork the path in place when
-  `checked_outcome_if_value` cannot decide, with the case fact added.
+Remaining driver capability:
+
 - A `branch` whose then arm returns while the else arm continues
   (`refcount_pipeline`): `checked_execution_region_pair` requires both
   arms to end alike; the continuation state is simply the continuing

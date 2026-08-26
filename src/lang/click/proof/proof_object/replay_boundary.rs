@@ -398,15 +398,38 @@ impl<'a> Proof<'a> {
                 self.step_error("post-execution tactics can be scheduled only at function exit")
             );
         }
-        if begin_tactic_expansion_capture(expansion_capture, source_index, &execution.replay) {
+        let branch_skeleton = || {
+            ProofCertificate::from_steps(surface_branch_skeleton(self.certificate().steps()))
+                .to_proof_tactics()
+        };
+        // A tactic nested in a deferred `if` arm is drained at a flattened
+        // position no deferral can know; its capture matches by tactic
+        // index alone (`DeferredTacticCapture::NESTED`).
+        let selected = expansion_capture
+            .as_deref()
+            .and_then(|capture| capture.source_index)
+            .filter(|selected| *selected != source_index)
+            .and_then(|selected| nested_deferred_tactic_by_source(&tactic, selected));
+        if let Some((nested_tactic_index, nested_source_index)) = selected {
+            if begin_tactic_expansion_capture(
+                expansion_capture,
+                nested_source_index,
+                &execution.replay,
+            ) {
+                execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                    tactic_index: nested_tactic_index,
+                    source_index: nested_source_index,
+                    post_execution_index: DeferredTacticCapture::NESTED,
+                    branch_skeleton: branch_skeleton(),
+                });
+            }
+        } else if begin_tactic_expansion_capture(expansion_capture, source_index, &execution.replay)
+        {
             execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,
                 post_execution_index: execution.replay.post_execution_tactics.len(),
-                branch_skeleton: ProofCertificate::from_steps(surface_branch_skeleton(
-                    self.certificate().steps(),
-                ))
-                .to_proof_tactics(),
+                branch_skeleton: branch_skeleton(),
             });
         }
         execution
@@ -438,4 +461,27 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn checked_facts(&self) -> &[Proposition] {
         self.state.checked_facts.as_ref()
     }
+}
+
+/// The `(tactic_index, source_index)` of the tactic with `source_index`
+/// nested in the arms of a deferred `if`, at any depth.
+fn nested_deferred_tactic_by_source(
+    tactic: &PostExecutionTactic,
+    source_index: usize,
+) -> Option<(usize, usize)> {
+    let PostExecutionTactic::If {
+        then_tactics,
+        else_tactics,
+        ..
+    } = tactic
+    else {
+        return None;
+    };
+    then_tactics.iter().chain(else_tactics).find_map(|nested| {
+        if nested.source_index == source_index {
+            Some((nested.tactic_index, nested.source_index))
+        } else {
+            nested_deferred_tactic_by_source(&nested.tactic, source_index)
+        }
+    })
 }

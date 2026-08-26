@@ -493,10 +493,21 @@ fn deferred_post_execution_linear_region(
     let mut deferred = tactics
         .iter()
         .map(|indexed| {
+            // Inside a deferred region (an arm of a post-execution `if`)
+            // a bare `frame()` is the ambient function frame checked per
+            // outcome path at finalization; the arm applies only on the
+            // paths that take it, so there is no Proof to search now.
+            let tactic = match &indexed.tactic {
+                ProofTactic::SmartFrame(None) => PostExecutionTactic::Frame,
+                ProofTactic::SmartFrame(Some(region)) => {
+                    PostExecutionTactic::FrameRegion(region.clone())
+                }
+                tactic => flat_post_execution_tactic(tactic)?,
+            };
             Some(DeferredPostExecutionTactic {
                 tactic_index: indexed.index,
                 source_index: indexed.source_index,
-                tactic: flat_post_execution_tactic(&indexed.tactic)?,
+                tactic,
                 surface_recorded: false,
             })
         })
@@ -1103,7 +1114,15 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                         &else_tactics,
                     ) && !proof.post_execution_if_is_path_decided(condition)?
                     {
-                        return Ok(None);
+                        // The condition is a proof-level case split on some
+                        // outcome path: fork those paths, one per polarity.
+                        match proof.split_outcome_paths_by_case(condition) {
+                            Ok(split) => proof = split,
+                            Err(_) => {
+                                check_verification_deadline()?;
+                                return Ok(None);
+                            }
+                        }
                     }
                     proof = proof.defer_post_execution_source_tactic(
                         *index,

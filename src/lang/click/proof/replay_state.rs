@@ -581,6 +581,12 @@ pub(super) struct DeferredTacticCapture {
     pub(super) branch_skeleton: Vec<ProofTactic>,
 }
 
+impl DeferredTacticCapture {
+    /// `post_execution_index` of a capture for a tactic nested in a deferred
+    /// `if` arm: it matches by tactic index at whatever drained position.
+    pub(super) const NESTED: usize = usize::MAX;
+}
+
 pub(in crate::lang::click) fn capture_c0_tactic_expansion(
     click_source: &str,
     c_sources: &[(&str, &str)],
@@ -1057,7 +1063,9 @@ pub(super) fn record_post_execution_surface_tactic(
         return;
     }
     if deferred_capture.is_some_and(|capture| {
-        capture.tactic_index == tactic_index && capture.post_execution_index == post_execution_index
+        capture.tactic_index == tactic_index
+            && (capture.post_execution_index == post_execution_index
+                || capture.post_execution_index == DeferredTacticCapture::NESTED)
     }) {
         capture_tactics.push(tactic.clone());
     }

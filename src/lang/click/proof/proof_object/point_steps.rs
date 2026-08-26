@@ -848,6 +848,136 @@ impl<'a> Proof<'a> {
     /// path partition and may be deferred until each outcome Proof is
     /// focused. An undecided logical case split must stay with the general
     /// proof driver, which introduces the two assumptions explicitly.
+    /// Forks every outcome path on which `condition` is undecided into two
+    /// paths, one per polarity, each carrying the case fact and a recorded
+    /// proof-case decision; a path whose facts already decide the condition
+    /// only records the decision. Afterwards a deferred post-execution `if`
+    /// on `condition` is decided on every path, and certification runs once
+    /// per recorded case.
+    pub(in crate::lang::click::proof) fn split_outcome_paths_by_case(
+        &self,
+        condition: &ClickProposition,
+    ) -> Result<Self, ClickError> {
+        self.require_execution_frontier("post-execution case split")?;
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("post-execution case split requires an execution proof"));
+        };
+        let mut execution = self.execution().cloned().ok_or_else(|| {
+            self.step_error("post-execution case split lost its execution frontier")
+        })?;
+        if !execution.replay.is_at_function_exit() {
+            return Err(self.step_error("post-execution case split requires function exit"));
+        }
+        let checked = execution.replay.execution().cloned().ok_or_else(|| {
+            self.step_error("post-execution case split has no checked execution paths")
+        })?;
+        let pre_state = execution
+            .replay
+            .execution_start_state(&execution.state)
+            .clone();
+        let mut paths = Vec::with_capacity(checked.paths().len() * 2);
+        let mut decisions_by_path = Vec::with_capacity(checked.paths().len() * 2);
+        for (path_index, path) in checked.paths().iter().enumerate() {
+            check_verification_deadline()?;
+            let decisions = execution
+                .outcome_branch_decisions
+                .get(path_index)
+                .cloned()
+                .unwrap_or_else(|| execution.branch_decisions.clone());
+            let keep = |paths: &mut Vec<_>, decisions_by_path: &mut Vec<_>| {
+                paths.push((
+                    path.outcome().clone(),
+                    path.execution_facts(),
+                    path.obligations().to_vec(),
+                ));
+                decisions_by_path.push(decisions.clone());
+            };
+            if decisions
+                .iter()
+                .any(|decision| &decision.condition == condition)
+            {
+                keep(&mut paths, &mut decisions_by_path);
+                continue;
+            }
+            let CFunctionOutcome::Return { value, state } = path.outcome() else {
+                keep(&mut paths, &mut decisions_by_path);
+                continue;
+            };
+            let path_facts = path
+                .facts()
+                .iter()
+                .map(|fact| fact.proposition().clone())
+                .collect::<Vec<_>>();
+            let lowered = lower_outcome_proposition_with_program_points(
+                context.parsed_function.parameters(),
+                context.arguments,
+                &pre_state,
+                state,
+                value,
+                &path_facts,
+                condition,
+                context.predicate_environment,
+                context.click_function_environment,
+                &execution.replay.program_point_states,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "post-execution case split could not lower its condition: {message}"
+                ))
+            })?;
+            let positive = crate::kernel::canonical_condition_fact(&lowered);
+            let negative =
+                crate::kernel::canonical_condition_fact(&Proposition::Not(Box::new(lowered)));
+            let assumptions = path_facts
+                .iter()
+                .fold(self.facts().assumptions().clone(), |assumptions, fact| {
+                    assumptions.assume_proposition(fact.clone())
+                });
+            let cases: Vec<(bool, Option<Proposition>)> = if assumptions.proves(&positive) {
+                vec![(true, None)]
+            } else if assumptions.proves(&negative) {
+                vec![(false, None)]
+            } else {
+                vec![(true, Some(positive)), (false, Some(negative))]
+            };
+            for (value, case_fact) in cases {
+                let mut facts = path.execution_facts();
+                if let Some(case_fact) = case_fact {
+                    facts.push(ExecutionPureFact::new(case_fact));
+                }
+                paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
+                let mut decisions = decisions.clone();
+                decisions.push(ExecutionBranchDecision {
+                    condition: condition.clone(),
+                    value,
+                    proof_case: true,
+                });
+                decisions_by_path.push(decisions);
+            }
+        }
+        let candidates = crate::kernel::c_function_execution_candidates_from_outcomes(
+            checked.state().clone(),
+            checked.function().clone(),
+            checked.arguments().to_vec(),
+            paths,
+        );
+        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+            execution: candidates,
+        };
+        execution.outcome_branch_decisions = Arc::new(decisions_by_path);
+        let mut state = (*self.state).clone();
+        state.goals =
+            state
+                .goals
+                .replace_execution_at(self.focused, self.facts().clone(), execution);
+        Ok(Self {
+            context: self.context.clone(),
+            state: Arc::new(state),
+            node: self.node.clone(),
+            focused: self.focused,
+        })
+    }
+
     pub(in crate::lang::click::proof) fn post_execution_if_is_path_decided(
         &self,
         condition: &ClickProposition,
