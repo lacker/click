@@ -104,7 +104,9 @@ impl<'a> Proof<'a> {
         {
             return Ok(Some(anchored));
         }
-        if let Some(rewritten) = self.try_indexed_goal_equality_rewrite_closure() {
+        if let Some(rewritten) =
+            self.try_indexed_goal_equality_rewrite_closure_excluding(exclude_exact_goal)
+        {
             return Ok(Some(rewritten));
         }
         if let Some(surface_goal) = self.surface_goal()
@@ -906,16 +908,44 @@ impl<'a> Proof<'a> {
     /// equality is used at most once; structural goals keep only a closing
     /// rewrite so their recursive connective proof remains visible.
     pub(super) fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
+        self.try_indexed_goal_equality_rewrite_closure_excluding(false)
+    }
+
+    /// The closure above; with `exclude_goal_fact`, the goal's own ambient
+    /// fact (in either orientation) is not a rewrite candidate, matching the
+    /// atomic derivation's rule when direct closure was rejected as
+    /// non-replayable.
+    pub(super) fn try_indexed_goal_equality_rewrite_closure_excluding(
+        &self,
+        exclude_goal_fact: bool,
+    ) -> Option<Self> {
+        // A judgment stated at an execution frontier (a `have` inside an
+        // `open` scope, before the outcome) reads its spellings from the
+        // execution's surface map, anchored at the current statement entry.
+        let frontier_anchor = match self.context.as_ref() {
+            ProofContext::Execution(_) if self.focused_outcome_point().is_none() => {
+                self.execution().map(|execution| ProgramPointRef {
+                    region: CodeRegionRef::Statement(
+                        execution.replay.frontier.next_statement_index,
+                    ),
+                    kind: ProgramPointKind::Entry,
+                })
+            }
+            _ => None,
+        };
         let (surface_facts, premise_anchor) = match self.context.as_ref() {
             ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
             ProofContext::Point(context) => (
                 context.surface_propositions,
                 context.premise_anchor.as_ref(),
             ),
-            ProofContext::Execution(_) => {
-                let point = self.focused_outcome_point()?;
-                (&point.surface_propositions, point.premise_anchor.as_ref())
-            }
+            ProofContext::Execution(_) => match self.focused_outcome_point() {
+                Some(point) => (&point.surface_propositions, point.premise_anchor.as_ref()),
+                None => (
+                    &self.execution()?.replay.surface_propositions,
+                    frontier_anchor.as_ref(),
+                ),
+            },
         };
         let mut proof = self.clone();
         let mut used = BTreeSet::new();
@@ -925,6 +955,13 @@ impl<'a> Proof<'a> {
             let mut refinement = None;
             for equality in proof.facts().bitvector_equalities_mentioning(&goal) {
                 if used.contains(&equality) {
+                    continue;
+                }
+                if exclude_goal_fact
+                    && (equality == goal
+                        || swapped_bitvector_equality(&equality)
+                            .is_some_and(|swapped| swapped == goal))
+                {
                     continue;
                 }
                 let Some(surface) =
@@ -2664,4 +2701,15 @@ pub(super) fn synthesize_surface_at_recorded_points(
         kernel, parameters, arguments, &points,
     ));
     candidates
+}
+
+/// `b == a` for the fact `a == b`.
+fn swapped_bitvector_equality(fact: &Proposition) -> Option<Proposition> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), value) = fact else {
+        return None;
+    };
+    Some(Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(right.clone(), left.clone()),
+        *value,
+    ))
 }

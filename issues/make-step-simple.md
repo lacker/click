@@ -199,14 +199,13 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: 6 example claims
+counts what still reaches the interpreter: 5 example claims
 (`list_prepend`, `list_destroy`, `pool_init`, `item_destroy`,
-`object_retain_many`, `refcount_pipeline`) plus quarantined
-`owned-vector`. Each is a distinct driver capability: an outcome-level
-case split on a condition the outcome does not decide (`list_prepend`,
-`pool_init`); a `branch` whose then arm returns while the else arm
-continues (`refcount_pipeline`); a nested `have ... by simp` inside an
-`open` scope (`object_retain_many`); and the terminal join below. Gaps closed on the
+`refcount_pipeline`) plus quarantined `owned-vector`. Each is a distinct
+driver capability: an outcome-level case split on a condition the
+outcome does not decide (`list_prepend`, `pool_init`); a `branch` whose
+then arm returns while the else arm continues (`refcount_pipeline`); and
+the terminal join below. Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split
@@ -219,6 +218,10 @@ way, all in the drivers or the kernel, no script changes:
   recorded effects.
 - Each statement step records a readable spelling for every fact it
   introduces (output-sized).
+- The goal-equality rewrite closure (`simp` closing `1 == x` from
+  `x == 1`) works for a judgment stated at an execution frontier, such as
+  a `have ... by simp` inside an `open` scope, reading spellings from the
+  execution's surface map (`object_retain_many`).
 - The kernel's call-havoc edge freezes the fact context in force when it
   is recorded (`CMemoryDerivation::CallHavoc { context }`). The
   assumption-free naming walk crosses it for a pointer that context proves
