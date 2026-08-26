@@ -1305,82 +1305,142 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 "kernel certification setup for `{proof_label}` failed: {message}"
             ))
         })?;
-        let certified_execution = crate::instrumentation::measure_operation(
-            function_block.signature().name(),
-            &proof_label,
-            "independent kernel certification",
-            || {
-                if replay.frontier_loop_rules.is_empty()
-                    && let Some((_, _, _, execution)) = certification_cache.iter().find(
-                        |(facts, cached_state, concrete_loop_execution, _)| {
-                            facts == &certification_facts
-                                && cached_state == pre_state
-                                && *concrete_loop_execution == replay.concrete_loop_execution
-                        },
-                    )
-                {
-                    execution.clone()
-                } else {
-                    let execution_start_assumptions =
-                        assumptions_from_propositions(&certification_facts);
-                    let execution = cached_independent_execution(
-                        pre_state,
-                        function,
-                        arguments,
-                        &execution_start_assumptions,
-                        function_environment,
-                        replay.concrete_loop_execution,
-                        || {
-                            prove_checked_c_function_execution_with_environment(
-                                pre_state.clone(),
-                                function.clone(),
-                                arguments.to_vec(),
-                                execution_start_assumptions.clone(),
-                                function_environment.clone(),
-                                if replay.concrete_loop_execution
-                                    || !replay.frontier_loop_rules.is_empty()
-                                {
-                                    CExecutionSemantics::APPLY_VERIFIED_RULES
-                                } else {
-                                    CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                                },
-                                if replay.concrete_loop_execution {
-                                    CFunctionContractExecutionMode::ExecuteLoops
-                                } else {
-                                    CFunctionContractExecutionMode::VerifyLoops
-                                },
-                            )
-                        },
-                    );
-                    if replay.frontier_loop_rules.is_empty() {
-                        certification_cache.push((
-                            certification_facts.clone(),
-                            pre_state.clone(),
-                            replay.concrete_loop_execution,
-                            execution.clone(),
-                        ));
-                    }
-                    execution
+        // A checked unit that joined a terminal proof-level case split keeps
+        // every case's outcome paths. Kernel certification runs once per
+        // group of paths with the same recorded case decisions, with that
+        // group's case facts assumed at function entry, as the compatibility
+        // interpreter certifies each case as its own context.
+        let path_case_facts: Vec<Vec<Proposition>> = (0..execution.paths().len())
+            .map(|path_index| {
+                direct_view
+                    .as_ref()
+                    .map(|view| view.path_case_decisions(path_index))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|(condition, value)| {
+                        let lowered = super::point_proofs::lower_point_proposition(
+                            &condition,
+                            &certification_facts,
+                            parsed_function.parameters(),
+                            arguments,
+                            pre_state,
+                            pre_state,
+                            None,
+                            &replay.program_point_states,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .ok()?;
+                        let fact = if value {
+                            lowered
+                        } else {
+                            Proposition::Not(Box::new(lowered))
+                        };
+                        Some(crate::kernel::canonical_condition_fact(&fact))
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut case_groups: Vec<(Vec<Proposition>, Vec<usize>)> = Vec::new();
+        for (path_index, facts) in path_case_facts.iter().enumerate() {
+            match case_groups
+                .iter_mut()
+                .find(|(group_facts, _)| group_facts == facts)
+            {
+                Some((_, members)) => members.push(path_index),
+                None => case_groups.push((facts.clone(), vec![path_index])),
+            }
+        }
+        if case_groups.is_empty() {
+            case_groups.push((Vec::new(), Vec::new()));
+        }
+        let base_certification_facts = certification_facts;
+        let mut certified_executions = Vec::with_capacity(case_groups.len());
+        let mut certified_outcomes_by_group = Vec::with_capacity(case_groups.len());
+        let mut merged_pairing: Vec<Option<(usize, usize)>> = vec![None; execution.paths().len()];
+        for (group_index, (group_facts, group_members)) in case_groups.iter().enumerate() {
+            let mut certification_facts = base_certification_facts.clone();
+            for fact in group_facts {
+                if !certification_facts.contains(fact) {
+                    certification_facts.push(fact.clone());
                 }
-            },
-        );
-        let certified_execution = checked_c_function_execution_with_entry_derivations(
-            certified_execution,
-            replay.function_entry_derivations.to_vec(),
-            replay.function_entry_execution_prerequisites.to_vec(),
-        );
-        if let Some(limit) = certified_execution.limit() {
-            if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+            }
+            let certified_execution = crate::instrumentation::measure_operation(
+                function_block.signature().name(),
+                &proof_label,
+                "independent kernel certification",
+                || {
+                    if replay.frontier_loop_rules.is_empty()
+                        && let Some((_, _, _, execution)) = certification_cache.iter().find(
+                            |(facts, cached_state, concrete_loop_execution, _)| {
+                                facts == &certification_facts
+                                    && cached_state == pre_state
+                                    && *concrete_loop_execution == replay.concrete_loop_execution
+                            },
+                        )
+                    {
+                        execution.clone()
+                    } else {
+                        let execution_start_assumptions =
+                            assumptions_from_propositions(&certification_facts);
+                        let execution = cached_independent_execution(
+                            pre_state,
+                            function,
+                            arguments,
+                            &execution_start_assumptions,
+                            function_environment,
+                            replay.concrete_loop_execution,
+                            || {
+                                prove_checked_c_function_execution_with_environment(
+                                    pre_state.clone(),
+                                    function.clone(),
+                                    arguments.to_vec(),
+                                    execution_start_assumptions.clone(),
+                                    function_environment.clone(),
+                                    if replay.concrete_loop_execution
+                                        || !replay.frontier_loop_rules.is_empty()
+                                    {
+                                        CExecutionSemantics::APPLY_VERIFIED_RULES
+                                    } else {
+                                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                                    },
+                                    if replay.concrete_loop_execution {
+                                        CFunctionContractExecutionMode::ExecuteLoops
+                                    } else {
+                                        CFunctionContractExecutionMode::VerifyLoops
+                                    },
+                                )
+                            },
+                        );
+                        if replay.frontier_loop_rules.is_empty() {
+                            certification_cache.push((
+                                certification_facts.clone(),
+                                pre_state.clone(),
+                                replay.concrete_loop_execution,
+                                execution.clone(),
+                            ));
+                        }
+                        execution
+                    }
+                },
+            );
+            let certified_execution = checked_c_function_execution_with_entry_derivations(
+                certified_execution,
+                replay.function_entry_derivations.to_vec(),
+                replay.function_entry_execution_prerequisites.to_vec(),
+            );
+            if let Some(limit) = certified_execution.limit() {
+                if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
+                    return Err(ClickError::new(format!(
+                        "verification budget exhausted inside {}",
+                        crate::instrumentation::deadline_context()
+                    )));
+                }
                 return Err(ClickError::new(format!(
-                    "verification budget exhausted inside {}",
-                    crate::instrumentation::deadline_context()
+                    "kernel certification hit execution limit {limit:?} for `{proof_label}`"
                 )));
             }
-            return Err(ClickError::new(format!(
-                "kernel certification hit execution limit {limit:?} for `{proof_label}`"
-            )));
-        }
-        let certified_outcomes = certified_execution
+            let certified_outcomes = certified_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1400,156 +1460,158 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let replay_outcomes = execution
-            .paths()
-            .iter()
-            .map(|path| path.outcome().clone())
-            .collect::<Vec<_>>();
-        let outcomes_match = |replayed: &crate::kernel::CFunctionExecutionCandidate,
-                              certified_index: usize| {
-            let certified = &certified_outcomes[certified_index];
-            let certified_path = &certified_execution.paths()[certified_index];
-            let certified_facts = certified_path
-                .execution_facts()
-                .into_iter()
-                .map(|fact| fact.proposition().clone())
-                .collect::<Vec<_>>();
-            let replayed_facts = replayed
-                .execution_facts()
-                .into_iter()
-                .map(|fact| fact.proposition().clone())
-                .collect::<Vec<_>>();
-            // Do not make two different branch paths appear equal by first
-            // assuming their contradictory guards. In an inconsistent
-            // context every outcome is provably equal, which used to pair a
-            // recursive branch with an unrelated base-case certificate.
-            let certified_path_conditions = certified_facts.iter().chain(
-                certified_path
-                    .obligations()
-                    .iter()
-                    .map(ProofObligation::proposition),
-            );
-            let replayed_path_conditions = replayed_facts
+            let replay_outcomes = execution
+                .paths()
                 .iter()
-                .chain(
-                    replayed
+                .map(|path| path.outcome().clone())
+                .collect::<Vec<_>>();
+            let outcomes_match = |replayed: &crate::kernel::CFunctionExecutionCandidate,
+                                  certified_index: usize| {
+                let certified = &certified_outcomes[certified_index];
+                let certified_path = &certified_execution.paths()[certified_index];
+                let certified_facts = certified_path
+                    .execution_facts()
+                    .into_iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect::<Vec<_>>();
+                let replayed_facts = replayed
+                    .execution_facts()
+                    .into_iter()
+                    .map(|fact| fact.proposition().clone())
+                    .collect::<Vec<_>>();
+                // Do not make two different branch paths appear equal by first
+                // assuming their contradictory guards. In an inconsistent
+                // context every outcome is provably equal, which used to pair a
+                // recursive branch with an unrelated base-case certificate.
+                let certified_path_conditions = certified_facts.iter().chain(
+                    certified_path
                         .obligations()
                         .iter()
                         .map(ProofObligation::proposition),
-                )
-                .collect::<Vec<_>>();
-            if certified_path_conditions.into_iter().any(|certified_fact| {
-                replayed_path_conditions.iter().any(|replayed_fact| {
-                    propositions_are_exact_negations(certified_fact, replayed_fact)
-                })
-            }) {
-                return false;
-            }
-            // A proof-level branch can select an execution path even when a
-            // simple statement certificate deliberately omitted the C branch
-            // guard from its own fact list. Include that selected branch when
-            // pairing the replay candidate with an independently certified
-            // path, or a recursive return known to equal zero can be paired
-            // with the unrelated base-case path merely because their final
-            // observable values coincide.
-            if !replay.case_assumptions.is_empty() {
-                let CFunctionOutcome::Return {
-                    value: result,
-                    state: post_state,
-                } = replayed.outcome()
-                else {
-                    return false;
-                };
-                let mut replayed_available = pure_facts.clone();
-                replayed_available.extend(
-                    replayed
-                        .facts()
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
                 );
-                for case in &replay.case_assumptions {
-                    let case_fact = if let Some(fact) = &case.fact {
-                        fact.clone()
-                    } else {
-                        let Ok(condition) = lower_outcome_proposition_with_program_points(
-                            parsed_function.parameters(),
-                            arguments,
-                            pre_state,
-                            post_state,
-                            result,
-                            &replayed_available,
-                            &case.condition,
-                            predicate_environment,
-                            click_function_environment,
-                            &replay.program_point_states,
-                        ) else {
-                            return false;
-                        };
-                        if case.value {
-                            condition
-                        } else {
-                            Proposition::Not(Box::new(condition))
-                        }
-                    };
-                    if replayed_path_conditions.iter().any(|replayed_fact| {
-                        propositions_are_exact_negations(replayed_fact, &case_fact)
-                    }) {
-                        // The replay execution still contains every C path;
-                        // proof-level branching filters the incompatible ones
-                        // later.  Such a path only needs its ordinary matching
-                        // kernel certificate, not a certificate compatible
-                        // with a proof branch that will discard it.
-                        break;
-                    }
-                    if certified_facts.iter().any(|certified_fact| {
-                        propositions_are_exact_negations(certified_fact, &case_fact)
-                    }) {
+                let replayed_path_conditions = replayed_facts
+                    .iter()
+                    .chain(
+                        replayed
+                            .obligations()
+                            .iter()
+                            .map(ProofObligation::proposition),
+                    )
+                    .collect::<Vec<_>>();
+                if certified_path_conditions.into_iter().any(|certified_fact| {
+                    replayed_path_conditions.iter().any(|replayed_fact| {
+                        propositions_are_exact_negations(certified_fact, replayed_fact)
+                    })
+                }) {
+                    return false;
+                }
+                // A proof-level branch can select an execution path even when a
+                // simple statement certificate deliberately omitted the C branch
+                // guard from its own fact list. Include that selected branch when
+                // pairing the replay candidate with an independently certified
+                // path, or a recursive return known to equal zero can be paired
+                // with the unrelated base-case path merely because their final
+                // observable values coincide.
+                if !replay.case_assumptions.is_empty() {
+                    let CFunctionOutcome::Return {
+                        value: result,
+                        state: post_state,
+                    } = replayed.outcome()
+                    else {
                         return false;
+                    };
+                    let mut replayed_available = pure_facts.clone();
+                    replayed_available.extend(
+                        replayed
+                            .facts()
+                            .iter()
+                            .map(|fact| fact.proposition().clone()),
+                    );
+                    for case in &replay.case_assumptions {
+                        let case_fact = if let Some(fact) = &case.fact {
+                            fact.clone()
+                        } else {
+                            let Ok(condition) = lower_outcome_proposition_with_program_points(
+                                parsed_function.parameters(),
+                                arguments,
+                                pre_state,
+                                post_state,
+                                result,
+                                &replayed_available,
+                                &case.condition,
+                                predicate_environment,
+                                click_function_environment,
+                                &replay.program_point_states,
+                            ) else {
+                                return false;
+                            };
+                            if case.value {
+                                condition
+                            } else {
+                                Proposition::Not(Box::new(condition))
+                            }
+                        };
+                        if replayed_path_conditions.iter().any(|replayed_fact| {
+                            propositions_are_exact_negations(replayed_fact, &case_fact)
+                        }) {
+                            // The replay execution still contains every C path;
+                            // proof-level branching filters the incompatible ones
+                            // later.  Such a path only needs its ordinary matching
+                            // kernel certificate, not a certificate compatible
+                            // with a proof branch that will discard it.
+                            break;
+                        }
+                        if certified_facts.iter().any(|certified_fact| {
+                            propositions_are_exact_negations(certified_fact, &case_fact)
+                        }) {
+                            return false;
+                        }
                     }
                 }
-            }
-            let mut path_assumptions = certified_path.assumptions().clone();
-            for fact in certification_facts.iter().chain(&certified_facts) {
-                path_assumptions = path_assumptions.assume_proposition(fact.clone());
-            }
-            for fact in &pure_facts {
-                path_assumptions = path_assumptions.assume_proposition(fact.clone());
-            }
-            for fact in replayed_facts {
-                path_assumptions = path_assumptions.assume_proposition(fact);
-            }
-            for equation in crate::kernel::certified_store_equations(&replayed.execution_facts())
-                .into_iter()
-                .chain(crate::kernel::certified_store_equations(
-                    &certified_path.execution_facts(),
-                ))
-            {
-                path_assumptions = path_assumptions.assume_proposition(equation);
-            }
-            if let CFunctionOutcome::Return { state, .. } = certified
-                && let Ok(resource_facts) = state.resources().observable_facts(&path_assumptions)
-            {
-                for fact in resource_facts {
+                let mut path_assumptions = certified_path.assumptions().clone();
+                for fact in certification_facts.iter().chain(&certified_facts) {
+                    path_assumptions = path_assumptions.assume_proposition(fact.clone());
+                }
+                for fact in &pure_facts {
+                    path_assumptions = path_assumptions.assume_proposition(fact.clone());
+                }
+                for fact in replayed_facts {
                     path_assumptions = path_assumptions.assume_proposition(fact);
                 }
-            }
-            c_function_outcomes_program_state_definitionally_equal(
-                replayed.outcome(),
-                certified,
-                &path_assumptions,
-            ) || c_function_outcomes_program_state_equal_by_execution_provenance(
-                replayed.outcome(),
-                &replayed.execution_facts(),
-                certified,
-                &certified_path.execution_facts(),
-                &path_assumptions,
-            )
-        };
-        // A nested proof branch can carry a self-contradictory case set: its
-        // sibling contexts own every execution path, and this context is
-        // vacuous. Such a path needs no matching kernel certificate — the
-        // exit drain below skips it by the same case reasoning.
-        let path_excluded_by_proof_branch =
+                for equation in
+                    crate::kernel::certified_store_equations(&replayed.execution_facts())
+                        .into_iter()
+                        .chain(crate::kernel::certified_store_equations(
+                            &certified_path.execution_facts(),
+                        ))
+                {
+                    path_assumptions = path_assumptions.assume_proposition(equation);
+                }
+                if let CFunctionOutcome::Return { state, .. } = certified
+                    && let Ok(resource_facts) =
+                        state.resources().observable_facts(&path_assumptions)
+                {
+                    for fact in resource_facts {
+                        path_assumptions = path_assumptions.assume_proposition(fact);
+                    }
+                }
+                c_function_outcomes_program_state_definitionally_equal(
+                    replayed.outcome(),
+                    certified,
+                    &path_assumptions,
+                ) || c_function_outcomes_program_state_equal_by_execution_provenance(
+                    replayed.outcome(),
+                    &replayed.execution_facts(),
+                    certified,
+                    &certified_path.execution_facts(),
+                    &path_assumptions,
+                )
+            };
+            // A nested proof branch can carry a self-contradictory case set: its
+            // sibling contexts own every execution path, and this context is
+            // vacuous. Such a path needs no matching kernel certificate — the
+            // exit drain below skips it by the same case reasoning.
+            let path_excluded_by_proof_branch =
             |replayed: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
                 if replay.case_assumptions.is_empty() {
                     return Ok(false);
@@ -1612,53 +1674,67 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 }
                 Ok(false)
             };
-        let certified_path_for_replay = crate::instrumentation::measure_operation(
-            function_block.signature().name(),
-            &proof_label,
-            "certified outcome pairing",
-            || -> Result<Option<Vec<Option<usize>>>, ClickError> {
-                if replay.execution_abstraction {
-                    return Ok((!certified_outcomes.is_empty())
-                        .then(|| vec![Some(0); execution.paths().len()]));
-                }
-                let mut pairing = Vec::with_capacity(execution.paths().len());
-                for (path_index, replayed) in execution.paths().iter().enumerate() {
-                    if matches!(&unit, OrderedProofUnit::Checked(_))
-                        && outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
-                            substrate.outcome_goal_for_path(path_index).is_none()
-                        })
-                    {
-                        // The Proof-owned N-way outcome derivation rejected
-                        // this candidate under an exact contradictory path
-                        // fact. It owns no semantic goal and needs no whole-
-                        // function pairing; a compatible certified sibling
-                        // remains addressed by its original path index.
-                        pairing.push(None);
-                        continue;
+            let certified_path_for_replay = crate::instrumentation::measure_operation(
+                function_block.signature().name(),
+                &proof_label,
+                "certified outcome pairing",
+                || -> Result<Option<Vec<Option<usize>>>, ClickError> {
+                    if replay.execution_abstraction {
+                        return Ok((!certified_outcomes.is_empty())
+                            .then(|| vec![Some(0); execution.paths().len()]));
                     }
-                    if let Some(certified_index) = (0..certified_outcomes.len())
-                        .find(|certified_index| outcomes_match(replayed, *certified_index))
-                    {
-                        pairing.push(Some(certified_index));
-                    } else if path_excluded_by_proof_branch(replayed)? {
-                        pairing.push(None);
-                    } else {
-                        return Ok(None);
+                    let mut pairing = Vec::with_capacity(execution.paths().len());
+                    for (path_index, replayed) in execution.paths().iter().enumerate() {
+                        if !group_members.contains(&path_index) {
+                            pairing.push(None);
+                            continue;
+                        }
+                        if matches!(&unit, OrderedProofUnit::Checked(_))
+                            && outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
+                                substrate.outcome_goal_for_path(path_index).is_none()
+                            })
+                        {
+                            // The Proof-owned N-way outcome derivation rejected
+                            // this candidate under an exact contradictory path
+                            // fact. It owns no semantic goal and needs no whole-
+                            // function pairing; a compatible certified sibling
+                            // remains addressed by its original path index.
+                            pairing.push(None);
+                            continue;
+                        }
+                        if let Some(certified_index) = (0..certified_outcomes.len())
+                            .find(|certified_index| outcomes_match(replayed, *certified_index))
+                        {
+                            pairing.push(Some(certified_index));
+                        } else if path_excluded_by_proof_branch(replayed)? {
+                            pairing.push(None);
+                        } else {
+                            return Ok(None);
+                        }
                     }
+                    Ok(Some(pairing))
+                },
+            )?;
+            let Some(certified_path_for_replay) = certified_path_for_replay else {
+                // Outcome equality is a conservative kernel query: once the
+                // ambient limit fires it returns `false`, which used to turn a
+                // valid replay into a ghost-region or memory mismatch. Give the
+                // limit priority over the semantic pairing diagnostic.
+                check_verification_deadline()?;
+                return Err(ClickError::new(format!(
+                    "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
+                )));
+            };
+            for &member in group_members {
+                if let Some(certified_index) = certified_path_for_replay[member] {
+                    merged_pairing[member] = Some((group_index, certified_index));
                 }
-                Ok(Some(pairing))
-            },
-        )?;
-        let Some(certified_path_for_replay) = certified_path_for_replay else {
-            // Outcome equality is a conservative kernel query: once the
-            // ambient limit fires it returns `false`, which used to turn a
-            // valid replay into a ghost-region or memory mismatch. Give the
-            // limit priority over the semantic pairing diagnostic.
-            check_verification_deadline()?;
-            return Err(ClickError::new(format!(
-                "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
-            )));
-        };
+            }
+            certified_executions.push(certified_execution);
+            certified_outcomes_by_group.push(certified_outcomes);
+        }
+        let certified_path_for_replay = merged_pairing;
+        let certification_facts = base_certification_facts;
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
@@ -1687,7 +1763,8 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         // sibling context certifies it.
                         continue 'execution_path;
                     };
-                    let certified_path = &certified_execution.paths()[certified_path_index];
+                    let certified_path = &certified_executions[certified_path_index.0].paths()
+                        [certified_path_index.1];
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
@@ -4138,11 +4215,14 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         if replay.execution_abstraction {
                             (
                                 certified_path.clone(),
-                                certified_outcomes[certified_path_index].clone(),
+                                certified_outcomes_by_group[certified_path_index.0]
+                                    [certified_path_index.1]
+                                    .clone(),
                                 certification_facts.clone(),
                             )
                         } else {
-                            let certified_outcome = &certified_outcomes[certified_path_index];
+                            let certified_outcome = &certified_outcomes_by_group
+                                [certified_path_index.0][certified_path_index.1];
                             let outcome_delta = describe_function_outcome_delta(
                                 &outcome,
                                 certified_outcome,
@@ -4184,7 +4264,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             )
             .ok_or_else(|| {
                 let certified_outcome =
-                    &certified_outcomes[certified_path_index];
+                    &certified_outcomes_by_group[certified_path_index.0][certified_path_index.1];
                 let outcome_delta = describe_function_outcome_delta(
                     specification.outcome(),
                     certified_outcome,
@@ -4212,7 +4292,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             concrete_loop_execution: replay.concrete_loop_execution,
                             frontier_loop_clauses: replay.frontier_loop_clauses.to_vec(),
                             frontier_loop_rules: replay.frontier_loop_rules.to_vec(),
-                            checked_execution: certified_execution.clone(),
+                            checked_execution: certified_executions[certified_path_index.0].clone(),
                         });
                     }
                     // Expansion prints what verification holds: the tactics come out

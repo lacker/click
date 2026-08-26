@@ -243,6 +243,7 @@ impl<'a> Proof<'a> {
                 .push(ExecutionBranchDecision {
                     condition: surface_condition.clone(),
                     value: take_then,
+                    proof_case: false,
                 });
             arm_execution.replay.has_structured_branch_history = true;
             arm_execution.branch_path.push(format!(
@@ -995,18 +996,10 @@ impl<'a> Proof<'a> {
         proof_case_condition: Option<ClickProposition>,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
-        // The join law for resources is the one for facts: what is identical
-        // in both arms survives. Storage identity is the cheap witness;
-        // arms that each unfolded the same resource hold equal contents in
-        // distinct storage and pass by content.
-        if !resource_contexts_agree(
-            arms[0].execution.state.resources(),
-            arms[1].execution.state.resources(),
-        ) {
-            return Err(self.step_error(
-                "checked `branch ensuring` cannot yet retain a proper common resource delta",
-            ));
-        }
+        // Both arms completed at function exit. Their outcomes remain
+        // separate paths, each with its own state and resources, and kernel
+        // certification runs once per recorded case, so the arms' resource
+        // contexts need not agree.
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("terminal execution join retained a non-execution context")
         };
@@ -1145,6 +1138,7 @@ impl<'a> Proof<'a> {
                         decisions.push(ExecutionBranchDecision {
                             condition: surface_condition.clone(),
                             value: arm_index == 0,
+                            proof_case: true,
                         });
                     }
                     path_branch_decisions.push(decisions);
@@ -1619,40 +1613,6 @@ impl<'a> Proof<'a> {
     /// preceding multi-successor call, the call remains the parent provenance
     /// node; for a fresh logical split, both arms retain the same checked C
     /// root. In either case this adds only the proof `if` and its arm bodies.
-    /// Whether a terminal join of the split's two arms can be retained: the
-    /// arms' resource contexts share storage. Arms that unfolded or folded
-    /// resources separately do not, and kernel certification does not yet
-    /// reproduce such a join; the driver declines instead of erroring.
-    pub(in crate::lang::click::proof) fn terminal_join_arms_share_resources(
-        &self,
-        record: &ExecutionProofCaseSplit<'a>,
-    ) -> Result<bool, ClickError> {
-        let (_, then_view) = self.sibling_execution_arm_view_from_bases(
-            "then",
-            record.split,
-            record.ids[0],
-            Vec::new(),
-            &record.base_facts[0],
-            &record.common_facts,
-            &record.base_executions[0],
-            None,
-        )?;
-        let (_, else_view) = self.sibling_execution_arm_view_from_bases(
-            "else",
-            record.split,
-            record.ids[1],
-            Vec::new(),
-            &record.base_facts[1],
-            &record.common_facts,
-            &record.base_executions[1],
-            None,
-        )?;
-        Ok(resource_contexts_agree(
-            then_view.execution.state.resources(),
-            else_view.execution.state.resources(),
-        ))
-    }
-
     pub(in crate::lang::click::proof) fn join_focused_execution_if_terminal(
         &self,
         record: &ExecutionProofCaseSplit<'a>,
@@ -2698,10 +2658,4 @@ fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]
             || (matches!(actual, SimpleProofStep::Step)
                 && matches!(expected, SimpleProofStep::StepUsing(premises) if premises.is_empty()))
     })
-}
-
-/// Whether two arms' resource contexts are the same resource state: shared
-/// storage, or identical facts.
-fn resource_contexts_agree(left: &ResourceContext, right: &ResourceContext) -> bool {
-    left.shares_storage_with(right) || left.facts() == right.facts()
 }

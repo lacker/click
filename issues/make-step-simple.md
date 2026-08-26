@@ -199,13 +199,9 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: 5 example claims
-(`list_prepend`, `list_destroy`, `pool_init`, `item_destroy`,
-`refcount_pipeline`) plus quarantined `owned-vector`. Each is a distinct
-driver capability: an outcome-level case split on a condition the
-outcome does not decide (`list_prepend`, `pool_init`); a `branch` whose
-then arm returns while the else arm continues (`refcount_pipeline`); and
-the terminal join below. Gaps closed on the
+counts what still reaches the interpreter: 3 example claims
+(`list_prepend`, `pool_init`, `refcount_pipeline`) plus quarantined
+`owned-vector`; the remaining capabilities are listed below. Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
 - A bare `frame()` among post-exit outcome operations, or at a case-split
@@ -231,18 +227,13 @@ way, all in the drivers or the kernel, no script changes:
   `detachable_buffer_pipeline`, `ring_buffer_pipeline`). The crossing is
   memoized per edge and pointer; without that memo the branch-shaped
   fixture did 22x the work.
-- A terminal proof-`if` join whose arms end with different resource
-  contexts is declined; those are `list_destroy` and `item_destroy`. The
-  join law for resources is the one for facts (identical contents
-  survive; `resource_contexts_agree`), but the actual gap is downstream:
-  the join merges both cases into one execution and clears
-  `case_assumptions`, so the unit's single kernel certification runs
-  without the case fact (`item != 0`) and the arm's `unfold`, and
-  `free(item)` certifies as `InvalidFree`. The interpreter certifies each
-  case as its own context with the case fact at entry. Fix: certify a
-  checked unit once per group of outcome paths with the same recorded
-  case decisions (`outcome_branch_decisions`), adding that group's
-  lowered case facts at entry, and pair outcomes within the group.
+- A terminal proof-`if` join keeps each case's outcome paths with their
+  own resources, and kernel certification of a checked unit runs once per
+  group of outcome paths with the same recorded proof-case decisions
+  (`ExecutionBranchDecision::proof_case`), with that group's case facts
+  lowered at function entry, as the interpreter certifies each case as its
+  own context (`mdtests/terminal_case_split_certifies_each_case.md`,
+  `list_destroy`, `item_destroy`).
 
 Remaining driver capabilities, each contained:
 

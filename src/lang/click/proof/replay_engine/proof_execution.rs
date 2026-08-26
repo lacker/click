@@ -1233,9 +1233,6 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     }
                     advanced = next;
                 }
-                if !advanced.terminal_join_arms_share_resources(&record)? {
-                    return Ok(None);
-                }
                 proof = advanced.join_focused_execution_if_terminal(&record)?;
                 saw_structure = true;
                 current = continuation;
@@ -2111,9 +2108,6 @@ fn advance_focused_execution_region<'a>(
                     return Ok(None);
                 }
                 advanced = next;
-            }
-            if !advanced.terminal_join_arms_share_resources(&record)? {
-                return Ok(None);
             }
             let proof = advanced
                 .join_focused_execution_if_terminal(&record)?
