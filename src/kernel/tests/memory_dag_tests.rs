@@ -539,9 +539,11 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
         }
     ));
     assert!(offset_derivation.replay(&assumptions));
+    // The call-havoc edge froze the context in force when it was recorded,
+    // so crossing it replays from the edge alone.
     assert!(
-        !offset_derivation.replay(&PureFactContext::new()),
-        "pointer-offset replay checks the child proof's named premises"
+        offset_derivation.replay(&PureFactContext::new()),
+        "the havoc edge's frozen context decides the crossing without ambient premises"
     );
 }
 

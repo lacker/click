@@ -246,15 +246,65 @@ impl<'a> Proof<'a> {
         for surface in premises {
             let fact = point
                 .surface_propositions
-                .available_kernel_matching(surface, |kernel| self.facts().contains(kernel))
+                .available_kernel_matching(surface, |kernel| {
+                    self.facts()
+                        .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                })
                 .cloned()
                 .map(Ok)
                 .unwrap_or_else(|| {
                     self.lower_surface_proposition(surface, "`frame using` premise")
                 })?;
-            if !self.facts().contains(&fact) {
+            // Availability is the same rule a statement step uses for its
+            // prerequisites: an available fact across the recorded effects,
+            // or a resource-shaped fact derived atomically from the context.
+            let available = |fact: &Proposition| {
+                self.facts()
+                    .replay_available_across_effects(fact, &execution.replay.effect_facts)
+                    || (matches!(
+                        fact,
+                        Proposition::CResourceContains { .. }
+                            | Proposition::CResourceSeparate { .. }
+                            | Proposition::CMemoryLoadable { .. }
+                    ) && self
+                        .facts()
+                        .assumptions()
+                        .derive_atomic_proposition(fact)
+                        .is_some())
+            };
+            // An unanchored premise reads at the outcome; a fact observed at
+            // an earlier recorded point (a resource's body fact at a call's
+            // exit) is the same surface read there. Try each recorded point
+            // before rejecting; this is bounded by the recorded points.
+            let fact = if available(&fact) {
+                fact
+            } else {
+                execution
+                    .replay
+                    .program_point_states
+                    .keys()
+                    .filter_map(|point| execution.replay.program_point_states.get(point))
+                    .filter_map(|point_state| {
+                        lower_point_proposition_with_assumptions(
+                            surface,
+                            self.facts().assumptions(),
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                            pre_state,
+                            point_state,
+                            None,
+                            &execution.replay.program_point_states,
+                            context.predicate_environment,
+                            context.click_function_environment,
+                        )
+                        .ok()
+                    })
+                    .find(|candidate| available(candidate))
+                    .unwrap_or(fact)
+            };
+            if !available(&fact) {
                 return Err(self.step_error(format!(
-                    "`frame using` requires an exact available premise: {fact:?}"
+                    "outcome `frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
                 )));
             }
             point.surface_propositions.record_lowering(surface, &fact)?;
@@ -363,7 +413,7 @@ impl<'a> Proof<'a> {
                 .replay_available_across_effects(&fact, &execution.replay.effect_facts)
             {
                 return Err(self.step_error(format!(
-                    "`frame using` requires an exact available premise: {fact:?}"
+                    "`frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
                 )));
             }
             execution
@@ -1027,8 +1077,20 @@ impl<'a> Proof<'a> {
             }
             // A judgment stated at a function outcome closes with the same
             // point-level replay availability its legacy point root used.
+            // A judgment stated at a function outcome closes on a fact
+            // available across the path's recorded effects: a fact about a
+            // cell that ownership proves untouched by a later call keeps its
+            // meaning although the outcome reads the cell under a new epoch
+            // name. This is the frame's availability rule.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
-                self.facts().pure_replay_available(goal) || normalizes_context_free(goal)
+                let point = self
+                    .focused_outcome_point()
+                    .expect("the guard resolved the outcome point");
+                self.facts().pure_replay_available(goal)
+                    || self
+                        .facts()
+                        .replay_available_across_effects(goal, &point.effect_facts)
+                    || normalizes_context_free(goal)
             }
             // A nested proposition judgment stated at an execution frontier
             // is the point proof of its `have`: it closes on an exact

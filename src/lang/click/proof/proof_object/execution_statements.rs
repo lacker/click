@@ -45,7 +45,25 @@ impl<'a> Proof<'a> {
             .replay
             .execution_start_state(&execution.state)
             .clone();
-        let make_goal = |checked: CheckedStatementStep| {
+        let make_goal = |mut checked: CheckedStatementStep| {
+            // A fact the statement introduces (a callee's `ensures`, a
+            // store's value) is recorded under its readable spelling at the
+            // successor state, so a later premise can name it without
+            // re-lowering it against another memory. Output-sized work: one
+            // synthesis per introduced fact.
+            for fact in &checked.added_facts {
+                if let Some(surface) = synthesize_surface_proposition(
+                    fact,
+                    context.parsed_function.parameters(),
+                    context.arguments,
+                    &checked.state,
+                ) {
+                    let _ = checked
+                        .replay
+                        .surface_propositions
+                        .record_lowering(&surface, fact);
+                }
+            }
             let mut successor_execution = execution.clone();
             successor_execution.replay = checked.replay;
             successor_execution.state = checked.state.into();

@@ -701,12 +701,22 @@ fn memory_derivations_reach(
                                 assumptions,
                             ))
                 }
-                CMemoryDerivation::CallHavoc { mutable_ranges, .. } => assumptions
-                    .ranges_proven_disjoint_from_pointer_for_frame(
+                CMemoryDerivation::CallHavoc {
+                    mutable_ranges,
+                    context,
+                    ..
+                } => {
+                    assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                         mutable_ranges,
                         pointer,
                         current.memory(),
-                    ),
+                    ) || call_havoc_frozen_context_crosses(
+                        &current,
+                        mutable_ranges,
+                        context,
+                        pointer,
+                    )
+                }
                 // Loop havoc may write anything the body can reach.
                 CMemoryDerivation::LoopHavoc { .. } => false,
             },
@@ -780,6 +790,9 @@ pub(super) enum MemoryDagHopJustification {
     CallHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
     },
+    /// The havoc edge's frozen context proves the pointer outside the
+    /// callee's mutable ranges by range reasoning or ownership.
+    CallHavocFrozenContext,
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -875,6 +888,22 @@ impl MemoryDagHopJustification {
                         .iter()
                         .zip(mutable_ranges)
                         .all(|(evidence, range)| evidence.replays(range, pointer, assumptions))
+            }
+            Self::CallHavocFrozenContext => {
+                let CMemoryDerivation::CallHavoc {
+                    mutable_ranges,
+                    context,
+                    base,
+                    ..
+                } = derivation
+                else {
+                    return false;
+                };
+                context.ranges_proven_disjoint_from_pointer_for_frame(
+                    mutable_ranges,
+                    pointer,
+                    base.memory(),
+                )
             }
             Self::AssumptionDependent(_) => false,
         }
@@ -1359,18 +1388,77 @@ pub(crate) fn cell_epoch_for_load_variable(
     if memory_dag_disabled() {
         return None;
     }
-    crate::instrumentation::measure_operation("kernel", "canonical form", "cell epoch walk", || {
-        with_cell_lookup_depth(|| {
-            // Declaring a block, forgetting cached cells, or allocating
-            // another block writes nothing; a name must not change across
-            // them, so the naming walk crosses those edges unconditionally.
-            with_extended_dag_bridging(|| {
-                memory_dag_cell_source(memory, pointer, &PureFactContext::new())
-                    .node()
-                    .clone()
+    // Assumption-free and a function of the interned snapshot, the pointer,
+    // and the recorded edges (a havoc edge's frozen context included), so
+    // the answer is memoized per query.
+    let key = (memory.clone(), pointer.clone());
+    if let Some(hit) = CELL_EPOCH_MEMO.with(|memo| memo.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let epoch = crate::instrumentation::measure_operation(
+        "kernel",
+        "canonical form",
+        "cell epoch walk",
+        || {
+            with_cell_lookup_depth(|| {
+                // Declaring a block, forgetting cached cells, or allocating
+                // another block writes nothing; a name must not change across
+                // them, so the naming walk crosses those edges unconditionally.
+                with_extended_dag_bridging(|| {
+                    memory_dag_cell_source(memory, pointer, &PureFactContext::new())
+                        .node()
+                        .clone()
+                })
             })
-        })
-    })
+        },
+    );
+    CELL_EPOCH_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len() >= 100_000 {
+            memo.clear();
+        }
+        memo.insert(key, epoch.clone());
+    });
+    epoch
+}
+
+/// Whether a call-havoc edge's frozen context proves `pointer` outside the
+/// callee's mutable ranges. The answer is a function of the edge (its
+/// derived snapshot identifies it) and the pointer, so it is memoized per
+/// edge rather than per querying snapshot: every later snapshot's naming
+/// walk crosses the same edge for the same cells.
+fn call_havoc_frozen_context_crosses(
+    derived: &crate::kernel::SharedCMemory,
+    mutable_ranges: &[CMemoryRange],
+    context: &PureFactContext,
+    pointer: &Pointer,
+) -> bool {
+    let key = (derived.clone(), pointer.clone());
+    if let Some(hit) = FROZEN_CROSSING_MEMO.with(|memo| memo.borrow().get(&key).copied()) {
+        return hit;
+    }
+    let crosses = context.ranges_proven_disjoint_from_pointer_for_frame(
+        mutable_ranges,
+        pointer,
+        derived.memory(),
+    );
+    FROZEN_CROSSING_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len() >= 100_000 {
+            memo.clear();
+        }
+        memo.insert(key, crosses);
+    });
+    crosses
+}
+
+thread_local! {
+    static FROZEN_CROSSING_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(crate::kernel::SharedCMemory, Pointer), bool>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static CELL_EPOCH_MEMO: std::cell::RefCell<
+        std::collections::HashMap<(crate::kernel::SharedCMemory, Pointer), Option<crate::kernel::SharedCMemory>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 fn memory_dag_cell_source(
@@ -1535,13 +1623,26 @@ fn memory_dag_cell_source(
                     };
                 }
             }
-            CMemoryDerivation::CallHavoc { mutable_ranges, .. } => {
+            CMemoryDerivation::CallHavoc {
+                mutable_ranges,
+                context,
+                ..
+            } => {
                 if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
                     mutable_ranges,
                     pointer,
                     assumptions,
                 ) {
                     MemoryDagHopJustification::CallHavocRanges { ranges }
+                } else if call_havoc_frozen_context_crosses(
+                    &current,
+                    mutable_ranges,
+                    context,
+                    pointer,
+                ) {
+                    // Decided by the edge's own frozen context: replayable
+                    // from the edge and the pointer alone.
+                    MemoryDagHopJustification::CallHavocFrozenContext
                 } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
                     mutable_ranges,
                     pointer,
@@ -2509,6 +2610,8 @@ pub(crate) fn clear_provenance_memos() {
 pub(crate) fn clear_canonical_form_caches() {
     DEEP_MEMORY_CACHE.with(|cache| cache.borrow_mut().clear());
     ATOMIC_LOADS_CACHE.with(|cache| cache.borrow_mut().clear());
+    CELL_EPOCH_MEMO.with(|memo| memo.borrow_mut().clear());
+    FROZEN_CROSSING_MEMO.with(|memo| memo.borrow_mut().clear());
 }
 
 const LOAD_CANONICALIZATION_DEPTH_LIMIT: usize = 24;

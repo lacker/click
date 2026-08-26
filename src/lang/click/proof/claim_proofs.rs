@@ -21,116 +21,6 @@ pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) theorems: Vec<VerifiedCTheorem>,
 }
 
-fn resource_clause_is_declared(resource: &ResourceClause) -> bool {
-    match resource {
-        ResourceClause::Declared { .. } => true,
-        ResourceClause::Quantified { resource, .. } => resource_clause_is_declared(resource),
-        ResourceClause::Read(_) | ResourceClause::Write(_) => false,
-    }
-}
-
-fn requirement_resource(requirement: &Requirement) -> Option<&ResourceClause> {
-    match requirement {
-        Requirement::Labeled { requirement, .. } => requirement_resource(requirement),
-        Requirement::Resource(resource) => Some(resource),
-        Requirement::LoadableSegment { .. } | Requirement::Proposition(_) => None,
-    }
-}
-
-fn grouped_contract_resource_shape(function_block: &FunctionBlock) -> (bool, bool) {
-    let contract_resources = function_block
-        .requires()
-        .iter()
-        .filter_map(requirement_resource)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Resource(resource) = clause.ensure() else {
-                return None;
-            };
-            Some(resource)
-        }))
-        .collect::<Vec<_>>();
-    (
-        contract_resources
-            .iter()
-            .any(|resource| resource_clause_is_declared(resource)),
-        contract_resources
-            .iter()
-            .all(|resource| resource_clause_is_declared(resource)),
-    )
-}
-
-fn grouped_predicate_contract_supported(
-    function_block: &FunctionBlock,
-    predicate_environment: &PredicateEnvironment,
-) -> bool {
-    fn direct_predicate_call_key(
-        proposition: &ClickProposition,
-    ) -> Option<(String, Vec<CExpression>)> {
-        let ClickProposition::PredicateCall { name, arguments } = proposition else {
-            return None;
-        };
-        let arguments = arguments
-            .iter()
-            .map(|argument| match argument {
-                ContractExpression::CFragment(expression) => Some(expression.clone()),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Some((name.clone(), arguments))
-    }
-
-    let pointer_parameters = function_block
-        .signature()
-        .parameters()
-        .iter()
-        .filter(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
-        .map(|parameter| parameter.name().to_string())
-        .collect::<BTreeSet<_>>();
-    let preserved_predicates = function_block
-        .requires()
-        .iter()
-        .filter_map(Requirement::proposition)
-        .filter_map(direct_predicate_call_key)
-        .collect::<BTreeSet<_>>();
-    function_block
-        .requires()
-        .iter()
-        .filter_map(Requirement::proposition)
-        .chain(function_block.ensures().iter().filter_map(|clause| {
-            let Ensure::Proposition(proposition) = clause.ensure() else {
-                return None;
-            };
-            Some(proposition)
-        }))
-        .all(|proposition| {
-            let mut predicates = BTreeSet::new();
-            collect_called_predicates(proposition, &mut predicates);
-            if predicates.is_empty() {
-                return true;
-            }
-            // A heap-backed predicate requirement and an identical ensure
-            // are already one checked fact at the execution frontier. The
-            // retained Proof can preserve or explicitly unfold that fact
-            // without the value-only lowering restriction used by predicate
-            // conclusions that must be established from execution aftermath.
-            if direct_predicate_call_key(proposition)
-                .is_some_and(|key| preserved_predicates.contains(&key))
-            {
-                return true;
-            }
-            let mut referenced = BTreeSet::new();
-            collect_click_proposition_referenced_names(proposition, &mut referenced);
-            referenced.is_disjoint(&pointer_parameters)
-                && predicates.into_iter().all(|name| {
-                    value_predicate_definition_supported(
-                        &name,
-                        predicate_environment,
-                        &mut BTreeSet::new(),
-                    )
-                })
-        })
-}
-
 fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> bool {
     let mut saw_predicate = false;
     let supported = function_block.ensures().iter().all(|clause| {
@@ -141,22 +31,6 @@ fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> 
         true
     });
     supported && saw_predicate
-}
-
-fn grouped_heap_predicate_execute_simp_supported(
-    function_block: &FunctionBlock,
-    tactics: &[ProofTactic],
-) -> bool {
-    if !matches!(
-        tactics,
-        [
-            ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths,
-            ProofTactic::Simp
-        ]
-    ) {
-        return false;
-    }
-    grouped_heap_predicate_contract_supported(function_block)
 }
 
 fn heap_predicate_explicit_unfold_supported(
@@ -227,57 +101,6 @@ fn collect_post_execution_if_have_indices<'a>(
     }
 }
 
-fn structural_linear_tactic_supported(tactic: &ProofTactic) -> bool {
-    !matches!(
-        tactic,
-        ProofTactic::Open(_)
-            | ProofTactic::If(_)
-            | ProofTactic::Cases(_)
-            | ProofTactic::Branch(_)
-            | ProofTactic::Loop(_)
-            | ProofTactic::Choose(_)
-            | ProofTactic::Witness(_)
-    )
-}
-
-fn structural_open_definition_supported(
-    open: &ProofOpen,
-    resource_environment: &ResourceEnvironment,
-) -> bool {
-    let definition_supported = match &open.resource {
-        ResourceClause::Declared { name, .. } => {
-            resource_environment.get(name).is_some_and(|definition| {
-                definition.composite_body().is_some_and(|body| {
-                    body.contains()
-                        .iter()
-                        .all(|resource| !matches!(resource, ResourceClause::Quantified { .. }))
-                })
-            })
-        }
-        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Quantified { .. } => {
-            false
-        }
-    };
-    definition_supported
-        && open.tactics.iter().all(|tactic| match tactic {
-            ProofTactic::Open(nested) => {
-                structural_open_definition_supported(nested, resource_environment)
-            }
-            _ => true,
-        })
-}
-
-fn structural_open_body_tactic_supported(tactic: &ProofTactic) -> bool {
-    match tactic {
-        ProofTactic::Open(open) => open
-            .tactics
-            .iter()
-            .all(structural_open_body_tactic_supported),
-        ProofTactic::If(_) | ProofTactic::Branch(_) => true,
-        tactic => structural_linear_tactic_supported(tactic),
-    }
-}
-
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
@@ -287,99 +110,16 @@ fn structural_open_body_tactic_supported(tactic: &ProofTactic) -> bool {
 /// nested scopes, quantified contract resources, and counted populations use
 /// the same checked resource entry and close operations as ordinary composite
 /// scopes.
-fn top_level_structural_proof_supported(
-    function_block: &FunctionBlock,
-    tactics: &[ProofTactic],
-    predicate_environment: &PredicateEnvironment,
-    resource_environment: &ResourceEnvironment,
-) -> bool {
-    let opens = tactics
-        .iter()
-        .filter_map(|tactic| match tactic {
-            ProofTactic::Open(open) => Some(open),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let has_top_level_branch = tactics
-        .iter()
-        .any(|tactic| matches!(tactic, ProofTactic::Branch(_)));
-    let has_top_level_expanded_execution_if =
-        tactics.iter().any(expanded_execution_if_tactic_supported);
-    let has_top_level_mid_execution_if =
-        tactics.iter().any(mid_execution_proof_if_tactic_supported);
-    let has_top_level_expanded_execution_tree =
-        tactics.iter().any(expanded_execution_tree_tactic_supported);
-    let top_level_post_execution_if_count = tactics
-        .iter()
-        .filter(|tactic| post_execution_if_tactic_supported(tactic))
-        .count();
-    let has_top_level_post_execution_if = top_level_post_execution_if_count > 0;
-    if has_top_level_post_execution_if
-        && has_top_level_expanded_execution_if
-        && !has_top_level_expanded_execution_tree
-    {
-        return false;
+/// Diagnostic for the migration census: a checked driver erred and the claim
+/// goes to the compatibility interpreter. Printed only under
+/// `CLICK_DBG_FALLBACK=1`.
+fn note_checked_driver_fallback(driver: &str, claim_label: &str, error: &ClickError) {
+    if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
+        eprintln!(
+            "DRIVER {driver} {claim_label}: {}",
+            error.message().chars().take(200).collect::<String>()
+        );
     }
-    let has_top_level_direct_if = has_top_level_expanded_execution_if
-        || has_top_level_mid_execution_if
-        || has_top_level_expanded_execution_tree
-        || has_top_level_post_execution_if;
-    if opens.is_empty() && !has_top_level_branch && !has_top_level_direct_if {
-        return false;
-    }
-    let scope_definitions_are_supported = opens
-        .iter()
-        .all(|open| structural_open_definition_supported(open, resource_environment));
-    let structural_tactics = tactics.iter().all(|tactic| match tactic {
-        ProofTactic::Open(open) => open
-            .tactics
-            .iter()
-            .all(structural_open_body_tactic_supported),
-        ProofTactic::Branch(_) => true,
-        tactic @ ProofTactic::If(_) => {
-            expanded_execution_if_tactic_supported(tactic)
-                || mid_execution_proof_if_tactic_supported(tactic)
-                || expanded_execution_tree_tactic_supported(tactic)
-                || post_execution_if_tactic_supported(tactic)
-        }
-        tactic => structural_linear_tactic_supported(tactic),
-    });
-    (opens.is_empty() || scope_definitions_are_supported)
-        && structural_tactics
-        && (grouped_predicate_contract_supported(function_block, predicate_environment)
-            || (has_top_level_post_execution_if
-                && grouped_heap_predicate_contract_supported(function_block))
-            || (has_top_level_expanded_execution_tree
-                && grouped_heap_predicate_contract_supported(function_block)))
-}
-
-fn value_predicate_definition_supported(
-    name: &str,
-    predicate_environment: &PredicateEnvironment,
-    visiting: &mut BTreeSet<String>,
-) -> bool {
-    if !visiting.insert(name.to_string()) {
-        return false;
-    }
-    let supported = predicate_environment.get(name).is_some_and(|definition| {
-        if definition
-            .parameters()
-            .iter()
-            .any(|parameter| !matches!(parameter.c_type(), C0Type::Int32 | C0Type::UInt8))
-            || crate::lang::click::validation::proposition_contains_resource_count(
-                definition.body(),
-            )
-        {
-            return false;
-        }
-        let mut nested = BTreeSet::new();
-        collect_called_predicates(definition.body(), &mut nested);
-        nested.into_iter().all(|nested| {
-            value_predicate_definition_supported(&nested, predicate_environment, visiting)
-        })
-    });
-    visiting.remove(name);
-    supported
 }
 
 fn leading_point_have_supported(have: &ProofHave) -> bool {
@@ -504,100 +244,6 @@ fn reject_grouped_top_level_existential_operations(
     Ok(())
 }
 
-fn grouped_flat_proof_supported(
-    function_block: &FunctionBlock,
-    tactics: &[ProofTactic],
-    predicate_environment: &PredicateEnvironment,
-) -> bool {
-    // The direct grouped slice owns one execution frontier with proposition
-    // claims, including value-predicate contracts, opaque calls transferring
-    // unmixed declared composite resources, explicit checked
-    // unfold/fold/observe operations on those resources, source-ordered
-    // mutable outcome folds with an explicit nonempty frame, and all feasible
-    // successor paths.
-    // Heap/resource-observing predicate bodies, mixed raw-memory/composite
-    // contracts and ambient smart mutable resource frames still depend on
-    // outcome compatibility planning. Top-level
-    // `open` has its own structural Proof driver. The direct leading-point
-    // slice deliberately starts with proposition-only goals and the linear
-    // operations already checked by Proof. Logical decomposition over value
-    // propositions stays inside the nested Proof goal. Universal and
-    // existential value binders also remain inside that goal; their explicit
-    // checked operations need no cursor state. Exact empty mutable frames and
-    // a preceding sequence of supported post-execution `have` scopes and fact
-    // transports, predicate unfolds, theorem applications, rewrites, and
-    // checked proposition closers are checked in source order on typed outcome
-    // goals. Entry resource-relation facts use the same nested proposition
-    // scopes; top-level grouped choices preserve their compatibility cursor.
-    let unsupported_leading_have = tactics
-        .iter()
-        .take_while(|tactic| {
-            !matches!(
-                tactic,
-                ProofTactic::Step
-                    | ProofTactic::StepUsing(_)
-                    | ProofTactic::SmartStep
-                    | ProofTactic::SmartExecute
-                    | ProofTactic::SmartExecuteAllPaths
-                    | ProofTactic::ExecuteUntil(_)
-            )
-        })
-        .any(|tactic| {
-            matches!(tactic, ProofTactic::Have(have) if !leading_point_have_supported(have))
-        });
-    let (has_declared_contract_resource, declared_resources_are_unmixed) =
-        grouped_contract_resource_shape(function_block);
-    let has_mutable_effect = function_block
-        .effects()
-        .iter()
-        .any(|clause| !matches!(clause.effect(), Effect::Immutable));
-    let first_execution = tactics.iter().position(|tactic| {
-        matches!(
-            tactic,
-            ProofTactic::Step
-                | ProofTactic::StepUsing(_)
-                | ProofTactic::SmartStep
-                | ProofTactic::SmartExecute
-                | ProofTactic::SmartExecuteAllPaths
-                | ProofTactic::ExecuteUntil(_)
-        )
-    });
-    let explicit_mutable_outcome_resource_shape = first_execution.is_some_and(|execution| {
-        tactics
-            .iter()
-            .enumerate()
-            .find(|(index, tactic)| {
-                *index > execution && matches!(tactic, ProofTactic::FoldResource(_))
-            })
-            .is_some_and(|(fold, _)| {
-                tactics.iter().enumerate().any(|(index, tactic)| {
-                    index > fold
-                        && matches!(
-                            tactic,
-                            ProofTactic::FrameUsing {
-                                region: None | Some(CodeRegionRef::Function),
-                                premises,
-                            } if !premises.is_empty()
-                        )
-                })
-            })
-    });
-    let declared_resource_call_shape = declared_resources_are_unmixed
-        && tactics
-            .iter()
-            .all(|tactic| !matches!(tactic, ProofTactic::Open(_)))
-        && (!has_mutable_effect || explicit_mutable_outcome_resource_shape);
-    let exact_empty_frame_segment = exact_empty_frame_outcome_segment(tactics);
-    let unsupported_empty_mutable_frame_ordering =
-        has_mutable_effect && !exact_empty_frame_segment.0;
-    let owns_one_execution_frontier =
-        !unsupported_leading_have && !unsupported_empty_mutable_frame_ordering;
-    owns_one_execution_frontier
-        && (grouped_predicate_contract_supported(function_block, predicate_environment)
-            || grouped_heap_predicate_execute_simp_supported(function_block, tactics))
-        && (!has_declared_contract_resource || declared_resource_call_shape)
-}
-
 fn apply_checked_contract_resource_transition(
     outcome: &mut CFunctionOutcome,
     pre_state: &CState,
@@ -714,47 +360,41 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let direct_proof = if top_level_structural_proof_supported(
+    // The checked drivers are tried in order: the structural driver owns
+    // scopes and branches, the flat driver owns linear proofs. A driver
+    // declines (`None`) or errors; either hands the claim to the
+    // compatibility interpreter, which remains authoritative until every
+    // corpus claim is checked directly (`CLICK_DBG_FALLBACK=1` counts the
+    // remainder).
+    let structural = match try_check_structural_function_proof(
+        &initial,
+        &program,
+        generated_by_source_index,
+        expansion_capture.as_deref_mut(),
         function_block,
-        tactics,
+        parsed_function,
+        claim_label,
+        function_environment,
         predicate_environment,
+        click_function_environment,
         resource_environment,
+        theorem_environment,
+        &function,
+        &arguments,
     ) {
-        match try_check_structural_function_proof(
-            &initial,
-            &program,
-            generated_by_source_index,
-            expansion_capture.as_deref_mut(),
-            function_block,
-            parsed_function,
-            claim_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            &function,
-            &arguments,
-        ) {
-            Ok(proof) => proof,
-
-            Err(_) if generated_by_source_index.is_some() => {
-                // Generated certificates may use a broader surface shape
-                // than the currently migrated structural Proof driver owns.
-                // Its immutable attempt and staged expansion cursor make a
-                // bounded rejection transactional; preserve deadline errors,
-                // then let the compatibility checker remain authoritative.
-                check_verification_deadline()?;
-                None
-            }
-            Err(error) => {
-                return Err(error);
-            }
+        Ok(proof) => proof,
+        Err(_) if generated_by_source_index.is_some() => {
+            check_verification_deadline()?;
+            None
         }
+        Err(error) => return Err(error),
+    };
+    let direct_proof = if structural.is_some() {
+        structural
     } else {
         let owns_empty_predicate_branches =
             heap_predicate_explicit_unfold_supported(function_block, tactics);
-        try_check_flat_function_proof(
+        match try_check_flat_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -772,13 +412,18 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             false,
             false,
             owns_empty_predicate_branches,
-        )?
+        ) {
+            Ok(proof) => proof,
+            Err(_) if generated_by_source_index.is_some() => {
+                check_verification_deadline()?;
+                None
+            }
+            Err(error) => return Err(error),
+        }
     };
     if let Some(proof) = direct_proof {
-        #[cfg(test)]
-        FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
-        let theorems = finish_ordered_proof_units(
-            expansion_capture,
+        match finish_ordered_proof_units(
+            expansion_capture.as_deref_mut(),
             vec![OrderedProofUnit::Checked(proof)],
             source_path,
             function_block,
@@ -793,8 +438,14 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             &function,
             &arguments,
             tactics,
-        )?;
-        return Ok(ClaimProofResult { theorems });
+        ) {
+            Ok(theorems) => {
+                #[cfg(test)]
+                FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
+                return Ok(ClaimProofResult { theorems });
+            }
+            Err(error) => return Err(error),
+        }
     }
     if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
         eprintln!("FALLBACK single {claim_label}");
@@ -926,46 +577,38 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         replay: Box::new(replay),
         branch_path: PersistentSequence::default(),
     };
-    let grouped_direct_supported =
-        grouped_flat_proof_supported(function_block, tactics, predicate_environment);
-    let grouped_structural_supported = top_level_structural_proof_supported(
+    // Same order as the single-claim route: structural, then flat, then the
+    // compatibility interpreter.
+    let structural = match try_check_structural_function_proof(
+        &initial,
+        &program,
+        generated_by_source_index,
+        expansion_capture.as_deref_mut(),
         function_block,
-        tactics,
+        parsed_function,
+        &proof_label,
+        function_environment,
         predicate_environment,
+        click_function_environment,
         resource_environment,
-    );
-    let direct_proof = if grouped_structural_supported {
-        match try_check_structural_function_proof(
-            &initial,
-            &program,
-            generated_by_source_index,
-            expansion_capture.as_deref_mut(),
-            function_block,
-            parsed_function,
-            &proof_label,
-            function_environment,
-            predicate_environment,
-            click_function_environment,
-            resource_environment,
-            theorem_environment,
-            &function,
-            &arguments,
-        ) {
-            Ok(proof) => proof,
-            Err(_) if generated_by_source_index.is_some() => {
-                // As in individual claim checking, generated structural
-                // proofs are a speculative migration route. Compatibility
-                // remains the semantic fallback for unsupported shapes.
-                check_verification_deadline()?;
-                None
-            }
-            Err(error) => return Err(error),
+        theorem_environment,
+        &function,
+        &arguments,
+    ) {
+        Ok(proof) => proof,
+        Err(_) if generated_by_source_index.is_some() => {
+            check_verification_deadline()?;
+            None
         }
-    } else if grouped_direct_supported {
+        Err(error) => return Err(error),
+    };
+    let direct_proof = if structural.is_some() {
+        structural
+    } else {
         let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         let owns_empty_predicate_branches =
             heap_predicate_explicit_unfold_supported(function_block, tactics);
-        let flat = try_check_flat_function_proof(
+        match try_check_flat_function_proof(
             &initial,
             &program,
             generated_by_source_index,
@@ -983,26 +626,18 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             true,
             owns_post_execution_transport,
             owns_empty_predicate_branches,
-        );
-        match flat {
+        ) {
             Ok(proof) => proof,
             Err(_) if generated_by_source_index.is_some() => {
-                // As in the structural attempt, a generated flat proof is a
-                // speculative migration route; compatibility remains the
-                // semantic fallback for unsupported shapes.
                 check_verification_deadline()?;
                 None
             }
             Err(error) => return Err(error),
         }
-    } else {
-        None
     };
     if let Some(proof) = direct_proof {
-        #[cfg(test)]
-        FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
-        let theorems = finish_ordered_proof_units(
-            expansion_capture,
+        match finish_ordered_proof_units(
+            expansion_capture.as_deref_mut(),
             vec![OrderedProofUnit::Checked(proof)],
             source_path,
             function_block,
@@ -1017,8 +652,14 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             &function,
             &arguments,
             tactics,
-        )?;
-        return Ok(ClaimProofResult { theorems });
+        ) {
+            Ok(theorems) => {
+                #[cfg(test)]
+                FLAT_PROOF_UNITS.with(|units| units.set(units.get() + 1));
+                return Ok(ClaimProofResult { theorems });
+            }
+            Err(error) => return Err(error),
+        }
     }
     if std::env::var_os("CLICK_DBG_FALLBACK").is_some() {
         eprintln!("FALLBACK grouped {proof_label}");

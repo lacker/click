@@ -2948,8 +2948,8 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
         });
     baseline.expect("the comparison branching loop without an effect should verify");
     assert_eq!(
-        baseline_roots, 1,
-        "the branching source proof must not be replayed as a detached certificate"
+        baseline_roots, 0,
+        "the branching source proof is checked directly, not replayed as a detached certificate"
     );
 
     let ((verified, effect_replays), effect_roots) =
@@ -2957,7 +2957,7 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
             proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources))
         });
     verified.expect("the branch-shaped smart frame should verify");
-    assert_eq!(effect_roots, 1, "the smart effect added an acceptance pass");
+    assert_eq!(effect_roots, 0, "the smart effect added an acceptance pass");
     assert_eq!(
         effect_replays, baseline_replays,
         "the branch-shaped smart effect entered compatibility replay"
@@ -2976,7 +2976,7 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
         });
     let expanded = expanded.expect("the branch-shaped smart frame should expand");
     assert_eq!(
-        expansion_roots, 1,
+        expansion_roots, 0,
         "provenance extraction added a detached acceptance pass"
     );
     assert_eq!(
@@ -2991,7 +2991,7 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
         });
     reverified.expect("the branch-shaped explicit frame should verify normally");
     assert_eq!(
-        rewritten_roots, 1,
+        rewritten_roots, 0,
         "rewritten-source verification added an acceptance pass"
     );
     assert_eq!(

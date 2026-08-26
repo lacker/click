@@ -1617,6 +1617,41 @@ impl<'a> Proof<'a> {
     /// preceding multi-successor call, the call remains the parent provenance
     /// node; for a fresh logical split, both arms retain the same checked C
     /// root. In either case this adds only the proof `if` and its arm bodies.
+    /// Whether a terminal join of the split's two arms can be retained: the
+    /// arms' resource contexts share storage. Arms that unfolded or folded
+    /// resources separately do not, and kernel certification does not yet
+    /// reproduce such a join; the driver declines instead of erroring.
+    pub(in crate::lang::click::proof) fn terminal_join_arms_share_resources(
+        &self,
+        record: &ExecutionProofCaseSplit<'a>,
+    ) -> Result<bool, ClickError> {
+        let (_, then_view) = self.sibling_execution_arm_view_from_bases(
+            "then",
+            record.split,
+            record.ids[0],
+            Vec::new(),
+            &record.base_facts[0],
+            &record.common_facts,
+            &record.base_executions[0],
+            None,
+        )?;
+        let (_, else_view) = self.sibling_execution_arm_view_from_bases(
+            "else",
+            record.split,
+            record.ids[1],
+            Vec::new(),
+            &record.base_facts[1],
+            &record.common_facts,
+            &record.base_executions[1],
+            None,
+        )?;
+        Ok(then_view
+            .execution
+            .state
+            .resources()
+            .shares_storage_with(else_view.execution.state.resources()))
+    }
+
     pub(in crate::lang::click::proof) fn join_focused_execution_if_terminal(
         &self,
         record: &ExecutionProofCaseSplit<'a>,

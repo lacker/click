@@ -122,8 +122,8 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
     });
     verified.expect("a storage-only callee should preserve its caller's allocation authority");
     assert_eq!(
-        root_replays, 2,
-        "the two source contracts must each have one compatibility root, with no acceptance replay"
+        root_replays, 0,
+        "both source contracts are checked directly, with no compatibility root"
     );
     assert!(events.iter().all(|event| !matches!(
         event,

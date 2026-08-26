@@ -490,6 +490,7 @@ impl CMemory {
                     base,
                     variable,
                     mutable_ranges: mutable_ranges.to_vec(),
+                    context: assumptions.clone(),
                 },
             );
         }

@@ -130,225 +130,6 @@ fn expanded_execution_arm_supported(
         )
 }
 
-pub(in crate::lang::click::proof) fn expanded_execution_if_tactic_supported(
-    tactic: &ProofTactic,
-) -> bool {
-    let ProofTactic::If(proof_if) = tactic else {
-        return false;
-    };
-    // A source `step()` retains the bare statement step.
-    let arm_steps = |tactics: &[ProofTactic]| {
-        tactics
-            .iter()
-            .map(|tactic| match tactic {
-                ProofTactic::SmartStep => Some(SimpleProofStep::Step),
-                tactic => linear_execution_simple_step(tactic),
-            })
-            .collect::<Option<Vec<_>>>()
-    };
-    let Some(then_steps) = arm_steps(&proof_if.then_tactics) else {
-        return false;
-    };
-    let Some(else_steps) = arm_steps(&proof_if.else_tactics) else {
-        return false;
-    };
-    expanded_execution_arm_supported(&proof_if.condition, true, &then_steps)
-        && expanded_execution_arm_supported(&proof_if.condition, false, &else_steps)
-        && !(then_steps.is_empty() && else_steps.is_empty())
-}
-
-fn post_execution_tree_arm_supported(tactics: &[ProofTactic], depth: usize) -> bool {
-    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
-        && tactics.iter().enumerate().all(|(index, tactic)| {
-            if matches!(tactic, ProofTactic::Simp) {
-                return false;
-            }
-            if flat_post_execution_tactic(tactic).is_some() {
-                return true;
-            }
-            index + 1 == tactics.len() && post_execution_tree_tactic_supported_at(tactic, depth + 1)
-        })
-}
-
-fn post_execution_tree_tactic_supported_at(tactic: &ProofTactic, depth: usize) -> bool {
-    let ProofTactic::If(proof_if) = tactic else {
-        return false;
-    };
-    // A handwritten `if { simp() } else { simp() }` is an undecided logical
-    // split, not an expansion cursor selecting a checked execution outcome.
-    // Execution expansion leaves a stable program-point condition and
-    // explicit checked operations in both arms.
-    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
-        && proof_case_is_stable_program_point_condition(&proof_if.condition)
-        && post_execution_tree_arm_supported(&proof_if.then_tactics, depth)
-        && post_execution_tree_arm_supported(&proof_if.else_tactics, depth)
-        && !(proof_if.then_tactics.is_empty() && proof_if.else_tactics.is_empty())
-}
-
-pub(in crate::lang::click::proof) fn post_execution_if_tactic_supported(
-    tactic: &ProofTactic,
-) -> bool {
-    post_execution_tree_tactic_supported_at(tactic, 0)
-}
-
-pub(in crate::lang::click::proof) fn mid_execution_proof_if_tactic_supported(
-    tactic: &ProofTactic,
-) -> bool {
-    let ProofTactic::If(proof_if) = tactic else {
-        return false;
-    };
-    if expanded_execution_if_tactic_supported(tactic) || post_execution_if_tactic_supported(tactic)
-    {
-        return false;
-    }
-    if ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)).is_ok()
-        || (checked_execution_proof_if_arm_is_resource_neutral(&proof_if.then_tactics, 0)
-            && checked_execution_proof_if_arm_is_resource_neutral(&proof_if.else_tactics, 0))
-    {
-        return checked_execution_proof_if_arm_supported(&proof_if.then_tactics, 0)
-            && checked_execution_proof_if_arm_supported(&proof_if.else_tactics, 0);
-    }
-    let arm_is_checked_linear =
-        |arm: &[ProofTactic]| !arm.is_empty() && arm.iter().all(checked_linear_continuation_tactic);
-    arm_is_checked_linear(&proof_if.then_tactics) && arm_is_checked_linear(&proof_if.else_tactics)
-}
-
-fn checked_execution_proof_if_arm_is_resource_neutral(
-    tactics: &[ProofTactic],
-    depth: usize,
-) -> bool {
-    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
-        && tactics.iter().all(|tactic| match tactic {
-            ProofTactic::If(nested) => {
-                checked_execution_proof_if_arm_is_resource_neutral(&nested.then_tactics, depth + 1)
-                    && checked_execution_proof_if_arm_is_resource_neutral(
-                        &nested.else_tactics,
-                        depth + 1,
-                    )
-            }
-            ProofTactic::Open(_)
-            | ProofTactic::UnfoldResource(_)
-            | ProofTactic::FoldResource(_)
-            | ProofTactic::ObserveResource(_) => false,
-            _ => true,
-        })
-}
-
-/// Complete surface certificates may retain terminal logical decomposition
-/// and ordered outcome closers in either arm. Smart source scripts keep the
-/// narrower admission rule above until their search operations themselves
-/// stay on the same Proof lineage.
-fn checked_execution_proof_if_arm_supported(tactics: &[ProofTactic], depth: usize) -> bool {
-    depth < MAX_CHECKED_EXECUTION_REGION_DEPTH
-        && !tactics.is_empty()
-        && tactics
-            .iter()
-            .enumerate()
-            .all(|(index, tactic)| match tactic {
-                ProofTactic::If(nested) => {
-                    index + 1 == tactics.len()
-                        && (post_execution_tree_tactic_supported_at(tactic, depth + 1)
-                            || (checked_execution_proof_if_arm_supported(
-                                &nested.then_tactics,
-                                depth + 1,
-                            ) && checked_execution_proof_if_arm_supported(
-                                &nested.else_tactics,
-                                depth + 1,
-                            )))
-                }
-                ProofTactic::Open(_) | ProofTactic::Branch(_) | ProofTactic::Loop(_) => false,
-                tactic => {
-                    checked_linear_continuation_tactic(tactic)
-                        || flat_post_execution_tactic(tactic).is_some()
-                }
-            })
-}
-
-fn expanded_execution_tree_arm_supported(
-    condition: &ClickProposition,
-    take_then: bool,
-    tactics: &[ProofTactic],
-    depth: usize,
-) -> bool {
-    if depth >= MAX_CHECKED_EXECUTION_REGION_DEPTH || tactics.is_empty() {
-        return tactics.is_empty();
-    }
-    let post_only = tactics
-        .iter()
-        .all(|tactic| flat_post_execution_tactic(tactic).is_some())
-        && tactics
-            .iter()
-            .any(|tactic| !matches!(tactic, ProofTactic::Simp));
-    if post_only {
-        return true;
-    }
-    let expected = if take_then {
-        condition.clone()
-    } else {
-        negate_click_proposition(condition)
-    };
-    let entry_supported = match tactics.first() {
-        Some(ProofTactic::Step) => true,
-        Some(ProofTactic::StepUsing(premises)) => {
-            premises.as_slice() == std::slice::from_ref(&expected)
-        }
-        _ => false,
-    };
-    if !entry_supported {
-        return false;
-    }
-    let nested = tactics
-        .iter()
-        .enumerate()
-        .filter_map(|(index, tactic)| matches!(tactic, ProofTactic::If(_)).then_some(index))
-        .collect::<Vec<_>>();
-    match nested.as_slice() {
-        [] => {
-            tactics.iter().all(|tactic| {
-                matches!(tactic, ProofTactic::SmartStep)
-                    || linear_execution_simple_step(tactic).is_some()
-                    || (!matches!(tactic, ProofTactic::Simp)
-                        && flat_post_execution_tactic(tactic).is_some())
-            }) && tactics.iter().any(|tactic| {
-                !matches!(tactic, ProofTactic::Simp) && flat_post_execution_tactic(tactic).is_some()
-            })
-        }
-        [index] if *index + 1 == tactics.len() => {
-            tactics[..*index].iter().all(|tactic| {
-                matches!(tactic, ProofTactic::SmartStep)
-                    || linear_execution_simple_step(tactic).is_some()
-            }) && expanded_execution_tree_tactic_supported_at(&tactics[*index], depth + 1)
-        }
-        _ => false,
-    }
-}
-
-fn expanded_execution_tree_tactic_supported_at(tactic: &ProofTactic, depth: usize) -> bool {
-    let ProofTactic::If(proof_if) = tactic else {
-        return false;
-    };
-    proof_case_is_stable_program_point_condition(&proof_if.condition)
-        && expanded_execution_tree_arm_supported(
-            &proof_if.condition,
-            true,
-            &proof_if.then_tactics,
-            depth,
-        )
-        && expanded_execution_tree_arm_supported(
-            &proof_if.condition,
-            false,
-            &proof_if.else_tactics,
-            depth,
-        )
-        && !(proof_if.then_tactics.is_empty() && proof_if.else_tactics.is_empty())
-}
-
-pub(in crate::lang::click::proof) fn expanded_execution_tree_tactic_supported(
-    tactic: &ProofTactic,
-) -> bool {
-    expanded_execution_tree_tactic_supported_at(tactic, 0)
-}
-
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
     match node {
         InternalProofNode::Done => Some(&[]),
@@ -1068,6 +849,55 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     }
     for indexed in remaining {
         check_verification_deadline()?;
+        // A bare `frame()` among the ordered outcome operations is the
+        // smart function frame searched on the exit Proof now, as the
+        // linear continuation does for a frame that arrives first.
+        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+            let checkpoint = proof.checkpoint();
+            let Some(framed) =
+                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
+            else {
+                return Ok(None);
+            };
+            // The function frame at exit retains an ordered deferral whose
+            // authority finalization applies. Keep that deferral, printing
+            // the checked contribution at its source position after the
+            // outcome operations deferred before it, on the unframed Proof:
+            // the frame step itself would otherwise precede them in the
+            // retained certificate.
+            let certificate = framed.certificate_since(&checkpoint)?;
+            let (_, deferred) =
+                framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+            let Some(mut deferred) = deferred else {
+                return Ok(None);
+            };
+            let PostExecutionTactic::CheckedFrameUsing {
+                surface_tactics, ..
+            } = &mut deferred.tactic
+            else {
+                return Ok(None);
+            };
+            *surface_tactics = Some(certificate.to_proof_tactics());
+            deferred.surface_recorded = false;
+            let branch_skeleton =
+                ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
+                    .to_proof_tactics();
+            let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+            let mut capture = staged_expansion_capture.as_mut();
+            let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
+                if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+                    replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                        tactic_index,
+                        source_index,
+                        post_execution_index: replay.post_execution_tactics.len(),
+                        branch_skeleton,
+                    });
+                }
+                replay.post_execution_tactics.push(deferred);
+            })?;
+            proof = framed;
+            continue;
+        }
         let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
             return Ok(None);
         };
@@ -1403,6 +1233,9 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     }
                     advanced = next;
                 }
+                if !advanced.terminal_join_arms_share_resources(&record)? {
+                    return Ok(None);
+                }
                 proof = advanced.join_focused_execution_if_terminal(&record)?;
                 saw_structure = true;
                 current = continuation;
@@ -1418,6 +1251,55 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     }
     for indexed in remaining {
         check_verification_deadline()?;
+        // A bare `frame()` among the ordered outcome operations is the
+        // smart function frame searched on the exit Proof now, as the
+        // linear continuation does for a frame that arrives first.
+        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+            let checkpoint = proof.checkpoint();
+            let Some(framed) =
+                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
+            else {
+                return Ok(None);
+            };
+            // The function frame at exit retains an ordered deferral whose
+            // authority finalization applies. Keep that deferral, printing
+            // the checked contribution at its source position after the
+            // outcome operations deferred before it, on the unframed Proof:
+            // the frame step itself would otherwise precede them in the
+            // retained certificate.
+            let certificate = framed.certificate_since(&checkpoint)?;
+            let (_, deferred) =
+                framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+            let Some(mut deferred) = deferred else {
+                return Ok(None);
+            };
+            let PostExecutionTactic::CheckedFrameUsing {
+                surface_tactics, ..
+            } = &mut deferred.tactic
+            else {
+                return Ok(None);
+            };
+            *surface_tactics = Some(certificate.to_proof_tactics());
+            deferred.surface_recorded = false;
+            let branch_skeleton =
+                ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
+                    .to_proof_tactics();
+            let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+            let mut capture = staged_expansion_capture.as_mut();
+            let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
+                if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+                    replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                        tactic_index,
+                        source_index,
+                        post_execution_index: replay.post_execution_tactics.len(),
+                        branch_skeleton,
+                    });
+                }
+                replay.post_execution_tactics.push(deferred);
+            })?;
+            proof = framed;
+            continue;
+        }
         let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
             return Ok(None);
         };
@@ -2182,6 +2064,9 @@ fn advance_focused_execution_region<'a>(
                     return Ok(None);
                 }
                 advanced = next;
+            }
+            if !advanced.terminal_join_arms_share_resources(&record)? {
+                return Ok(None);
             }
             let proof = advanced
                 .join_focused_execution_if_terminal(&record)?

@@ -1013,10 +1013,18 @@ pub enum CMemoryDerivation {
         variable: Variable,
     },
     /// `base` after a call that may write only within `mutable_ranges`.
+    ///
+    /// `context` is the pure fact context in force when the havoc was
+    /// recorded, frozen on the edge. A cell absent from `base` (an earlier
+    /// callee's write) is named later by the assumption-free naming walk;
+    /// that walk may cross this edge for a pointer this context proves
+    /// outside the mutable ranges by ownership, because the decision is a
+    /// function of the edge alone.
     CallHavoc {
         base: SharedCMemory,
         variable: Variable,
         mutable_ranges: Vec<CMemoryRange>,
+        context: PureFactContext,
     },
 }
 

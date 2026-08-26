@@ -194,6 +194,40 @@ law is unified in chunk 4. Findings worth keeping:
 - The interpreter's `execute` arm still tries the exact selector before
   the planner; chunk 4 makes both drivers the same repetition of `step()`.
 
+Chunk 4, first commit (2026-08-26): the shape gates
+(`grouped_flat_proof_supported`, `top_level_structural_proof_supported`
+and their predicates) are deleted. Every claim is checked by the structural
+driver, then the flat driver, then the compatibility interpreter; a driver
+declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
+counts what still reaches the interpreter: 8 example claims
+(`list_prepend`, `list_destroy`, `pool_init`, `item_destroy`,
+`zero_list_sum`, `zero_list_sum_bounded`, `object_retain_many`,
+`refcount_pipeline`) plus quarantined `owned-vector`. Gaps closed on the
+way, all in the drivers or the kernel, no script changes:
+
+- A bare `frame()` among post-exit outcome operations is searched on the
+  exit Proof and kept as an ordered deferral, so expansion prints it after
+  the `fold`/`have` it follows.
+- Outcome `frame using` premises accept facts available across the
+  recorded effects, atomically derivable resource facts, and a lowering at
+  a recorded program point (a resource body fact observed at a call's
+  exit); an outcome `assumption` closes on a fact available across the
+  recorded effects.
+- Each statement step records a readable spelling for every fact it
+  introduces (output-sized).
+- The kernel's call-havoc edge freezes the fact context in force when it
+  is recorded (`CMemoryDerivation::CallHavoc { context }`). The
+  assumption-free naming walk crosses it for a pointer that context proves
+  outside the mutable ranges by ownership, so a cell an earlier callee
+  wrote keeps its name across a later call into a disjoint owned resource
+  (`mdtests/call_havoc_keeps_names_by_ownership.md`,
+  `detachable_buffer_pipeline`, `ring_buffer_pipeline`). The crossing is
+  memoized per edge and pointer; without that memo the branch-shaped
+  fixture did 22x the work.
+- A terminal proof-`if` join whose arms end with resource contexts that do
+  not share storage is declined (kernel certification does not reproduce
+  it yet); those are `list_destroy` and `item_destroy` above.
+
 ## Record of the abandoned carry (2026-08-25)
 
 Before this design was chosen, a "carry" was prototyped in the linear
