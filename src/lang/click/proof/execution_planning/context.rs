@@ -249,9 +249,13 @@ pub(in crate::lang::click::proof) fn merge_path_aligned_certificates(
                 "`{claim_label}` path-aligned certificate has no paths"
             ))
         })?;
+        // Equal certificates fold only when they took the same cases: a bare
+        // `step()` at a C `if` reads the same on both sides of a case split
+        // and is valid only inside its case, so distinct cases keep their
+        // `if` even when their steps coincide.
         if paths
             .iter()
-            .all(|path| path.certificate == first.certificate)
+            .all(|path| path.certificate == first.certificate && path.case_path == first.case_path)
         {
             return Ok(first.certificate.clone());
         }

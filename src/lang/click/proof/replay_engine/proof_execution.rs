@@ -2752,6 +2752,21 @@ fn advance_linear_open_scope<'a>(
             }
             continue;
         }
+        // After execution reached function exit inside the scope, an ordered
+        // outcome operation (`simp`, `fold`, a `have` naming `result`, ...)
+        // is deferred on the scope body and follows the scope's join.
+        if scope.is_at_function_exit()
+            && !matches!(indexed.tactic, ProofTactic::Have(_))
+            && let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic)
+        {
+            scope = scope.defer_post_execution_source_tactic(
+                indexed.index,
+                indexed.source_index,
+                post_tactic,
+                expansion_capture.as_deref_mut(),
+            )?;
+            continue;
+        }
         let ProofTactic::Have(have) = &indexed.tactic else {
             return Ok(None);
         };

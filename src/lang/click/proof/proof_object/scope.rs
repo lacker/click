@@ -774,6 +774,32 @@ impl<'a> ProofScope<'a> {
 
     /// Runs the migrated `simp` search inside the nested proof and retains
     /// the accepted descendant directly.
+    /// Whether execution inside the scope reached function exit.
+    pub(in crate::lang::click::proof) fn is_at_function_exit(&self) -> bool {
+        self.body.is_at_function_exit()
+    }
+
+    /// Schedules an ordered outcome operation written inside the scope
+    /// body after execution reached function exit; the body's deferred
+    /// operations follow the scope through its join to finalization.
+    pub(in crate::lang::click::proof) fn defer_post_execution_source_tactic(
+        &self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+        expansion_capture: Option<&mut ExpansionCapture>,
+    ) -> Result<Self, ClickError> {
+        let body = self.body.defer_post_execution_source_tactic(
+            tactic_index,
+            source_index,
+            tactic,
+            expansion_capture,
+        )?;
+        let mut next = self.clone();
+        next.body = body;
+        Ok(next)
+    }
+
     pub(in crate::lang::click::proof) fn try_simp_closure(
         &self,
     ) -> Result<Option<Self>, ClickError> {

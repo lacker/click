@@ -2456,8 +2456,19 @@ impl<'a> Proof<'a> {
             context.tactic_index,
             "smart step selection",
         )?;
-        if matches!(statement, CStatement::If { .. } | CStatement::While { .. }) {
+        if matches!(statement, CStatement::While { .. }) {
             return Ok(None);
+        }
+        if matches!(statement, CStatement::If { .. }) {
+            // A C `if` the context decides is one step into that arm; one it
+            // cannot decide is a fork for the driver's branch handling.
+            return match self.apply_step(SimpleProofStep::Step) {
+                Ok(proof) => Ok(Some(proof)),
+                Err(_) => {
+                    check_verification_deadline()?;
+                    Ok(None)
+                }
+            };
         }
         // The statement runs in the whole proof context; nothing can supply
         // more than the step already sees, so its failure is the answer,
