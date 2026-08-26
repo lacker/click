@@ -199,15 +199,19 @@ Chunk 4, first commit (2026-08-26): the shape gates
 and their predicates) are deleted. Every claim is checked by the structural
 driver, then the flat driver, then the compatibility interpreter; a driver
 declines with `None`, and its errors stay terminal. `CLICK_DBG_FALLBACK=1`
-counts what still reaches the interpreter: 8 example claims
+counts what still reaches the interpreter: 6 example claims
 (`list_prepend`, `list_destroy`, `pool_init`, `item_destroy`,
-`zero_list_sum`, `zero_list_sum_bounded`, `object_retain_many`,
-`refcount_pipeline`) plus quarantined `owned-vector`. Gaps closed on the
+`object_retain_many`, `refcount_pipeline`) plus quarantined
+`owned-vector`. Each is a distinct driver capability: an outcome-level
+case split on a condition the outcome does not decide (`list_prepend`,
+`pool_init`); a `branch` whose then arm returns while the else arm
+continues (`refcount_pipeline`); a nested `have ... by simp` inside an
+`open` scope (`object_retain_many`); and the terminal join below. Gaps closed on the
 way, all in the drivers or the kernel, no script changes:
 
-- A bare `frame()` among post-exit outcome operations is searched on the
-  exit Proof and kept as an ordered deferral, so expansion prints it after
-  the `fold`/`have` it follows.
+- A bare `frame()` among post-exit outcome operations, or at a case-split
+  arm's exit, is searched on the exit Proof and kept as an ordered
+  deferral, so expansion prints it after the `fold`/`have` it follows.
 - Outcome `frame using` premises accept facts available across the
   recorded effects, atomically derivable resource facts, and a lowering at
   a recorded program point (a resource body fact observed at a call's

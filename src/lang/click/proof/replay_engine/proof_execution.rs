@@ -1643,6 +1643,53 @@ fn advance_focused_execution_arm<'a>(
 ) -> Result<Option<Proof<'a>>, ClickError> {
     for indexed in tactics {
         if proof.is_at_function_exit() {
+            // A bare `frame()` at an arm's exit is the smart function frame
+            // searched on this arm's exit Proof, kept as an ordered deferral
+            // like the flat driver's post-exit frame.
+            if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+                let checkpoint = proof.checkpoint();
+                let Some(framed) = proof.try_smart_frame_at(
+                    region.as_ref(),
+                    indexed.index,
+                    indexed.source_index,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let certificate = framed.certificate_since(&checkpoint)?;
+                let (_, deferred) = framed
+                    .edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+                let Some(mut deferred) = deferred else {
+                    return Ok(None);
+                };
+                let PostExecutionTactic::CheckedFrameUsing {
+                    surface_tactics, ..
+                } = &mut deferred.tactic
+                else {
+                    return Ok(None);
+                };
+                *surface_tactics = Some(certificate.to_proof_tactics());
+                deferred.surface_recorded = false;
+                let branch_skeleton = ProofCertificate::from_steps(surface_branch_skeleton(
+                    proof.certificate().steps(),
+                ))
+                .to_proof_tactics();
+                let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+                let mut capture = expansion_capture.as_deref_mut();
+                let (next, _) = proof.edit_replay_cursor(|replay, _, _| {
+                    if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+                        replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                            tactic_index,
+                            source_index,
+                            post_execution_index: replay.post_execution_tactics.len(),
+                            branch_skeleton,
+                        });
+                    }
+                    replay.post_execution_tactics.push(deferred);
+                })?;
+                proof = next;
+                continue;
+            }
             let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
                 return Ok(None);
             };
