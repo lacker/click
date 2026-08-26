@@ -316,7 +316,10 @@ impl<'a> Proof<'a> {
                     + arm.introduced_derivations.len()
             || replay.frontier_loop_clauses.len()
                 != parent_execution.replay.frontier_loop_clauses.len()
-            || replay.frontier_loop_rules.len() != parent_execution.replay.frontier_loop_rules.len()
+                    + arm.introduced_loop_clauses.len()
+            || replay.frontier_loop_rules.len()
+                != parent_execution.replay.frontier_loop_rules.len()
+                    + arm.introduced_loop_rules.len()
             || replay.unfolded_predicates.len()
                 != parent_execution.replay.unfolded_predicates.len() + arm.introduced_unfolds.len()
             || replay.planned_statement_transitions.len()
@@ -821,6 +824,7 @@ impl<'a> Proof<'a> {
                 .function_entry_derivations
                 .insert(theorem.clone());
         }
+        migrate_arm_loop_proofs(&mut execution.replay, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1216,6 +1220,7 @@ impl<'a> Proof<'a> {
                 execution.replay.unfolded_predicates.push(name.clone());
             }
         }
+        migrate_arm_loop_proofs(&mut execution.replay, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
@@ -1479,6 +1484,8 @@ impl<'a> Proof<'a> {
                 execution.replay.unfolded_predicates.push(name.clone());
             }
         }
+        migrate_arm_loop_proofs(&mut execution.replay, &arms);
+        migrate_arm_loop_proofs(&mut execution.replay, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         execution.replay.case_assumptions.clear();
@@ -1794,6 +1801,18 @@ impl<'a> Proof<'a> {
             .suffix_since(&delta_execution.replay.unfolded_predicates)
             .ok_or_else(not_descended)?
             .to_vec();
+        let introduced_loop_clauses = execution
+            .replay
+            .frontier_loop_clauses
+            .suffix_since(&delta_execution.replay.frontier_loop_clauses)
+            .ok_or_else(not_descended)?
+            .to_vec();
+        let introduced_loop_rules = execution
+            .replay
+            .frontier_loop_rules
+            .suffix_since(&delta_execution.replay.frontier_loop_rules)
+            .ok_or_else(not_descended)?
+            .to_vec();
         Ok((
             frontier.selection,
             CheckedExecutionJoinArm {
@@ -1806,6 +1825,8 @@ impl<'a> Proof<'a> {
                 introduced_prerequisites,
                 introduced_derivations,
                 introduced_unfolds,
+                introduced_loop_clauses,
+                introduced_loop_rules,
             },
         ))
     }
@@ -2695,4 +2716,30 @@ fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]
             || (matches!(actual, SimpleProofStep::Step)
                 && matches!(expected, SimpleProofStep::StepUsing(premises) if premises.is_empty()))
     })
+}
+
+/// Carries the frontier-local loop proofs both arms established into the
+/// joined replay. A loop is keyed by its code region: the same C loop proved
+/// in both arms is one bound clause and one verified rule.
+fn migrate_arm_loop_proofs(
+    replay: &mut TacticReplayState,
+    arms: &[CheckedExecutionJoinArm<'_>; 2],
+) {
+    for arm in arms {
+        for (clause, rule) in arm
+            .introduced_loop_clauses
+            .iter()
+            .zip(&arm.introduced_loop_rules)
+        {
+            if replay
+                .frontier_loop_clauses
+                .iter()
+                .any(|existing: &StructuralClause| existing.region() == clause.region())
+            {
+                continue;
+            }
+            replay.frontier_loop_clauses.push(clause.clone());
+            replay.frontier_loop_rules.push(rule.clone());
+        }
+    }
 }

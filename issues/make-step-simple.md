@@ -287,11 +287,11 @@ Landed on master (`96d0e40f`), each green through `scripts/check.sh`:
 ### Interpreter deletion: current failure set
 
 Replacing both interpreter fallbacks in `claim_proofs.rs` with a terminal
-`unsupported_proof_shape` error (the deletion) starts at **17** failing unit
-tests. The preserved attempt is the branch
-`wip/interpreter-deletion-branch-core` (`49181d01`, pushed; supersedes the
-earlier `interpreter-deletion-17to5` stash). It drives the 17 down to **5**
-with these fixes, all worth keeping:
+`unsupported_proof_shape` error (the deletion) started at **17** failing
+unit tests. The first attempt (preserved at
+`wip/interpreter-deletion-branch-core`, `49181d01`; superseded, see below)
+drove them to **5** with these fixes, all still worth landing with the
+deletion:
 
 - `smart_frame_miss_error`: a smart `frame` miss is terminal with the
   exit / effect-goal / no-candidate diagnostic (the four `try_smart_frame_at`
@@ -306,82 +306,67 @@ with these fixes, all worth keeping:
   pre-exit-diagnostic check is reordered before the `!saw_structure`
   decline, so `by simp` at function entry gives "requires execution to
   reach function exit first".
-- `frontier_is_execution_branch` accepts a *raw* source condition
-  (`flag != 0`, not just the anchored `at(stmt.entry, ...)` form), so a
-  source `if` at a C-`if` frontier routes through the branch core.
-- `advance_focused_execution_arm` handles a `loop` inside a branch arm.
 
-### Branch-core unification (2026-08-26), attempt v2 at `wip/interpreter-deletion-branch-core` (`49181d01`)
+### A proof `if` is a case split (2026-08-26, landed)
 
-A second attempt (WIP commit `49181d01` on branch
-`wip/interpreter-deletion-branch-core`, based on master `5bd3aec1`) adds a
-genuine, sound unification on top of the deletion and drives `branch_count`
-two layers deeper before hitting a **model gap**, not a driver decline. It
-is not green (the 5 are still red) but the pieces are worth keeping:
+The first attempt took a wrong turn that is worth recording so it is not
+repeated. Commit `96d0e40f` routed a non-terminal source `if` through the
+**branch core** (`try_advance_checked_execution_branch`: split the C `if`,
+advance both arms to a typed region boundary, *join them back into one
+state*, continue). That is the law for an explicit `branch { }` block,
+whose arms are meant to reconverge. It is the wrong law for a proof `if`,
+and every wall it hit (arms reaching the boundary with different states,
+a loop inside an arm leaving its exit transition untaken, "ran past the
+end of its branch body") was self-inflicted. `96d0e40f` is reverted
+(`eb3a29ff`).
 
-- **Leading-step consumption in the branch core.** A source C-`if` arm
-  carries a leading branch-entry `step()` (e.g. `branch_count` then-arm
-  `step(); loop{}` for a block whose only statement is a `while`). The
-  branch split (`split_focused_execution_branch` + `focus_split_arm`)
-  already performs the branch decision and positions the arm at the first
-  block statement, so that leading `step()` must be *skipped*, not
-  executed — otherwise `try_indexed_execute_step` sees the `while` and
-  returns `None` (the old DECLINE 1814). Added `consume_leading_step: bool`
-  to `advance_checked_branch_arms` / `try_advance_checked_execution_branch`,
-  advancing each arm via `advance_focused_execution_region_after_leading_tactic`
-  when set. The two `If`-handler branch-core callers pass `true`; the three
-  `Branch`-handler callers and the open-scope caller pass `false`.
-- **Divergent-arm continuation distribution.** `branch_count`'s arms
-  *diverge* (then: `i==2`, else: `i==1`) and share a continuation
-  (`return i; simp`) that runs to exit. A converging join
-  (`merge_checked_execution_join`, which requires `then_state == else_state`)
-  is wrong. Added `Proof::arm_states_converge(record)` and a new case in
-  `advance_checked_branch_arms`: when both arms reach the boundary,
-  `ensuring` is `None`, the continuation is non-`Done`, and the arms
-  *diverge*, run the shared continuation inside each arm to its own
-  function exit via `continue_arm_into_parent_frontier`, then terminal-join
-  the two outcomes.
+The interpreter's `If` arm shows the intended meaning: a proof `if` is a
+**case split**. For each polarity it assumes the condition, runs the arm,
+then runs the shared continuation on that same context to its own
+function exit, and collects the outcome; the cases never rejoin. A loop
+that is the last statement of an arm needs nothing special: the
+continuation's next `step()` takes its exit exactly as in linear code.
 
-With both, `branch_count` advances both arms, distributes the continuation,
-and reaches the **terminal join** — where it fails on the real gap:
+The checked drivers already had the case-split primitives
+(`split_focused_execution_if`, `focus_execution_if_arm`,
+`join_focused_execution_if_terminal`); the terminal path only advanced
+the arm and required it to reach exit by itself. The landed change is
+small: in both `If` handlers, a case whose arm ends short of function exit
+keeps running the shared continuation inside that case; the arm walker
+admits a frontier-local `loop`; and a join carries each arm's
+frontier-local loop clauses and verified rules as an arm delta
+(`introduced_loop_clauses` / `introduced_loop_rules`,
+`migrate_arm_loop_proofs`), exactly like `introduced_unfolds`.
 
-- **The model gap (loop exit across a branch boundary).** The then-arm's
-  `loop{}` leaves `frontier_loop_clauses == 1` / `frontier_loop_rules == 1`
-  at the arm boundary (the loop-exit transition, which assumes `¬guard` and
-  pops the clause, is a *following* `step()` in linear code — here the block
-  ends immediately after the `while`, so nothing takes it). The terminal /
-  branch join's `validate_execution_join_arm_deltas` rejects this (it treats
-  `frontier_loop_clauses`/`rules`/`planned_statement_transitions` as
-  immutable, migrating only prereqs/derivations/unfolds). **Confirmed** it
-  is not mere bookkeeping: relaxing the guard to tolerate the extra loop
-  clauses makes the final `simp` fail with "did not retain a complete proof
-  for `branch_count.ensures_0`" — i.e. the `¬guard` exit fact (`i >= 2`,
-  giving `i == 2`) is genuinely absent, so `result >= 1` is unprovable on
-  the then path. Resetting the loop clauses to the parent's in
-  `install_parent_frontier_after_decided` clears the guard but drops the
-  same exit fact, so it is equally unsound.
-  **The needed operation:** when an arm's frontier is at a loop-exit point
-  (region boundary with an active loop clause) and control falls through to
-  a shared continuation, the checked driver must *take the loop-exit
-  transition* (establish `¬guard`, advance past the `while`, pop the clause)
-  before continuing — the same thing a trailing linear `step()` does after
-  `loop{}`. That is a real, soundness-relevant loop operation in
-  `continue_arm_into_parent_frontier` (or the arm advance), not a metadata
-  fix, and is the design decision to make with the user before landing.
+That exposed a pre-existing gap in the checked outcome `simp`, unrelated
+to the `if`: from the negated loop guard `¬(i < 3)` it retained
+`result == 3` and `result >= 3` but not the *looser* `result >= 1`
+(constant-bound weakening). The search-based
+`check_function_claim_by_simp` decides it, which is how the interpreter
+route accepted `branch_count` without a replayable certificate. The
+checked simp's premise pairs were also empty for this goal (the loop
+facts have no Surface spelling), so the fix,
+`try_selected_constant_bound_weakening`, cites only facts it establishes
+itself: nested `have value >= C` and `have C >= c` closed by the direct
+logical closer, then `int32_ge_transitive` (`int32_le_transitive` for an
+upper bound). Regression:
+`frontier_local_loop_exit_bound_weakens_to_a_looser_ensures`. The
+criterion for adding such a derivation is a common, bounded, replayable
+shape; "the old simp could decide it" is not a criterion, and the old
+simp's authoritative use (`!require_explicit_closers`) leaves with the
+interpreter.
 
-**Remaining shapes** (from `CLICK_DBG_SHAPE`):
+`branch_count` now verifies through the checked driver with no interpreter
+fallback (`CLICK_DBG_FALLBACK=1`).
 
-- `frontier_local_loop_verifies_at_a_branch_local_frontier` /
-  `branch_count`: `Lin[step,step]->If{Lin[step,loop]|Lin[step,step]}->Lin[step,simp]`.
-  Blocked on the loop-exit-across-branch model gap above (v2 gets it to the
-  terminal join; base master declines earlier).
+**Remaining fallbacks** (from `CLICK_DBG_FALLBACK` / `CLICK_DBG_SHAPE`):
+
 - `recursive_zero_list_branch_frames` / `zero_list_sum`:
   `Lin[observe]->If{Lin[execute]->If{Lin[frame]|Lin[frame]}->Lin[simp] | Lin[execute,frame,simp]}`.
-  A terminal outer proof-case-split whose then-arm contains a *nested*
-  execution `if`.
+  A terminal outer case split whose then-arm contains a *nested* `if`.
 - `smart_execute_retains_nested_terminal_c_branches` / `write_nested`:
   `Open{If{Lin[step]->If{...}|Lin[step,step,step]}->Lin[frame]}->Lin[have,assumption,assumption]`.
-  A nested execution `if` inside an `open` scope.
+  A nested `if` inside an `open` scope.
 - `branch_continuation_claims_retain_their_selected_outcome_step` /
   `joined_increment`: `Lin[step]->Br{Lin[step]|Lin[step]}->Lin[step,step,simp]`.
   An explicit `Br` with a non-Done continuation.
@@ -391,7 +376,7 @@ and reaches the **terminal join** — where it fails on the real gap:
   A `Br` whose arms carry mid-execution `have`s and reach a continuation
   that itself `execute`s.
 
-The deletion finishes by closing these 5, then removing
+The deletion finishes by closing these, then removing
 `execute_internal_proof`, `replay_linear_tactics_*`, the planner
 construction entries, and the `OrderedProofUnit::Replay` arm, in one green
 commit.

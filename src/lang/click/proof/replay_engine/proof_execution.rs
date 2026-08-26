@@ -1195,6 +1195,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                     proof.split_focused_execution_if(condition.clone())?
                 };
                 let mut advanced = split;
+                let mut consumed_continuation = false;
                 for (take_then, branch) in
                     [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
                 {
@@ -1220,9 +1221,32 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                             1,
                         )?
                     };
-                    let Some(next) = next else {
+                    let Some(mut next) = next else {
                         return Ok(None);
                     };
+                    // A proof `if` is a case split: each case is the function
+                    // running linearly under one assumed polarity. A case
+                    // whose arm ends short of function exit keeps running
+                    // through the shared continuation to its own exit; the
+                    // cases never rejoin as one state.
+                    if !next.is_at_function_exit()
+                        && !matches!(continuation.as_ref(), InternalProofNode::Done)
+                    {
+                        let Some(continued) = advance_focused_execution_region(
+                            next,
+                            None,
+                            continuation,
+                            staged_expansion_capture.as_mut(),
+                            proof_site.as_ref(),
+                            owning_source_index,
+                            1,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        next = continued;
+                        consumed_continuation = true;
+                    }
                     if !next.is_at_function_exit() {
                         return Ok(None);
                     }
@@ -1230,7 +1254,11 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                 }
                 proof = advanced.join_focused_execution_if_terminal(&record)?;
                 saw_structure = true;
-                current = continuation;
+                current = if consumed_continuation {
+                    &InternalProofNode::Done
+                } else {
+                    continuation
+                };
             }
         }
     }
@@ -1752,6 +1780,15 @@ fn advance_focused_execution_arm<'a>(
                 return Ok(None);
             };
             nested.join()?
+        } else if let ProofTactic::Loop(clause) = &indexed.tactic {
+            // A frontier-local loop inside a case is one checked operation,
+            // exactly as in the linear continuation.
+            proof.apply_frontier_local_loop(
+                expansion_capture.as_deref_mut(),
+                clause,
+                indexed.index,
+                indexed.source_index,
+            )?
         } else if matches!(
             indexed.tactic,
             ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths
@@ -2104,6 +2141,7 @@ fn advance_focused_execution_region<'a>(
                 proof.split_focused_execution_if(condition.clone())?
             };
             let mut advanced = split;
+            let mut consumed_continuation = false;
             for (take_then, branch) in [(true, then_branch.as_ref()), (false, else_branch.as_ref())]
             {
                 let focused = advanced.focus_execution_if_arm(&record, take_then)?;
@@ -2128,9 +2166,30 @@ fn advance_focused_execution_region<'a>(
                         depth + 1,
                     )?
                 };
-                let Some(next) = next else {
+                let Some(mut next) = next else {
                     return Ok(None);
                 };
+                // Case split, as at the top level: a case whose arm ends
+                // short of function exit runs the shared continuation to
+                // its own exit.
+                if !next.is_at_function_exit()
+                    && !matches!(continuation.as_ref(), InternalProofNode::Done)
+                {
+                    let Some(continued) = advance_focused_execution_region(
+                        next,
+                        enclosing_record,
+                        continuation,
+                        expansion_capture.as_deref_mut(),
+                        proof_site,
+                        owning_source_index,
+                        depth + 1,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    next = continued;
+                    consumed_continuation = true;
+                }
                 if !next.is_at_function_exit() {
                     return Ok(None);
                 }
@@ -2142,7 +2201,11 @@ fn advance_focused_execution_region<'a>(
             advance_focused_execution_region(
                 proof,
                 enclosing_record,
-                continuation,
+                if consumed_continuation {
+                    &InternalProofNode::Done
+                } else {
+                    continuation
+                },
                 expansion_capture,
                 proof_site,
                 owning_source_index,

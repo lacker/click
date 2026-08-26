@@ -3358,3 +3358,47 @@ fn body_final_branch_preservation_completes_at_typed_back_edge_boundary() {
         "the failure should name the invariant bundle: {error:?}"
     );
 }
+
+#[test]
+fn frontier_local_loop_exit_bound_weakens_to_a_looser_ensures() {
+    // The negated loop guard leaves `i >= 3` at the loop's exit. The checked
+    // outcome `simp` must retain a replayable proof of the *looser* bounds
+    // `result >= 1` and `result <= 5` (constant-bound weakening through
+    // `int32_ge_transitive` / `int32_le_transitive`), not only the exact
+    // `result == 3`.
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result >= 1;
+                ensures result <= 5;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                    initialize by simp;
+                    preserve by {
+                        step();
+                        close_invariants();
+                    }
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect("the checked outcome simp should weaken the loop-exit bound to the looser ensures");
+}

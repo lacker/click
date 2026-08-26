@@ -80,6 +80,7 @@ impl<'a> Proof<'a> {
             )
             .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
             .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
+            .or_else(|| self.try_selected_constant_bound_weakening(&goal, &derivation))
             .or_else(|| {
                 self.surface_goal().and_then(|surface_goal| {
                     self.try_selected_unchanged_load_forall_goal(surface_goal, &premise_pairs)
@@ -1042,6 +1043,133 @@ impl<'a> Proof<'a> {
                 return Some(closed);
             }
             proof = rewritten;
+        }
+        None
+    }
+
+    /// Weakens a constant bound. A goal `value >= c` (or `value <= c`)
+    /// closes from a stronger context bound `value >= C` with `C >= c`
+    /// (`value <= C` with `C <= c`), the shape a loop's negated guard leaves
+    /// on its counter. The proof cites only facts it establishes itself, two
+    /// nested `have`s closed by the direct logical closer, so the context
+    /// bound needs no Surface spelling; the transitivity theorem then closes
+    /// the goal.
+    pub(super) fn try_selected_constant_bound_weakening(
+        &self,
+        goal: &Proposition,
+        derivation: &PropositionDerivation,
+    ) -> Option<Self> {
+        let surface_goal = self.surface_goal()?.clone();
+        let (goal_value, goal_bound, lower_bound) = match goal {
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedGreaterEqual(value, bound),
+                true,
+            ) => (value, bound, true),
+            Proposition::ConditionIs(
+                ConditionTerm::Bitvector32SignedLessEqual(value, bound),
+                true,
+            ) => (value, bound, false),
+            _ => return None,
+        };
+        let Bitvector32Term::Constant(goal_bits) = goal_bound.as_ref() else {
+            return None;
+        };
+        let goal_constant = *goal_bits as i32;
+        let (surface_lower, surface_upper) = surface_nonstrict_parts(&surface_goal)?;
+        let (surface_value, surface_goal_constant) = if lower_bound {
+            (surface_upper, surface_lower)
+        } else {
+            (surface_lower, surface_upper)
+        };
+        let mut candidates = Vec::new();
+        for premise in derivation.context_premises().iter() {
+            let Proposition::ConditionIs(term, polarity) = premise else {
+                continue;
+            };
+            let bound = match (term, polarity, lower_bound) {
+                (ConditionTerm::Bitvector32SignedGreaterEqual(value, bound), true, true)
+                | (ConditionTerm::Bitvector32SignedLessThan(value, bound), false, true)
+                | (ConditionTerm::Bitvector32SignedLessEqual(value, bound), true, false)
+                | (ConditionTerm::Bitvector32SignedGreaterThan(value, bound), false, false)
+                    if value == goal_value =>
+                {
+                    bound
+                }
+                _ => continue,
+            };
+            let Bitvector32Term::Constant(bits) = bound.as_ref() else {
+                continue;
+            };
+            let constant = *bits as i32;
+            let stronger = if lower_bound {
+                constant > goal_constant
+            } else {
+                constant < goal_constant
+            };
+            if stronger && !candidates.contains(&constant) {
+                candidates.push(constant);
+            }
+        }
+        let operator = if lower_bound {
+            ComparisonOperator::GreaterEqual
+        } else {
+            ComparisonOperator::LessEqual
+        };
+        for constant in candidates {
+            let surface_constant =
+                ContractExpression::CFragment(CExpression::Value(int32(constant as u32)));
+            let bound_surface = ClickProposition::Comparison {
+                left: surface_value.clone(),
+                operator: operator.clone(),
+                right: surface_constant.clone(),
+            };
+            let link_surface = ClickProposition::Comparison {
+                left: surface_constant.clone(),
+                operator: operator.clone(),
+                right: surface_goal_constant.clone(),
+            };
+            let Ok(scope) = self.begin_have(bound_surface.clone()) else {
+                continue;
+            };
+            let Some(scope) = scope.try_direct_logical_closure().ok().flatten() else {
+                continue;
+            };
+            let Ok(proof) = scope.join() else {
+                continue;
+            };
+            let Ok(scope) = proof.begin_have(link_surface.clone()) else {
+                continue;
+            };
+            let Some(scope) = scope.try_direct_logical_closure().ok().flatten() else {
+                continue;
+            };
+            let Ok(proof) = scope.join() else {
+                continue;
+            };
+            let theorem = SimpleProofStep::ApplyTheoremUsing {
+                application: TheoremApplication {
+                    name: if lower_bound {
+                        "int32_ge_transitive".to_string()
+                    } else {
+                        "int32_le_transitive".to_string()
+                    },
+                    arguments: vec![
+                        surface_value.clone(),
+                        surface_constant.clone(),
+                        surface_goal_constant.clone(),
+                    ],
+                },
+                premises: vec![bound_surface, link_surface],
+            };
+            let Ok(applied) = proof.apply_step(theorem) else {
+                continue;
+            };
+            if applied.is_complete() {
+                return Some(applied);
+            }
+            if let Some(closed) = applied.try_direct_logical_closure().ok().flatten() {
+                return Some(closed);
+            }
         }
         None
     }

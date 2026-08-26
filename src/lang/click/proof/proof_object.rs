@@ -213,6 +213,10 @@ struct CheckedExecutionJoinArm<'v> {
     introduced_prerequisites: Vec<Proposition>,
     introduced_derivations: Vec<Theorem>,
     introduced_unfolds: Vec<String>,
+    /// Frontier-local loops the arm proved inside its region. They are
+    /// checked function-proof state, so a join carries them like unfolds.
+    introduced_loop_clauses: Vec<StructuralClause>,
+    introduced_loop_rules: Vec<CVerifiedLoopRule>,
 }
 
 /// The merged continuation a checked execution join produces: the shared
