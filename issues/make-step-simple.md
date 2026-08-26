@@ -288,10 +288,10 @@ Landed on master (`96d0e40f`), each green through `scripts/check.sh`:
 
 Replacing both interpreter fallbacks in `claim_proofs.rs` with a terminal
 `unsupported_proof_shape` error (the deletion) starts at **17** failing unit
-tests. A near-complete attempt is stashed on this branch as
-`interpreter-deletion-17to5` (based on current master, so it re-applies
-cleanly). It drives the 17 down to **5** with these fixes, all worth
-keeping:
+tests. The preserved attempt is the branch
+`wip/interpreter-deletion-branch-core` (`49181d01`, pushed; supersedes the
+earlier `interpreter-deletion-17to5` stash). It drives the 17 down to **5**
+with these fixes, all worth keeping:
 
 - `smart_frame_miss_error`: a smart `frame` miss is terminal with the
   exit / effect-goal / no-candidate diagnostic (the four `try_smart_frame_at`
