@@ -886,67 +886,12 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     }
     for indexed in remaining {
         check_verification_deadline()?;
-        // A bare `frame()` among the ordered outcome operations is the
-        // smart function frame searched on the exit Proof now, as the
-        // linear continuation does for a frame that arrives first.
-        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-            let checkpoint = proof.checkpoint();
-            let Some(framed) =
-                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-            else {
-                return Ok(None);
-            };
-            // The function frame at exit retains an ordered deferral whose
-            // authority finalization applies. Keep that deferral, printing
-            // the checked contribution at its source position after the
-            // outcome operations deferred before it, on the unframed Proof:
-            // the frame step itself would otherwise precede them in the
-            // retained certificate.
-            let certificate = framed.certificate_since(&checkpoint)?;
-            let (_, deferred) =
-                framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
-            let Some(mut deferred) = deferred else {
-                return Ok(None);
-            };
-            let PostExecutionTactic::CheckedFrameUsing {
-                surface_tactics, ..
-            } = &mut deferred.tactic
-            else {
-                return Ok(None);
-            };
-            *surface_tactics = Some(certificate.to_proof_tactics());
-            deferred.surface_recorded = false;
-            let branch_skeleton =
-                ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
-                    .to_proof_tactics();
-            let (source_index, tactic_index) = (indexed.source_index, indexed.index);
-            let mut capture = staged_expansion_capture.as_mut();
-            let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
-                if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
-                    replay.deferred_tactic_capture = Some(DeferredTacticCapture {
-                        tactic_index,
-                        source_index,
-                        post_execution_index: replay.post_execution_tactics.len(),
-                        branch_skeleton,
-                    });
-                }
-                replay.post_execution_tactics.push(deferred);
-            })?;
-            proof = framed;
-            continue;
-        }
-        if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
-            return Err(error);
-        }
-        let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+        let Some(next) =
+            defer_post_exit_outcome_tactic(proof, &indexed, staged_expansion_capture.as_mut())?
+        else {
             return Ok(None);
         };
-        proof = proof.defer_post_execution_source_tactic(
-            indexed.index,
-            indexed.source_index,
-            post_tactic,
-            staged_expansion_capture.as_mut(),
-        )?;
+        proof = next;
     }
     if let (Some(expansion_capture), Some(staged)) = (expansion_capture, staged_expansion_capture) {
         *expansion_capture = staged;
@@ -1026,11 +971,25 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                 };
                 proof = advanced;
                 if !unconsumed.is_empty() {
-                    if !matches!(continuation.as_ref(), InternalProofNode::Done) {
-                        return Ok(None);
+                    if matches!(continuation.as_ref(), InternalProofNode::Done) {
+                        remaining = unconsumed;
+                        break;
                     }
-                    remaining = unconsumed;
-                    break;
+                    // Post-exit outcome tactics from this linear run precede
+                    // more structure (a post-execution `if`). Defer them onto
+                    // the exit Proof in order, then process the continuation.
+                    for indexed in &unconsumed {
+                        let Some(next) = defer_post_exit_outcome_tactic(
+                            proof,
+                            indexed,
+                            staged_expansion_capture.as_mut(),
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        proof = next;
+                    }
+                    saw_structure = true;
                 }
                 current = continuation;
             }
@@ -1153,7 +1112,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
                         // outcome path: fork those paths, one per polarity.
                         match proof.split_outcome_paths_by_case(condition) {
                             Ok(split) => proof = split,
-                            Err(_) => {
+                            Err(error) => {
                                 check_verification_deadline()?;
                                 return Ok(None);
                             }
@@ -1290,72 +1249,80 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     }
     for indexed in remaining {
         check_verification_deadline()?;
-        // A bare `frame()` among the ordered outcome operations is the
-        // smart function frame searched on the exit Proof now, as the
-        // linear continuation does for a frame that arrives first.
-        if let ProofTactic::SmartFrame(region) = &indexed.tactic {
-            let checkpoint = proof.checkpoint();
-            let Some(framed) =
-                proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
-            else {
-                return Ok(None);
-            };
-            // The function frame at exit retains an ordered deferral whose
-            // authority finalization applies. Keep that deferral, printing
-            // the checked contribution at its source position after the
-            // outcome operations deferred before it, on the unframed Proof:
-            // the frame step itself would otherwise precede them in the
-            // retained certificate.
-            let certificate = framed.certificate_since(&checkpoint)?;
-            let (_, deferred) =
-                framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
-            let Some(mut deferred) = deferred else {
-                return Ok(None);
-            };
-            let PostExecutionTactic::CheckedFrameUsing {
-                surface_tactics, ..
-            } = &mut deferred.tactic
-            else {
-                return Ok(None);
-            };
-            *surface_tactics = Some(certificate.to_proof_tactics());
-            deferred.surface_recorded = false;
-            let branch_skeleton =
-                ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
-                    .to_proof_tactics();
-            let (source_index, tactic_index) = (indexed.source_index, indexed.index);
-            let mut capture = staged_expansion_capture.as_mut();
-            let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
-                if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
-                    replay.deferred_tactic_capture = Some(DeferredTacticCapture {
-                        tactic_index,
-                        source_index,
-                        post_execution_index: replay.post_execution_tactics.len(),
-                        branch_skeleton,
-                    });
-                }
-                replay.post_execution_tactics.push(deferred);
-            })?;
-            proof = framed;
-            continue;
-        }
-        if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
-            return Err(error);
-        }
-        let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+        let Some(next) =
+            defer_post_exit_outcome_tactic(proof, &indexed, staged_expansion_capture.as_mut())?
+        else {
             return Ok(None);
         };
-        proof = proof.defer_post_execution_source_tactic(
-            indexed.index,
-            indexed.source_index,
-            post_tactic,
-            staged_expansion_capture.as_mut(),
-        )?;
+        proof = next;
     }
     if let (Some(expansion_capture), Some(staged)) = (expansion_capture, staged_expansion_capture) {
         *expansion_capture = staged;
     }
     Ok(Some(proof))
+}
+
+/// Defers one ordered outcome operation, written after the checked
+/// execution reached function exit, onto the exit `Proof`. A bare `frame()`
+/// is the smart function frame searched here; other outcome tactics are
+/// deferred by their post-execution kind. `Ok(None)` declines; `Err` is a
+/// terminal diagnostic.
+fn defer_post_exit_outcome_tactic<'a>(
+    proof: Proof<'a>,
+    indexed: &IndexedTactic,
+    mut expansion_capture: Option<&mut ExpansionCapture>,
+) -> Result<Option<Proof<'a>>, ClickError> {
+    if let ProofTactic::SmartFrame(region) = &indexed.tactic {
+        let checkpoint = proof.checkpoint();
+        let Some(framed) =
+            proof.try_smart_frame_at(region.as_ref(), indexed.index, indexed.source_index)?
+        else {
+            return Ok(None);
+        };
+        let certificate = framed.certificate_since(&checkpoint)?;
+        let (_, deferred) =
+            framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+        let Some(mut deferred) = deferred else {
+            return Ok(None);
+        };
+        let PostExecutionTactic::CheckedFrameUsing {
+            surface_tactics, ..
+        } = &mut deferred.tactic
+        else {
+            return Ok(None);
+        };
+        *surface_tactics = Some(certificate.to_proof_tactics());
+        deferred.surface_recorded = false;
+        let branch_skeleton =
+            ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
+                .to_proof_tactics();
+        let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+        let mut capture = expansion_capture.as_deref_mut();
+        let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
+            if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+                replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                    tactic_index,
+                    source_index,
+                    post_execution_index: replay.post_execution_tactics.len(),
+                    branch_skeleton,
+                });
+            }
+            replay.post_execution_tactics.push(deferred);
+        })?;
+        return Ok(Some(framed));
+    }
+    if let Some(error) = post_exit_execution_tactic_error(&indexed.tactic) {
+        return Err(error);
+    }
+    let Some(post_tactic) = flat_post_execution_tactic(&indexed.tactic) else {
+        return Ok(None);
+    };
+    Ok(Some(proof.defer_post_execution_source_tactic(
+        indexed.index,
+        indexed.source_index,
+        post_tactic,
+        expansion_capture,
+    )?))
 }
 
 pub(super) fn solve_nested_have<'a>(
