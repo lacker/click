@@ -287,39 +287,59 @@ Landed on master (`96d0e40f`), each green through `scripts/check.sh`:
 ### Interpreter deletion: current failure set
 
 Replacing both interpreter fallbacks in `claim_proofs.rs` with a terminal
-`unsupported_proof_shape` error (the deletion) fails **17** unit tests. The
-deletion is atomic: the driver's decline must become a terminal error with
-the right diagnostic, which cannot land while the interpreter still catches
-that decline. The 17 split into:
+`unsupported_proof_shape` error (the deletion) starts at **17** failing unit
+tests. A near-complete attempt is stashed on this branch as
+`interpreter-deletion-17to5` (based on current master, so it re-applies
+cleanly). It drives the 17 down to **5** with these fixes, all worth
+keeping:
 
-- ~12 diagnostic/provenance fixes, worked out before in the stash
-  `chunk4-interpreter-deletion-wip` (based on an older master, so re-apply
-  fresh): a smart `frame` miss is terminal with the
-  exit/effect-goal/no-candidate diagnostic; the flat and structural drivers
-  publish their expansion capture on a terminal error as well as on
-  retention; `simp` before exit is terminal; the `branch` capture guard is
-  dropped. Tests: `bare_frame_tactic_rejects_ensure_claim`,
-  `frame_rejects_ensure_clause`, `expands_qualified_frame_tactic`,
-  `branch_arms_retain_bare_fact_transports_on_proof`,
-  `linear_open_retains_a_direct_bare_fact_transport`,
-  `mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate`,
-  `selected_post_execution_frame_stays_inside_open_scope`,
-  `smart_execute_crosses_terminal_c_branch_before_checked_frame`,
-  `execute_step_expands_call_assign_fact_from_internal_snapshot`,
-  `proof_sugar_and_bare_smart_tactics_have_the_same_frontier_semantics`,
-  `grouped_mutable_composite_calls_{continue_on_proof_after_preparatory_scope,keep_open_scopes_on_proof}`.
-- ~5 deeper driver-capability gaps (nested/recursive terminal branches and
-  loop-in-branch through the expansion re-verify path):
-  `smart_execute_retains_nested_terminal_c_branches_before_checked_frame`,
-  `recursive_zero_list_branch_frames_stay_on_proof`,
-  `frontier_local_loop_verifies_at_a_branch_local_frontier`,
-  `branch_continuation_claims_retain_their_selected_outcome_step`,
-  `expanded_execute_and_frame_replay_after_resource_branch`.
+- `smart_frame_miss_error`: a smart `frame` miss is terminal with the
+  exit / effect-goal / no-candidate diagnostic (the four `try_smart_frame_at`
+  decline sites and the scope site).
+- Both drivers are split into a `_inner` body plus a thin wrapper that
+  publishes the expansion capture on any non-decline result (retention *or*
+  terminal error), so `expand` still records through a failing verify.
+- The three `supports_checked_frame_using` frame guards are removed so a
+  frame is always attempted (a genuine miss is now the terminal error
+  above); this alone cleared ~8 expansion tests.
+- `pre_exit_outcome_tactic_error` covers `simp` and `frame`, and the
+  pre-exit-diagnostic check is reordered before the `!saw_structure`
+  decline, so `by simp` at function entry gives "requires execution to
+  reach function exit first".
+- `frontier_is_execution_branch` accepts a *raw* source condition
+  (`flag != 0`, not just the anchored `at(stmt.entry, ...)` form), so a
+  source `if` at a C-`if` frontier routes through the branch core.
+- `advance_focused_execution_arm` handles a `loop` inside a branch arm.
 
-The deletion is one focused push: re-apply the diagnostic fixes, close the
-5, then delete `execute_internal_proof`, `replay_linear_tactics_*`, the
-planner construction entries, and the `OrderedProofUnit::Replay` arm in one
-green commit.
+The remaining **5** are nested / recursive branches and
+branch-with-continuation shapes where the branch core's arm advance still
+declines. Their exact proof-tree shapes (from `CLICK_DBG_SHAPE`):
+
+- `frontier_local_loop_verifies_at_a_branch_local_frontier` /
+  `branch_count`: `Lin[step,step]->If{Lin[step,loop]|Lin[step,step]}->Lin[step,simp]`.
+  Now routes into the branch core (raw-condition fix), but the core
+  declines — an arm `SmartStep` (`try_indexed_execute_step`) or the
+  loop-in-arm advance returns `None`.
+- `recursive_zero_list_branch_frames` / `zero_list_sum`:
+  `Lin[observe]->If{Lin[execute]->If{Lin[frame]|Lin[frame]}->Lin[simp] | Lin[execute,frame,simp]}`.
+  A terminal outer proof-case-split whose then-arm contains a *nested*
+  execution `if`.
+- `smart_execute_retains_nested_terminal_c_branches` / `write_nested`:
+  `Open{If{Lin[step]->If{...}|Lin[step,step,step]}->Lin[frame]}->Lin[have,assumption,assumption]`.
+  A nested execution `if` inside an `open` scope.
+- `branch_continuation_claims_retain_their_selected_outcome_step` /
+  `joined_increment`: `Lin[step]->Br{Lin[step]|Lin[step]}->Lin[step,step,simp]`.
+  An explicit `Br` with a non-Done continuation.
+- `expanded_execute_and_frame_replay_after_resource_branch` /
+  `vector_replace_if`:
+  `Lin[step,step,step,have]->Br{Lin[step,have,have,have]|...}->Lin[execute,have,frame,simp]`.
+  A `Br` whose arms carry mid-execution `have`s and reach a continuation
+  that itself `execute`s.
+
+The deletion finishes by closing these 5, then removing
+`execute_internal_proof`, `replay_linear_tactics_*`, the planner
+construction entries, and the `OrderedProofUnit::Replay` arm, in one green
+commit.
 
 ## Record of the abandoned carry (2026-08-25)
 
