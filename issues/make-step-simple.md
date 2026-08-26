@@ -268,6 +268,32 @@ way, all in the drivers or the kernel, no script changes:
   interface join needs both arms at the boundary
   (`mdtests/frontier_branch_return.md`).
 
+### Unification progress (2026-08-26)
+
+The branch arm-advancing law is now one core (`advance_checked_branch_arms`)
+shared by the `Proof` branch driver and the open-scope branch handler;
+only the split and join stay target-specific. This deleted the scope's
+weaker third copy (it had bailed on mixed-ending arms) — a nested terminal
+C branch inside an `open` scope now verifies on the checked route (master
+`5b1a7445`).
+
+Two duplications remain, each its own chunk:
+
+- The **expanded-execution walker** (`advance_expanded_execution_*`) is a
+  second representation — it walks a proof after expansion (flat `step()` /
+  explicit branch-entry forms) and threads `post_execution` deferrals — and
+  its branch handler is the weakest copy (always
+  `join_focused_execution_split(&record, false, None)`: no `empty`, no
+  `ensuring`, no mixed-arm continuation). The 5 blocker tests are all
+  `expand`-and-re-verify tests whose fallback is here. Folding this into
+  the shared arm-advance core is the main remaining unification.
+- **Route parity**: a proof can verify on the grouped route but decline on
+  the single-claim route (`compare_swap2.ensures_0`), and an expansion made
+  through one entry point (`CProofClaim::Ensure(0)`) can produce a form that
+  falls back while a tactic-position expansion of the same proof does not.
+  The single-claim and grouped drivers, and the two expansion entry points,
+  should reach the same checked route.
+
 ## Interpreter deletion: driver-gap blockers (2026-08-26)
 
 The whole corpus reaches the checked drivers: examples and mdtests both
