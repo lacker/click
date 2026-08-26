@@ -321,56 +321,6 @@ The deletion is one focused push: re-apply the diagnostic fixes, close the
 planner construction entries, and the `OrderedProofUnit::Replay` arm in one
 green commit.
 
-## Interpreter deletion: driver-gap blockers (2026-08-26)
-
-## Interpreter deletion: driver-gap blockers (2026-08-26)
-
-The whole corpus reaches the checked drivers: examples and mdtests both
-have **zero** `CLICK_DBG_FALLBACK` interpreter hits (quarantined
-`owned-vector` aside). The interpreter (`execute_internal_proof` and the
-grouped/single fallbacks in `claim_proofs.rs`) is therefore dead for real
-proofs, but deleting it — replacing both fallbacks with a terminal
-"unsupported proof shape" error — turns 5 unit tests red. They assert the
-interpreter handles synthetic shapes no example or mdtest uses. The
-deletion attempt is stashed (`git stash` tag
-`chunk4-interpreter-deletion-wip`, sha 89f0936f); it also carries the
-green driver work below, which is worth re-landing once the blockers are
-closed:
-
-- `smart_frame` misses are terminal (`frame requires execution to reach
-  function exit first` / `has no effect claim to prove` / `found no
-  checked Proof candidate`), the flat/structural drivers publish their
-  expansion capture on a terminal error as well as on retention, `simp`
-  before exit is a terminal diagnostic, a `branch` capture guard is
-  dropped, loops and mixed-arm continuations run inside logical case-split
-  arms, and terminal joins migrate an arm's frontier-local loop clauses.
-
-The 5 blockers, each a checked-driver capability the interpreter has and
-the drivers do not yet:
-
-1. `frontier_local_loop_verifies_at_a_branch_local_frontier`: a
-   frontier-local `loop` inside a C-`if` arm. The arm's loop rules now
-   migrate at the terminal join, but per-case certification's outcome
-   `simp` then fails ("checked outcome `simp` search did not retain a
-   complete proof") — the loop rule is not yet visible to the per-case
-   kernel certification.
-2. `recursive_zero_list_branch_frames_stay_on_proof`,
-   `smart_execute_retains_nested_terminal_c_branches_before_checked_frame`,
-   `expanded_branch_certificate_uses_the_branch_entry_state`: nested /
-   recursive terminal C branches with a post-branch continuation. The
-   nested-branch handlers decline at the "unconsumed continuation after a
-   nested branch" and "post-execution `if` not path-decided" guards
-   (proof_execution.rs ~1109 / ~2196); the single-level cases are solved,
-   the recursive nesting is not.
-4. `expanded_execute_and_frame_replay_after_resource_branch`: the same
-   nested-branch shape reached through `expand`, whose dependency-path
-   check surfaces the decline as an expansion failure.
-
-Acceptance: all 5 checked directly (census stays zero), the stashed
-driver work re-landed green through `scripts/check.sh`, then
-`execute_internal_proof`, `replay_linear_tactics_*`, the planner's
-construction entry points, and the `OrderedProofUnit::Replay` arm deleted.
-
 ## Record of the abandoned carry (2026-08-25)
 
 Before this design was chosen, a "carry" was prototyped in the linear
