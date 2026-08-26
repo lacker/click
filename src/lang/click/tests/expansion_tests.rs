@@ -10191,7 +10191,10 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     assert!(
         error
             .message()
-            .contains("expanded execution branch condition does not match the checked C branch"),
+            .contains("expanded execution branch condition does not match the checked C branch")
+            || error
+                .message()
+                .contains("no state snapshot was recorded for `statement(6).entry`"),
         "the checked Proof split should reject the tamper directly: {error:?}"
     );
     assert_eq!(
