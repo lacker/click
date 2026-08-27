@@ -302,15 +302,13 @@ impl<'a> Proof<'a> {
         {
             return Err(self.step_error(format!("{name} arm retained the wrong condition theorem")));
         }
-        let replay = &arm.execution.replay;
-        if replay.function_entry_execution_prerequisites.len()
+        if arm.execution.function_entry_execution_prerequisites.len()
             != parent_execution
-                .replay
                 .function_entry_execution_prerequisites
                 .len()
                 + arm.introduced_prerequisites.len()
-            || replay.function_entry_derivations.len()
-                != parent_execution.replay.function_entry_derivations.len()
+            || arm.execution.function_entry_derivations.len()
+                != parent_execution.function_entry_derivations.len()
                     + arm.introduced_derivations.len()
             || arm.execution.frontier_loop_clauses.len()
                 != parent_execution.frontier_loop_clauses.len() + arm.introduced_loop_clauses.len()
@@ -318,8 +316,8 @@ impl<'a> Proof<'a> {
                 != parent_execution.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
             || arm.execution.unfolded_predicates.len()
                 != parent_execution.unfolded_predicates.len() + arm.introduced_unfolds.len()
-            || replay.planned_statement_transitions.len()
-                != parent_execution.replay.planned_statement_transitions.len()
+            || arm.execution.planned_statement_transitions.len()
+                != parent_execution.planned_statement_transitions.len()
         {
             return Err(self.step_error(format!(
                 "{name} execution arm changed replay metadata that the checked {variant} has not migrated"
@@ -754,17 +752,15 @@ impl<'a> Proof<'a> {
             }
         }
         execution.has_structured_branch_history = true;
-        execution.replay.execution_abstraction = true;
+        execution.execution_abstraction = true;
         execution.unfolded_predicates.clear();
         execution.case_assumptions.clear();
-        execution.replay.next_opaque_call = then_abstract
-            .replay
+        execution.next_opaque_call = then_abstract
             .next_opaque_call
-            .max(else_abstract.replay.next_opaque_call);
-        execution.replay.next_kernel_variable = then_abstract
-            .replay
+            .max(else_abstract.next_opaque_call);
+        execution.next_kernel_variable = then_abstract
             .next_kernel_variable
-            .max(else_abstract.replay.next_kernel_variable);
+            .max(else_abstract.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -781,7 +777,6 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
-                .replay
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -790,10 +785,7 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(theorem.clone());
+            execution.function_entry_derivations.insert(theorem.clone());
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
@@ -1135,12 +1127,14 @@ impl<'a> Proof<'a> {
         execution.branch_decisions = parent_execution.branch_decisions.clone();
         execution.outcome_branch_decisions = Arc::new(path_branch_decisions);
         execution.has_structured_branch_history = true;
-        execution.replay.next_opaque_call = then_replay
+        execution.next_opaque_call = arms[0]
+            .execution
             .next_opaque_call
-            .max(else_replay.next_opaque_call);
-        execution.replay.next_kernel_variable = then_replay
+            .max(arms[1].execution.next_opaque_call);
+        execution.next_kernel_variable = arms[0]
+            .execution
             .next_kernel_variable
-            .max(else_replay.next_kernel_variable);
+            .max(arms[1].execution.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -1157,7 +1151,6 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
-                .replay
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -1166,10 +1159,7 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(theorem.clone());
+            execution.function_entry_derivations.insert(theorem.clone());
         }
         for name in arms[0]
             .introduced_unfolds
@@ -1353,8 +1343,6 @@ impl<'a> Proof<'a> {
         if **then_state != **else_state {
             return Err(self.step_error("execution `branch` arms reached different C states"));
         }
-        let then_replay = &arms[0].execution.replay;
-        let else_replay = &arms[1].execution.replay;
         let mut execution = parent_execution.clone();
         execution.has_empty_execution_branch_leaf |= arms
             .iter()
@@ -1398,12 +1386,14 @@ impl<'a> Proof<'a> {
             },
         }
         execution.has_structured_branch_history = true;
-        execution.replay.next_opaque_call = then_replay
+        execution.next_opaque_call = arms[0]
+            .execution
             .next_opaque_call
-            .max(else_replay.next_opaque_call);
-        execution.replay.next_kernel_variable = then_replay
+            .max(arms[1].execution.next_opaque_call);
+        execution.next_kernel_variable = arms[0]
+            .execution
             .next_kernel_variable
-            .max(else_replay.next_kernel_variable);
+            .max(arms[1].execution.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
@@ -1420,7 +1410,6 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
-                .replay
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -1429,10 +1418,7 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(theorem.clone());
+            execution.function_entry_derivations.insert(theorem.clone());
         }
         for name in arms[0]
             .introduced_unfolds
@@ -1741,18 +1727,12 @@ impl<'a> Proof<'a> {
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_prerequisites = execution
-            .replay
             .function_entry_execution_prerequisites
-            .introduced_since(
-                &delta_execution
-                    .replay
-                    .function_entry_execution_prerequisites,
-            )
+            .introduced_since(&delta_execution.function_entry_execution_prerequisites)
             .ok_or_else(not_descended)?;
         let introduced_derivations = execution
-            .replay
             .function_entry_derivations
-            .introduced_since(&delta_execution.replay.function_entry_derivations)
+            .introduced_since(&delta_execution.function_entry_derivations)
             .ok_or_else(not_descended)?;
         let introduced_unfolds = execution
             .unfolded_predicates

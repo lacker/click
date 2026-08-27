@@ -180,7 +180,6 @@ impl<'a> Proof<'a> {
         )?;
         if let Some(prerequisite) = checked.function_entry_prerequisite
             && !execution
-                .replay
                 .function_entry_execution_prerequisites
                 .contains(&prerequisite)
         {
@@ -189,24 +188,17 @@ impl<'a> Proof<'a> {
                 .function_entry_prerequisites
                 .push(prerequisite.clone());
             execution
-                .replay
                 .function_entry_execution_prerequisites
                 .insert(prerequisite);
         }
         if let Some(derivation) = checked.function_entry_derivation
-            && !execution
-                .replay
-                .function_entry_derivations
-                .contains(&derivation)
+            && !execution.function_entry_derivations.contains(&derivation)
         {
             execution
                 .last_step_delta
                 .function_entry_derivations
                 .push(derivation.clone());
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(derivation);
+            execution.function_entry_derivations.insert(derivation);
         }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {

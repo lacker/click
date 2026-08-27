@@ -34,25 +34,19 @@ during ordinary verification in the intended architecture.
 
 ## Replay state inside a proof
 
-`ExecutionProofState` owns a `CState`, the execution frontier (program point,
-region, region start state, continuations), the program-point states recorded
-on the path, the surface spellings the path has lowered, the path's case
-assumptions, effect facts, frontier-local loop clauses and rules, branch
-provenance, the path's unfolded predicates, and a `TacticReplayState`; that
-nested bag still owns fact and resource metadata, marks, structural context,
-deferrals, and certificate builders. The per-proof constants
-(`ExecutionProofConstants`: proof site, source layout, entry facts, function-
-entry state, grouped-contract flag) live on the proof's
-`ExecutionProofContext`, not in the path snapshot; the executor takes that
-context alongside the execution state and reads its function, environments,
-claim label, and tactic index from it. A caller that needs a variant derives
-one: `with_tactic_index` attributes one tactic's execution, and
-`with_loop_binding` runs a `loop` step against the loop-bound function block,
-annotated function, and rule-carrying environment. It lives only as the
-execution snapshot of a `Proof` goal: the checked drivers advance a `Proof`,
-and every source or generated proof tree is checked that way. The earlier
-interpreter that advanced this context as a parallel engine is gone; the
-remaining duplication of facts and `CState` between the snapshot and the
+`ExecutionProofState` owns every semantic path fact: the `CState`, the
+execution frontier (program point, region, region start state, continuations),
+the program-point states recorded on the path, the surface spellings the path
+has lowered, case assumptions, effect facts, frontier-local loop clauses and
+rules, function-entry prerequisites and derivations, planned statement
+transitions, the freshness counters, the loop-effect goal and region flags,
+branch provenance, and the path's unfolded predicates. Its `TacticReplayState`
+holds only cursors: the certificate builder, deferred post-execution tactics,
+and expansion-capture state, all scheduled for retirement in phase 3. It lives
+only as the execution snapshot of a `Proof` goal: the checked drivers advance
+a `Proof`, and every source or generated proof tree is checked that way. The
+earlier interpreter that advanced this context as a parallel engine is gone;
+the remaining duplication of facts and `CState` between the snapshot and the
 `Proof` is tracked for removal in `issues/replay-smell.md`.
 
 Lowering and point proofs read execution data through `ExecutionView`, a

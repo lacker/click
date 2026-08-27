@@ -1142,6 +1142,64 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// path and migrated across joins as arm deltas.
     pub(in crate::lang::click::proof) frontier_loop_clauses: PersistentSequence<StructuralClause>,
     pub(in crate::lang::click::proof) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
+    /// The execution frontier was intentionally replaced by a branch
+    /// interface. Its state is a specification abstraction, not an exact
+    /// symbolic body outcome; whole-function kernel certification checks every
+    /// concrete path before any contract claim is exported.
+    pub(in crate::lang::click::proof) execution_abstraction: bool,
+    pub(in crate::lang::click::proof) loop_effect_goal: Option<LoopEffectReplayGoal>,
+    pub(in crate::lang::click::proof) next_path_choice: usize,
+    /// Frontier-local loop proofs become part of the checked function proof,
+    /// not temporary tactic state.  Final kernel certification rebuilds the
+    /// annotated function from these bound clauses and reuses these rules.
+    /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
+    /// the same reference under another form — names in this region.
+    ///
+    /// `old` denotes function entry, but certificate replay used to resolve it
+    /// *positionally*, to whichever state the enclosing proof region started
+    /// from. Inside a function-body proof those coincide; inside a
+    /// loop-preservation region they do not, so the same surface text meant
+    /// loop-entry memory here and function-entry memory in the Click -> Spec
+    /// lowering the kernel certified against. Naming the state explicitly is
+    /// what makes the two agree; see
+    /// `docs/internals/memory-dag.md` (stage 2a).
+    ///
+    /// `None` keeps the previous positional resolution, so every region that
+    /// does not record a function-entry snapshot behaves exactly as before.
+    pub(in crate::lang::click::proof) concrete_loop_execution: bool,
+    /// Immutable facts at the execution root. Every proof branch reads the
+    /// same entry context, so clones share it rather than copying a
+    /// project-sized fact vector.
+    /// Exact non-contract facts selected by a statement certificate, resource
+    /// observation, or explicit kernel theorem while the C frontier is still
+    /// at function entry.
+    pub(in crate::lang::click::proof) function_entry_execution_prerequisites:
+        PersistentOrderedSet<Proposition>,
+    /// Kernel-issued implications produced by explicit theorem applications
+    /// and resource-count observations at function entry. Final certification
+    /// independently discharges their premises before admitting conclusions
+    /// that were exact assumptions of the checked execution.
+    pub(in crate::lang::click::proof) function_entry_derivations: PersistentOrderedSet<Theorem>,
+    pub(in crate::lang::click::proof) region_simp: Option<(usize, usize)>,
+    pub(in crate::lang::click::proof) region_invariants_closed: bool,
+    /// Where the replayed `close_invariants` tactic sat, so the invariant
+    /// bundle check its caller performs after the replay finishes can be
+    /// timed against that tactic's own identity instead of going unattributed.
+    ///
+    /// `close_invariants` only records the intent during replay; the kernel
+    /// re-derivation that gives it meaning runs in
+    /// `verify_one_loop_preservation_proof` once the whole certificate has
+    /// replayed. Without this the dominant cost of the loop-invariant bundle
+    /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
+    pub(in crate::lang::click::proof) invariant_closer_step: Option<InvariantCloserStep>,
+    pub(in crate::lang::click::proof) next_opaque_call: u64,
+    pub(in crate::lang::click::proof) next_kernel_variable: u64,
+    /// Semantic transition evidence recorded by planning so the surface step
+    /// constructed for a statement move can consult the certified transition.
+    /// It is deliberately separate from `ProofTactic` so internal execution
+    /// artifacts cannot masquerade as proof steps.
+    pub(in crate::lang::click::proof) planned_statement_transitions:
+        SharedVec<PlannedStatementTransition>,
     pub(in crate::lang::click::proof) replay: TacticReplayState,
     pub(in crate::lang::click::proof) branch_path: PersistentSequence<String>,
     /// Kernel facts whose checked C-branch Surface spellings must survive a
@@ -1202,6 +1260,18 @@ impl ExecutionProofState {
             effect_facts: SharedVec::default(),
             frontier_loop_clauses: PersistentSequence::default(),
             frontier_loop_rules: PersistentSequence::default(),
+            execution_abstraction: Default::default(),
+            loop_effect_goal: Default::default(),
+            next_path_choice: Default::default(),
+            concrete_loop_execution: Default::default(),
+            function_entry_execution_prerequisites: Default::default(),
+            function_entry_derivations: Default::default(),
+            region_simp: Default::default(),
+            region_invariants_closed: Default::default(),
+            invariant_closer_step: Default::default(),
+            next_opaque_call: Default::default(),
+            next_kernel_variable: Default::default(),
+            planned_statement_transitions: Default::default(),
             replay,
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
@@ -2098,7 +2168,7 @@ impl<'a> Proof<'a> {
     /// representation transitions, but it is no longer an open semantic goal.
     fn focused_loop_effect_closed(&self) -> bool {
         self.goal_execution()
-            .and_then(|execution| execution.replay.loop_effect_goal.as_ref())
+            .and_then(|execution| execution.loop_effect_goal.as_ref())
             .is_some_and(|goal| goal.closed)
     }
 

@@ -186,10 +186,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 while let Proposition::Implies(_, body) = conclusion {
                     conclusion = body;
                 }
-                replay
+                execution
                     .function_entry_execution_prerequisites
                     .insert(conclusion.clone());
-                replay.function_entry_derivations.insert(derivation);
+                execution.function_entry_derivations.insert(derivation);
             }
         }
     }
@@ -212,10 +212,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         && let Some(derivation) =
             prove_pure_proposition_from_context(&assumptions_from_propositions(&have_facts), &fact)
     {
-        replay
+        execution
             .function_entry_execution_prerequisites
             .insert(fact.clone());
-        replay.function_entry_derivations.insert(derivation);
+        execution.function_entry_derivations.insert(derivation);
     }
     if !pure_facts.contains(&fact) {
         pure_facts.push(fact.clone());
@@ -242,7 +242,6 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
 
@@ -372,8 +371,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             surface_propositions: execution.surface_propositions.clone(),
             program_point_states: execution.program_point_states.clone(),
             case_path,
-            next_opaque_call: replay.next_opaque_call,
-            next_kernel_variable: replay.next_kernel_variable,
+            next_opaque_call: execution.next_opaque_call,
+            next_kernel_variable: execution.next_kernel_variable,
         }],
         &mut next_statement_index,
         &mut next_loop_index,

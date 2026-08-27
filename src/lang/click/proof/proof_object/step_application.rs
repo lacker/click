@@ -418,14 +418,13 @@ impl<'a> Proof<'a> {
                 frame_facts.push(fact);
             }
         }
-        if execution.replay.loop_effect_goal.is_some() {
+        if execution.loop_effect_goal.is_some() {
             if region.is_some() {
                 return Err(
                     self.step_error("a structural effect proof must use unqualified `frame using`")
                 );
             }
             let goal = execution
-                .replay
                 .loop_effect_goal
                 .as_ref()
                 .expect("the loop effect goal was observed above");
@@ -451,7 +450,6 @@ impl<'a> Proof<'a> {
             )
             .map_err(|message| self.step_error(format!("`frame using` failed: {message}")))?;
             execution
-                .replay
                 .loop_effect_goal
                 .as_mut()
                 .expect("the checked loop effect goal remains present")
@@ -878,7 +876,7 @@ impl<'a> Proof<'a> {
         let execution = self.execution().ok_or_else(|| {
             self.step_error("smart loop framing requires an execution-frontier Proof")
         })?;
-        execution.replay.loop_effect_goal.as_ref().ok_or_else(|| {
+        execution.loop_effect_goal.as_ref().ok_or_else(|| {
             self.step_error("smart loop framing requires a structural effect goal")
         })?;
         let mut dependency_names = BTreeSet::new();

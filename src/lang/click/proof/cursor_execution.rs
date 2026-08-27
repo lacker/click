@@ -25,7 +25,6 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     let resource_environment = proof_context.resource_environment;
     let claim_label = proof_context.claim_label;
 
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
     let mut concrete_facts = available_pure_facts.clone();
@@ -128,7 +127,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
     execution.case_assumptions.clear();
-    replay.execution_abstraction = true;
+    execution.execution_abstraction = true;
 
     let mut exported_resources = ResourceContext::new();
     // This vector contains only facts explicitly exported by the interface
@@ -420,7 +419,6 @@ pub(super) fn execute_branch_step_from_execution_point(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
     let statement_index = execution.frontier.next_statement_index;
@@ -549,8 +547,8 @@ pub(super) fn execute_branch_step_from_execution_point(
         && !condition_was_proven
         && matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
     {
-        let occurrence = replay.next_path_choice;
-        replay.next_path_choice += 1;
+        let occurrence = execution.next_path_choice;
+        execution.next_path_choice += 1;
         let statement_condition = surface_with_source_site(
             &surface_c_condition(&condition),
             &ProgramPointRef {
@@ -598,11 +596,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 &construction_point_overrides,
             );
             construct_simple_step_for_planned_operation(
-                replay,
-                &execution.frontier,
-                &execution.effect_facts,
-                &execution.program_point_states,
-                &mut execution.surface_propositions,
+                execution,
                 proof_context,
                 &current_state,
                 function_block,
@@ -617,6 +611,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     theorem: condition_transition.theorem.clone(),
                 },
             );
+            let replay = &mut execution.replay;
             restore_construction_point_view(&mut execution.program_point_states, restore);
             let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
             for fact in &condition_transition.path_facts {
@@ -630,11 +625,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             &construction_point_overrides,
         );
         append_condition_transition_certificate(
-            replay,
-            &execution.frontier,
-            &execution.effect_facts,
-            &execution.program_point_states,
-            &mut execution.surface_propositions,
+            execution,
             proof_context,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
@@ -647,6 +638,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
+    let state: &mut CState = &mut execution.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
         &current_state,
@@ -786,10 +778,7 @@ fn execute_concrete_loop_head_step(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
-    let state: &mut CState = &mut execution.state;
-
-    replay.concrete_loop_execution = true;
+    execution.concrete_loop_execution = true;
     let CStatement::While {
         condition, body, ..
     } = loop_statement.clone()
@@ -859,11 +848,7 @@ fn execute_concrete_loop_head_step(
             &construction_point_overrides,
         );
         append_condition_transition_certificate(
-            replay,
-            &execution.frontier,
-            &execution.effect_facts,
-            &execution.program_point_states,
-            &mut execution.surface_propositions,
+            execution,
             proof_context,
             &condition_transition,
             true,
@@ -876,6 +861,7 @@ fn execute_concrete_loop_head_step(
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
+    let state: &mut CState = &mut execution.state;
     *available_pure_facts = condition_transition.pure_facts;
     execution.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state.clone();
@@ -1500,7 +1486,6 @@ pub(super) fn execute_step_successors_from_execution_point(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
         ExecutionView::new(
@@ -1525,8 +1510,8 @@ pub(super) fn execute_step_successors_from_execution_point(
     // The proof surface currently represents one binary partition, so require
     // exactly one checked transition per polarity here.
     let safe_partition = if statement_supports_retained_successor_partition(&statement) {
-        let mut preview_next_opaque_call = replay.next_opaque_call;
-        let mut preview_next_kernel_variable = replay.next_kernel_variable;
+        let mut preview_next_opaque_call = execution.next_opaque_call;
+        let mut preview_next_kernel_variable = execution.next_kernel_variable;
         let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
         let preview = certified_statement_transitions(
             &current_state,
@@ -1614,7 +1599,6 @@ fn execute_step_from_execution_point_selecting_path(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
     #[cfg(test)]
@@ -1741,8 +1725,8 @@ fn execute_step_from_execution_point_selecting_path(
         function_environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
-        &mut replay.next_opaque_call,
-        &mut replay.next_kernel_variable,
+        &mut execution.next_opaque_call,
+        &mut execution.next_kernel_variable,
         prerequisite_policy,
         fact_transport_policy,
         context,
@@ -1804,11 +1788,7 @@ fn execute_step_from_execution_point_selecting_path(
                 &construction_point_overrides,
             );
             construct_simple_step_for_planned_operation(
-                replay,
-                &execution.frontier,
-                &execution.effect_facts,
-                &execution.program_point_states,
-                &mut execution.surface_propositions,
+                execution,
                 proof_context,
                 &current_state,
                 function_block,
@@ -1852,6 +1832,7 @@ fn execute_step_from_execution_point_selecting_path(
             );
             completed_outcomes.push((outcome, completed_execution_facts, obligations));
         }
+        let state: &mut CState = &mut execution.state;
         let completed = c_function_execution_candidates_from_outcomes(
             execution_start_state.clone(),
             function.clone(),
@@ -1951,7 +1932,7 @@ fn execute_step_from_execution_point_selecting_path(
         .expect("one statement transition was required");
     let introduced_facts = transition.introduced_facts.clone();
     let definedness = statement_expression_definedness(&current_state, &step_statement);
-    for derivation in &replay.function_entry_derivations {
+    for derivation in &execution.function_entry_derivations {
         let mut conclusion = derivation.proposition();
         while let Proposition::Implies(_, body) = conclusion {
             conclusion = body;
@@ -1965,7 +1946,7 @@ fn execute_step_from_execution_point_selecting_path(
                 .execution_start_facts
                 .contains(conclusion)
         {
-            replay
+            execution
                 .function_entry_execution_prerequisites
                 .insert(conclusion.clone());
         }
@@ -2046,11 +2027,7 @@ fn execute_step_from_execution_point_selecting_path(
             &construction_point_overrides,
         );
         deferred_transport_operations = append_statement_transition_certificate(
-            replay,
-            &execution.frontier,
-            &execution.effect_facts,
-            &execution.program_point_states,
-            &mut execution.surface_propositions,
+            execution,
             proof_context,
             &transition,
             if loop_index.is_some() {
@@ -2066,6 +2043,7 @@ fn execute_step_from_execution_point_selecting_path(
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
+    let state: &mut CState = &mut execution.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
     // later simple step. Record that form during both planning and
@@ -2329,16 +2307,15 @@ fn execute_step_from_execution_point_selecting_path(
     // pre-statement sources, mirroring what the certificate's own replay
     // carries across this statement.
     if construction.is_some() {
+        // Construction reads the post-statement state while it records into
+        // the execution; the transports do not change the state.
+        let exit_state = (*execution.state).clone();
         for operation in &deferred_transport_operations {
             if let Some(environments) = construction {
                 construct_simple_step_for_planned_operation(
-                    replay,
-                    &execution.frontier,
-                    &execution.effect_facts,
-                    &execution.program_point_states,
-                    &mut execution.surface_propositions,
+                    execution,
                     proof_context,
-                    state,
+                    &exit_state,
                     function_block,
                     parameters,
                     arguments,
@@ -2346,6 +2323,7 @@ fn execute_step_from_execution_point_selecting_path(
                     operation,
                 );
             }
+            let replay = &mut execution.replay;
             let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
             match operation {
                 ConstructionEvidence::CertifiedFactTransport { target, .. } => {
@@ -2764,8 +2742,8 @@ pub(super) fn bounded_execute_from_execution_point(
             tactic_index,
             "execute",
         )?;
-        let mut preview_next_opaque_call = frontier.execution.replay.next_opaque_call;
-        let mut preview_next_kernel_variable = frontier.execution.replay.next_kernel_variable;
+        let mut preview_next_opaque_call = frontier.execution.next_opaque_call;
+        let mut preview_next_kernel_variable = frontier.execution.next_kernel_variable;
         let transition_label = format!("`{claim_label}` tactic {tactic_index}: `execute`");
         let preview_transitions = certified_statement_transitions(
             &current_state,

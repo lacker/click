@@ -1149,7 +1149,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             .as_ref()
             .clone();
         certification_facts.extend(
-            replay
+            proof_execution
                 .function_entry_execution_prerequisites
                 .iter()
                 .cloned(),
@@ -1249,7 +1249,8 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             |(facts, cached_state, concrete_loop_execution, _)| {
                                 facts == &certification_facts
                                     && cached_state == pre_state
-                                    && *concrete_loop_execution == replay.concrete_loop_execution
+                                    && *concrete_loop_execution
+                                        == proof_execution.concrete_loop_execution
                             },
                         )
                     {
@@ -1263,7 +1264,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             arguments,
                             &execution_start_assumptions,
                             function_environment,
-                            replay.concrete_loop_execution,
+                            proof_execution.concrete_loop_execution,
                             || {
                                 prove_checked_c_function_execution_with_environment(
                                     pre_state.clone(),
@@ -1271,14 +1272,14 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     arguments.to_vec(),
                                     execution_start_assumptions.clone(),
                                     function_environment.clone(),
-                                    if replay.concrete_loop_execution
+                                    if proof_execution.concrete_loop_execution
                                         || !proof_execution.frontier_loop_rules.is_empty()
                                     {
                                         CExecutionSemantics::APPLY_VERIFIED_RULES
                                     } else {
                                         CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
                                     },
-                                    if replay.concrete_loop_execution {
+                                    if proof_execution.concrete_loop_execution {
                                         CFunctionContractExecutionMode::ExecuteLoops
                                     } else {
                                         CFunctionContractExecutionMode::VerifyLoops
@@ -1290,7 +1291,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             certification_cache.push((
                                 certification_facts.clone(),
                                 pre_state.clone(),
-                                replay.concrete_loop_execution,
+                                proof_execution.concrete_loop_execution,
                                 execution.clone(),
                             ));
                         }
@@ -1300,8 +1301,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             );
             let certified_execution = checked_c_function_execution_with_entry_derivations(
                 certified_execution,
-                replay.function_entry_derivations.to_vec(),
-                replay.function_entry_execution_prerequisites.to_vec(),
+                proof_execution.function_entry_derivations.to_vec(),
+                proof_execution
+                    .function_entry_execution_prerequisites
+                    .to_vec(),
             );
             if let Some(limit) = certified_execution.limit() {
                 if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
@@ -1553,7 +1556,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 &proof_label,
                 "certified outcome pairing",
                 || -> Result<Option<Vec<Option<usize>>>, ClickError> {
-                    if replay.execution_abstraction {
+                    if proof_execution.execution_abstraction {
                         return Ok((!certified_outcomes.is_empty())
                             .then(|| vec![Some(0); execution.paths().len()]));
                     }
@@ -4094,7 +4097,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                     }
 
                     let (certified_path, specification_outcome, specification_requirements) =
-                        if replay.execution_abstraction {
+                        if proof_execution.execution_abstraction {
                             (
                                 certified_path.clone(),
                                 certified_outcomes_by_group[certified_path_index.0]
@@ -4171,7 +4174,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),
                             theorem: theorem.clone(),
-                            concrete_loop_execution: replay.concrete_loop_execution,
+                            concrete_loop_execution: proof_execution.concrete_loop_execution,
                             frontier_loop_clauses: proof_execution.frontier_loop_clauses.to_vec(),
                             frontier_loop_rules: proof_execution.frontier_loop_rules.to_vec(),
                             checked_execution: certified_executions[certified_path_index.0].clone(),

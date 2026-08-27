@@ -133,63 +133,7 @@ impl<T: Clone> SharedValue<T> {
 
 #[derive(Clone, Default)]
 pub(super) struct TacticReplayState {
-    pub(super) loop_effect_goal: Option<LoopEffectReplayGoal>,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
-    pub(super) region_simp: Option<(usize, usize)>,
-    pub(super) region_invariants_closed: bool,
-    /// Where the replayed `close_invariants` tactic sat, so the invariant
-    /// bundle check its caller performs after the replay finishes can be
-    /// timed against that tactic's own identity instead of going unattributed.
-    ///
-    /// `close_invariants` only records the intent during replay; the kernel
-    /// re-derivation that gives it meaning runs in
-    /// `verify_one_loop_preservation_proof` once the whole certificate has
-    /// replayed. Without this the dominant cost of the loop-invariant bundle
-    /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
-    pub(super) invariant_closer_step: Option<InvariantCloserStep>,
-    pub(super) next_opaque_call: u64,
-    pub(super) next_kernel_variable: u64,
-    pub(super) next_path_choice: usize,
-    /// Immutable facts at the execution root. Every proof branch reads the
-    /// same entry context, so clones share it rather than copying a
-    /// project-sized fact vector.
-    /// Exact non-contract facts selected by a statement certificate, resource
-    /// observation, or explicit kernel theorem while the C frontier is still
-    /// at function entry.
-    pub(super) function_entry_execution_prerequisites: PersistentOrderedSet<Proposition>,
-    /// Kernel-issued implications produced by explicit theorem applications
-    /// and resource-count observations at function entry. Final certification
-    /// independently discharges their premises before admitting conclusions
-    /// that were exact assumptions of the checked execution.
-    pub(super) function_entry_derivations: PersistentOrderedSet<Theorem>,
-    /// Frontier-local loop proofs become part of the checked function proof,
-    /// not temporary tactic state.  Final kernel certification rebuilds the
-    /// annotated function from these bound clauses and reuses these rules.
-    /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
-    /// the same reference under another form — names in this region.
-    ///
-    /// `old` denotes function entry, but certificate replay used to resolve it
-    /// *positionally*, to whichever state the enclosing proof region started
-    /// from. Inside a function-body proof those coincide; inside a
-    /// loop-preservation region they do not, so the same surface text meant
-    /// loop-entry memory here and function-entry memory in the Click -> Spec
-    /// lowering the kernel certified against. Naming the state explicitly is
-    /// what makes the two agree; see
-    /// `docs/internals/memory-dag.md` (stage 2a).
-    ///
-    /// `None` keeps the previous positional resolution, so every region that
-    /// does not record a function-entry snapshot behaves exactly as before.
-    pub(super) concrete_loop_execution: bool,
-    /// The execution frontier was intentionally replaced by a branch
-    /// interface. Its state is a specification abstraction, not an exact
-    /// symbolic body outcome; whole-function kernel certification checks every
-    /// concrete path before any contract claim is exported.
-    pub(super) execution_abstraction: bool,
-    /// Semantic transition evidence recorded by planning so the surface step
-    /// constructed for a statement move can consult the certified transition.
-    /// It is deliberately separate from `ProofTactic` so internal execution
-    /// artifacts cannot masquerade as proof steps.
-    pub(super) planned_statement_transitions: SharedVec<PlannedStatementTransition>,
     pub(super) proof_certificate_builder: SharedValue<ProofCertificateBuilder>,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common

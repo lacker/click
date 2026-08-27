@@ -2870,7 +2870,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         });
         return Ok(true);
     }
-    if execution.replay.loop_effect_goal.is_some() {
+    if execution.loop_effect_goal.is_some() {
         // A structural-effect replay path may already own the exact C-branch
         // fact under this Surface spelling. Prefer that unambiguous indexed
         // identity to rereading the condition from the heap. Ordinary loop

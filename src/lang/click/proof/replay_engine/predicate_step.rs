@@ -72,7 +72,6 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
     let state: &CState = &execution.state;
     let unfolded_predicates = &mut execution.unfolded_predicates;
 
@@ -146,13 +145,16 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             })
             .flatten();
         if let Some(derivation) = contract_unfolding {
-            if replay
+            if execution
                 .function_entry_execution_prerequisites
                 .insert(kernel.clone())
             {
                 added_function_entry_prerequisites.push(kernel);
             }
-            if replay.function_entry_derivations.insert(derivation.clone()) {
+            if execution
+                .function_entry_derivations
+                .insert(derivation.clone())
+            {
                 added_function_entry_derivations.push(derivation);
             }
         }

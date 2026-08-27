@@ -2838,16 +2838,9 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
                 .shares_storage_with(&applied_execution.state),
             "theorem application does not alter the C state"
         );
-        assert!(
-            root_execution
-                .replay
-                .function_entry_execution_prerequisites
-                .len()
-                == 0
-        );
+        assert!(root_execution.function_entry_execution_prerequisites.len() == 0);
         assert!(
             applied_execution
-                .replay
                 .function_entry_execution_prerequisites
                 .contains(&kernel_conclusion)
         );
@@ -8124,9 +8117,9 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         let execution = closed
             .execution()
             .expect("the successor retains execution state");
-        assert!(execution.replay.region_invariants_closed);
+        assert!(execution.region_invariants_closed);
         assert!(
-            execution.replay.invariant_closer_step.is_none(),
+            execution.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the replay adapter boundary"
         );
         assert!(closed.apply_step(SimpleProofStep::CloseInvariants).is_err());

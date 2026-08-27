@@ -258,12 +258,12 @@ impl<'a> Proof<'a> {
                 self.step_error("`close_invariants` is only available in a loop-region proof")
             );
         }
-        if execution.replay.region_invariants_closed {
+        if execution.region_invariants_closed {
             return Err(
                 self.step_error("the invariant bundle was closed more than once on one path")
             );
         }
-        execution.replay.region_invariants_closed = true;
+        execution.region_invariants_closed = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -320,7 +320,7 @@ impl<'a> Proof<'a> {
         )
         .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
 
-        if execution.replay.region_invariants_closed {
+        if execution.region_invariants_closed {
             Ok(self.clone())
         } else {
             self.apply_step(SimpleProofStep::CloseInvariants)
@@ -491,7 +491,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let claim_label = context.claim_label;
         let mut planning = execution.clone();
-        planning.replay.planned_statement_transitions.clear();
+        planning.planned_statement_transitions.clear();
         let facts_vec = self.facts().to_vec();
         planning.replay.proof_certificate_builder = ProofCertificateBuilder {
             last_step_entry: execution
@@ -760,7 +760,7 @@ impl<'a> Proof<'a> {
             let mut planning = self.execution().cloned().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
             })?;
-            planning.replay.planned_statement_transitions.clear();
+            planning.planned_statement_transitions.clear();
             planning.replay.proof_certificate_builder = ProofCertificateBuilder {
                 last_step_entry: view
                     .replay
@@ -855,7 +855,7 @@ impl<'a> Proof<'a> {
             click_function_environment: context.click_function_environment,
         });
         let mut planning = execution.clone();
-        planning.replay.planned_statement_transitions.clear();
+        planning.planned_statement_transitions.clear();
         planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
         let mut planning_facts = facts_vec.clone();
         let direct_result = (!force_all_paths).then(|| {
@@ -868,7 +868,7 @@ impl<'a> Proof<'a> {
         });
         if direct_result.is_none_or(|result| result.is_err()) {
             planning = execution.clone();
-            planning.replay.planned_statement_transitions.clear();
+            planning.planned_statement_transitions.clear();
             planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
             planning_facts = facts_vec.clone();
             bounded_execute_from_execution_point(
@@ -1058,7 +1058,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.replay.invariant_closer_step = Some(InvariantCloserStep {
+        execution.invariant_closer_step = Some(InvariantCloserStep {
             tactic_index,
             source_index,
             statement_index: execution.frontier.next_statement_index,
@@ -1098,7 +1098,7 @@ impl<'a> Proof<'a> {
         if execution.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("a region `simp` is only available in a loop-region proof"));
         }
-        execution.replay.region_simp = Some((tactic_index, source_index));
+        execution.region_simp = Some((tactic_index, source_index));
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(Self {
             context: self.context.clone(),

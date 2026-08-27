@@ -136,7 +136,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
-        execution.replay.loop_effect_goal = Some(LoopEffectReplayGoal {
+        execution.loop_effect_goal = Some(LoopEffectReplayGoal {
             before_state: before_state.clone(),
             check: check.clone(),
             closed: false,

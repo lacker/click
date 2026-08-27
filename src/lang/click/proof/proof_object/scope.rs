@@ -966,26 +966,18 @@ impl<'a> ProofScope<'a> {
                     conclusion = body;
                 }
                 execution
-                    .replay
                     .function_entry_execution_prerequisites
                     .insert(conclusion.clone());
-                execution
-                    .replay
-                    .function_entry_derivations
-                    .insert(derivation);
+                execution.function_entry_derivations.insert(derivation);
             }
         }
         if let Some(derivation) =
             crate::kernel::prove_pure_proposition_from_context(assumptions, kernel)
         {
             execution
-                .replay
                 .function_entry_execution_prerequisites
                 .insert(kernel.clone());
-            execution
-                .replay
-                .function_entry_derivations
-                .insert(derivation);
+            execution.function_entry_derivations.insert(derivation);
         }
         Ok(())
     }
