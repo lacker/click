@@ -241,8 +241,9 @@ planner — run on boundary `Proof`s with no interpreter call in
      adapters `into_execution_context` / `replay_cursor` /
      `begin_source_tactic`, and others) — 2,485 lines. The checked
      drivers are the single engine; the last shapes were closed by
-     treating a proof `if` as a case split (see
-     [make-step-simple.md](make-step-simple.md)). Examples and mdtests
+     treating a proof `if` as a case split (each case runs its arm and
+     the shared continuation to its own function exit; the cases never
+     rejoin as one state). Examples and mdtests
      had zero fallbacks before the cut, and the whole unit suite passed
      with the fallbacks made terminal, so no diagnostic depended on the
      interpreter.
@@ -398,12 +399,17 @@ recommendation; it is outcome-side work, not planner porting.
 ## Superseded: the smart `execute` law is `step()` made simple (2026-08-25)
 
 The "smart `execute` is the open law" item above, the typed-gate result,
-and the carry census below are resolved by a design decision recorded in
-[make-step-simple.md](make-step-simple.md): `step()` executes with the
-whole proof context visible and takes no premise list, `execute` is its
-repetition, and `step() using` is deleted. There is no premise selection
-to unify, carry, or minimize. Phase 1 continues from that issue's plan;
-its chunk 4 is this issue's flat-driver adoption and routing deletions.
+and the carry census below are resolved by a design decision (the
+`make-step-simple` issue, closed 2026-08-27 when its last chunk landed):
+`step()` executes with the whole proof context visible and takes no
+premise list, `execute` is its repetition, and `step() using` is deleted.
+There is no premise selection to unify, carry, or minimize. Two facts from
+that work outlive it: a proof `if` at an execution frontier is a case
+split, never a fork-and-rejoin (that law belongs to `branch { }` alone);
+and a checked `simp` derivation is added only for a common, bounded,
+replayable shape — "the search-based `simp` could decide it" is not a
+criterion, and that decision procedure's authoritative use left with the
+interpreter.
 
 ## Outcome spelling repair landed; the carry gap remains (2026-08-25)
 

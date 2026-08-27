@@ -56,6 +56,12 @@ simple and structural operations as explicit tactics. A candidate is not
 accepted merely because the planner labels it successful; success is a
 completed checked descendant.
 
+A checked `simp` derivation is added only for a common, bounded,
+replayable shape: it must emit simple steps the kernel checks one at a
+time and a certificate can replay. That the search-based `simp` decision
+procedure could decide a goal is not a criterion; it is a diagnostic, not
+an authority.
+
 For expansion, the completed proof's provenance is filtered to the selected
 source site and rendered as an explicit Surface Click proof. The complete
 rewritten source is then parsed and verified through the ordinary entry point.
