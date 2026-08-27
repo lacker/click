@@ -98,18 +98,18 @@ int32 read_after_calls(struct buffer* owner) {
 } by {
     unfold(allocated_buffer(owner));
     fold(buffer_storage(owner));
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
     unfold(buffer_storage(owner));
     have 0 <= owner->len by simp;
     have owner->len <= owner->cap by simp;

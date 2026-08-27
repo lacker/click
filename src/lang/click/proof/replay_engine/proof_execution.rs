@@ -54,7 +54,7 @@ pub(in crate::lang::click) fn collect_internal_proof_execution_labels<R>(
 /// statement step; the other simple statement forms map as themselves.
 fn arm_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
     match tactic {
-        ProofTactic::SmartStep => Some(SimpleProofStep::Step),
+        ProofTactic::Step => Some(SimpleProofStep::Step),
         tactic => linear_execution_simple_step(tactic),
     }
 }
@@ -63,7 +63,6 @@ fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep>
     match tactic {
         ProofTactic::Mark(name) => Some(SimpleProofStep::Mark(name.clone())),
         ProofTactic::Step => Some(SimpleProofStep::Step),
-        ProofTactic::StepUsing(premises) => Some(SimpleProofStep::StepUsing(premises.clone())),
         ProofTactic::TransportUsing {
             source,
             target,
@@ -99,35 +98,10 @@ fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep>
     }
 }
 
-fn expanded_execution_arm_supported(
-    condition: &ClickProposition,
-    take_then: bool,
-    steps: &[SimpleProofStep],
-) -> bool {
-    if steps.is_empty() {
-        return true;
-    }
-    let expected = if take_then {
-        condition.clone()
-    } else {
-        negate_click_proposition(condition)
-    };
-    // An empty entry-premise list is still the surface shape of this checked
-    // operation: admit it so `Proof` reports the missing branch anchor instead
-    // of silently dropping to compatibility replay. A nonempty, different
-    // premise belongs to an older certificate shape and remains unsupported.
-    let entry_supported = match steps.first() {
-        Some(SimpleProofStep::Step) => true,
-        Some(SimpleProofStep::StepUsing(premises)) => {
-            premises.is_empty() || premises.as_slice() == std::slice::from_ref(&expected)
-        }
-        _ => false,
-    };
-    entry_supported
-        && matches!(
-            steps.last(),
-            Some(SimpleProofStep::StepUsing(_) | SimpleProofStep::Step)
-        )
+fn expanded_execution_arm_supported(steps: &[SimpleProofStep]) -> bool {
+    steps.is_empty()
+        || (matches!(steps.first(), Some(SimpleProofStep::Step))
+            && matches!(steps.last(), Some(SimpleProofStep::Step)))
 }
 
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
@@ -191,7 +165,7 @@ fn checked_execution_arm_tactics_end(
             at_function_exit = true;
             continue;
         }
-        if matches!(indexed.tactic, ProofTactic::SmartStep) {
+        if matches!(indexed.tactic, ProofTactic::Step) {
             may_exit = true;
             continue;
         }
@@ -433,7 +407,7 @@ fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
     linear_execution_simple_step(tactic).is_some()
         || matches!(
             tactic,
-            ProofTactic::SmartStep
+            ProofTactic::Step
                 | ProofTactic::ApplyTheorem(_)
                 | ProofTactic::Transport { .. }
                 | ProofTactic::Have(_)
@@ -623,7 +597,6 @@ fn advance_checked_linear_continuation<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
-    allow_unrelated_statement_context: bool,
     timing_claim_label: Option<&str>,
 ) -> Result<Option<(Proof<'a>, Vec<IndexedTactic>)>, ClickError> {
     let Some(tactics) = linear_execution_tactics(continuation) else {
@@ -665,30 +638,6 @@ fn advance_checked_linear_continuation<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
-        } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            // A complete top-level resource scope owns its linear suffix, so
-            // statement selection may retain unrelated resources and facts
-            // just as it does inside the scope. Flat partial migration keeps
-            // the narrower standalone-step policy until its continuation is
-            // owned transactionally too.
-            let stepped = if allow_unrelated_statement_context {
-                proof.try_indexed_execute_step()?
-            } else {
-                proof.try_smart_step()?
-            };
-            match stepped {
-                Some(stepped) => stepped,
-                // The planner fallback constructs the explicit checked
-                // operations through the same law the interpreter used.
-                // While the compatibility interpreter still exists, its
-                // failures stay a decline so routing does not change; the
-                // fallback deletion makes them terminal, as they were in
-                // the interpreter itself.
-                None => match proof.apply_planned_smart_step(indexed.index) {
-                    Ok(stepped) => stepped,
-                    Err(_) => return Ok(None),
-                },
-            }
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
                 return Ok(None);
@@ -816,7 +765,6 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
     arguments: &'a [CExpression],
-    allow_indexed_smart_step: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     // A retained proof or a terminal error publishes what the driver
     // captured; only a decline (`Ok(None)`) leaves the cursor untouched.
@@ -836,7 +784,6 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
         theorem_environment,
         function,
         arguments,
-        allow_indexed_smart_step,
     );
     if !matches!(result, Ok(None))
         && let (Some(expansion_capture), Some(staged)) = (expansion_capture, staged)
@@ -862,7 +809,6 @@ fn try_check_flat_function_proof_inner<'a>(
     theorem_environment: &'a TheoremEnvironment,
     function: &'a CFunction,
     arguments: &'a [CExpression],
-    allow_indexed_smart_step: bool,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     let Some(tactics) = linear_execution_tactics(program) else {
         return Ok(None);
@@ -890,7 +836,6 @@ fn try_check_flat_function_proof_inner<'a>(
         staged_expansion_capture.as_mut(),
         context.replay.proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
-        allow_indexed_smart_step,
         Some(claim_label),
     )?
     else {
@@ -1023,7 +968,6 @@ fn try_check_structural_function_proof_inner<'a>(
                     staged_expansion_capture.as_mut(),
                     proof_site.as_ref(),
                     generated_by_source_index.unwrap_or(usize::MAX),
-                    true,
                     Some(claim_label),
                 )?
                 else {
@@ -1194,7 +1138,7 @@ fn try_check_structural_function_proof_inner<'a>(
                 }
                 proof = proof.with_execution_tactic_index(*index)?;
                 if let Some((then_steps, else_steps)) =
-                    expanded_execution_if_steps(condition, then_branch, else_branch)
+                    expanded_execution_if_steps(then_branch, else_branch)
                     && proof.frontier_is_execution_branch(condition)?
                 {
                     proof =
@@ -1232,7 +1176,7 @@ fn try_check_structural_function_proof_inner<'a>(
                             owning_source_index,
                         );
                         exact
-                    } else if !arm_steps[0].3 && !arm_steps[1].3 {
+                    } else {
                         proof.try_collapse_statement_successor_if(
                             condition,
                             [
@@ -1240,8 +1184,6 @@ fn try_check_structural_function_proof_inner<'a>(
                                 (arm_steps[1].0, arm_steps[1].2.clone()),
                             ],
                         )?
-                    } else {
-                        None
                     }
                 } else {
                     None
@@ -1523,7 +1465,7 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
             for indexed in tactics {
                 let handled_by_linear_driver = !matches!(
                     indexed.tactic,
-                    ProofTactic::Loop(_) | ProofTactic::Simp | ProofTactic::SmartStep
+                    ProofTactic::Loop(_) | ProofTactic::Simp | ProofTactic::Step
                 );
                 if handled_by_linear_driver {
                     let segment = InternalProofNode::Linear {
@@ -1537,7 +1479,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                         expansion_capture.as_deref_mut(),
                         proof_site,
                         owning_source_index,
-                        false,
                         Some(claim_label),
                     )?
                     .filter(|(_, unconsumed)| unconsumed.is_empty());
@@ -1568,13 +1509,9 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                     continue;
                 }
                 match &indexed.tactic {
-                    ProofTactic::SmartStep => {
+                    ProofTactic::Step => {
                         let checkpoint = proof.checkpoint();
-                        proof = if let Some(stepped) = proof.try_smart_step()? {
-                            stepped
-                        } else {
-                            proof.apply_planned_smart_step(indexed.index)?
-                        };
+                        proof = proof.apply_step(SimpleProofStep::Step)?;
                         let steps = proof.certificate_since(&checkpoint)?.steps().to_vec();
                         proof = proof.record_surface_steps(&steps)?;
                         if indexed.source_index != owning_source_index
@@ -1820,11 +1757,6 @@ fn advance_focused_execution_arm<'a>(
         let checkpoint = proof.checkpoint();
         let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
             proof.apply_step(step)?
-        } else if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            let Some(next) = proof.try_indexed_execute_step()? else {
-                return Ok(None);
-            };
-            next
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
                 // Exit applications need one point proof per concrete
@@ -1903,10 +1835,7 @@ fn source_successor_if_arm_step(
     take_then: bool,
 ) -> Option<(usize, usize, Vec<ClickProposition>, bool)> {
     match &indexed.tactic {
-        ProofTactic::StepUsing(premises) => {
-            Some((indexed.index, indexed.source_index, premises.clone(), false))
-        }
-        ProofTactic::SmartStep => Some((
+        ProofTactic::Step => Some((
             indexed.index,
             indexed.source_index,
             vec![if take_then {
@@ -1929,14 +1858,13 @@ fn record_source_successor_smart_expansions(
     let Some(site) = proof_site else {
         return;
     };
-    for (_, source_index, premises, smart) in arm_steps {
+    for (_, source_index, _, smart) in arm_steps {
         if *smart
             && *source_index != owning_source_index
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
                 == Some(*source_index)
         {
-            let certificate =
-                ProofCertificate::from_steps(vec![SimpleProofStep::StepUsing(premises.clone())]);
+            let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Step]);
             record_proof_site_tactic_expansion(
                 expansion_capture.as_deref_mut(),
                 site,
@@ -2459,14 +2387,13 @@ fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofSte
 }
 
 fn expanded_execution_if_steps(
-    condition: &ClickProposition,
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
 ) -> Option<(Vec<SimpleProofStep>, Vec<SimpleProofStep>)> {
     let then_steps = linear_execution_steps(then_branch)?;
     let else_steps = linear_execution_steps(else_branch)?;
-    (expanded_execution_arm_supported(condition, true, &then_steps)
-        && expanded_execution_arm_supported(condition, false, &else_steps)
+    (expanded_execution_arm_supported(&then_steps)
+        && expanded_execution_arm_supported(&else_steps)
         && !(then_steps.is_empty() && else_steps.is_empty()))
     .then_some((then_steps, else_steps))
 }
@@ -2505,25 +2432,6 @@ fn advance_linear_open_scope<'a>(
             } else {
                 scope.apply_step(step)?
             };
-            continue;
-        }
-        if matches!(indexed.tactic, ProofTactic::SmartStep) {
-            let checkpoint = scope.checkpoint();
-            let Some(stepped) = scope.try_smart_step()? else {
-                return Ok(None);
-            };
-            scope = stepped;
-            if indexed.source_index != owning_source_index
-                && let Some(site) = proof_site
-            {
-                let certificate = scope.certificate_since(&checkpoint)?;
-                record_proof_site_tactic_expansion(
-                    expansion_capture.as_deref_mut(),
-                    site,
-                    indexed.source_index,
-                    &certificate.to_proof_tactics(),
-                );
-            }
             continue;
         }
         if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
@@ -2739,7 +2647,7 @@ fn advance_checked_open_scope<'a>(
         ..
     } = body
         && let Some((then_steps, else_steps)) =
-            expanded_execution_if_steps(condition, then_branch, else_branch)
+            expanded_execution_if_steps(then_branch, else_branch)
         && scope.frontier_is_execution_branch(condition)?
     {
         let scope = scope.apply_expanded_execution_if(condition, &then_steps, &else_steps)?;
@@ -3188,9 +3096,7 @@ pub(in crate::lang::click::proof) fn add_proof_branch_path(
 /// reached function exit: the tactic has no statement to run.
 fn post_exit_execution_tactic_error(tactic: &ProofTactic) -> Option<ClickError> {
     let name = match tactic {
-        ProofTactic::Step | ProofTactic::StepUsing(_) | ProofTactic::SmartStep => {
-            "step()".to_string()
-        }
+        ProofTactic::Step => "step()".to_string(),
         ProofTactic::SmartExecute | ProofTactic::SmartExecuteAllPaths => "execute()".to_string(),
         ProofTactic::ExecuteUntil(region) => format!(
             "execute_until({})",

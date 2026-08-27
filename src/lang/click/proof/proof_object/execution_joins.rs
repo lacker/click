@@ -500,14 +500,9 @@ impl<'a> Proof<'a> {
             else_branch.as_ref()
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        let path_condition = if take_then {
-            surface_condition.clone()
-        } else {
-            negate_click_proposition(&surface_condition)
-        };
         let mut selected_steps = Vec::with_capacity(entry_steps + arm.certificate.steps().len());
-        selected_steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
-        selected_steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        selected_steps.push(SimpleProofStep::Step);
+        selected_steps.resize_with(entry_steps, || SimpleProofStep::Step);
         selected_steps.extend_from_slice(arm.certificate.steps());
         let selected = ProofCertificate::from_steps(selected_steps);
         let empty = ProofCertificate::from_steps(Vec::new());
@@ -1060,32 +1055,23 @@ impl<'a> Proof<'a> {
             )?;
         }
 
-        let terminal_certificate =
-            |body: &ProofCertificate, empty_source_arm: bool, path_condition: ClickProposition| {
-                let entry_steps = 1 + usize::from(empty_source_arm);
-                let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
-                steps.push(SimpleProofStep::StepUsing(vec![path_condition]));
-                steps.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
-                steps.extend_from_slice(body.steps());
-                ProofCertificate::from_steps(steps)
-            };
+        let terminal_certificate = |body: &ProofCertificate, empty_source_arm: bool| {
+            let entry_steps = 1 + usize::from(empty_source_arm);
+            let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
+            steps.push(SimpleProofStep::Step);
+            steps.resize_with(entry_steps, || SimpleProofStep::Step);
+            steps.extend_from_slice(body.steps());
+            ProofCertificate::from_steps(steps)
+        };
         let then_proof = if proof_case_split {
             arms[0].certificate.clone()
         } else {
-            terminal_certificate(
-                &arms[0].certificate,
-                empty_source_arms[0],
-                surface_condition.clone(),
-            )
+            terminal_certificate(&arms[0].certificate, empty_source_arms[0])
         };
         let else_proof = if proof_case_split {
             arms[1].certificate.clone()
         } else {
-            terminal_certificate(
-                &arms[1].certificate,
-                empty_source_arms[1],
-                negate_click_proposition(&surface_condition),
-            )
+            terminal_certificate(&arms[1].certificate, empty_source_arms[1])
         };
         let then_replay = &arms[0].execution.replay;
         let else_replay = &arms[1].execution.replay;
@@ -2114,13 +2100,8 @@ impl<'a> Proof<'a> {
             else_branch.as_ref()
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        let path_condition = if take_then {
-            checked_condition
-        } else {
-            negate_click_proposition(&checked_condition)
-        };
-        let mut expected = vec![SimpleProofStep::StepUsing(vec![path_condition])];
-        expected.resize_with(entry_steps, || SimpleProofStep::StepUsing(Vec::new()));
+        let mut expected = vec![SimpleProofStep::Step];
+        expected.resize_with(entry_steps, || SimpleProofStep::Step);
         Ok(expected)
     }
 
@@ -2205,7 +2186,6 @@ impl<'a> Proof<'a> {
             SimpleProofStep::Have { .. }
             | SimpleProofStep::UnfoldPredicate(_)
             | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::StepUsing(_)
             | SimpleProofStep::Step => true,
             SimpleProofStep::If {
                 then_proof,
@@ -2229,7 +2209,7 @@ impl<'a> Proof<'a> {
 
     pub(super) fn planned_execution_steps_contain_transition(steps: &[SimpleProofStep]) -> bool {
         steps.iter().any(|step| match step {
-            SimpleProofStep::StepUsing(_) | SimpleProofStep::Step => true,
+            SimpleProofStep::Step => true,
             SimpleProofStep::If {
                 then_proof,
                 else_proof,
@@ -2256,12 +2236,7 @@ impl<'a> Proof<'a> {
         let mut escaped = false;
         for step in steps {
             if !escaped
-                && matches!(
-                    step,
-                    SimpleProofStep::StepUsing(_)
-                        | SimpleProofStep::Step
-                        | SimpleProofStep::If { .. }
-                )
+                && matches!(step, SimpleProofStep::Step | SimpleProofStep::If { .. })
                 && proof.is_at_region_boundary()
             {
                 proof = proof.continue_arm_into_parent_frontier(record)?;
@@ -2339,7 +2314,6 @@ impl<'a> Proof<'a> {
         else_steps: &[SimpleProofStep],
     ) -> Result<Self, ClickError> {
         let arm_premises = [then_steps, else_steps].map(|steps| match steps.first() {
-            Some(SimpleProofStep::StepUsing(premises)) => Some(premises.clone()),
             Some(SimpleProofStep::Step) => Some(Vec::new()),
             _ => None,
         });
@@ -2380,9 +2354,9 @@ impl<'a> Proof<'a> {
                 .checked_expanded_execution_arm_entry_steps(&record, take_then, None)?
                 .len();
             if steps.len() < entry_steps
-                || !steps[..entry_steps].iter().all(|step| {
-                    matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step)
-                })
+                || !steps[..entry_steps]
+                    .iter()
+                    .all(|step| matches!(step, SimpleProofStep::Step))
             {
                 return Err(self.step_error(format!(
                     "planned execution {} arm does not begin with its {entry_steps} C branch-entry step(s)",
@@ -2420,11 +2394,7 @@ impl<'a> Proof<'a> {
             }
             if !matches!(
                 steps.last(),
-                Some(
-                    SimpleProofStep::StepUsing(_)
-                        | SimpleProofStep::Step
-                        | SimpleProofStep::If { .. }
-                )
+                Some(SimpleProofStep::Step | SimpleProofStep::If { .. })
             ) {
                 return Err(self.step_error(format!(
                     "expanded execution {} arm does not end in a checked C step",
@@ -2711,11 +2681,11 @@ impl<'a> Proof<'a> {
 /// Whether an arm's leading steps are its checked branch-entry steps. A bare
 /// `step()` is the entry step that lists no premise.
 fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]) -> bool {
-    steps.len() >= expected.len() && steps.iter().zip(expected).all(|(actual, expected)| {
-        actual == expected
-            || (matches!(actual, SimpleProofStep::Step)
-                && matches!(expected, SimpleProofStep::StepUsing(premises) if premises.is_empty()))
-    })
+    steps.len() >= expected.len()
+        && steps
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual == expected)
 }
 
 /// Carries the frontier-local loop proofs both arms established into the

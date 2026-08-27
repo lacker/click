@@ -44,1044 +44,214 @@ int32 bubble_sort3_loop(int32 p[3]) {
     requires loadable(p[0..3]);
     consumes p[0..3];
     ensures sorted: sorted(p, 3) by {
-        step() using {
-            loadable(p[0..3]);
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
-        step() using {
-            loadable(old(p[0..3]));
-        }
+        step();
+        step();
+        step();
+        step();
+        step();
+        step();
+        step();
         if at(function.entry, p[1]) < at(function.entry, *p) {
-            step() using {
-                loadable(old(p[0..3]));
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                at(function.entry, p[1]) < at(function.entry, *p);
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                at(function.entry, p[1]) < at(function.entry, *p);
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                at(function.entry, p[1]) < at(function.entry, *p);
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                at(function.entry, p[1]) < at(function.entry, *p);
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                at(function.entry, p[1]) < at(function.entry, *p);
-            }
+            step();
+            step();
+            step();
+            step();
+            step();
+            step();
             if at(function.entry, p[2]) < at(function.entry, *p) {
-                step() using {
-                    loadable(old(p[0..3]));
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    at(function.entry, p[2]) < at(function.entry, *p);
-                }
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
                 if at(function.entry, p[2]) < at(function.entry, p[1]) {
-                    step() using {
-                        loadable(old(p[0..3]));
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                    }
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
                 } else {
-                    step() using {
-                        loadable(old(p[0..3]));
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        at(function.entry, p[1]) < at(function.entry, *p);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                        not old(p[2]) < old(p[1]);
-                    }
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
                 }
             } else {
-                step() using {
-                    loadable(old(p[0..3]));
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    at(function.entry, p[1]) < at(function.entry, *p);
-                    not p[2] < tmp;
-                }
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
             }
         } else {
-            step() using {
-                loadable(old(p[0..3]));
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                not p[1] < *p;
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                not p[1] < *p;
-            }
-            step() using {
-                loadable(old(p[0..3]));
-                not p[1] < *p;
-            }
+            step();
+            step();
+            step();
+            step();
             if at(function.entry, p[2]) < at(function.entry, p[1]) {
-                step() using {
-                    loadable(old(p[0..3]));
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not tmp < *p;
-                    at(function.entry, p[2]) < at(function.entry, p[1]);
-                }
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
                 if at(function.entry, p[2]) < at(function.entry, *p) {
-                    step() using {
-                        loadable(old(p[0..3]));
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not old(p[1]) < tmp;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        at(function.entry, p[2]) < at(function.entry, *p);
-                    }
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
                 } else {
-                    step() using {
-                        loadable(old(p[0..3]));
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
-                    step() using {
-                        loadable(old(p[0..3]));
-                        not tmp < *p;
-                        at(function.entry, p[2]) < at(function.entry, p[1]);
-                        not old(p[2]) < *p;
-                    }
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
+                    step();
                 }
             } else {
-                step() using {
-                    loadable(old(p[0..3]));
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
-                step() using {
-                    loadable(old(p[0..3]));
-                    not p[1] < *p;
-                    not p[2] < p[1];
-                }
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
+                step();
             }
         }
         unfold(sorted);

@@ -78,18 +78,18 @@ int32 write_after_calls(struct buffer* owner, int32 index) {
     mutable owner->data[index..index + 1];
     ensures result == owner->len;
 } by {
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
-    step() using { loadable(owner->len); }
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
     unfold(buffer_storage(owner));
     step();
     execute();

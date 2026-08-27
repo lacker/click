@@ -592,21 +592,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
         } by {
             unfold(owned_string(owner));
             unfold(terminated_at);
-            step() using {
-                0 <= index;
-                index < owner->len;
-                loadable(owner->len);
-                loadable(owner->cap);
-                loadable(owner->data);
-                0 <= owner->len;
-                owner->len < owner->cap;
-                terminated_at(owner->data, owner->len);
-                separate(
-                    memory(owner[0..4]),
-                    memory(owner->data[0..owner->cap])
-                );
-                owner->data[owner->len] == 0;
-            }
+            step();
             have terminated_at(owner->data, owner->len) by {
                 unfold(terminated_at);
                 simp();
@@ -652,29 +638,9 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
     )
     .expect("the retained Have and statement step should expand");
     assert!(expanded.contains("have "), "{expanded}");
-    assert!(expanded.contains("step() using {"), "{expanded}");
+    assert!(expanded.contains("step();"), "{expanded}");
     verify_c0_sources(&expanded, &[("owned_string_set.c", c_source)])
         .expect("the rewritten resource-backed step should verify normally");
-
-    let premise_body = expanded
-        .rfind("step() using {")
-        .expect("the expanded smart step should expose its premise list")
-        + "step() using {".len();
-    let mut corrupted = expanded.clone();
-    corrupted.insert_str(premise_body, "\n                    index < 0;");
-    let (corrupted_result, corrupted_events) = crate::instrumentation::collect(|| {
-        verify_c0_sources(&corrupted, &[("owned_string_set.c", c_source)])
-    });
-    corrupted_result.expect_err("an unavailable resource-step premise must be rejected");
-    assert!(
-        corrupted_events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "owned_string_set.contract"
-                    && name.starts_with("smart tactic compatibility replay")
-        )),
-        "the corrupted explicit step entered compatibility replay: {corrupted_events:#?}"
-    );
 }
 
 #[test]

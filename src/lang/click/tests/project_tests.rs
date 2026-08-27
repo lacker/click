@@ -252,20 +252,12 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
     execute_until(statement(3));
     have owner->data == data by simp;
     have owner->value == 0 by simp;
-    step() using {
-        owner->value == 0;
-        loadable(old(object(owner)));
-        loadable(old(data[0..1]));
-    }
+    step();
     have owner->data[at(statement(3).entry, owner->value)] == value by {
         assumption();
     }
     have owner->data[0] == value by simp;
-    step() using {
-        owner->data[0] == value;
-        loadable(old(object(owner)));
-        loadable(old(data[0..1]));
-    }
+    step();
     execute();
     simp();
 }
@@ -368,26 +360,16 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     ensures owner->data == data;
 } by {
     step();
-    step() using {
-        loadable(old(object(owner)));
-    }
-    step() using {
-        loadable(old(object(owner)));
-        owner->data == data;
-    }
-    step() using {
-        loadable(old(object(owner)));
-        owner->data == data;
-    }
+    step();
+    step();
+    step();
     have owner->data == data by {
         simp() using {
             owner->data == at(statement(2).entry, owner->data);
             at(statement(2).entry, owner->data) == data;
         }
     }
-    step() using {
-        owner->data == data;
-    }
+    step();
     simp();
 }
 "#;
@@ -502,9 +484,7 @@ int32 pipeline(struct counter* owner) {
 } by {
     execute_until(statement(3));
     have owner->value == 1 by simp;
-    step() using {
-        owner->value == 1;
-    }
+    step();
     frame();
     simp();
 }
@@ -701,7 +681,7 @@ int32 buffer_pipeline(
             normalize();
         }
         fold(nonempty_buffer(owner));
-        step() using {};
+        step();
     }
 }
 "#;

@@ -143,10 +143,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         if self.focused != partition.ids[0]
-            || !matches!(
-                self.node.step.as_deref(),
-                Some(SimpleProofStep::Step | SimpleProofStep::StepUsing(_))
-            )
+            || !matches!(self.node.step.as_deref(), Some(SimpleProofStep::Step))
         {
             return Err(self
                 .step_error("statement-successor `if` must immediately follow its checked step"));
@@ -199,9 +196,8 @@ impl<'a> Proof<'a> {
     }
 
     /// Splits a proof path condition that exactly names the current C `if`
-    /// and applies each arm's leading source step as a checked `StepUsing`
-    /// operation on that focused Proof. Smart entries arrive with the same
-    /// explicit premises selected by their caller. The returned arms remain
+    /// and applies each arm's leading source step as a checked `Step` on
+    /// that focused Proof, which decides the C `if` from the assumed case. The returned arms remain
     /// proof cases, so their source scopes may continue through the C join;
     /// only the branch-entry transition is selected here.
     pub(in crate::lang::click::proof) fn try_split_source_successor_if(
@@ -257,14 +253,10 @@ impl<'a> Proof<'a> {
         )?;
         let mut advanced = split;
         for (arm_index, take_then) in [(0usize, true), (1usize, false)] {
-            let (tactic_index, source_index, premises) = &arm_steps[arm_index];
+            let (tactic_index, source_index, _premises) = &arm_steps[arm_index];
             advanced = advanced
                 .focus_execution_if_arm(&record, take_then)?
-                .apply_step_at(
-                    SimpleProofStep::StepUsing(premises.clone()),
-                    *tactic_index,
-                    *source_index,
-                )?;
+                .apply_step_at(SimpleProofStep::Step, *tactic_index, *source_index)?;
         }
         Ok(Some((advanced, record)))
     }
@@ -287,10 +279,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         if self.focused != partition.ids[0]
-            || !matches!(
-                self.node.step.as_deref(),
-                Some(SimpleProofStep::Step | SimpleProofStep::StepUsing(_))
-            )
+            || !matches!(self.node.step.as_deref(), Some(SimpleProofStep::Step))
         {
             return Ok(None);
         }
@@ -357,22 +346,17 @@ impl<'a> Proof<'a> {
                                 "proof `if` negation"
                             },
                         )?;
-                        // Exclusion is intentionally bounded by source
-                        // evidence. It asks only whether the arm polarity plus
-                        // explicitly named premises refute one of this lane's
-                        // exact certified partition facts; it never searches
-                        // the ambient context for a global contradiction.
+                        // Exclusion is intentionally bounded: it asks only
+                        // whether the arm polarity plus the facts the
+                        // partitioning statement itself introduced on this
+                        // lane (a callee's instantiated `ensures`) refute one
+                        // of the lane's exact certified partition facts; it
+                        // never searches the ambient context for a global
+                        // contradiction.
                         let mut evidence = Vec::new();
-                        for premise in &arm_steps[logical_arm].1 {
-                            let lowered = focused.lower_surface_proposition(
-                                premise,
-                                "bounded statement-successor premise",
-                            )?;
-                            if !partition.base_facts[parent_arm].contains(&lowered) {
-                                return Ok(None);
-                            }
-                            if !evidence.contains(&lowered) {
-                                evidence.push(lowered);
+                        for introduced in &partition.introduced_facts[parent_arm] {
+                            if !evidence.contains(introduced) {
+                                evidence.push(introduced.clone());
                             }
                         }
                         let premise_context = assumptions_from_propositions(&evidence);
@@ -423,11 +407,10 @@ impl<'a> Proof<'a> {
                         at_function_entry: execution.replay.is_at_function_entry(),
                     });
                 let base_execution = Arc::new(execution.clone());
-                let mut checked = check_step_using_facts(
+                let mut checked = check_statement_step(
                     &mut execution.replay,
                     &mut execution.state,
                     &facts,
-                    &arm_steps[logical_arm].1,
                     context.function_block,
                     context.function,
                     context.parsed_function,
@@ -490,13 +473,13 @@ impl<'a> Proof<'a> {
         });
         let then_node = Arc::new(ProofNode {
             parent: Some(marker_node.clone()),
-            step: Some(Arc::new(SimpleProofStep::StepUsing(arm_steps[0].1.clone()))),
+            step: Some(Arc::new(SimpleProofStep::Step)),
             focused: partition.ids[0],
             depth: marker_node.depth + 1,
         });
         let else_node = Arc::new(ProofNode {
             parent: Some(then_node),
-            step: Some(Arc::new(SimpleProofStep::StepUsing(arm_steps[1].1.clone()))),
+            step: Some(Arc::new(SimpleProofStep::Step)),
             focused: partition.ids[1],
             depth: marker_node.depth + 2,
         });

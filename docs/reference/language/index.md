@@ -322,9 +322,6 @@ prerequisite is not yet available, establish it with `have` before the step:
 step();
 ```
 
-The migration spelling `step() using { P; ... }` checks that each listed fact
-is available and then steps; it is being retired.
-
 At a loop entry, `loop { ... }` verifies initialization and one arbitrary
 iteration, constructs the kernel loop rule, applies it, and reaches the
 abstract exit. It fails if the current frontier is not a loop. Ordinary

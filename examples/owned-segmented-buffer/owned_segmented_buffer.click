@@ -52,41 +52,11 @@ int32 owned_segmented_buffer_init(
     ensures owner->first_data == first_data;
     ensures owner->second_data == second_data;
 } by {
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(owner[0..6]);
-        loadable(first_data[0..first_len]);
-        loadable(second_data[0..second_len]);
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
+    step();
+    step();
+    step();
+    step();
+    step();
     have 0 <= owner->first_len by {
         apply(int32_positive_is_nonnegative(at(statement(4).entry, first_len))) using {
             at(statement(4).entry, 1) <= at(statement(4).entry, first_len);
@@ -159,13 +129,7 @@ int32 owned_segmented_buffer_get_first(
 } by {
     observe(owned_segmented_buffer(owner));
     observe(owned_segment(owner->first_data, owner->first_len));
-    step() using {
-        0 <= index;
-        index < owner->first_len;
-        loadable(owner->first_len);
-        loadable(owner->first_data);
-        loadable(owner->first_data[0..owner->first_len]);
-    }
+    step();
     frame() using {
     }
     have result == owner->first_data[index] by {
@@ -192,34 +156,8 @@ int32 owned_segmented_buffer_set_first(
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->first_data, owner->first_len));
-    step() using {
-        0 <= index;
-        index < owner->first_len;
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(owner[0..1]);
-        loadable((owner + 1)[0..1]);
-        loadable((owner + 2)[0..2]);
-        loadable((owner + 4)[0..2]);
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-        0 <= owner->first_len;
-    }
-    step() using {
-        0 <= index;
-        index < owner->first_len;
-        loadable(old(owner->first_len));
-        loadable(old(owner->second_len));
-        loadable(old(owner->first_data));
-        loadable(old(owner->second_data));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-        0 <= owner->first_len;
-    }
+    step();
+    step();
     have 0 <= owner->first_len by {
         assumption();
     }
@@ -297,34 +235,8 @@ int32 owned_segmented_buffer_set_second(
 } by {
     unfold(owned_segmented_buffer(owner));
     unfold(owned_segment(owner->second_data, owner->second_len));
-    step() using {
-        0 <= index;
-        index < owner->second_len;
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(owner[0..1]);
-        loadable((owner + 1)[0..1]);
-        loadable((owner + 2)[0..2]);
-        loadable((owner + 4)[0..2]);
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-        0 <= owner->second_len;
-    }
-    step() using {
-        0 <= index;
-        index < owner->second_len;
-        loadable(old(owner->first_len));
-        loadable(old(owner->second_len));
-        loadable(old(owner->first_data));
-        loadable(old(owner->second_data));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-        0 <= owner->second_len;
-    }
+    step();
+    step();
     have 0 <= owner->second_len by {
         assumption();
     }
@@ -396,132 +308,15 @@ int32 owned_segmented_buffer_swap(struct owned_segmented_buffer* owner) {
     ensures owner->second_data == old(owner->first_data);
 } by {
     unfold(owned_segmented_buffer(owner));
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(owner[0..1]);
-        loadable((owner + 1)[0..1]);
-        loadable((owner + 2)[0..2]);
-        loadable((owner + 4)[0..2]);
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= owner->first_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= saved_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= saved_len;
-        1 <= owner->second_len;
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= saved_len;
-        at(statement(0).entry, 1) <= at(statement(0).entry, owner->second_len);
-    }
-    step() using {
-        separate(memory(owner[0..1]), memory(owner[1..2]));
-        separate(memory(owner[0..1]), memory(owner[2..4]));
-        separate(memory(owner[0..1]), memory(owner[4..6]));
-        separate(memory(owner[1..2]), memory(owner[2..4]));
-        separate(memory(owner[1..2]), memory(owner[4..6]));
-        separate(memory(owner[2..4]), memory(owner[4..6]));
-        loadable(old(owner[0..1]));
-        loadable(old((owner + 1)[0..1]));
-        loadable(old((owner + 2)[0..2]));
-        loadable(old((owner + 4)[0..2]));
-        1 <= saved_len;
-        at(statement(0).entry, 1) <= at(statement(0).entry, owner->second_len);
-    }
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
     have 1 <= owner->first_len by {
         assumption();
     }
@@ -591,27 +386,9 @@ int32 owned_segmented_buffer_pipeline(
     ensures second_data[0] == second_value;
     ensures result == first_value;
 } by {
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(owner[0..6]);
-        loadable(first_data[0..first_len]);
-        loadable(second_data[0..second_len]);
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(owner[0..6]));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-    }
+    step();
+    step();
+    step();
     have ignored == first_len by {
         assumption();
     }
@@ -627,20 +404,7 @@ int32 owned_segmented_buffer_pipeline(
     have owner->second_data == second_data by {
         assumption();
     }
-    step() using {
-        1 <= first_len;
-        1 <= second_len;
-        loadable(old(object(owner)));
-        loadable(old(first_data[0..first_len]));
-        loadable(old(second_data[0..second_len]));
-        ignored == first_len;
-        owner->first_len == first_len;
-        owner->second_len == second_len;
-        0 < owner->first_len;
-        0 < owner->second_len;
-        owner->first_data == first_data;
-        owner->second_data == second_data;
-    }
+    step();
     have 0 < owner->second_len by {
         assumption();
     }
@@ -658,19 +422,7 @@ int32 owned_segmented_buffer_pipeline(
     transport(at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value), first_data[0] == first_value) using {
         at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value);
     }
-    step() using {
-        loadable(old(object(owner)));
-        at(statement(4).entry, 0) < at(statement(4).entry, owner->second_len);
-        0 < owner->first_len;
-        1 <= first_len;
-        1 <= second_len;
-        ignored == first_value;
-        owner->second_len == second_len;
-        owner->first_len == first_len;
-        first_data[0] == first_value;
-        owner->first_data == first_data;
-        owner->second_data == second_data;
-    }
+    step();
     transport(at(statement(4).entry, owner->first_len) == at(statement(4).entry, first_len), owner->first_len == first_len) using {
         1 <= second_len;
         at(statement(4).entry, owner->first_len) == first_len;
@@ -723,12 +475,7 @@ int32 owned_segmented_buffer_pipeline(
     transport(at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value), second_data[0] == second_value) using {
         at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
     }
-    step() using {
-        0 < owner->first_len;
-        loadable(object(owner));
-        owner->first_data == first_data;
-        first_data[0] == first_value;
-    }
+    step();
     have c(result) == first_data[0] by {
         rewrite(at(statement(6).entry, c(result)) == at(statement(6).entry, owner->first_data[0]));
         rewrite(owner->first_data == first_data);
@@ -738,54 +485,7 @@ int32 owned_segmented_buffer_pipeline(
         c(result) == first_data[0];
         *first_data == first_value;
     }
-    step() using {
-        c(result) == first_data[0];
-        *first_data == first_value;
-        c(result) == first_value;
-        at(statement(5).entry, loadable(object(owner)));
-        c(result) == owner->first_data[0];
-        0 < owner->first_len;
-        owner->first_data == first_data;
-        at(statement(4).entry, loadable(old(object(owner))));
-        at(statement(4).entry, 0) < at(statement(4).entry, owner->second_len);
-        at(statement(4).entry, 0) < at(statement(4).entry, owner->first_len);
-        at(statement(4).entry, 1) <= at(statement(4).entry, first_len);
-        at(statement(4).entry, 1) <= at(statement(4).entry, second_len);
-        at(statement(4).entry, ignored) == at(statement(4).entry, first_value);
-        at(statement(3).entry, owner->second_len) == at(statement(3).entry, second_len);
-        at(statement(3).entry, owner->first_len) == at(statement(3).entry, first_len);
-        at(statement(4).entry, first_data[0]) == at(statement(4).entry, first_value);
-        at(statement(4).entry, owner->first_data) == at(statement(4).entry, first_data);
-        at(statement(4).entry, owner->second_data) == at(statement(4).entry, second_data);
-        ignored == second_value;
-        owner->first_len == at(statement(4).entry, owner->first_len);
-        owner->second_len == at(statement(4).entry, owner->second_len);
-        owner->first_data == at(statement(4).entry, owner->first_data);
-        owner->second_data == at(statement(4).entry, owner->second_data);
-        owner->second_data[0] == second_value;
-        at(statement(3).entry, loadable(old(first_data[0..first_len])));
-        at(statement(3).entry, loadable(old(second_data[0..second_len])));
-        at(statement(3).entry, ignored) == at(statement(3).entry, first_len);
-        at(statement(4).entry, owner->first_len) == at(statement(3).entry, owner->first_len);
-        at(statement(4).entry, owner->second_len) == at(statement(3).entry, owner->second_len);
-        at(statement(4).entry, owner->first_data) == at(statement(3).entry, owner->first_data);
-        at(statement(4).entry, owner->second_data) == at(statement(3).entry, owner->second_data);
-        at(statement(4).entry, owner->first_data[0]) == at(statement(4).entry, first_value);
-        at(statement(4).entry, owner->first_len) == at(statement(4).entry, first_len);
-        at(statement(4).entry, owner->second_len) == at(statement(4).entry, second_len);
-        at(statement(3).entry, 0) < at(statement(3).entry, owner->first_len);
-        at(statement(3).entry, 0) < at(statement(3).entry, owner->second_len);
-        at(statement(3).entry, owner->first_data) == at(statement(3).entry, first_data);
-        at(statement(3).entry, owner->second_data) == at(statement(3).entry, second_data);
-        owner->first_len == first_len;
-        owner->second_len == second_len;
-        at(statement(5).entry, 0) < at(statement(5).entry, owner->first_len);
-        0 < owner->second_len;
-        at(statement(5).entry, first_data[0]) == at(statement(5).entry, first_value);
-        at(statement(5).entry, owner->first_data) == at(statement(5).entry, first_data);
-        owner->second_data == second_data;
-        at(statement(5).entry, second_data[0]) == at(statement(5).entry, second_value);
-    }
+    step();
     have owner->first_len == first_len by {
         assumption();
     }

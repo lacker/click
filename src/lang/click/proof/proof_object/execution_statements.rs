@@ -6,26 +6,22 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_execution_statement_step(
         &self,
         step: SimpleProofStep,
-        premises: &[ClickProposition],
     ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
-            return Err(self.step_error("`step using` requires an execution-frontier proof"));
+            return Err(self.step_error("`step` requires an execution-frontier proof"));
         };
-        self.require_execution_frontier("`step using`")?;
+        self.require_execution_frontier("`step`")?;
         let mut execution = self
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        // Every statement step executes in the whole proof context. A
-        // `step() using` list is checked for availability and recorded as
-        // spellings, but does not narrow what the kernel sees.
+        // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
-        let checked = check_step_using_facts(
+        let checked = check_statement_step(
             &mut execution.replay,
             &mut execution.state,
             &self.facts(),
-            premises,
             context.function_block,
             context.function,
             context.parsed_function,
@@ -127,7 +123,12 @@ impl<'a> Proof<'a> {
                     successor_execution.state = state.into();
                     let path_fact = Proposition::ConditionIs(path_condition, value);
                     if by_polarity[slot]
-                        .replace((facts, Arc::new(successor_execution), vec![path_fact]))
+                        .replace((
+                            facts,
+                            Arc::new(successor_execution),
+                            vec![path_fact],
+                            added.clone(),
+                        ))
                         .is_some()
                     {
                         return Err(
@@ -165,6 +166,7 @@ impl<'a> Proof<'a> {
                     base_facts: [then_arm.0.clone(), else_arm.0.clone()],
                     base_executions: [then_arm.1.clone(), else_arm.1.clone()],
                     path_facts: [then_arm.2, else_arm.2],
+                    introduced_facts: [then_arm.3, else_arm.3],
                     common_facts,
                     parent_unfolds: frontier.context.unfolded_predicates.clone(),
                     parent_execution: parent_execution.clone(),
@@ -564,14 +566,13 @@ impl<'a> Proof<'a> {
                     SimpleProofStep::Have { .. }
                         | SimpleProofStep::UnfoldPredicate(_)
                         | SimpleProofStep::TransportUsing { .. }
-                        | SimpleProofStep::StepUsing(_)
                         | SimpleProofStep::Step
                 )
             })
             && construction
                 .steps
                 .iter()
-                .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step))
+                .any(|step| matches!(step, SimpleProofStep::Step))
         {
             let mut proof = self.clone();
             for step in &construction.steps {
@@ -834,14 +835,13 @@ impl<'a> Proof<'a> {
                     SimpleProofStep::Have { .. }
                         | SimpleProofStep::UnfoldPredicate(_)
                         | SimpleProofStep::TransportUsing { .. }
-                        | SimpleProofStep::StepUsing(_)
                         | SimpleProofStep::Step
                 )
             })
             && construction
                 .steps
                 .iter()
-                .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step))
+                .any(|step| matches!(step, SimpleProofStep::Step))
         {
             let mut executed = self.clone();
             for step in &construction.steps {
@@ -956,13 +956,12 @@ impl<'a> Proof<'a> {
                 SimpleProofStep::Have { .. }
                     | SimpleProofStep::UnfoldPredicate(_)
                     | SimpleProofStep::TransportUsing { .. }
-                    | SimpleProofStep::StepUsing(_)
                     | SimpleProofStep::Step
             )
         }) && construction
             .steps
             .iter()
-            .any(|step| matches!(step, SimpleProofStep::StepUsing(_) | SimpleProofStep::Step));
+            .any(|step| matches!(step, SimpleProofStep::Step));
         let applied = if linear_supported {
             let mut proof = self.clone();
             for step in &construction.steps {

@@ -17,11 +17,10 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
 /// transported across the statement boundary before ambient facts are
 /// restored at their original snapshots.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_step_using_facts(
+pub(in crate::lang::click::proof) fn check_statement_step(
     replay: &mut TacticReplayState,
     state: &mut CState,
     requirement_pure_facts: &ProofFacts,
-    premises: &[ClickProposition],
     function_block: &FunctionBlock,
     function: &CFunction,
     parsed_function: &syntax::C0Function,
@@ -37,11 +36,7 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     // A bare `step()` executes in the whole proof context: prerequisites
     // are proved from it, and nothing is transported per step because the
     // kernel keeps cell names it can prove unwritten from that context.
-    let tactic_name = if context.is_some() && premises.is_empty() {
-        "step()"
-    } else {
-        "step() using"
-    };
+    let tactic_name = "step()";
     let prerequisite_policy = if context.is_some() {
         StatementPrerequisitePolicy::Contextual
     } else {
@@ -64,168 +59,6 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
     )?;
     let pre_state = replay.old_reference_state(state).clone();
     let mut explicit_premises = Vec::new();
-    for surface_premise in premises {
-        let recorded = replay
-            .surface_propositions
-            .available_kernel_matching(surface_premise, |kernel| {
-                requirement_pure_facts.contains(kernel)
-            });
-        let recorded_is_constant_truth = recorded.is_some_and(|premise| match premise {
-            Proposition::ConditionIs(ConditionTerm::Constant(true), true) => true,
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32SignedLessThan(left, right)
-                | ConditionTerm::Bitvector32SignedLessEqual(left, right)
-                | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
-                | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
-                | ConditionTerm::Bitvector32Equal(left, right),
-                true,
-            ) => matches!(
-                (left.as_ref(), right.as_ref()),
-                (Bitvector32Term::Constant(_), Bitvector32Term::Constant(_))
-            ),
-            _ => false,
-        });
-        let lower_at_current = || {
-            lower_point_proposition_with_assumptions(
-                surface_premise,
-                assumptions,
-                parsed_function.parameters(),
-                arguments,
-                &pre_state,
-                state,
-                None,
-                &replay.program_point_states,
-                predicate_environment,
-                click_function_environment,
-            )
-        };
-        let current_indexed = proposition_contains_at_expression(surface_premise)
-            .then(|| lower_at_current().ok())
-            .flatten()
-            .filter(|current| {
-                requirement_pure_facts
-                    .replay_available_across_effects(current, &replay.effect_facts)
-            });
-        let parameter_names = parsed_function
-            .parameters()
-            .iter()
-            .map(syntax::C0Parameter::name)
-            .collect::<BTreeSet<_>>();
-        let stable_recorded_definedness = matches!(
-            surface_premise,
-            ClickProposition::Defined { expression }
-                if !super::super::surface_certificates::contract_expression_mentions_c_local(
-                    expression,
-                    &parameter_names,
-                )
-        );
-        // Prefer an explicit program-point lowering when it names
-        // an exact available fact. Fall back to the checked cache
-        // when a partial expansion has not replayed that point, or
-        // when the cache records an equivalent polarity form
-        // such as `not (a < b)` versus `a >= b`.
-        let premise = if let Some(current) = current_indexed {
-            current
-        } else if recorded_is_constant_truth {
-            match lower_at_current() {
-                Ok(current)
-                    if !PureFactContext::new().proves(&current)
-                        && requirement_pure_facts
-                            .replay_available_across_effects(&current, &replay.effect_facts) =>
-                {
-                    current
-                }
-                _ => recorded.expect("checked recorded truth").clone(),
-            }
-        } else if (proposition_contains_at_expression(surface_premise)
-            || proposition_contains_old_expression(surface_premise)
-            || stable_recorded_definedness)
-            && let Some(recorded) = recorded
-        {
-            recorded.clone()
-        } else {
-            lower_at_current().map_err(|message| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not lower `{tactic_name}` premise `{}`: {message}",
-                    super::super::super::printing::source_click_proposition(surface_premise)
-                ))
-            })?
-        };
-        replay
-            .surface_propositions
-            .record_lowering(surface_premise, &premise)
-            .map_err(|error| {
-                ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: could not record `{tactic_name}` premise: {}",
-                    error.message()
-                ))
-            })?;
-        // Anchor the premise at this statement's entry only when its
-        // surface form actually denotes the recorded fact here: a premise
-        // taken from the recorded cache may have been established at an
-        // earlier point, and a cell it reads may have changed since. With
-        // terms canonical at creation the recorded fact is
-        // snapshot-independent, so a stale anchor would silently bind the
-        // old value to this point's surface form.
-        let anchored_form_is_current = proposition_contains_at_expression(surface_premise)
-            || proposition_contains_old_expression(surface_premise)
-            || lower_at_current().is_ok_and(|fresh| {
-                fresh == premise
-                    || crate::kernel::canonical_condition_fact(&fresh)
-                        == crate::kernel::canonical_condition_fact(&premise)
-            });
-        if anchored_form_is_current {
-            let entry_point = ProgramPointRef {
-                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
-                kind: ProgramPointKind::Entry,
-            };
-            let source_surface = surface_anchored_where_unanchored(surface_premise, &entry_point)?;
-            replay
-                .surface_propositions
-                .record_lowering(&source_surface, &premise)
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not record `{tactic_name}` premise source site: {}",
-                        error.message()
-                    ))
-                })?;
-        }
-        // Loadability premises additionally transport across
-        // snapshot terms and recorded effects: the recorded
-        // fact and the premise print identically but embed
-        // different memory snapshots.
-        let premise_is_available = requirement_pure_facts
-                .replay_available_across_effects(&premise, &replay.effect_facts)
-                || crate::kernel::loadable_covered_by_fact(assumptions, &premise)
-                // A premise written for a sibling execution path
-                // can lower to a context-free truth on this path
-                // (a shared post-branch step's premise after a
-                // constant assignment); it demands no evidence.
-                || PureFactContext::new().proves(&premise)
-                // Load variables are kernel-internal; two
-                // recorded equalities chained through one are the same
-                // user-level fact, so availability closes over them rather
-                // than demanding the certificate write the chain.
-                || premise_bridged_by_load_variables(&premise, requirement_pure_facts);
-        if !premise_is_available {
-            let all_pure_facts = requirement_pure_facts.to_vec();
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` requires an exact premise `{}`: {}",
-                super::super::super::printing::source_click_proposition(surface_premise),
-                describe_missing_pure_fact(
-                    &premise,
-                    &all_pure_facts,
-                    state.resources().facts(),
-                    parsed_function.parameters(),
-                    arguments,
-                    &replay.effect_facts,
-                )
-            )));
-        }
-        if !explicit_premises.contains(&premise) {
-            explicit_premises.push(premise);
-        }
-    }
     for case in &replay.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
@@ -291,17 +124,10 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
         tactic_index,
         tactic_name,
         prerequisite_policy,
-        // `using` deliberately selects the exact context that may
-        // cross this statement boundary. Transport only those
-        // listed facts through the certified statement effect;
-        // ambient facts are restored below at their original
-        // snapshots. A bare step transports nothing: the kernel keeps the
-        // names of cells it proves unwritten from the whole context.
-        if premises.is_empty() {
-            StatementFactTransportPolicy::None
-        } else {
-            StatementFactTransportPolicy::Selected
-        },
+        // A step transports nothing: the kernel keeps the names of cells it
+        // proves unwritten from the whole context, and ambient facts are
+        // restored below at their original snapshots.
+        StatementFactTransportPolicy::None,
         loop_step_policy,
         context,
     )?;
@@ -315,12 +141,4 @@ pub(in crate::lang::click::proof) fn check_step_using_facts(
             path: successor.path,
         })
         .collect())
-}
-
-/// Frame-lean adapter for the shared load-variable closure. Fact-vector
-/// materialization is local work and must not enlarge every statement replay
-/// frame; the expansion small-stack regression pins that boundary.
-#[inline(never)]
-fn premise_bridged_by_load_variables(premise: &Proposition, facts: &ProofFacts) -> bool {
-    super::super::fact_reasoning::premise_bridged_by_load_variable_chain(premise, &facts.to_vec())
 }

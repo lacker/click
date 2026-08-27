@@ -285,12 +285,6 @@ fn expand_declared_resource_tactic(
     resource_definitions: &BTreeMap<String, DeclaredResourceInfo>,
 ) -> Result<ProofTactic, ClickError> {
     match tactic {
-        ProofTactic::StepUsing(premises) => Ok(ProofTactic::StepUsing(
-            premises
-                .into_iter()
-                .map(|premise| expand_declared_resource_proposition(premise, resource_definitions))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
         ProofTactic::FrameUsing { region, premises } => Ok(ProofTactic::FrameUsing {
             region,
             premises: premises

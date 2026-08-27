@@ -374,7 +374,7 @@ fn resource_member_project(member_count: usize) -> (String, String) {
         click_source.push_str(&format!("    contains member_{index}({index});\n"));
     }
     click_source.push_str(
-        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    views bundle(p);\n    immutable by {\n        step() using {}\n        frame() using {}\n    }\n}\n",
+        "}\n\nverifying \"preserve_bundle.c\";\n\nint32 preserve_bundle(int32 p[]) {\n    views bundle(p);\n    immutable by {\n        step();\n        frame() using {}\n    }\n}\n",
     );
     (c_source, click_source)
 }
@@ -598,10 +598,8 @@ fn explicit_step_scales_near_linearly_with_unrelated_ambient_facts() {
     let samples = [8, 16, 32, 64]
         .into_iter()
         .map(|size| {
-            let (c_source, click_source) = function_with_unrelated_facts(
-                size,
-                "    step() using {\n        target == 7;\n    }\n    assumption();\n",
-            );
+            let (c_source, click_source) =
+                function_with_unrelated_facts(size, "    step();\n    assumption();\n");
             let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(&click_source, &[("exact_fact_target.c", c_source.as_str())])
             });
@@ -625,7 +623,7 @@ fn explicit_transport_scales_near_linearly_with_unrelated_ambient_facts() {
         .map(|size| {
             let (c_source, click_source) = function_with_unrelated_facts(
                 size,
-                "    step() using {\n        target == 7;\n    }\n    transport(target == 7, result == 7) using {\n        target == 7;\n    }\n    assumption();\n",
+                "    step();\n    transport(target == 7, result == 7) using {\n        target == 7;\n    }\n    assumption();\n",
             );
             let (verified, sample) = scaling_sample(size, || {
                 verify_c0_sources(

@@ -18,8 +18,8 @@ fn parses_logical_if_with_execution_tactics() {
             then_tactics,
             else_tactics,
             ..
-        }) if then_tactics.first() == Some(&ProofTactic::SmartStep)
-            && else_tactics.first() == Some(&ProofTactic::SmartStep)
+        }) if then_tactics.first() == Some(&ProofTactic::Step)
+            && else_tactics.first() == Some(&ProofTactic::Step)
     ));
 }
 
@@ -41,7 +41,7 @@ fn parses_frontier_branch_tactic() {
             ensuring: None,
             then_tactics,
             else_tactics,
-        }) if then_tactics == &[ProofTactic::SmartStep]
+        }) if then_tactics == &[ProofTactic::Step]
             && else_tactics == &[ProofTactic::SmartExecute]
     ));
 }
@@ -67,7 +67,7 @@ fn parses_frontier_branch_ensuring_interface() {
         }) if matches!(assertions.as_slice(), [
             ProofAssertion::Fact(_),
             ProofAssertion::Resource(ResourceClause::Write(_)),
-        ]) && then_tactics == &[ProofTactic::SmartStep]
+        ]) && then_tactics == &[ProofTactic::Step]
             && else_tactics == &[ProofTactic::SmartExecute]
     ));
 }
@@ -515,8 +515,8 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Smart(SmartTacticKind::Simp)
     ));
     assert!(matches!(
-        ProofTactic::SmartStep.class(),
-        TacticClass::Smart(SmartTacticKind::SmartStep)
+        ProofTactic::Step.class(),
+        TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     let application = TheoremApplication {
         name: "rewritten".to_string(),
@@ -560,14 +560,11 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Simple(SimpleTactic::FactTransport)
     ));
     assert!(matches!(
-        ProofTactic::StepUsing(Vec::new()).class(),
+        ProofTactic::Step.class(),
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::StepUsing(vec![ClickProposition::Defined {
-            expression: current_int(0),
-        }])
-        .class(),
+        ProofTactic::Step.class(),
         TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
@@ -610,12 +607,12 @@ fn parses_and_classifies_simple_and_smart_tactics() {
         TacticClass::Smart(SmartTacticKind::Frame)
     ));
     assert!(matches!(
-        ProofTactic::SmartStep.class(),
-        TacticClass::Smart(SmartTacticKind::SmartStep)
+        ProofTactic::Step.class(),
+        TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
-        ProofTactic::SmartStep.class(),
-        TacticClass::Smart(SmartTacticKind::SmartStep)
+        ProofTactic::Step.class(),
+        TacticClass::Simple(SimpleTactic::StatementTransition)
     ));
     assert!(matches!(
         ProofTactic::SmartExecute.class(),
@@ -636,7 +633,7 @@ fn canonical_tactic_printer_round_trips_nested_surface_certificate() {
     };
     let tactics = vec![
         ProofTactic::Mark("before_step".to_string()),
-        ProofTactic::StepUsing(vec![nonnegative.clone()]),
+        ProofTactic::Step,
         ProofTactic::If(ProofIf {
             condition: nonnegative.clone(),
             then_tactics: vec![ProofTactic::Have(ProofHave {

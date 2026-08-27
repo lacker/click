@@ -2,7 +2,7 @@
 
 A verified call may establish the exact current-memory fact required by a
 later call. Whole-function `execute()` must carry that certified postcondition
-through its generated `step() using` certificate, even when the same surface
+through its generated `step()` certificate, even when the same surface
 expression described an older snapshot earlier in the function.
 
 ```c filename=set_one.c

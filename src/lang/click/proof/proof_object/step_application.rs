@@ -54,10 +54,7 @@ impl<'a> Proof<'a> {
             return self.apply_have_step(proposition, proof);
         }
         if let SimpleProofStep::Step = &step {
-            return self.apply_execution_statement_step(step, &[]);
-        }
-        if let SimpleProofStep::StepUsing(premises) = &step {
-            return self.apply_execution_statement_step(step.clone(), premises);
+            return self.apply_execution_statement_step(step);
         }
 
         let next_state = match &step {

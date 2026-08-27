@@ -1169,6 +1169,10 @@ struct StatementSuccessorPartition {
     base_facts: [ProofFacts; 2],
     base_executions: [Arc<ExecutionProofState>; 2],
     path_facts: [Vec<Proposition>; 2],
+    /// The facts the partitioning statement introduced on each lane (a
+    /// callee's instantiated `ensures`): the bounded evidence a later
+    /// proof-level case split uses to exclude a lane.
+    introduced_facts: [Vec<Proposition>; 2],
     common_facts: ProofFacts,
     parent_unfolds: PersistentOrderedSet<String>,
     parent_execution: Arc<ExecutionProofState>,
@@ -1985,7 +1989,7 @@ fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
         SimpleProofStep::Left => "left()",
         SimpleProofStep::Right => "right()",
         SimpleProofStep::Enumerate => "enumerate()",
-        SimpleProofStep::Step | SimpleProofStep::StepUsing(_) => "step",
+        SimpleProofStep::Step => "step",
         SimpleProofStep::ApplyTheoremUsing { .. } => "apply",
         SimpleProofStep::TransportUsing { .. } => "transport",
         SimpleProofStep::InstantiateUsing { .. } => "instantiate",

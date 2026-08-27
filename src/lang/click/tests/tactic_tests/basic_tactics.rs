@@ -530,11 +530,7 @@ fn rejects_redundant_exact_premise_forms_with_migrations() {
 
     let old_step = FILL3_CLICK.replace("by auto;", "by { step using {} }");
     let error = parse(&old_step).expect_err("unparenthesized exact step should be rejected");
-    assert!(
-        error.message().contains("step() using"),
-        "{}",
-        error.message()
-    );
+    assert!(error.message().contains("step();"), "{}", error.message());
 }
 
 #[test]
@@ -564,7 +560,7 @@ fn parses_smart_step_proof_tactic() {
         ensure.proof().tactics(),
         Some(
             [
-                ProofTactic::SmartStep,
+                ProofTactic::Step,
                 ProofTactic::SmartExecute,
                 ProofTactic::Simp,
             ]

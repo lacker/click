@@ -1437,7 +1437,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     // A certified statement prerequisite may be represented by
                     // a source fact whose lowering differs only by canonical
                     // load materialization. Keep that checked equivalence here:
-                    // the generated `step() using` certificate is subsequently
+                    // the generated `step()` certificate is subsequently
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
                     let surface = checked_surface_fact_at_point(
@@ -1503,19 +1503,10 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 Ok(premises)
             })();
-            // A step into a C `if` keeps the condition it selected; every
-            // other retained step runs in the whole proof context, with the
-            // premises' spellings recorded above for later closers.
-            let enters_branch = matches!(
-                &replay.frontier.point,
-                ProofExecutionPoint::StatementEntry { remaining }
-                    if split_next_source_operation(remaining)
-                        .is_ok_and(|(statement, _)| matches!(statement, CStatement::If { .. }))
-            );
+            // Every retained step runs in the whole proof context, with the
+            // premises' spellings recorded above for later closers; a step
+            // into a C `if` decides it from the case its proof `if` assumed.
             match premises {
-                Ok(premises) if enters_branch => replay
-                    .proof_certificate_builder
-                    .push_step(SimpleProofStep::StepUsing(premises)),
                 Ok(_) => replay
                     .proof_certificate_builder
                     .push_step(SimpleProofStep::Step),
@@ -2054,10 +2045,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                 .steps
                 .iter()
                 .rev()
-                .find_map(|step| match step {
-                    SimpleProofStep::StepUsing(premises) => Some(Some(premises)),
-                    SimpleProofStep::Step => Some(None),
-                    _ => None,
+                .find_map(|step| -> Option<Option<&Vec<ClickProposition>>> {
+                    match step {
+                        SimpleProofStep::Step => Some(None),
+                        _ => None,
+                    }
                 })
                 .flatten()
                 .and_then(|premises| {
@@ -2166,12 +2158,6 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 .iter_mut()
                                 .rev()
                                 .find_map(|step| match step {
-                                    SimpleProofStep::StepUsing(premises) => {
-                                        if !premises.contains(&surface_source) {
-                                            premises.push(surface_source.clone());
-                                        }
-                                        Some(true)
-                                    }
                                     SimpleProofStep::Step => Some(false),
                                     _ => None,
                                 })

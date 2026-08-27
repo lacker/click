@@ -131,8 +131,6 @@ fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet
         matches!(
             tactic,
             ProofTactic::Step
-                | ProofTactic::StepUsing(_)
-                | ProofTactic::SmartStep
                 | ProofTactic::SmartExecute
                 | ProofTactic::SmartExecuteAllPaths
                 | ProofTactic::ExecuteUntil(_)
@@ -389,7 +387,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             theorem_environment,
             &function,
             &arguments,
-            false,
         ) {
             Ok(proof) => proof,
             Err(error) => return Err(error),
@@ -538,7 +535,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     let direct_proof = if structural.is_some() {
         structural
     } else {
-        let owns_post_execution_transport = exact_empty_frame_outcome_segment(tactics).2;
         match try_check_flat_function_proof(
             &initial,
             &program,
@@ -554,7 +550,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
             theorem_environment,
             &function,
             &arguments,
-            owns_post_execution_transport,
         ) {
             Ok(proof) => proof,
             Err(error) => return Err(error),

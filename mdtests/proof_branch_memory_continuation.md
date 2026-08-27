@@ -36,9 +36,7 @@ int32 advance_memory_interface(int32* p, int32 x) {
                 step();
             }
         }
-        step() using {
-            p[0] < 2147483647;
-        }
+        step();
         step();
         simp();
     }

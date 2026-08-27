@@ -954,10 +954,8 @@ mod tests {
         assert_eq!(mdtest.click_line(3), Ok(1));
         assert!(mdtest.click_line(4).is_err());
         assert_eq!(
-            mdtest
-                .replace_click_source(markdown, "step() using {\n}\n")
-                .unwrap(),
-            "before\n```click\nstep() using {\n}\n```\nafter\n"
+            mdtest.replace_click_source(markdown, "step();\n").unwrap(),
+            "before\n```click\nstep();\n```\nafter\n"
         );
 
         let no_trailing_newline = markdown.trim_end();

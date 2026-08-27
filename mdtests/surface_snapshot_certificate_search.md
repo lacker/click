@@ -54,18 +54,18 @@ int32 peek_many(int32 data[]) {
         0 <= k and k < 1 implies data[k] == old(data[k])
     };
 } by {
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
-    step() using { loadable(data[0..1]); }
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
+    step();
     execute();
     frame();
     simp();

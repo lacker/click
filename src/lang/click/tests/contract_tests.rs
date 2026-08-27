@@ -206,10 +206,8 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
             } by {
                 open(allocated_cell(owner)) {
                 }
-                step() using {
-                }
-                step() using {
-                }
+                step();
+                step();
                 if at(statement(1).exit, owner->data) == old(owner->data) {
                     step();
                 } else {
@@ -339,21 +337,13 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
             } by {
                 open(allocated_cell(owner)) {
                 }
-                step() using {
-                }
-                step() using {
-                }
+                step();
+                step();
                 if c(replaced) == 0 {
-                    step() using {
-                        c(replaced) == 0 implies
-                            at(statement(1).exit, owner->data) == old(owner->data);
-                    }
+                    step();
                     step();
                 } else {
-                    step() using {
-                        at(statement(1).exit, owner->data) == old(owner->data)
-                            implies c(replaced) == 0;
-                    }
+                    step();
                     step();
                 }
                 frame();
@@ -384,15 +374,21 @@ fn result_case_split_collapses_call_successors_at_following_c_if() {
     verify_c0_sources(&expanded, sources)
         .expect("the collapsed result split expansion should replay independently");
 
+    // Without the callee's bridging postconditions the case split has no
+    // evidence to exclude a lane of the call's partition.
     let insufficient = click_source
         .replace(
-            "                    step() using {\n                        c(replaced) == 0 implies\n                            at(statement(1).exit, owner->data) == old(owner->data);\n                    }",
-            "                    step() using {\n                    }",
+            "                ensures result == 0 implies owner->data == old(owner->data);\n",
+            "",
         )
         .replace(
-            "                    step() using {\n                        at(statement(1).exit, owner->data) == old(owner->data)\n                            implies c(replaced) == 0;\n                    }",
-            "                    step() using {\n                    }",
+            "                ensures owner->data == old(owner->data) implies result == 0;\n",
+            "",
         );
+    assert_ne!(
+        insufficient, click_source,
+        "the bridging postconditions should be present"
+    );
     let error = verify_c0_sources(&insufficient, sources)
         .expect_err("the adapter must decline when neither arm proves lane exclusion");
     assert!(
@@ -420,8 +416,7 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
                 immutable;
                 ensures result == x;
             } by {
-                step() using {
-                }
+                step();
                 if x >= 0 {
                     step();
                     step();
@@ -1804,8 +1799,8 @@ fn smart_frame_reports_its_real_time_deadline() {
             produces data[0..1];
             mutable data[0..1];
         } by {
-            step() using { loadable(data[0..1]); }
-            step() using {}
+            step();
+            step();
             frame();
             simp();
         }
@@ -2193,8 +2188,7 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
     let statement_steps = expanded
         .iter()
         .filter_map(|tactic| match tactic {
-            ProofTactic::StepUsing(premises) => Some(premises.as_slice()),
-            ProofTactic::Step => Some(&[][..]),
+            ProofTactic::Step => Some::<&[ClickProposition]>(&[]),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -2307,7 +2301,7 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::StepUsing(_)))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::Step))
             .count(),
         2,
         "the grouped store and return should each be retained exactly once: {expanded:#?}"
@@ -2386,7 +2380,7 @@ fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::StepUsing(_)))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::Step))
             .count(),
         3,
         "both stores and the return should be retained exactly once: {expanded:#?}"

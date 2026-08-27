@@ -9061,12 +9061,8 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
     };
     for arm in [&proof_if.then_tactics, &proof_if.else_tactics] {
         assert!(
-            matches!(
-                arm.get(..2),
-                Some([ProofTactic::StepUsing(entry), ProofTactic::Step])
-                    if entry.len() == 1
-            ),
-            "each terminal arm should begin with checked entry and return steps carrying its path condition: {arm:#?}"
+            matches!(arm.get(..2), Some([ProofTactic::Step, ProofTactic::Step])),
+            "each terminal arm should begin with its checked entry and return steps: {arm:#?}"
         );
         assert!(
             arm.iter().all(|tactic| !matches!(
@@ -9525,7 +9521,7 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
                             && proof_if.else_tactics.is_empty()
                             && matches!(
                                 proof_if.then_tactics.first(),
-                                Some(ProofTactic::StepUsing(premises)) if !premises.is_empty()
+                                Some(ProofTactic::Step)
                             )
                 )
         ),
@@ -9554,10 +9550,13 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
     let Some(ProofTactic::If(proof_if)) = open.tactics.first_mut() else {
         unreachable!()
     };
-    let Some(ProofTactic::StepUsing(entry)) = proof_if.then_tactics.first_mut() else {
+    // A checked C-branch entry is a bare `step();` deciding the `if` from
+    // the case its proof `if` assumed; removing it leaves the arm outside the
+    // branch it claims to prove.
+    let Some(ProofTactic::Step) = proof_if.then_tactics.first() else {
         unreachable!()
     };
-    entry.clear();
+    proof_if.then_tactics.remove(0);
     let corrupted_proof = crate::lang::click::printing::format_proof_tactics(&corrupted_tactics)
         .expect("the corrupted tactics should remain surface-expressible");
     let proof_start = expanded
@@ -9573,12 +9572,8 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
     let (corrupted_result, corrupted_checks) = proof::count_source_certificate_checks(|| {
         verify_c0_sources(&corrupted, &[("selected_branch.c", c_source)])
     });
-    let error = corrupted_result
+    corrupted_result
         .expect_err("tampering with the checked C-branch entry must invalidate the expansion");
-    assert!(
-        error.message().contains("checked branch-entry step"),
-        "the Proof operation should reject the corrupted entry directly: {error:?}"
-    );
     assert_eq!(
         corrupted_checks, 0,
         "the invalid C `if` checked a certificate"
@@ -9637,8 +9632,8 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
         ("else", &proof_if.else_tactics),
     ] {
         assert!(
-            matches!(arm.first(), Some(ProofTactic::StepUsing(premises)) if premises.len() == 1),
-            "{name} arm should retain the explicit C-branch entry condition: {arm:#?}"
+            matches!(arm.first(), Some(ProofTactic::Step)),
+            "{name} arm should retain its checked C-branch entry step: {arm:#?}"
         );
         assert!(
             matches!(arm.get(1), Some(ProofTactic::Step)),
@@ -11566,10 +11561,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
                 consumes p[0..2];
                 mutable p[1..2] by {
                     unfold(first_is_seven);
-                    step() using {
-                        p[0] == 7;
-                        loadable(p[0..2]);
-                    }
+                    step();
                     have p[0] == 7 by simp;
                     step();
                     frame();

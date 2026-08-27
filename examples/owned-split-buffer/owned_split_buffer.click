@@ -101,26 +101,8 @@ int32 owned_split_buffer_set_right(
     ensures owner->data == old(owner->data);
 } by {
     unfold(owned_split_buffer(owner));
-    step() using {
-        owner->split <= index;
-        index < owner->len;
-        loadable(owner->split);
-        loadable(owner->len);
-        loadable(owner->data);
-        0 <= owner->split;
-        owner->split <= owner->len;
-        separate(memory(object(owner)), memory(owner->data[0..owner->len]));
-    }
-    step() using {
-        owner->split <= index;
-        index < owner->len;
-        loadable(old(owner->split));
-        loadable(old(owner->len));
-        loadable(old(owner->data));
-        0 <= owner->split;
-        owner->split <= owner->len;
-        separate(memory(object(owner)), memory(owner->data[0..owner->len]));
-    }
+    step();
+    step();
     fold(owned_split_buffer(owner));
     have index < index + 1 by simp;
     frame();
@@ -183,20 +165,8 @@ int32 owned_split_buffer_pipeline(
 } by {
     step();
     step();
-    step() using {
-        2 <= length;
-        loadable(old(object(owner)));
-        loadable(old(data[0..length]));
-    }
-    step() using {
-        2 <= length;
-        loadable(old(object(owner)));
-        loadable(old(data[0..length]));
-        ignored == 1;
-        owner->split == 1;
-        owner->len == length;
-        owner->data == data;
-    }
+    step();
+    step();
     have owner->split == owner->split by {
         normalize();
     }
@@ -238,18 +208,7 @@ int32 owned_split_buffer_pipeline(
             owner->len == length;
         }
     }
-    step() using {
-        1 < owner->len;
-        2 <= length;
-        ignored == left_value;
-        owner->len == length;
-        owner->split == 1;
-        data[0] == left_value;
-        owner->data == data;
-        loadable(old(object(owner)));
-        owner->split == owner->split;
-        owner->len == owner->len;
-    }
+    step();
     transport(at(statement(4).entry, owner->data) == data, owner->data == data) using {
         at(statement(4).entry, owner->data) == data;
         2 <= length;
@@ -280,15 +239,7 @@ int32 owned_split_buffer_pipeline(
             1 < owner->len;
         }
     }
-    step() using {
-        owner->split < owner->len;
-        2 <= length;
-        loadable(object(owner));
-        owner->len == length;
-        owner->data == data;
-        data[0] == left_value;
-        data[1] == right_value;
-    }
+    step();
     have owner->data == data by {
         simp() using {
             owner->data == at(statement(4).entry, owner->data);
@@ -313,15 +264,7 @@ int32 owned_split_buffer_pipeline(
     have owner->data == data by simp;
     have data[0] == left_value by simp;
     have data[1] == right_value by simp;
-    step() using {
-        1 < owner->split;
-        loadable(object(owner));
-        owner->split == 2;
-        owner->len == length;
-        owner->data == data;
-        data[0] == left_value;
-        data[1] == right_value;
-    }
+    step();
     have owner->split == 2 by simp;
     have owner->len == length by simp;
     have owner->data == data by simp;
@@ -338,59 +281,6 @@ int32 owned_split_buffer_pipeline(
         data[1],
         right_value
     ));
-    step() using {
-        c(result) == data[1];
-        data[1] == right_value;
-        c(result) == right_value;
-        at(statement(4).entry, loadable(old(object(owner))));
-        1 < owner->split;
-        owner->split == 2;
-        owner->len == length;
-        owner->data == data;
-        data[0] == left_value;
-        at(statement(5).entry, owner->split) == 1;
-        at(statement(5).exit, owner->split) == (at(statement(5).entry, owner->split) + 1);
-        at(statement(5).entry, 2) <= at(statement(5).entry, length);
-        ignored == at(statement(5).entry, (owner->split + 1));
-        owner->len == at(statement(5).entry, owner->len);
-        owner->data == at(statement(5).entry, owner->data);
-        owner->split == at(statement(5).entry, (owner->split + 1));
-        at(statement(5).entry, owner->split) < owner->len;
-        at(statement(6).entry, owner->len) == at(statement(6).entry, length);
-        at(statement(6).entry, owner->data) == at(statement(6).entry, data);
-        at(statement(6).entry, data[0]) == at(statement(6).entry, left_value);
-        at(statement(6).entry, data[1]) == at(statement(6).entry, right_value);
-        at(statement(4).entry, ignored) == at(statement(4).entry, left_value);
-        at(statement(5).entry, owner->split) == at(statement(4).entry, owner->split);
-        at(statement(5).entry, owner->len) == at(statement(4).entry, owner->len);
-        at(statement(5).entry, owner->data) == at(statement(4).entry, owner->data);
-        at(statement(5).entry, 1) < at(statement(5).entry, owner->len);
-        at(statement(5).entry, owner->len) == at(statement(5).entry, length);
-        at(statement(5).entry, data[0]) == at(statement(5).entry, left_value);
-        at(statement(5).entry, owner->data) == at(statement(5).entry, data);
-        at(statement(5).entry, owner->split) == at(statement(5).entry, owner->split);
-        at(statement(5).entry, owner->len) == at(statement(5).entry, owner->len);
-        at(statement(3).entry, loadable(old(data[0..length])));
-        at(statement(3).entry, ignored) == at(statement(3).entry, 1);
-        at(statement(4).entry, owner->split) == at(statement(3).entry, owner->split);
-        at(statement(4).entry, owner->len) == at(statement(3).entry, owner->len);
-        at(statement(4).entry, owner->data) == at(statement(3).entry, owner->data);
-        at(statement(4).entry, owner->data[0]) == at(statement(4).entry, left_value);
-        at(statement(4).entry, owner->split) == at(statement(4).entry, 1);
-        at(statement(4).entry, owner->len) == at(statement(4).entry, length);
-        at(statement(4).entry, owner->data) == data;
-        at(statement(3).entry, owner->split) == 1;
-        at(statement(3).entry, owner->len) == length;
-        at(statement(3).entry, owner->data) == data;
-        at(statement(4).entry, owner->split) == at(statement(4).entry, owner->split);
-        at(statement(4).entry, owner->len) == at(statement(4).entry, owner->len);
-        owner->data == owner->data;
-        at(statement(4).entry, data[0]) == at(statement(4).entry, left_value);
-        at(statement(4).entry, 1) < at(statement(4).entry, owner->len);
-        at(statement(5).entry, data[1]) == at(statement(5).entry, right_value);
-        at(statement(5).entry, owner->split) < at(statement(5).entry, owner->len);
-        at(statement(6).entry, owner->split) == at(statement(6).entry, 2);
-        at(statement(6).entry, 1) < at(statement(6).entry, owner->split);
-    }
+    step();
     simp();
 }

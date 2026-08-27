@@ -460,7 +460,6 @@ fn loop_effect_linear_step_supported(step: &SimpleProofStep) -> bool {
     match step {
         SimpleProofStep::Mark(_)
         | SimpleProofStep::Step
-        | SimpleProofStep::StepUsing(_)
         | SimpleProofStep::ApplyTheoremUsing { .. }
         | SimpleProofStep::TransportUsing { .. }
         | SimpleProofStep::UnfoldPredicate(_)

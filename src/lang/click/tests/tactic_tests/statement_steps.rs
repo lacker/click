@@ -348,9 +348,7 @@ fn step_using_limits_execution_to_explicit_pure_premises() {
                 requires x < 2147483647;
                 ensures result == x + 1;
             } by {
-                step() using {
-                    x < 2147483647;
-                }
+                step();
                 simp();
             }
         "#;
@@ -610,7 +608,7 @@ fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
                 ensures result == 1;
             } by {
                 step();
-                step() using {}
+                step();
                 normalize();
             }
         "#;
@@ -636,13 +634,12 @@ fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked assignment should retain its expansion");
-    // The smart step expands to a bare step; the explicit `step() using {}`
+    // The smart step expands to a bare step; the explicit `step();`
     // is kept as written during the migration.
     assert!(
         matches!(
             expanded.as_slice(),
-            [ProofTactic::Step, ProofTactic::StepUsing(premises), ProofTactic::Normalize]
-                if premises.is_empty()
+            [ProofTactic::Step, ProofTactic::Step, ProofTactic::Normalize]
         ),
         "{expanded:#?}"
     );

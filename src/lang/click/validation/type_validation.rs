@@ -194,8 +194,6 @@ fn validate_pure_theorem_tactics(
             }
             ProofTactic::CloseInvariants
             | ProofTactic::Step
-            | ProofTactic::StepUsing(_)
-            | ProofTactic::SmartStep
             | ProofTactic::SmartExecute
             | ProofTactic::SmartExecuteAllPaths
             | ProofTactic::ExecuteUntil(_)
@@ -222,8 +220,7 @@ fn validate_pure_theorem_tactics(
 pub(in crate::lang::click) fn tactic_name(tactic: &ProofTactic) -> &'static str {
     match tactic {
         ProofTactic::Mark(_) => "mark",
-        ProofTactic::Step | ProofTactic::StepUsing(_) => "step",
-        ProofTactic::SmartStep => "step",
+        ProofTactic::Step => "step",
         ProofTactic::SmartExecute => "execute",
         ProofTactic::SmartExecuteAllPaths => "execute",
         ProofTactic::ExecuteUntil(_) => "execute_until",

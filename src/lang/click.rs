@@ -1763,8 +1763,8 @@ pub struct CertifiedFactTransport {
     pub(crate) theorem: Theorem,
     pub(crate) statement_local: bool,
     /// Exact facts the bounded frame check consumed to carry `source`
-    /// across the statement effect. A `step() using` certificate must list
-    /// them: replay frames the listed facts from the listed premises only.
+    /// across the statement effect; replay frames the fact from exactly
+    /// these.
     pub(crate) frame_premises: Vec<Proposition>,
 }
 
@@ -1787,8 +1787,6 @@ pub(crate) struct PlannedStatementTransition {
 pub enum ProofTactic {
     Mark(String),
     Step,
-    StepUsing(Vec<ClickProposition>),
-    SmartStep,
     SmartExecute,
     SmartExecuteAllPaths,
     ExecuteUntil(CodeRegionRef),
@@ -1887,7 +1885,6 @@ pub enum SmartTacticKind {
     Auto,
     ApplyTheorem,
     FactTransport,
-    SmartStep,
     SmartExecute,
     ExecuteUntil,
     Frame,
@@ -1930,11 +1927,6 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "step",
         syntax: "step()",
-        class: "smart",
-    },
-    PublicTacticForm {
-        id: "step-using",
-        syntax: "step() using",
         class: "simple",
     },
     PublicTacticForm {
@@ -2137,7 +2129,6 @@ pub struct ProofCertificate {
 pub enum SimpleProofStep {
     Mark(String),
     Step,
-    StepUsing(Vec<ClickProposition>),
     UnfoldPredicate(String),
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
@@ -2295,7 +2286,6 @@ impl SimpleProofStep {
         match tactic {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
-            ProofTactic::StepUsing(premises) => Self::StepUsing(premises.clone()),
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
             ProofTactic::FoldResource(resource) => Self::FoldResource(resource.clone()),
@@ -2454,7 +2444,6 @@ impl SimpleProofStep {
         match self {
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
-            Self::StepUsing(premises) => ProofTactic::StepUsing(premises.clone()),
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
             Self::FoldResource(resource) => ProofTactic::FoldResource(resource.clone()),
@@ -2740,7 +2729,6 @@ impl ProofTactic {
         match self {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
-            Self::StepUsing(_) => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
@@ -2767,7 +2755,6 @@ impl ProofTactic {
             Self::InstantiateUsing { .. } => TacticClass::Simple(SimpleTactic::Instantiate),
             Self::FoldResource(_) => TacticClass::Simple(SimpleTactic::FoldResource),
             Self::FrameUsing { .. } => TacticClass::Simple(SimpleTactic::Frame),
-            Self::SmartStep => TacticClass::Smart(SmartTacticKind::SmartStep),
             Self::SmartExecute | Self::SmartExecuteAllPaths => {
                 TacticClass::Smart(SmartTacticKind::SmartExecute)
             }

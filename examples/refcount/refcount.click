@@ -160,22 +160,13 @@ int32 refcount_pipeline(int32 amount) {
         else {}
     }
     step();
-    step() using {
-        0 <= amount;
-        defined(1 + amount);
-    }
+    step();
     have obj->refs == 1 + amount by simp;
     have amount < obj->refs by {
         rewrite(obj->refs == 1 + amount);
         assumption();
     }
-    step() using {
-        0 <= amount;
-        amount <= 1 + amount;
-        amount < obj->refs;
-        defined(1 + amount);
-        defined((1 + amount) - amount);
-    }
+    step();
     step();
     step();
     simp();

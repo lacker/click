@@ -98,57 +98,9 @@ int32 input_cursor_take(struct input_cursor* owner) {
 } by {
     unfold(input_cursor(owner));
     observe(readable_input(owner->data, owner->len));
-    step() using {
-        owner->pos < owner->len;
-        separate(memory(owner->pos), memory(owner->len));
-        separate(memory(owner->pos), memory(owner->data));
-        separate(memory(owner->len), memory(owner->data));
-        contains(input_cursor(owner), memory(owner->pos));
-        contains(input_cursor(owner), memory(owner->len));
-        contains(input_cursor(owner), memory(owner->data));
-        loadable(owner->pos);
-        loadable(owner->len);
-        loadable(owner->data);
-        0 <= owner->pos;
-        owner->pos <= owner->len;
-        separate(memory(object(owner)), memory(owner->data[0..owner->len]));
-        loadable(owner->data[0..owner->len]);
-        0 <= owner->len;
-    }
-    step() using {
-        owner->pos < owner->len;
-        separate(memory(owner->pos), memory(owner->len));
-        separate(memory(owner->pos), memory(owner->data));
-        separate(memory(owner->len), memory(owner->data));
-        contains(input_cursor(owner), memory(owner->pos));
-        contains(input_cursor(owner), memory(owner->len));
-        contains(input_cursor(owner), memory(owner->data));
-        loadable(old(owner->pos));
-        loadable(old(owner->len));
-        loadable(old(owner->data));
-        0 <= owner->pos;
-        owner->pos <= owner->len;
-        separate(memory(object(owner)), memory(owner->data[0..owner->len]));
-        loadable(old(owner->data[0..owner->len]));
-        0 <= owner->len;
-    }
-    step() using {
-        owner->pos < owner->len;
-        separate(memory(owner->pos), memory(owner->len));
-        separate(memory(owner->pos), memory(owner->data));
-        separate(memory(owner->len), memory(owner->data));
-        contains(input_cursor(owner), memory(owner->pos));
-        contains(input_cursor(owner), memory(owner->len));
-        contains(input_cursor(owner), memory(owner->data));
-        loadable(old(owner->pos));
-        loadable(old(owner->len));
-        loadable(old(owner->data));
-        0 <= owner->pos;
-        owner->pos <= owner->len;
-        separate(memory(object(owner)), memory(owner->data[0..owner->len]));
-        loadable(old(owner->data[0..owner->len]));
-        0 <= owner->len;
-    }
+    step();
+    step();
+    step();
     step();
     have 0 <= owner->pos by {
         simp() using {
@@ -241,28 +193,7 @@ int32 input_cursor_clone(
     observe(input_cursor(source));
     step();
     step();
-    step() using {
-        at(statement(0).entry, separate(memory(object(target)), memory(object(source))));
-        at(statement(0).entry, separate(memory(object(target)), memory(source->data[0..source->len])));
-        at(statement(0).entry, loadable(target[0..4]));
-        at(statement(0).entry, separate(memory(source->pos), memory(source->len)));
-        at(statement(0).entry, separate(memory(source->pos), memory(source->data)));
-        at(statement(0).entry, separate(memory(source->len), memory(source->data)));
-        at(statement(0).entry, contains(input_cursor(source), memory(source->pos)));
-        at(statement(0).entry, contains(input_cursor(source), memory(source->len)));
-        at(statement(0).entry, contains(input_cursor(source), memory(source->data)));
-        at(statement(0).entry, loadable(source->pos));
-        at(statement(0).entry, loadable(source->len));
-        at(statement(0).entry, loadable(source->data));
-        at(statement(0).entry, separate(memory(object(source)), memory(source->data[0..source->len])));
-        at(statement(0).entry, loadable(source->data[0..source->len]));
-        0 <= source->pos;
-        source->pos <= source->len;
-        0 <= source->len;
-        at(statement(1).entry, 0) <= at(statement(1).entry, source->pos);
-        at(statement(1).entry, source->pos) <= at(statement(1).entry, source->len);
-        at(statement(1).entry, 0) <= at(statement(1).entry, source->len);
-    }
+    step();
     step();
     fold(input_cursor(target));
     frame();
@@ -385,7 +316,7 @@ int32 input_cursor_shared_pipeline(
         right_value == right->data[right->pos];
         right->data[right->pos] == data[0];
     }
-    step() using {};
+    step();
     frame();
     simp();
 }

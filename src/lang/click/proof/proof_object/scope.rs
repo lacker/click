@@ -710,23 +710,6 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
-    /// Selects and applies one smart statement step on the scope's checked
-    /// child Proof. The accepted descendant, including its exact `StepUsing`
-    /// certificate and fact delta, becomes the next scope body directly.
-    pub(in crate::lang::click::proof) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
-        let Some(body) = self.body.try_indexed_execute_step()? else {
-            return Ok(None);
-        };
-        let mut next = self.clone();
-        for fact in body.added_facts() {
-            if !next.introduced_facts.contains(fact) {
-                next.introduced_facts.push(fact.clone());
-            }
-        }
-        next.body = body;
-        Ok(Some(next))
-    }
-
     /// Runs bare theorem-application search on the scope's current checked
     /// body and retains only the accepted explicit theorem step. Function-exit
     /// applications remain outcome-local ordered-finalization operations.

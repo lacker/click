@@ -42,7 +42,7 @@ fn parses_expanded_typed_loads_and_old_loadability() {
         int32 example(int32 owner[], int32 data[]) {
             ensures result == 0;
         } by {
-            step() using {
+            frame() using {
                 loadable(old(owner[0..6]));
                 load_int32_pointer((owner + 2)) == data;
                 separate(
@@ -52,15 +52,15 @@ fn parses_expanded_typed_loads_and_old_loadability() {
             }
         }
     "#;
-    let file = parser::parse(source).expect("expanded step syntax should parse");
+    let file = parser::parse(source).expect("expanded premise syntax should parse");
     let SourceProof::Script(tactics) = file.function_blocks[0]
         .grouped_proof()
         .expect("example should have a grouped proof")
     else {
         panic!("expected a proof script");
     };
-    let ProofTactic::StepUsing(premises) = &tactics[0] else {
-        panic!("expected a step() using tactic");
+    let ProofTactic::FrameUsing { premises, .. } = &tactics[0] else {
+        panic!("expected a frame() using tactic");
     };
     assert!(matches!(
         &premises[0],

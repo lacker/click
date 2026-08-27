@@ -124,9 +124,6 @@ control flow.
   available condition fact selects and enters one arm. At a loop head, it
   evaluates the condition once and enters one iteration or advances past the
   loop.
-- `step() using { P; ... }`: migration spelling that checks each listed fact
-  is available and then performs `step()`. It is being retired; write
-  `step();`.
 - `execute()`: build symbolic verification paths from the current execution
   frontier to function exit. From function entry, this executes the
   whole C0 function. It applies verified abstract loop rules where available.

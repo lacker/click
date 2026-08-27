@@ -50,26 +50,16 @@ int32 service_step(struct service* owner) {
             owns owner->cell[0..1];
         }
         then {
-            step() using {
-                loadable(owner->phase);
-            }
+            step();
         }
         else {
-            step() using {
-                loadable(owner->phase);
-            }
+            step();
         }
     }
-    step() using {
-        loadable(owner->phase);
-        loadable(owner->cell);
-        loadable(owner->cell[0..1]);
-    }
+    step();
     fold(service(owner));
     observe(service(owner));
-    step() using {
-        loadable(owner->phase);
-    }
+    step();
     frame();
     simp();
 }
@@ -89,7 +79,7 @@ int32 service_run(struct service* owner) {
 
         initialize by simp;
         preserve by {
-            step() using {};
+            step();
             close_invariants();
         }
     }

@@ -1858,17 +1858,15 @@ impl Parser {
         let tactic = match name.as_str() {
             "step" => {
                 if self.peek() != Some(&Token::LParen) {
-                    return Err(self.error("`step using` was replaced by `step() using { ... }`"));
+                    return Err(self.error("`step using` was replaced by `step();`"));
                 }
                 self.expect_empty_tactic_args(&name)?;
                 if self.peek_ident() == Some("using") {
-                    let premises = self.parse_exact_premises()?;
-                    if self.peek() == Some(&Token::Semicolon) {
-                        self.position += 1;
-                    }
-                    return Ok(ProofTactic::StepUsing(premises));
+                    return Err(self.error(
+                        "`step()` takes no `using` list: it executes the next statement with the whole proof context; write `step();`",
+                    ));
                 }
-                ProofTactic::SmartStep
+                ProofTactic::Step
             }
             "close_invariants" => {
                 self.expect_empty_tactic_args(&name)?;

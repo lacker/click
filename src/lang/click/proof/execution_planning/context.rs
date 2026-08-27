@@ -502,8 +502,8 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             certificate_facts.insert(transport.target.clone());
         }
     }
-    // Definedness guards are exact `step() using` premises, so Selected
-    // statement execution already carries them to their certified targets.
+    // Definedness guards are certified with the statement, so its execution
+    // already carries them to their certified targets.
     // Other transported facts can still require an explicit surface bridge.
     let is_evaluator_guard = |fact: &Proposition| {
         matches!(
@@ -672,7 +672,6 @@ pub(in crate::lang::click) enum StatementPrerequisitePolicy {
 #[derive(Clone, Copy)]
 pub(in crate::lang::click) enum StatementFactTransportPolicy {
     None,
-    Selected,
     Automatic,
 }
 

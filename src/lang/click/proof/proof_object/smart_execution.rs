@@ -4,7 +4,7 @@ use super::*;
 
 impl<'a> Proof<'a> {
     /// Searches a straight-line prefix up to one named statement by applying
-    /// every selected `StepUsing` to the current checked descendant. The
+    /// every selected `Step` to the current checked descendant. The
     /// returned fact list is only the prefix's output delta; scope adapters
     /// use it to retain facts introduced inside their owned representation.
     pub(super) fn try_linear_execute_until_descendant(

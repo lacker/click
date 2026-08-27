@@ -701,6 +701,14 @@ impl<'a> Proof<'a> {
     /// back to that same kernel proposition when the selected simple step is
     /// replayed. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
+    /// The point data a premise lookup spells against: the focused outcome
+    /// point, or the frontier's own point view for a judgment stated
+    /// mid-execution.
+    fn premise_point_view(&self) -> Option<PointOperationView<'_>> {
+        self.outcome_point_view()
+            .or_else(|| self.execution_proposition_point_view())
+    }
+
     pub(super) fn replayable_surface_fact(
         &self,
         surface_facts: &SurfacePropositionMap,
@@ -738,9 +746,21 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         };
-        if let Some(point) = self.focused_outcome_point()
-            && let Some(surface) = point.requirement_surfaces.get(kernel)
-        {
+        let requirement_surface = if let Some(point) = self.focused_outcome_point() {
+            point.requirement_surfaces.get(kernel).cloned()
+        } else {
+            // A judgment stated mid-execution selects its requirement
+            // spellings from the frontier's own contract, as an outcome
+            // point does from its recorded ones.
+            self.execution_proposition_point_view().and_then(|view| {
+                view.requirement_facts
+                    .iter()
+                    .zip(view.original_requirements)
+                    .find(|(fact, _)| *fact == kernel)
+                    .and_then(|(_, requirement)| requirement.proposition().cloned())
+            })
+        };
+        if let Some(surface) = requirement_surface {
             let anchored = ClickProposition::At {
                 selector: VisitSelector::ProgramPoint(function_entry.clone()),
                 proposition: Box::new(surface.clone()),
@@ -748,20 +768,20 @@ impl<'a> Proof<'a> {
             if matches_kernel(&anchored).is_some() {
                 return Some(anchored);
             }
-            if let Ok(anchored) = surface_with_source_site(surface, &function_entry)
+            if let Ok(anchored) = surface_with_source_site(&surface, &function_entry)
                 && matches_kernel(&anchored).is_some()
             {
                 return Some(anchored);
             }
         }
-        if self.focused_outcome_point().is_some() {
+        if self.premise_point_view().is_some() {
             if let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
                 let anchored = surface_with_source_site(surface, &function_entry).ok()?;
                 matches_kernel(&anchored).map(|()| anchored)
             }) {
                 return Some(anchored);
             }
-            if let Some(view) = self.outcome_point_view()
+            if let Some(view) = self.premise_point_view()
                 && let Some(surface) = synthesize_surface_proposition(
                     kernel,
                     view.parameters,
@@ -794,7 +814,7 @@ impl<'a> Proof<'a> {
                     context.program_point_states,
                 )),
                 ProofContext::Execution(_) => self
-                    .outcome_point_view()
+                    .premise_point_view()
                     .map(|view| (view.parameters, view.arguments, view.program_point_states)),
             }
             && let Some(anchored) = synthesize_surface_at_recorded_points(
@@ -823,7 +843,7 @@ impl<'a> Proof<'a> {
                     context.program_point_states,
                 )),
                 ProofContext::Execution(_) => self
-                    .outcome_point_view()
+                    .premise_point_view()
                     .map(|view| (view.parameters, view.arguments, view.program_point_states)),
             };
             if let Some((parameters, arguments, program_points)) = synthesis_context
@@ -2554,7 +2574,7 @@ impl<'a> Proof<'a> {
     /// selects current Surface facts indexed under the assigned name;
     /// unrelated facts remain shared and are never scanned. Selection performs
     /// indexed fact/surface lookups only; the C transition runs once, when the
-    /// resulting `StepUsing` is submitted to `apply_step` and retained by the
+    /// resulting `Step` is submitted to `apply_step` and retained by the
     /// returned descendant.
     pub(in crate::lang::click::proof) fn try_indexed_statement_step(
         &self,
@@ -2566,7 +2586,7 @@ impl<'a> Proof<'a> {
     /// Preserve the established exact-context selection first; only when it
     /// cannot advance may unrelated retained effects or facts be shared by
     /// the broader checked selector. Both paths return only an accepted
-    /// `StepUsing` descendant, never planning aftermath.
+    /// `Step` descendant, never planning aftermath.
     /// A smart `step()` is the bare statement step in the whole context.
     pub(in crate::lang::click::proof) fn try_smart_step(&self) -> Result<Option<Self>, ClickError> {
         self.try_indexed_execute_step()
@@ -2785,9 +2805,9 @@ impl<'a> Proof<'a> {
 
     pub(super) fn try_statement_step_using(
         &self,
-        premises: Vec<ClickProposition>,
+        _premises: Vec<ClickProposition>,
     ) -> Result<Option<Self>, ClickError> {
-        match self.apply_step(SimpleProofStep::StepUsing(premises)) {
+        match self.apply_step(SimpleProofStep::Step) {
             Ok(proof) => Ok(Some(proof)),
             Err(_) => {
                 check_verification_deadline()?;

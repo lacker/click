@@ -1141,26 +1141,12 @@ pub(super) fn surface_with_source_site(
     surface_at_source_site(surface, point, SourceSiteAnnotation::Reread)
 }
 
-/// Anchors the unanchored operands of a surface form at a program point
-/// and leaves operands that already name their point (`old(...)` or an
-/// explicit `at(point, ...)`) untouched. For recording where an unanchored
-/// form was read; unlike [`surface_with_source_site`] it never moves a form
-/// that is already anchored to a different point.
-pub(super) fn surface_anchored_where_unanchored(
-    surface: &ClickProposition,
-    point: &ProgramPointRef,
-) -> Result<ClickProposition, ClickError> {
-    surface_at_source_site(surface, point, SourceSiteAnnotation::KeepExisting)
-}
-
 #[derive(Clone, Copy)]
 enum SourceSiteAnnotation {
     /// Re-read every operand at the point, replacing an existing `at`
     /// selector: fact transport across a statement re-reads the source
     /// form at the statement's exit, having proved the cells unchanged.
     Reread,
-    /// Anchor only operands that carry no selector yet.
-    KeepExisting,
 }
 
 fn surface_at_source_site(
@@ -1181,7 +1167,6 @@ fn surface_at_source_site(
     }
     let expression_at_source = |expression: &ContractExpression| match (annotation, expression) {
         (_, ContractExpression::Old(_)) => expression.clone(),
-        (SourceSiteAnnotation::KeepExisting, ContractExpression::At { .. }) => expression.clone(),
         (SourceSiteAnnotation::Reread, ContractExpression::At { expression, .. }) => {
             ContractExpression::At {
                 selector: VisitSelector::ProgramPoint(point.clone()),

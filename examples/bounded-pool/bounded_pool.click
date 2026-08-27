@@ -249,16 +249,10 @@ void pool_pipeline(
     unfold(valid_pool);
     mark before_object_writes;
     open(pool_object(pool, first)) {
-        step() using {
-            0 <= pool->checked_out;
-            pool->checked_out == count(pool_object(pool, _));
-        }
+        step();
     }
     open(pool_object(pool, second)) {
-        step() using {
-            0 <= pool->checked_out;
-            pool->checked_out == count(pool_object(pool, _));
-        }
+        step();
     }
     transport(
         at(before_object_writes,
@@ -272,14 +266,7 @@ void pool_pipeline(
             pool->checked_out + count(pool_slot(pool))
     );
     mark after_object_writes;
-    step() using {
-        loadable(pool->checked_out);
-        loadable(pool->capacity);
-        0 <= pool->checked_out;
-        pool->checked_out == count(pool_object(pool, _));
-        pool->capacity ==
-            pool->checked_out + count(pool_slot(pool));
-    }
+    step();
     transport(
         at(after_object_writes, first->value == 11),
         first->value == 11
@@ -289,14 +276,7 @@ void pool_pipeline(
         second->value == 22
     );
     unfold(valid_pool);
-    step() using {
-        loadable(pool->checked_out);
-        loadable(pool->capacity);
-        0 <= pool->checked_out;
-        pool->checked_out == count(pool_object(pool, _));
-        pool->capacity ==
-            pool->checked_out + count(pool_slot(pool));
-    }
+    step();
     unfold(valid_pool);
     have pool->checked_out == 0 by simp;
     have pool->checked_out + count(pool_slot(pool)) ==
@@ -315,19 +295,8 @@ void pool_pipeline(
         rewrite(pool->capacity == count(pool_slot(pool)));
         assumption();
     }
-    step() using {
-        loadable(pool->checked_out);
-        loadable(pool->capacity);
-        0 <= pool->checked_out;
-        pool->checked_out == count(pool_object(pool, _));
-        pool->capacity ==
-            pool->checked_out + count(pool_slot(pool));
-        pool->checked_out == 0;
-        0 <= pool->capacity;
-        first->value == 11;
-        second->value == 22;
-    }
-    step() using {};
+    step();
+    step();
     frame();
     have pool->capacity == 0 by {
         assumption();
@@ -380,7 +349,7 @@ void pool_transfer_pipeline(
             destination->checked_out + count(pool_slot(destination))
     );
     step();
-    step() using {};
+    step();
     frame();
     simp();
 }

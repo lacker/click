@@ -27,9 +27,7 @@ int32 increment_after_other_write(struct pair* pair) {
     ensures result == old(pair->value) + 1;
 } by {
     step();
-    step() using {
-        defined(pair->value + 1);
-    }
+    step();
     have pair->value == old(pair->value) by {
         normalize();
     }

@@ -13,11 +13,6 @@ path = "mdtests/smart_step_carries_prior_call_facts.md"
 needle = "step();"
 
 [[form]]
-id = "step-using"
-path = "mdtests/proof_branch_interface_continuation.md"
-needle = "step() using {"
-
-[[form]]
 id = "execute"
 path = "mdtests/tactic_execute.md"
 needle = "execute();"

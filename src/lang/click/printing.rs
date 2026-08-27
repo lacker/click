@@ -124,11 +124,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
     match tactic {
         ProofTactic::Mark(name) => line(output, &prefix, &format!("mark {name};")),
         ProofTactic::Step => line(output, &prefix, "step();"),
-        ProofTactic::StepUsing(premises) => {
-            line(output, &prefix, "step() using {");
-            write_premise_list(output, premises, indent + 1);
-            line(output, &prefix, "}");
-        }
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }
@@ -417,7 +412,6 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             write_premise_list(output, premises, indent + 1);
             line(output, &prefix, "}");
         }
-        ProofTactic::SmartStep => line(output, &prefix, "step();"),
         ProofTactic::SmartExecute
         | ProofTactic::SmartExecuteAllPaths
         | ProofTactic::ExecuteUntil(_)

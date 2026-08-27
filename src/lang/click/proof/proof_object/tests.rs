@@ -3078,8 +3078,8 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                 matches!(
                     steps.as_slice(),
                     [SimpleProofStep::Step]
-                        | [SimpleProofStep::StepUsing(_)]
-                        | [SimpleProofStep::StepUsing(_), SimpleProofStep::Step]
+                        | [SimpleProofStep::Step]
+                        | [SimpleProofStep::Step, SimpleProofStep::Step]
                 ),
                 "{steps:#?}"
             );
@@ -7334,8 +7334,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             .join_nested(nested)
             .expect("the checked have should advance the open scope");
         let scope = scope
-            .try_smart_step()
-            .expect("the open body's bounded smart-step query should run")
+            .apply_step(SimpleProofStep::Step)
             .expect("the owned resource scope should retain its checked statement step");
         let closed = scope.join().expect("the marker body should close");
         let allocations = fact_node_allocations() - before;
@@ -7613,7 +7612,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             &theorem_environment,
         );
         let progressed = root
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the meaningful assignment should advance the execution Proof");
         if size == 16 {
             let retained = progressed.clone();
@@ -7627,7 +7626,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             assert!(Arc::ptr_eq(&progressed.state, &retained.state));
             assert!(matches!(
                 progressed.certificate().steps(),
-                [SimpleProofStep::StepUsing(_)]
+                [SimpleProofStep::Step]
             ));
         }
 
@@ -7644,7 +7643,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         assert!(matches!(
             transported.certificate().steps(),
             [
-                SimpleProofStep::StepUsing(_),
+                SimpleProofStep::Step,
                 SimpleProofStep::TransportUsing {
                     source: retained_source,
                     target,
@@ -7889,11 +7888,6 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
     let function_environment = CExecutionEnvironment::new();
     let arguments = vec![CExpression::Value(int32(7))];
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
-    let unavailable = ClickProposition::Comparison {
-        left: ContractExpression::CFragment(CExpression::Value(int32(0))),
-        operator: ComparisonOperator::Equal,
-        right: ContractExpression::CFragment(CExpression::Value(int32(1))),
-    };
     let mut samples = Vec::new();
 
     for size in [16_u32, 64, 256, 1024, 4096] {
@@ -7949,14 +7943,6 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             marked.certificate().steps(),
             [SimpleProofStep::Mark(name)] if name == "candidate"
         ));
-        let error = root
-            .apply_step(SimpleProofStep::StepUsing(vec![unavailable.clone()]))
-            .err()
-            .expect("an unavailable explicit premise must reject the candidate");
-        assert!(error.message().contains("requires an exact premise"));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
-        assert!(root.certificate().steps().is_empty());
-
         let before = fact_node_allocations();
         let completed = root
             .apply_step(SimpleProofStep::Step)
@@ -8213,7 +8199,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
             &click_function_environment,
             &theorem_environment,
         )
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("the declaration prefix should execute before the proof split");
         let before = fact_node_allocations();
         let (split, record) = root
@@ -8229,15 +8215,15 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
         let completed = split
             .focus_execution_if_arm(&record, true)
             .expect("the then sibling should remain open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the then assignment should check")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the then return should check")
             .focus_execution_if_arm(&record, false)
             .expect("the else sibling should remain open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the else assignment should check")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the else return should check")
             .join_focused_execution_if_terminal(&record)
             .expect("the two terminal proof cases should join");
@@ -8459,7 +8445,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         );
         assert_eq!(execution.branch_path.len(), 0);
         let completed = joined
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the joined continuation should execute its return");
         assert!(
             completed
@@ -8891,7 +8877,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             "the interface node must not copy ambient facts into its delta"
         );
         let completed = joined
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the abstract joined frontier should execute its return");
         assert!(
             completed
@@ -8918,11 +8904,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let error = split
         .focus_split_arm(&record, true)
         .expect("the then sibling is open")
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("then assignment should check")
         .focus_split_arm(&record, false)
         .expect("the else sibling is open")
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("else assignment should check")
         .join_focused_execution_interface(&record, vec![ProofAssertion::Fact(negative)])
         .err()
@@ -8992,7 +8978,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             && matches!(else_proof.steps(), [SimpleProofStep::Step])
     ));
     let completed = joined
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("the abstract sibling continuation should execute its return");
     assert!(
         completed
@@ -9042,11 +9028,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("owned-interface then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("owned-interface else assignment should check");
         let assertions = vec![ProofAssertion::Resource(marker_clause.clone())];
         let before = fact_node_allocations();
@@ -9066,7 +9052,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             }] if retained == assertions.as_slice()
         ));
         joined
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the exact owned interface should retain its return frontier");
     }
     let (_, base_height, base_allocations) = ownership_samples[0];
@@ -9103,13 +9089,13 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("transformed-interface then assignment should check")
             .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
             .expect("then arm should fold its ready resource")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("transformed-interface else assignment should check")
             .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
             .expect("else arm should independently fold its ready resource");
@@ -9149,14 +9135,14 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
                 ..
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::StepUsing(_), SimpleProofStep::FoldResource(_)]
+                [SimpleProofStep::Step, SimpleProofStep::FoldResource(_)]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::StepUsing(_), SimpleProofStep::FoldResource(_)]
+                [SimpleProofStep::Step, SimpleProofStep::FoldResource(_)]
             )
         ));
         joined
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the transformed owned interface should retain its return frontier");
     }
     let (_, base_height, base_allocations) = changed_snapshot_samples[0];
@@ -9188,11 +9174,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("normalized-ownership then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("normalized-ownership else assignment should check");
         let before = fact_node_allocations();
         let normalized_join = branches
@@ -9237,11 +9223,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let invalid_branches = invalid_split
         .focus_split_arm(&invalid_record, true)
         .expect("the then sibling is open")
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("rejected quantity then assignment should check")
         .focus_split_arm(&invalid_record, false)
         .expect("the else sibling is open")
-        .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+        .apply_step(SimpleProofStep::Step)
         .expect("rejected quantity else assignment should check");
     let quantity_three = ResourceClause::Quantified {
         quantity: ContractExpression::CFragment(CExpression::Value(int32(3))),
@@ -9331,11 +9317,11 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         let nested = nested_split
             .focus_split_arm(&nested_record, true)
             .expect("the nested then sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("nested then assignment should check")
             .focus_split_arm(&nested_record, false)
             .expect("the nested else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("nested else assignment should check");
         let nested_statement = nested_record.statement_index;
         assert!(nested_record.continuation_remaining.is_none());
@@ -9380,7 +9366,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             }] if assertions == std::slice::from_ref(&ProofAssertion::Fact(nonnegative.clone()))
         ));
         let completed = joined
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("derived enclosing continuation should execute the return");
         assert!(
             completed
@@ -9500,8 +9486,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
                 ..
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::StepUsing(decision), SimpleProofStep::Step]
-                    if !decision.is_empty()
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             ) && else_proof.steps().is_empty()
         ));
         assert_eq!(
@@ -9564,9 +9549,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         }] if then_proof.steps().is_empty()
             && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::StepUsing(decision), SimpleProofStep::Step]
-                    if matches!(decision.as_slice(), [fact]
-                        if *fact == negate_click_proposition(condition))
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             )
         ),
         "{certificate:#?}"
@@ -9602,8 +9585,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             ..
         }] if matches!(
             then_proof.steps(),
-            [SimpleProofStep::StepUsing(decision), SimpleProofStep::Step]
-                if !decision.is_empty()
+            [SimpleProofStep::Step, SimpleProofStep::Step]
         ) && else_proof.steps().is_empty()
     ));
     assert_eq!(
@@ -9726,11 +9708,11 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let advanced = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("then return should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("else return should check");
         assert!(advanced.split_arms_at_function_exit(&record));
         let before = fact_node_allocations();
@@ -9750,14 +9732,10 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
                 else_proof,
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                    if entry == std::slice::from_ref(condition) && body.is_empty()
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                    if matches!(entry.as_slice(), [fact]
-                        if *fact == negate_click_proposition(condition))
-                        && body.is_empty()
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             )
         ));
         assert!(root.certificate().steps().is_empty());
@@ -9806,11 +9784,11 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             "{premature:?}"
         );
         let both_returned = split_proof
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the then sibling returns in place")
             .focus(sibling_ids[1])
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::StepUsing(Vec::new()))
+            .apply_step(SimpleProofStep::Step)
             .expect("the else sibling returns in place");
         let sibling_joined = both_returned
             .join_focused_execution_terminal(&record)
@@ -9826,14 +9804,10 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
                 else_proof,
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                    if entry == std::slice::from_ref(condition) && body.is_empty()
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::StepUsing(entry), SimpleProofStep::StepUsing(body)]
-                    if matches!(entry.as_slice(), [fact]
-                        if *fact == negate_click_proposition(condition))
-                        && body.is_empty()
+                [SimpleProofStep::Step, SimpleProofStep::Step]
             )
         ));
         let sibling_execution = sibling_joined

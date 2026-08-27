@@ -738,7 +738,7 @@ fn certified_transitions_from_execution(
                             prerequisite_policy,
                             StatementPrerequisitePolicy::Explicit
                         ) {
-                            // `step() using` exposes a deliberately small premise
+                            // An explicit premise set is deliberately small.
                             // set. Permit one proof-producing atomic check over
                             // exactly that set, after execution has deferred
                             // every non-exact obligation. This keeps certificate
@@ -986,8 +986,7 @@ fn certified_transitions_from_execution(
                         let statement_local =
                             exact_fact_is_available(&fact, &statement_fact_sources);
                         let (theorem, frame_premises) = match fact_transport_policy {
-                            StatementFactTransportPolicy::Selected
-                            | StatementFactTransportPolicy::Automatic => {
+                            StatementFactTransportPolicy::Automatic => {
                                 direct_transport_with_frame_premises(
                                     &fact,
                                     post_state.memory(),
@@ -1155,9 +1154,9 @@ fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, tar
 }
 
 /// Direct transport of one fact across the statement effect, together with
-/// the exact facts its bounded frame check consumed (the premises the
-/// `step() using` certificate has to list so replay frames the fact from
-/// the same evidence). The source fact itself is not a frame premise.
+/// the exact facts its bounded frame check consumed (recorded so replay
+/// frames the fact from the same evidence). The source fact itself is not a
+/// frame premise.
 fn direct_transport_with_frame_premises(
     fact: &Proposition,
     after: &crate::kernel::CMemory,

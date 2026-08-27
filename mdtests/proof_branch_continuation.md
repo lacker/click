@@ -37,9 +37,7 @@ int32 joined_increment(int32* p, int32 x) {
                 step();
             }
         }
-        step() using {
-            y < 2147483647;
-        }
+        step();
         step();
         simp();
     }

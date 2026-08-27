@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn block_tactic_optional_semicolon_belongs_to_the_tactic() {
-    let source = "by { step() using {}; simp(); }";
+    let source = "by { step(); simp(); }";
     let tokens = scan_source_tokens(source).expect("source should tokenize");
     let by = tokens
         .iter()
@@ -1122,16 +1122,7 @@ int32 vector_set(struct vector* owner, int32 index, int32 value) {
     step();
     step();
     step();
-    step() using {
-        0 <= index;
-        index < owner->len;
-        loadable(old(owner->len));
-        loadable(old(owner->cap));
-        loadable(old(owner->data));
-        1 <= owner->len;
-        owner->len <= owner->cap;
-        separate(memory(object(owner)), memory(owner->data[0..owner->cap]));
-    }
+    step();
     fold(nonempty_vector(owner));
     have index < index + 1 by simp;
     frame();
@@ -1152,45 +1143,19 @@ int32 vector_replace_if(
 } by {
     step();
     step();
-    step() using {
-        index < owner->len;
-        0 <= index;
-        1 <= owner->len;
-        owner->len <= owner->cap;
-        loadable(old(owner->cap));
-        loadable(old(owner->data));
-        loadable(old(owner->len));
-    }
+    step();
     have replace == replace by {
         normalize();
     }
     branch {
         then {
-            step() using {
-                index < owner->len;
-                0 <= index;
-                1 <= owner->len;
-                owner->len <= owner->cap;
-                replace != 0;
-                loadable(old(owner->cap));
-                loadable(old(owner->data));
-                loadable(old(owner->len));
-            }
+            step();
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
         }
         else {
-            step() using {
-                index < owner->len;
-                0 <= index;
-                1 <= owner->len;
-                owner->len <= owner->cap;
-                replace == 0;
-                loadable(old(owner->cap));
-                loadable(old(owner->data));
-                loadable(old(owner->len));
-            }
+            step();
             have replace != 0 implies selected == replacement by simp;
             have not (replace != 0) implies selected == original by simp;
             have index < index + 1 by simp;
@@ -1726,7 +1691,7 @@ int32 nested(int32 x) {
     assert_eq!(leading_replays, 0, "leading expansion entered replay");
     assert_eq!(leading_fallbacks, 0, "leading expansion fell back");
     assert!(
-        leading_expanded.contains("step() using"),
+        leading_expanded.contains("step();"),
         "leading smart step did not extract its checked operation: {leading_expanded}"
     );
     let (((leading_reverified, leading_reverify_fallbacks), leading_reverify_replays), _) =
@@ -1745,31 +1710,6 @@ int32 nested(int32 x) {
     assert_eq!(
         leading_reverify_fallbacks, 0,
         "expanded leading branch step fell back"
-    );
-
-    let corrupted = leading_expanded.replacen(
-        "step() using {\n                x >= 0;\n            }",
-        "step() using {\n                x < 0;\n            }",
-        1,
-    );
-    assert_ne!(
-        corrupted, leading_expanded,
-        "leading expansion should expose its checked branch premise"
-    );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&corrupted, &[("nested.c", c_source)])
-            })
-        });
-    corrupted_result.expect_err("wrong leading branch premise should be rejected by Proof");
-    assert_eq!(
-        corrupted_replays, 0,
-        "wrong leading branch premise entered replay"
-    );
-    assert_eq!(
-        corrupted_fallbacks, 0,
-        "wrong leading branch premise fell back"
     );
 }
 

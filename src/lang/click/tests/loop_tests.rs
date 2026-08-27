@@ -534,10 +534,8 @@ fn frontier_local_loop_frames_untouched_composite_pointer_field_across_call() {
                     }
                     initialize by simp;
                     preserve by {
-                        step() using {};
-                        step() using {
-                            i < 1;
-                        }
+                        step();
+                        step();
                         close_invariants();
                     }
                 }
