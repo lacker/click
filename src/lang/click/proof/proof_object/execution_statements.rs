@@ -921,7 +921,7 @@ impl<'a> Proof<'a> {
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
-            &execution.replay,
+            &execution.expansion,
             context.constants.proof_site.as_ref(),
         );
         let smart_certificate =
@@ -1095,7 +1095,7 @@ impl<'a> Proof<'a> {
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
-            &execution.replay,
+            &execution.expansion,
             context.constants.proof_site.as_ref(),
         );
         let _timing = TacticTiming::new(

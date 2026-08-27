@@ -577,7 +577,9 @@ record (`record_surface_steps`, the tactic surface scopes) is deleted and
 expansions read the Proof (`path_certificate` follows an unjoined arm's
 lineage), with the case-split offset measured on the Proof; the builder left the bag:
 `SurfaceRecord` is typed path state and planning owns explicit sinks
-(`Construction { environments, sink }`), and the per-proof constants (proof site,
+(`Construction { environments, sink }`); `TacticReplayState` is deleted — the
+execution carries one `ExpansionCursor` (deferred capture + enclosing C
+branch choices) and `at_entry` takes no replay, and the per-proof constants (proof site,
 source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
 as `ExecutionProofConstants`, on 2026-08-27; the executor's per-field
 environment parameters collapsed into `proof_context`, with derived

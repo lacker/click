@@ -1207,7 +1207,8 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// artifacts cannot masquerade as proof steps.
     pub(in crate::lang::click::proof) planned_statement_transitions:
         SharedVec<PlannedStatementTransition>,
-    pub(in crate::lang::click::proof) replay: TacticReplayState,
+    /// Where a source tactic's expansion is being captured on this path.
+    pub(in crate::lang::click::proof) expansion: ExpansionCursor,
     pub(in crate::lang::click::proof) branch_path: PersistentSequence<String>,
     /// Kernel facts whose checked C-branch Surface spellings must survive a
     /// join for extraction and explicit historical premises.
@@ -1252,7 +1253,6 @@ impl ExecutionProofState {
     /// replay bag with no branch provenance yet.
     pub(in crate::lang::click::proof) fn at_entry(
         state: CState,
-        replay: TacticReplayState,
         frontier: ExecutionFrontier,
         program_point_states: ProgramPointStates,
         surface_propositions: SurfacePropositionMap,
@@ -1281,7 +1281,7 @@ impl ExecutionProofState {
             next_opaque_call: Default::default(),
             next_kernel_variable: Default::default(),
             planned_statement_transitions: Default::default(),
-            replay,
+            expansion: ExpansionCursor::default(),
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
             branch_decisions: PersistentSequence::default(),
@@ -1311,7 +1311,6 @@ struct ExecutionBranchDecision {
 pub(super) struct ProofFinalizationView<'p> {
     pub(super) state: &'p CState,
     pub(super) facts: Vec<Proposition>,
-    pub(super) replay: &'p TacticReplayState,
     pub(super) frontier: &'p ExecutionFrontier,
     pub(super) execution: &'p ExecutionProofState,
     pub(super) context: &'p ExecutionProofContext<'p>,

@@ -287,7 +287,6 @@ impl<'a> Proof<'a> {
         Ok(ProofFinalizationView {
             state: &execution.state,
             facts: self.facts().to_vec(),
-            replay: &execution.replay,
             frontier: &execution.frontier,
             execution,
             context,
@@ -338,10 +337,10 @@ impl<'a> Proof<'a> {
             if begin_tactic_expansion_capture(
                 expansion_capture,
                 nested_source_index,
-                &execution.replay,
+                &execution.expansion,
                 context.constants.proof_site.as_ref(),
             ) {
-                execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index: nested_tactic_index,
                     source_index: nested_source_index,
                     post_execution_index: DeferredTacticCapture::NESTED,
@@ -351,10 +350,10 @@ impl<'a> Proof<'a> {
         } else if begin_tactic_expansion_capture(
             expansion_capture,
             source_index,
-            &execution.replay,
+            &execution.expansion,
             context.constants.proof_site.as_ref(),
         ) {
-            execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+            execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,
                 post_execution_index: execution.post_execution_tactics.len(),

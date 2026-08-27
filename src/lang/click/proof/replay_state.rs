@@ -131,13 +131,13 @@ impl<T: Clone> SharedValue<T> {
     }
 }
 
+/// Where a source tactic's expansion is being captured on this path: the
+/// deferred capture selected for a post-execution tactic and the C branch
+/// choices enclosing it, which the deferred expansion finalizes against
+/// after every path has completed.
 #[derive(Clone, Default)]
-pub(super) struct TacticReplayState {
+pub(super) struct ExpansionCursor {
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
-    /// C branch choices enclosing a selected tactic in their common
-    /// continuation. Deferred post-execution expansion is finalized after
-    /// `execute_internal_proof` has returned one context per path, so it must
-    /// retain this typed path rather than reconstructing it from diagnostics.
     pub(super) deferred_expansion_path_choices: PersistentSequence<SurfacePathChoice>,
 }
 
@@ -654,14 +654,14 @@ pub(super) fn proof_site_for_claims(
 pub(super) fn begin_tactic_expansion_capture(
     capture: Option<&mut ExpansionCapture>,
     source_index: usize,
-    replay: &TacticReplayState,
+    cursor: &ExpansionCursor,
     proof_site: Option<&ProofSite>,
 ) -> bool {
     let Some(capture) = capture else {
         return false;
     };
     let sibling_branch_capture = capture.active
-        && !replay.deferred_expansion_path_choices.is_empty()
+        && !cursor.deferred_expansion_path_choices.is_empty()
         && capture.source_index == Some(source_index)
         && proof_site == Some(&capture.site);
     if capture.active && !sibling_branch_capture
@@ -739,10 +739,10 @@ pub(super) fn take_path_tactic_expansion_capture(
 
 pub(super) fn resume_deferred_tactic_expansion_capture(
     capture: Option<&mut ExpansionCapture>,
-    replay: &TacticReplayState,
+    cursor: &ExpansionCursor,
     proof_site: Option<&ProofSite>,
 ) -> Result<(), ClickError> {
-    let Some(deferred) = &replay.deferred_tactic_capture else {
+    let Some(deferred) = &cursor.deferred_tactic_capture else {
         return Ok(());
     };
     let Some(capture) = capture else {

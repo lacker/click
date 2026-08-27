@@ -459,8 +459,7 @@ timings:
 ### Small-stack canary
 
 Checked verification advances a persistent `Proof`; its execution snapshot
-(`ExecutionProofState`) embeds the `TacticReplayState` bag by value, so the
-driver frames carry that representation on the stack.
+(`ExecutionProofState`) is carried by value through the driver frames.
 `selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.75
 MiB thread stack, below libtest's 2 MiB default, and pins that representation
 budget. The run needed between 1216 and 1280 KiB on rustc 1.92 / macOS and

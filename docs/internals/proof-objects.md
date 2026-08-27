@@ -43,21 +43,21 @@ transitions, the freshness counters, the loop-effect goal and region flags,
 branch provenance, deferred post-execution tactics, and the path's unfolded
 predicates. The path's surface record (`SurfaceRecord`: replay-visible
 certificate facts, the premise anchor, proof-level case choices) is typed path
-state on it too. Its `TacticReplayState` holds only the expansion-capture
-cursors, scheduled for retirement in phase 3. The checked drivers no longer
-mirror surface steps into that builder: a tactic's expansion and a
-preservation arm's certificate come from the `Proof` itself (`certificate`,
-`certificate_since`, and the lineage-following `path_certificate` for an
-unjoined case-split arm), and the certificate builder is only a planning
-call's construction sink, owned by the planning `Proof` method and handed to
-the executor with the construction environments as one `Construction` gate; a
-bounded execution gives each explored path its own sink and synthesizes them
-at the join. It lives only as the execution snapshot of a `Proof` goal: the
-checked drivers advance a `Proof`, and every source or generated proof tree is
-checked that way. The earlier interpreter that advanced this context as a
-parallel engine is gone; the remaining duplication of facts and `CState`
-between the snapshot and the `Proof` is tracked for removal in `issues/replay-
-smell.md`.
+state on it too. Its one cursor, `ExpansionCursor`, records where a source
+tactic's expansion is being captured; it holds no semantic state. The checked
+drivers no longer mirror surface steps into that builder: a tactic's expansion
+and a preservation arm's certificate come from the `Proof` itself
+(`certificate`, `certificate_since`, and the lineage-following
+`path_certificate` for an unjoined case-split arm), and the certificate
+builder is only a planning call's construction sink, owned by the planning
+`Proof` method and handed to the executor with the construction environments
+as one `Construction` gate; a bounded execution gives each explored path its
+own sink and synthesizes them at the join. It lives only as the execution
+snapshot of a `Proof` goal: the checked drivers advance a `Proof`, and every
+source or generated proof tree is checked that way. The earlier interpreter
+that advanced this context as a parallel engine is gone; the remaining
+duplication of facts and `CState` between the snapshot and the `Proof` is
+tracked for removal in `issues/replay- smell.md`.
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface

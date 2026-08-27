@@ -1157,7 +1157,6 @@ mod certificate_tests {
     fn deferred_tactics_retain_their_owning_source_occurrence() {
         let mut execution = ExecutionProofState::at_entry(
             CState::new(),
-            TacticReplayState::default(),
             ExecutionFrontier::default(),
             ProgramPointStates::new(),
             SurfacePropositionMap::default(),

@@ -1038,8 +1038,8 @@ impl<'a> Proof<'a> {
         } else {
             terminal_certificate(&arms[1].certificate, empty_source_arms[1])
         };
-        let then_replay = &arms[0].execution.replay;
-        let else_replay = &arms[1].execution.replay;
+        let then_replay = &arms[0].execution.expansion;
+        let else_replay = &arms[1].execution.expansion;
         let common_program_points = arms[0]
             .execution
             .program_point_states
@@ -1180,7 +1180,7 @@ impl<'a> Proof<'a> {
         // in exactly one arm. Retain that cursor across the audited join, but
         // reject two different captures rather than guessing which source
         // occurrence owns the eventual expansion.
-        let parent_capture = parent_execution.replay.deferred_tactic_capture.as_ref();
+        let parent_capture = parent_execution.expansion.deferred_tactic_capture.as_ref();
         let then_capture = then_replay.deferred_tactic_capture.as_ref();
         let else_capture = else_replay.deferred_tactic_capture.as_ref();
         if parent_capture.is_some()
@@ -1190,7 +1190,7 @@ impl<'a> Proof<'a> {
                 self.step_error("terminal execution arm lost its inherited selected-tactic cursor")
             );
         }
-        execution.replay.deferred_tactic_capture = match (then_capture, else_capture) {
+        execution.expansion.deferred_tactic_capture = match (then_capture, else_capture) {
             (Some(then_capture), Some(else_capture)) if then_capture == else_capture => {
                 Some(then_capture.clone())
             }

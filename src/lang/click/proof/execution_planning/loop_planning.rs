@@ -351,7 +351,6 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()
     };
-    let replay = TacticReplayState::default();
     record_statement_program_point_state(
         &mut program_point_states,
         environment.function_block,
@@ -371,7 +370,6 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         0,
         ExecutionProofState::at_entry(
             preservation.state().clone(),
-            replay,
             frontier,
             program_point_states,
             environment.surface_propositions.clone(),
@@ -1254,7 +1252,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionProofConstants::default()
     };
     let mut surface_propositions = environment.surface_propositions.clone();
-    let replay = TacticReplayState::default();
     record_statement_program_point_state(
         &mut program_point_states,
         environment.function_block,
@@ -1326,7 +1323,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         internal_proof_first_index(&program).unwrap_or(0),
         ExecutionProofState::at_entry(
             preservation.state().clone(),
-            replay,
             frontier,
             program_point_states,
             surface_propositions,

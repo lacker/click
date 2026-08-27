@@ -61,7 +61,6 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -2753,7 +2752,6 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_premise.clone());
-        let replay = TacticReplayState::default();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&premise, &kernel_premise)
@@ -2763,7 +2761,6 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -2949,7 +2946,6 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_premise.clone());
-        let replay = TacticReplayState::default();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&premise, &kernel_premise)
@@ -2959,7 +2955,6 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -6845,7 +6840,6 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(predicate.clone());
-        let replay = TacticReplayState::default();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&surface, &predicate)
@@ -6855,7 +6849,6 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -6974,7 +6967,6 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -7082,7 +7074,6 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -7191,7 +7182,6 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -7317,7 +7307,6 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -7482,7 +7471,6 @@ fn execution_transport_forks_without_copying_unrelated_state() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel.clone());
-        let replay = TacticReplayState::default();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&surface, &kernel)
@@ -7492,7 +7480,6 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -7602,7 +7589,6 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_source.clone());
-        let replay = TacticReplayState::default();
         let mut surface_propositions = SurfacePropositionMap::default();
         surface_propositions
             .record_lowering(&source, &kernel_source)
@@ -7612,7 +7598,6 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -7711,13 +7696,11 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
 
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "indexed local assignment",
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -7833,13 +7816,11 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
                 .expect("the unrelated surface fact should be indexed");
             pure_facts.push(fact);
         }
-        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "indexed store selection",
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 surface_propositions,
@@ -7920,13 +7901,11 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
     let mut samples = Vec::new();
 
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "persistent statement step",
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -8052,7 +8031,6 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 
     for size in [16_u32, 64, 256, 1024, 4096] {
         let make_root = |loop_invariant_region: bool| {
-            let replay = TacticReplayState::default();
             let mut frontier = ExecutionFrontier::default();
             if loop_invariant_region {
                 frontier.region = ExecutionRegionKind::LoopBody;
@@ -8062,7 +8040,6 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                 0,
                 ExecutionProofState::at_entry(
                     CState::new(),
-                    replay,
                     frontier,
                     ProgramPointStates::new(),
                     SurfacePropositionMap::default(),
@@ -8214,13 +8191,11 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
 
     let mut samples = Vec::new();
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "execution proof if scaling",
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -8345,13 +8320,11 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(lowered_disjunction.clone());
-        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "execution proof cases scaling",
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
-                replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -8428,7 +8401,6 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut statement_delta: Option<Vec<Proposition>> = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
@@ -8436,7 +8408,6 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -8572,7 +8543,6 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
     let mut allocation_samples = Vec::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
@@ -8580,7 +8550,6 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -8861,7 +8830,6 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         right: value(0),
     };
     let make_root = |size: u32, state: CState| {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
@@ -8869,7 +8837,6 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             0,
             ExecutionProofState::at_entry(
                 state,
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -9337,7 +9304,6 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         right: ContractExpression::CFragment(CExpression::Value(int32(0))),
     };
     let make_root = |size: u32| {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
@@ -9345,7 +9311,6 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -9476,7 +9441,6 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let function_environment = CExecutionEnvironment::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let make_root = |facts: Vec<Proposition>| {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
@@ -9484,7 +9448,6 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),
@@ -9747,7 +9710,6 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut expected_outcome_fact_sizes = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let replay = TacticReplayState::default();
         let mut frontier = ExecutionFrontier::default();
         frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
@@ -9755,7 +9717,6 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
-                replay,
                 frontier,
                 ProgramPointStates::new(),
                 SurfacePropositionMap::default(),

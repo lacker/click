@@ -1359,10 +1359,10 @@ fn defer_post_exit_outcome_tactic<'a>(
             if begin_tactic_expansion_capture(
                 capture.take(),
                 source_index,
-                &execution.replay,
+                &execution.expansion,
                 proof_site.as_ref(),
             ) {
-                execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index,
                     source_index,
                     post_execution_index: execution.post_execution_tactics.len(),
@@ -1741,10 +1741,10 @@ fn advance_focused_execution_arm<'a>(
                     if begin_tactic_expansion_capture(
                         capture.take(),
                         source_index,
-                        &execution.replay,
+                        &execution.expansion,
                         proof_site.as_ref(),
                     ) {
-                        execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                        execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
                             tactic_index,
                             source_index,
                             post_execution_index: execution.post_execution_tactics.len(),

@@ -327,7 +327,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         function_entry_state: Some(function_entry_state),
         grouped_contract: false,
     };
-    let replay = TacticReplayState::default();
     let frontier = ExecutionFrontier::default();
     let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
@@ -343,7 +342,6 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     )?;
     let initial = ExecutionProofState::at_entry(
         state,
-        replay,
         frontier,
         program_point_states,
         surface_propositions,
@@ -502,7 +500,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         function_entry_state: Some(function_entry_state),
         grouped_contract: true,
     };
-    let replay = TacticReplayState::default();
     let frontier = ExecutionFrontier::default();
     let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
@@ -518,7 +515,6 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     )?;
     let initial = ExecutionProofState::at_entry(
         state,
-        replay,
         frontier,
         program_point_states,
         surface_propositions,
@@ -1083,18 +1079,17 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     let outcome_substrate = match &unit {
         OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
     };
-    let (state, replay, frontier, proof_execution, proof_context, branch_path) =
-        match (&unit, &direct_view) {
-            (OrderedProofUnit::Checked(_), Some(view)) => (
-                view.state,
-                view.replay,
-                view.frontier,
-                view.execution,
-                view.context,
-                view.branch_path,
-            ),
-            _ => unreachable!("ordered proof unit and finalization view must agree"),
-        };
+    let (state, frontier, proof_execution, proof_context, branch_path) = match (&unit, &direct_view)
+    {
+        (OrderedProofUnit::Checked(_), Some(view)) => (
+            view.state,
+            view.frontier,
+            view.execution,
+            view.context,
+            view.branch_path,
+        ),
+        _ => unreachable!("ordered proof unit and finalization view must agree"),
+    };
     let retained_surface = match &unit {
         OrderedProofUnit::Checked(proof) => {
             let record = &proof_execution.surface_record;
@@ -1794,7 +1789,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                     // path cannot decide the pre-join surface branches, and the tactic
                     // it carries belongs on every leaf.
                     let deferred_capture_branch_path = if let Some(deferred) =
-                        replay.deferred_tactic_capture.as_ref()
+                        proof_execution.expansion.deferred_tactic_capture.as_ref()
                     {
                         match &outcome {
                             CFunctionOutcome::Return {
@@ -2068,7 +2063,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic,
@@ -2169,7 +2164,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2225,7 +2220,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2279,7 +2274,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::ApplyTheoremUsing {
@@ -2433,7 +2428,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     surface_have,
@@ -2555,7 +2550,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2588,7 +2583,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::Choose(choice.clone()),
@@ -2620,7 +2615,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::Witness(witness.clone()),
@@ -2757,7 +2752,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2873,7 +2868,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2988,7 +2983,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic,
@@ -3085,7 +3080,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::FrameUsing {
@@ -3137,7 +3132,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             deferred.surface_recorded,
                                             &mut path_surface_post_tactics,
                                             &mut path_deferred_capture_tactics,
-                                            replay.deferred_tactic_capture.as_ref(),
+                                            proof_execution
+                                                .expansion
+                                                .deferred_tactic_capture
+                                                .as_ref(),
                                             post_execution_index,
                                             *tactic_index,
                                             tactic,
@@ -3318,7 +3316,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    replay.deferred_tactic_capture.as_ref(),
+                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::FrameUsing {
@@ -3386,7 +3384,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             deferred.surface_recorded,
                                             &mut path_surface_post_tactics,
                                             &mut path_deferred_capture_tactics,
-                                            replay.deferred_tactic_capture.as_ref(),
+                                            proof_execution
+                                                .expansion
+                                                .deferred_tactic_capture
+                                                .as_ref(),
                                             post_execution_index,
                                             *tactic_index,
                                             tactic.clone(),
@@ -3397,7 +3398,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        replay.deferred_tactic_capture.as_ref(),
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         ProofTactic::FrameUsing {
@@ -3411,7 +3412,8 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 "post-execution branch selection must flatten control nodes before checking leaf tactics"
                             ),
                             PostExecutionTactic::Simp => {
-                                let capturing_this_tactic = replay
+                                let capturing_this_tactic = proof_execution
+                                    .expansion
                                     .deferred_tactic_capture
                                     .as_ref()
                                     .is_some_and(|capture| capture.tactic_index == *tactic_index);
@@ -4322,7 +4324,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             }
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {
-            let Some(deferred) = replay.deferred_tactic_capture.as_ref() else {
+            let Some(deferred) = proof_execution.expansion.deferred_tactic_capture.as_ref() else {
                 // Structured proofs produce one replay context per logical
                 // case.  A selected deferred tactic activates the expansion
                 // capture while those contexts are being built, but contexts

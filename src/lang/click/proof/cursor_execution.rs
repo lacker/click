@@ -2677,7 +2677,7 @@ pub(super) fn bounded_execute_from_execution_point(
     // Each explored path constructs its own surface steps from a clean
     // builder; the paths are merged back into one step sequence (with `if`
     // structure at genuine forks) once the frontiers are complete. Every
-    // path starts from the execution.replay-visible certificate facts at this point.
+    // path starts from the replay-visible certificate facts at this point.
     // Each explored path constructs its own surface steps into its own sink,
     // seeded with the planning anchor; the paths are merged back into one
     // step sequence (with `if` structure at genuine forks) once complete.
