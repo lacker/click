@@ -391,9 +391,11 @@ impl<'a> Proof<'a> {
             // that frontier from the unchanged Proof root.
             return Ok(false);
         }
+        let Some(context) = self.execution_context() else {
+            return Ok(false);
+        };
         let statement_index = execution.frontier.next_statement_index;
-        let source_region = execution
-            .replay
+        let source_region = context
             .source_layout
             .statement(statement_index)
             .ok_or_else(|| {

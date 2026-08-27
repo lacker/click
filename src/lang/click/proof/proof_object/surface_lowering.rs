@@ -113,7 +113,7 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
-                let pre_state = execution.old_reference_state(&execution.state);
+                let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
                 lower_point_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
@@ -183,7 +183,7 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
-                let pre_state = execution.old_reference_state(&execution.state);
+                let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
                 lower_point_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),

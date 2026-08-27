@@ -70,7 +70,7 @@ pub(in crate::lang::click) fn verify_loop_execution_proofs(
     verify_execution_proofs_forward(
         expansion_capture,
         function.body(),
-        vec![ExecutionProofContext {
+        vec![PlanningExecutionContext {
             state: entry_state,
             pure_facts: requirement_facts,
             surface_propositions: surface_propositions.clone(),
@@ -214,7 +214,7 @@ impl FrontierLoopProofSource {
 }
 
 #[derive(Clone)]
-pub(in crate::lang::click::proof) struct ExecutionProofContext {
+pub(in crate::lang::click::proof) struct PlanningExecutionContext {
     pub(in crate::lang::click::proof) state: CState,
     pub(in crate::lang::click::proof) pure_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
@@ -413,6 +413,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     frontier: &ExecutionFrontier,
     effect_facts: &[ExecutionPureFact],
     program_point_states: &ProgramPointStates,
+    proof_context: &ExecutionProofContext<'_>,
     transition: &CertifiedStatementTransition,
     loop_step_policy: LoopStepPolicy,
     state: &CState,
@@ -478,6 +479,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             frontier,
             effect_facts,
             program_point_states,
+            proof_context,
             state,
             function_block,
             parameters,
@@ -570,6 +572,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     frontier: &ExecutionFrontier,
     effect_facts: &[ExecutionPureFact],
     program_point_states: &ProgramPointStates,
+    proof_context: &ExecutionProofContext<'_>,
     transition: &CertifiedConditionTransition,
     include_path_fact: bool,
     state: &CState,
@@ -604,6 +607,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         frontier,
         effect_facts,
         program_point_states,
+        proof_context,
         state,
         function_block,
         parameters,

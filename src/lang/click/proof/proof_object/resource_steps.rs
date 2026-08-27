@@ -191,7 +191,8 @@ impl<'a> Proof<'a> {
                 let kernel = match &surface {
                     Some(surface) => {
                         let surface = self.substitute_point_locals_in_proposition(surface)?;
-                        let pre_state = execution.old_reference_state(&execution.state);
+                        let pre_state =
+                            context.old_reference_state(&execution.frontier, &execution.state);
                         lower_point_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
@@ -362,7 +363,9 @@ impl<'a> Proof<'a> {
                 self.step_error("resource `fold` must run before execution reaches function exit")
             );
         }
-        let pre_state = execution.old_reference_state(&execution.state).clone();
+        let pre_state = context
+            .old_reference_state(&execution.frontier, &execution.state)
+            .clone();
         let checked = fold_composite_resource_for_proof(
             context.resource_environment,
             resource,

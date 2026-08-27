@@ -18,6 +18,7 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_statement_step(
     execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
     requirement_pure_facts: &ProofFacts,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -30,7 +31,6 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     tactic_index: usize,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<CheckedStatementStep>, ClickError> {
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
     let assumptions = requirement_pure_facts.assumptions();
     // A bare `step()` executes in the whole proof context: prerequisites
@@ -58,7 +58,9 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         tactic_index,
         tactic_name,
     )?;
-    let pre_state = old_reference_state(replay, &execution.frontier, state).clone();
+    let pre_state = proof_context
+        .old_reference_state(&execution.frontier, state)
+        .clone();
     let mut explicit_premises = Vec::new();
     for case in &execution.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
@@ -114,6 +116,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     }
     let successors = execute_step_successors_from_execution_point(
         execution,
+        proof_context,
         &explicit_premises,
         function_block,
         function,

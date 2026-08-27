@@ -14,6 +14,7 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         execution: ExecutionProofState,
         pure_facts: Vec<Proposition>,
+        constants: ExecutionProofConstants,
         function_block: &'a FunctionBlock,
         function: &'a CFunction,
         parsed_function: &'a syntax::C0Function,
@@ -24,7 +25,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
-        let effect_goals = match execution.replay.proof_site.as_ref() {
+        let effect_goals = match constants.proof_site.as_ref() {
             Some(ProofSite::FunctionClaim {
                 claim: CProofClaim::Grouped,
                 ..
@@ -40,6 +41,7 @@ impl<'a> Proof<'a> {
             tactic_index,
             execution,
             pure_facts,
+            constants,
             effect_goals,
             function_block,
             function,
@@ -64,6 +66,7 @@ impl<'a> Proof<'a> {
         tactic_index: usize,
         execution: ExecutionProofState,
         pure_facts: Vec<Proposition>,
+        constants: ExecutionProofConstants,
         effect_goals: EffectGoalSelection,
         function_block: &'a FunctionBlock,
         function: &'a CFunction,
@@ -88,6 +91,11 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
+                proof_site: constants.proof_site,
+                source_layout: constants.source_layout,
+                execution_start_facts: constants.execution_start_facts,
+                function_entry_state: constants.function_entry_state,
+                grouped_contract: constants.grouped_contract,
             })),
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
@@ -132,7 +140,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
-        execution.replay.proof_site = Some(site);
         execution.replay.loop_effect_goal = Some(LoopEffectReplayGoal {
             before_state: before_state.clone(),
             check: check.clone(),
@@ -154,6 +161,11 @@ impl<'a> Proof<'a> {
                 predicate_environment: context.predicate_environment,
                 click_function_environment: context.click_function_environment,
                 theorem_environment: context.theorem_environment,
+                proof_site: Some(site),
+                source_layout: context.source_layout.clone(),
+                execution_start_facts: context.execution_start_facts.clone(),
+                function_entry_state: context.function_entry_state.clone(),
+                grouped_contract: context.grouped_contract,
             })),
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
@@ -279,9 +291,9 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn finalization_view(
         &self,
     ) -> Result<ProofFinalizationView<'_>, ClickError> {
-        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("proof does not own an execution frontier"));
-        }
+        };
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
@@ -291,6 +303,7 @@ impl<'a> Proof<'a> {
             replay: &execution.replay,
             frontier: &execution.frontier,
             execution,
+            context,
             unfolded_predicates: &execution.unfolded_predicates,
             branch_path: &execution.branch_path,
             outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),
@@ -310,6 +323,9 @@ impl<'a> Proof<'a> {
         expansion_capture: Option<&mut ExpansionCapture>,
     ) -> Result<Self, ClickError> {
         self.require_execution_frontier("post-execution tactic scheduling")?;
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("post-execution tactics require an execution proof"));
+        };
         let mut execution = self
             .execution()
             .cloned()
@@ -336,6 +352,7 @@ impl<'a> Proof<'a> {
                 expansion_capture,
                 nested_source_index,
                 &execution.replay,
+                context.proof_site.as_ref(),
             ) {
                 execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index: nested_tactic_index,
@@ -344,8 +361,12 @@ impl<'a> Proof<'a> {
                     branch_skeleton: branch_skeleton(),
                 });
             }
-        } else if begin_tactic_expansion_capture(expansion_capture, source_index, &execution.replay)
-        {
+        } else if begin_tactic_expansion_capture(
+            expansion_capture,
+            source_index,
+            &execution.replay,
+            context.proof_site.as_ref(),
+        ) {
             execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,

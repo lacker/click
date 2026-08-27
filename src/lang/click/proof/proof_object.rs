@@ -811,18 +811,47 @@ struct PointProofContext<'a> {
     requirement_facts: &'a [Proposition],
 }
 
-struct ExecutionProofContext<'a> {
-    claim_label: &'a str,
-    tactic_index: usize,
-    function_block: &'a FunctionBlock,
-    function: &'a CFunction,
-    parsed_function: &'a syntax::C0Function,
-    arguments: &'a [CExpression],
-    function_environment: &'a CExecutionEnvironment,
-    resource_environment: &'a ResourceEnvironment,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
+/// The per-proof constants of an execution proof: which claim is being
+/// proved, the source layout it executes, and the entry facts and state
+/// that `old(...)` and requirement premises resolve against.
+#[derive(Clone, Default)]
+pub(in crate::lang::click::proof) struct ExecutionProofConstants {
+    pub(in crate::lang::click::proof) proof_site: Option<ProofSite>,
+    pub(in crate::lang::click::proof) source_layout: SourceExecutionLayout,
+    pub(in crate::lang::click::proof) execution_start_facts: Arc<Vec<Proposition>>,
+    pub(in crate::lang::click::proof) function_entry_state: Option<CState>,
+    pub(in crate::lang::click::proof) grouped_contract: bool,
+}
+
+pub(in crate::lang::click::proof) struct ExecutionProofContext<'a> {
+    pub(in crate::lang::click::proof) claim_label: &'a str,
+    pub(in crate::lang::click::proof) tactic_index: usize,
+    pub(in crate::lang::click::proof) function_block: &'a FunctionBlock,
+    pub(in crate::lang::click::proof) function: &'a CFunction,
+    pub(in crate::lang::click::proof) parsed_function: &'a syntax::C0Function,
+    pub(in crate::lang::click::proof) arguments: &'a [CExpression],
+    pub(in crate::lang::click::proof) function_environment: &'a CExecutionEnvironment,
+    pub(in crate::lang::click::proof) resource_environment: &'a ResourceEnvironment,
+    pub(in crate::lang::click::proof) predicate_environment: &'a PredicateEnvironment,
+    pub(in crate::lang::click::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::lang::click::proof) theorem_environment: &'a TheoremEnvironment,
+    pub(in crate::lang::click::proof) proof_site: Option<ProofSite>,
+    pub(in crate::lang::click::proof) source_layout: SourceExecutionLayout,
+    pub(in crate::lang::click::proof) execution_start_facts: Arc<Vec<Proposition>>,
+    pub(in crate::lang::click::proof) function_entry_state: Option<CState>,
+    pub(in crate::lang::click::proof) grouped_contract: bool,
+}
+
+impl ExecutionProofContext<'_> {
+    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
+    /// a contract clause is lowered at `frontier`.
+    pub(in crate::lang::click::proof) fn old_reference_state<'s>(
+        &'s self,
+        frontier: &'s ExecutionFrontier,
+        current_state: &'s CState,
+    ) -> &'s CState {
+        old_reference_state(self.function_entry_state.as_ref(), frontier, current_state)
+    }
 }
 
 #[derive(Clone)]
@@ -1107,21 +1136,16 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 
 impl ExecutionProofState {
     /// The read-only execution data lowering and point proofs consult.
-    pub(in crate::lang::click::proof) fn view(&self) -> ExecutionView<'_> {
+    pub(in crate::lang::click::proof) fn view<'s>(
+        &'s self,
+        context: &'s ExecutionProofContext<'_>,
+    ) -> ExecutionView<'s> {
         self.replay.view(
             &self.frontier,
             &self.effect_facts,
             &self.program_point_states,
+            context.function_entry_state.as_ref(),
         )
-    }
-
-    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
-    /// a contract clause is lowered here.
-    pub(in crate::lang::click::proof) fn old_reference_state<'a>(
-        &'a self,
-        current_state: &'a CState,
-    ) -> &'a CState {
-        old_reference_state(&self.replay, &self.frontier, current_state)
     }
 
     /// The execution state at a proof's entry: the frontier's C state and
@@ -1174,6 +1198,7 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) replay: &'p TacticReplayState,
     pub(super) frontier: &'p ExecutionFrontier,
     pub(super) execution: &'p ExecutionProofState,
+    pub(super) context: &'p ExecutionProofContext<'p>,
     pub(super) unfolded_predicates: &'p SharedVec<String>,
     pub(super) branch_path: &'p PersistentSequence<String>,
     outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],
@@ -1734,6 +1759,16 @@ impl<'a> Proof<'a> {
             context,
             outcome,
         })
+    }
+
+    /// The execution proof's per-proof context, when this is one.
+    pub(in crate::lang::click::proof) fn execution_context(
+        &self,
+    ) -> Option<&ExecutionProofContext<'a>> {
+        match self.context.as_ref() {
+            ProofContext::Execution(context) => Some(context),
+            _ => None,
+        }
     }
 
     fn execution(&self) -> Option<&ExecutionProofState> {

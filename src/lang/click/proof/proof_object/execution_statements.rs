@@ -20,6 +20,7 @@ impl<'a> Proof<'a> {
         let fact_context = Some(self.facts().assumptions());
         let checked = check_statement_step(
             &mut execution,
+            context,
             &self.facts(),
             context.function_block,
             context.function,
@@ -386,6 +387,7 @@ impl<'a> Proof<'a> {
             let base_facts = arm_facts.len();
             let feasible = introduce_proof_case_assumption(
                 &mut arm_execution,
+                context,
                 &mut arm_facts,
                 base_execution.has_structured_branch_history,
                 condition,
@@ -524,6 +526,7 @@ impl<'a> Proof<'a> {
         let assumptions = assumptions_from_propositions(&planning_facts);
         execute_step_from_execution_point(
             &mut planning,
+            context,
             &mut planning_facts,
             context.function_block,
             context.function,
@@ -668,7 +671,7 @@ impl<'a> Proof<'a> {
                 )));
             }
             let assumptions = assumptions_from_propositions(facts);
-            let pre_state = old_reference_state(replay, frontier, state);
+            let pre_state = view.context.old_reference_state(frontier, state);
             let source = lower_point_proposition(
                 surface_source,
                 facts,
@@ -732,6 +735,7 @@ impl<'a> Proof<'a> {
                     frontier,
                     &view.execution.effect_facts,
                     &view.execution.program_point_states,
+                    view.context.function_entry_state.as_ref(),
                 ),
                 state,
                 context.predicate_environment,
@@ -802,6 +806,7 @@ impl<'a> Proof<'a> {
         };
         super::super::cursor_execution::execute_until_statement(
             &mut planning,
+            context,
             &mut planning_facts,
             context.function_block,
             context.function,
@@ -893,6 +898,7 @@ impl<'a> Proof<'a> {
         let direct_result = (!force_all_paths).then(|| {
             execute_rest_from_execution_point(
                 &mut planning,
+                context,
                 &mut planning_facts,
                 context.function_block,
                 context.function,
@@ -911,6 +917,7 @@ impl<'a> Proof<'a> {
             planning_facts = facts_vec.clone();
             bounded_execute_from_execution_point(
                 &mut planning,
+                context,
                 &mut planning_facts,
                 context.function_block,
                 context.function,
@@ -1020,10 +1027,12 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             source_index,
             &execution.replay,
+            context.proof_site.as_ref(),
         );
         let smart_certificate = check_mid_execution_have(
             have,
             &mut execution,
+            context,
             &mut facts,
             context.function_block,
             context.parsed_function,
@@ -1200,6 +1209,7 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             source_index,
             &execution.replay,
+            context.proof_site.as_ref(),
         );
         let _timing = TacticTiming::new(
             context.claim_label,
@@ -1212,6 +1222,7 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             loop_clause,
             &mut execution,
+            context,
             &mut facts,
             context.function_block,
             context.parsed_function,

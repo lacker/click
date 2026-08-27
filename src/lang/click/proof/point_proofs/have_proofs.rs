@@ -1980,11 +1980,18 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
     for unit in units {
         context_count += 1;
-        let replay = match &unit {
-            OrderedProofUnit::Checked(proof) => proof.finalization_view()?.replay,
+        let (replay, proof_site) = match &unit {
+            OrderedProofUnit::Checked(proof) => {
+                let view = proof.finalization_view()?;
+                (view.replay, view.context.proof_site.as_ref())
+            }
         };
         let path_choices = replay.deferred_expansion_path_choices.to_vec();
-        resume_deferred_tactic_expansion_capture(expansion_capture.as_deref_mut(), replay)?;
+        resume_deferred_tactic_expansion_capture(
+            expansion_capture.as_deref_mut(),
+            replay,
+            proof_site,
+        )?;
         let path_had_deferred_capture = replay.deferred_tactic_capture.is_some();
         let result_before = expansion_capture
             .as_deref()

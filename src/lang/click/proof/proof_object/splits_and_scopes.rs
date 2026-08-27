@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
         };
         let statement_index = execution.frontier.next_statement_index;
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            execution.view(),
+            execution.view(context),
             &execution.state,
             context.function,
             context.arguments,
@@ -301,7 +301,7 @@ impl<'a> Proof<'a> {
         };
         for execution in &partition.base_executions {
             let statement_index = execution.frontier.next_statement_index;
-            let Some(region) = execution.replay.source_layout.statement(statement_index) else {
+            let Some(region) = context.source_layout.statement(statement_index) else {
                 return Ok(None);
             };
             if !matches!(region.kind, SourceStatementKind::If { .. }) {
@@ -406,6 +406,7 @@ impl<'a> Proof<'a> {
                 let base_execution = Arc::new(execution.clone());
                 let mut checked = check_statement_step(
                     &mut execution,
+                    context,
                     &facts,
                     context.function_block,
                     context.function,

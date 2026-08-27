@@ -9,6 +9,7 @@ use crate::lang::click::proof::proof_object::ExecutionProofState;
 pub(in crate::lang::click::proof) fn check_mid_execution_have(
     have: &ProofHave,
     execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
     pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -45,7 +46,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &have_facts,
         parsed_function.parameters(),
         arguments,
-        old_reference_state(replay, &execution.frontier, state),
+        proof_context.old_reference_state(&execution.frontier, state),
         &state,
         None,
         None,
@@ -53,6 +54,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            proof_context.function_entry_state.as_ref(),
         ),
         &replay.surface_propositions,
         predicate_environment,
@@ -73,6 +75,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                proof_context.function_entry_state.as_ref(),
             ),
             &state,
             &have_facts,
@@ -98,7 +101,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         &have_facts,
                         parsed_function.parameters(),
                         arguments,
-                        old_reference_state(replay, &execution.frontier, state),
+                        proof_context.old_reference_state(&execution.frontier, state),
                         &state,
                         None,
                         None,
@@ -106,6 +109,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &execution.frontier,
         &execution.effect_facts,
         &execution.program_point_states,
+        proof_context.function_entry_state.as_ref(),
     ),
                         &replay.surface_propositions,
                         predicate_environment,
@@ -132,7 +136,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 &execution.effect_facts,
                 parsed_function.parameters(),
                 arguments,
-                old_reference_state(replay, &execution.frontier, state),
+                proof_context.old_reference_state(&execution.frontier, state),
                 &state,
                 &execution.program_point_states,
                 &replay.surface_propositions,
@@ -167,7 +171,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 application,
                 parsed_function.parameters(),
                 arguments,
-                old_reference_state(replay, &execution.frontier, state),
+                proof_context.old_reference_state(&execution.frontier, state),
                 &state,
                 &execution.program_point_states,
                 predicate_environment,
@@ -219,6 +223,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
     execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -242,7 +247,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         )));
     }
     let statement_index = execution.frontier.next_statement_index;
-    let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
+    let source_region = proof_context.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` could not resolve source statement({statement_index})"
         ))
@@ -304,7 +309,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let loop_certificates = std::cell::RefCell::new(LoopProofCertificates::default());
     let loop_source = FrontierLoopProofSource::new(
         loop_template,
-        replay.proof_site.clone(),
+        proof_context.proof_site.clone(),
         claim_label,
         source_index,
     );
@@ -356,7 +361,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let _exit_contexts = verify_execution_proofs_forward(
         expansion_capture,
         &current_loop,
-        vec![ExecutionProofContext {
+        vec![PlanningExecutionContext {
             state: state.clone(),
             pure_facts: loop_pure_facts,
             surface_propositions: replay.surface_propositions.clone(),
@@ -439,6 +444,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let assumptions = assumptions_from_propositions(available_pure_facts);
     execute_step_from_execution_point(
         execution,
+        proof_context,
         available_pure_facts,
         &bound_function_block,
         &annotated,

@@ -150,7 +150,9 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let pre_state = execution.old_reference_state(&execution.state).clone();
+        let pre_state = context
+            .old_reference_state(&execution.frontier, &execution.state)
+            .clone();
         let retain_function_entry_derivation = execution
             .frontier
             .execution_start_state
@@ -773,7 +775,7 @@ impl<'a> Proof<'a> {
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
-            requirement_facts: &execution.replay.execution_start_facts,
+            requirement_facts: &context.execution_start_facts,
         })
     }
 
@@ -1181,7 +1183,9 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let pre_state = execution.old_reference_state(&execution.state).clone();
+        let pre_state = context
+            .old_reference_state(&execution.frontier, &execution.state)
+            .clone();
         let checked = check_point_fact_transport_using_facts(
             source,
             target,

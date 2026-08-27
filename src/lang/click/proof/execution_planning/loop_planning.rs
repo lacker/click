@@ -6,7 +6,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
     loop_index: usize,
     proof: &SourceProof,
     clause: &StructuralClause,
-    context: &ExecutionProofContext,
+    context: &PlanningExecutionContext,
     invariant_checks: &[CLoopInvariantCheck],
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<ProofCertificate, ClickError> {
@@ -343,13 +343,15 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ..ExecutionFrontier::default()
     };
     let mut program_point_states = ProgramPointStates::new();
-    let replay = TacticReplayState {
+    let constants = ExecutionProofConstants {
         proof_site: environment
             .frontier_loop_source
             .and_then(|source| source.proof_site.clone()),
-
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
+        ..ExecutionProofConstants::default()
+    };
+    let replay = TacticReplayState {
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
@@ -378,6 +380,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
+        constants.clone(),
         environment.function_block,
         environment.function,
         environment.parsed_function,
@@ -404,7 +407,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         steps += 1;
         let view = proof.finalization_view()?;
         let is_branch = view
-            .replay
+            .context
             .source_layout
             .statement(view.frontier.next_statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
@@ -1247,11 +1250,13 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionFrontier::default()
     };
     let mut program_point_states = ProgramPointStates::new();
-    let mut replay = TacticReplayState {
+    let constants = ExecutionProofConstants {
         proof_site: Some(preserve_site),
-
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
+        ..ExecutionProofConstants::default()
+    };
+    let mut replay = TacticReplayState {
         surface_propositions: environment.surface_propositions.clone(),
         ..TacticReplayState::default()
     };
@@ -1314,7 +1319,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             }
         }
     }
-    let proof_site_for_driver = replay.proof_site.clone();
+    let proof_site_for_driver = constants.proof_site.clone();
     let owning_source_index = if environment
         .frontier_loop_source
         .is_some_and(|source| source.preserve_source_index.is_none())
@@ -1334,6 +1339,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
+        constants.clone(),
         environment.function_block,
         environment.function,
         environment.parsed_function,
@@ -1388,7 +1394,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
                 .to_proof_tactics();
         let region_simp = context_replay.region_simp;
-        let proof_site = context_replay.proof_site.clone();
+        let proof_site = leaf.finalization_view()?.context.proof_site.clone();
         let invariants_already_closed = context_replay.region_invariants_closed;
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =

@@ -38,8 +38,7 @@ impl<'a> Proof<'a> {
             return Ok(false);
         }
         let statement_index = execution.frontier.next_statement_index;
-        if !execution
-            .replay
+        if !context
             .source_layout
             .statement(statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }))
@@ -48,7 +47,7 @@ impl<'a> Proof<'a> {
         }
         let Ok((_, _, CStatement::If { condition, .. }, _)) =
             next_top_level_statement_from_execution_point(
-                execution.view(),
+                execution.view(context),
                 &execution.state,
                 context.function,
                 context.arguments,
@@ -91,8 +90,7 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let statement_index = execution.frontier.next_statement_index;
-        let source_region = execution
-            .replay
+        let source_region = context
             .source_layout
             .statement(statement_index)
             .ok_or_else(|| {
@@ -111,7 +109,7 @@ impl<'a> Proof<'a> {
         };
         let (execution_start_state, current_state, statement, remaining) =
             next_top_level_statement_from_execution_point(
-                execution.view(),
+                execution.view(context),
                 &execution.state,
                 context.function,
                 context.arguments,
@@ -211,7 +209,8 @@ impl<'a> Proof<'a> {
             } else {
                 negate_click_proposition(&surface_condition)
             };
-            let pre_state = arm_execution.old_reference_state(&arm_execution.state);
+            let pre_state =
+                context.old_reference_state(&arm_execution.frontier, &arm_execution.state);
             let kernel_path_fact = lower_point_proposition_with_assumptions(
                 &surface_path_fact,
                 transition.pure_facts.assumptions(),
@@ -376,6 +375,7 @@ impl<'a> Proof<'a> {
             &assertions,
             context.tactic_index,
             &mut execution,
+            context,
             &mut facts,
             context.parsed_function.parameters(),
             context.arguments,
@@ -464,7 +464,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            parent_execution.view(),
+            parent_execution.view(context),
             &parent_execution.state,
             context.function,
             context.arguments,
@@ -659,6 +659,7 @@ impl<'a> Proof<'a> {
                 &assertions,
                 context.tactic_index,
                 &mut execution,
+                context,
                 &mut facts,
                 context.parsed_function.parameters(),
                 context.arguments,
@@ -668,8 +669,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 &stable_join_locals,
                 Some(&sibling_join_states),
-                true,
-            )
+                true)
             .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
             Ok((execution, facts))
         };
@@ -997,7 +997,7 @@ impl<'a> Proof<'a> {
             (condition, [false, false])
         } else {
             let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-                parent_execution.view(),
+                parent_execution.view(context),
                 &parent_execution.state,
                 context.function,
                 context.arguments,
@@ -2050,7 +2050,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            record.parent_execution.view(),
+            record.parent_execution.view(context),
             &record.parent_execution.state,
             context.function,
             context.arguments,

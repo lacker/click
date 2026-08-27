@@ -293,7 +293,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let pre_state = execution.old_reference_state(&execution.state);
+        let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
         self.select_theorem_application_step_at_point(
             application,
             context.parsed_function.parameters(),
@@ -468,12 +468,12 @@ impl<'a> Proof<'a> {
             // the complete ambient fact vector. The returned form still
             // has to survive `apply_step` below.
             let mut snapshot_surface_error = None;
-            if let ProofContext::Execution(_) = self.context.as_ref() {
+            if let ProofContext::Execution(context) = self.context.as_ref() {
                 let execution = self
                     .execution()
                     .expect("execution proof owns semantic state");
                 match checked_surface_comparison_fact_at_point_with_indexed_facts(
-                    execution.view(),
+                    execution.view(context),
                     &matched,
                     SurfaceFactMatch::CanonicalExact,
                     &self.facts(),

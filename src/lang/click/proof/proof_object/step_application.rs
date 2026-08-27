@@ -530,7 +530,9 @@ impl<'a> Proof<'a> {
         let checked_execution = execution.frontier.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
-        let pre_state = execution.old_reference_state(&execution.state).clone();
+        let pre_state = context
+            .old_reference_state(&execution.frontier, &execution.state)
+            .clone();
         for effect_index in &effect_indices {
             let claim = FunctionClaimRef::Effect(
                 *effect_index,
@@ -674,7 +676,8 @@ impl<'a> Proof<'a> {
         let path_independent_only = self.node.depth == 0
             && (execution.paths().len() > 1 || execution_state.has_structured_branch_history);
         let available = self.facts().to_vec();
-        let pre_state = execution_state.old_reference_state(&execution_state.state);
+        let pre_state =
+            context.old_reference_state(&execution_state.frontier, &execution_state.state);
         let mut path_derivations = Vec::with_capacity(execution.paths().len());
         for (path_index, path) in execution.paths().iter().enumerate() {
             if !path.obligations().is_empty() {
@@ -769,6 +772,7 @@ impl<'a> Proof<'a> {
             &execution_state.frontier,
             &execution_state.effect_facts,
             &execution_state.program_point_states,
+            context,
             &execution_state.state,
             &available,
             context.parsed_function.parameters(),

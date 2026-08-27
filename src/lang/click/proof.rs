@@ -1016,6 +1016,7 @@ mod certificate_tests {
                 &ExecutionFrontier::default(),
                 &[],
                 &ProgramPointStates::new(),
+                None,
             ),
             &kernel,
             SurfaceFactMatch::CanonicalExact,

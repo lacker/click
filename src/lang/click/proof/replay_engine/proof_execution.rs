@@ -749,6 +749,7 @@ fn advance_checked_linear_continuation<'a>(
 pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     execution: &ExecutionProofState,
     pure_facts: &[Proposition],
+    constants: &ExecutionProofConstants,
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     expansion_capture: Option<&mut ExpansionCapture>,
@@ -769,6 +770,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     let result = try_check_flat_function_proof_inner(
         execution,
         pure_facts,
+        constants,
         program,
         generated_by_source_index,
         &mut staged,
@@ -795,6 +797,7 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
 fn try_check_flat_function_proof_inner<'a>(
     execution: &ExecutionProofState,
     pure_facts: &[Proposition],
+    constants: &ExecutionProofConstants,
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     staged_expansion_capture: &mut Option<ExpansionCapture>,
@@ -820,6 +823,7 @@ fn try_check_flat_function_proof_inner<'a>(
         tactics[0].index,
         execution.clone(),
         pure_facts.to_vec(),
+        constants.clone(),
         function_block,
         function,
         parsed_function,
@@ -834,7 +838,7 @@ fn try_check_flat_function_proof_inner<'a>(
         root,
         program,
         staged_expansion_capture.as_mut(),
-        execution.replay.proof_site.as_ref(),
+        constants.proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
         Some(claim_label),
     )?
@@ -873,6 +877,7 @@ fn try_check_flat_function_proof_inner<'a>(
 pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     execution: &ExecutionProofState,
     pure_facts: &[Proposition],
+    constants: &ExecutionProofConstants,
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     expansion_capture: Option<&mut ExpansionCapture>,
@@ -893,6 +898,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     let result = try_check_structural_function_proof_inner(
         execution,
         pure_facts,
+        constants,
         program,
         generated_by_source_index,
         &mut staged,
@@ -919,6 +925,7 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
 fn try_check_structural_function_proof_inner<'a>(
     execution: &ExecutionProofState,
     pure_facts: &[Proposition],
+    constants: &ExecutionProofConstants,
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     staged_expansion_capture: &mut Option<ExpansionCapture>,
@@ -933,7 +940,7 @@ fn try_check_structural_function_proof_inner<'a>(
     function: &'a CFunction,
     arguments: &'a [CExpression],
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    let proof_site = execution.replay.proof_site.clone();
+    let proof_site = constants.proof_site.clone();
     let owning_source_index = generated_by_source_index.unwrap_or(usize::MAX);
     let mut proof = Proof::for_execution_frontier(
         claim_label,
@@ -942,6 +949,7 @@ fn try_check_structural_function_proof_inner<'a>(
         })?,
         execution.clone(),
         pure_facts.to_vec(),
+        constants.clone(),
         function_block,
         function,
         parsed_function,
@@ -1343,9 +1351,17 @@ fn defer_post_exit_outcome_tactic<'a>(
             ProofCertificate::from_steps(surface_branch_skeleton(proof.certificate().steps()))
                 .to_proof_tactics();
         let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+        let proof_site = proof
+            .execution_context()
+            .and_then(|context| context.proof_site.clone());
         let mut capture = expansion_capture.as_deref_mut();
         let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
-            if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+            if begin_tactic_expansion_capture(
+                capture.take(),
+                source_index,
+                replay,
+                proof_site.as_ref(),
+            ) {
                 replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index,
                     source_index,
@@ -1729,9 +1745,17 @@ fn advance_focused_execution_arm<'a>(
                 ))
                 .to_proof_tactics();
                 let (source_index, tactic_index) = (indexed.source_index, indexed.index);
+                let proof_site = proof
+                    .execution_context()
+                    .and_then(|context| context.proof_site.clone());
                 let mut capture = expansion_capture.as_deref_mut();
                 let (next, _) = proof.edit_replay_cursor(|replay, _, _| {
-                    if begin_tactic_expansion_capture(capture.take(), source_index, replay) {
+                    if begin_tactic_expansion_capture(
+                        capture.take(),
+                        source_index,
+                        replay,
+                        proof_site.as_ref(),
+                    ) {
                         replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                             tactic_index,
                             source_index,
@@ -2817,6 +2841,7 @@ fn advance_checked_open_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
     pure_facts: &mut Vec<Proposition>,
     structured_branch_history: bool,
     condition: &ClickProposition,
@@ -2902,7 +2927,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             pure_facts,
             parameters,
             arguments,
-            execution.old_reference_state(&execution.state),
+            proof_context.old_reference_state(&execution.frontier, &execution.state),
             &execution.state,
             None,
             &execution.program_point_states,
@@ -2962,7 +2987,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         pure_facts,
         parameters,
         arguments,
-        execution.old_reference_state(&execution.state),
+        proof_context.old_reference_state(&execution.frontier, &execution.state),
         &execution.state,
         None,
         &execution.program_point_states,

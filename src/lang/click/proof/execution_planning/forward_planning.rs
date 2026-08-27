@@ -3,12 +3,12 @@ use super::*;
 pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     statement: &CStatement,
-    contexts: Vec<ExecutionProofContext>,
+    contexts: Vec<PlanningExecutionContext>,
     next_statement_index: &mut usize,
     next_loop_index: &mut usize,
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
-) -> Result<Vec<ExecutionProofContext>, ClickError> {
+) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     match statement {
         CStatement::Seq(first, second) => {
             let contexts = verify_execution_proofs_forward(
@@ -217,7 +217,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                                 });
                         }
                     }
-                    iteration_contexts.push(ExecutionProofContext {
+                    iteration_contexts.push(PlanningExecutionContext {
                         state: preservation.state().clone(),
                         pure_facts,
                         surface_propositions: context.surface_propositions.clone(),
@@ -446,8 +446,8 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
 
 fn split_execution_proof_branch_contexts(
     condition: &CExpression,
-    contexts: Vec<ExecutionProofContext>,
-) -> Result<(Vec<ExecutionProofContext>, Vec<ExecutionProofContext>), ClickError> {
+    contexts: Vec<PlanningExecutionContext>,
+) -> Result<(Vec<PlanningExecutionContext>, Vec<PlanningExecutionContext>), ClickError> {
     let mut then_contexts = Vec::new();
     let mut else_contexts = Vec::new();
     for context in contexts {
@@ -460,7 +460,7 @@ fn split_execution_proof_branch_contexts(
             true,
             None,
         )? {
-            let next = ExecutionProofContext {
+            let next = PlanningExecutionContext {
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
                 surface_propositions: context.surface_propositions.clone(),
@@ -717,7 +717,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        planning_replay.view(&ExecutionFrontier::default(), &[], program_point_states),
+        planning_replay.view(
+            &ExecutionFrontier::default(),
+            &[],
+            program_point_states,
+            None,
+        ),
         state,
         available,
         parameters,
@@ -763,14 +768,14 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
 
 fn advance_execution_proof_statement(
     statement: &CStatement,
-    contexts: Vec<ExecutionProofContext>,
+    contexts: Vec<PlanningExecutionContext>,
     statement_index: usize,
     loop_index: Option<usize>,
     environment: &ExecutionProofEnvironment<'_>,
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
     loop_preservation_source: LoopPreservationSource,
     initialization_proven: bool,
-) -> Result<Vec<ExecutionProofContext>, ClickError> {
+) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     let mut advanced = Vec::new();
     for mut context in contexts {
         record_code_region_program_point_state(
@@ -959,7 +964,7 @@ fn advance_execution_proof_statement(
                 }
             }
             match transition.outcome {
-                CStatementOutcome::Normal(state) => advanced.push(ExecutionProofContext {
+                CStatementOutcome::Normal(state) => advanced.push(PlanningExecutionContext {
                     state,
                     pure_facts: transition.pure_facts,
                     surface_propositions,

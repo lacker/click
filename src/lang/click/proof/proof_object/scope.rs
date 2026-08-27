@@ -570,7 +570,9 @@ impl<'a> ProofScope<'a> {
                 },
             );
         } else {
-            let pre_state = execution.old_reference_state(&execution.state).clone();
+            let pre_state = context
+                .old_reference_state(&execution.frontier, &execution.state)
+                .clone();
             let checked = close_open_resource_for_proof(
                 context.resource_environment,
                 resource,
@@ -943,7 +945,9 @@ impl<'a> ProofScope<'a> {
             let ProofTactic::ApplyTheoremUsing { application, .. } = tactic else {
                 continue;
             };
-            let pre_state = execution.old_reference_state(&execution.state).clone();
+            let pre_state = context
+                .old_reference_state(&execution.frontier, &execution.state)
+                .clone();
             if let Some(derivation) =
                 kernel_standard_theorem_derivation_at_current_point_with_assumptions(
                     context.theorem_environment,
@@ -1105,7 +1109,9 @@ impl<'a> ProofScope<'a> {
                         },
                     );
                 } else {
-                    let pre_state = execution.old_reference_state(&execution.state).clone();
+                    let pre_state = context
+                        .old_reference_state(&execution.frontier, &execution.state)
+                        .clone();
                     let checked = close_open_resource_for_proof(
                         context.resource_environment,
                         &resource,

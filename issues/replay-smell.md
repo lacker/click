@@ -569,7 +569,9 @@ interpreter's `Branch` join; phase 1 (complete) deleted
 takes `&mut ExecutionProofState`, so bag fields can move without signature
 churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
 `effect_facts`, `program_point_states`, and the frontier loop clauses/rules
-moved onto `ExecutionProofState` on 2026-08-27); phase 3 retires the
+moved onto `ExecutionProofState`, and the per-proof constants (proof site,
+source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
+as `ExecutionProofConstants`, on 2026-08-27); phase 3 retires the
 `proof_certificate_builder` reads inside finalization.
 
 ### Boundary representations the typed region goal must subsume

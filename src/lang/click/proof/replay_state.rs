@@ -133,9 +133,7 @@ impl<T: Clone> SharedValue<T> {
 
 #[derive(Clone, Default)]
 pub(super) struct TacticReplayState {
-    pub(super) proof_site: Option<ProofSite>,
     pub(super) loop_effect_goal: Option<LoopEffectReplayGoal>,
-    pub(super) source_layout: SourceExecutionLayout,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
     pub(super) region_invariants_closed: bool,
@@ -149,14 +147,12 @@ pub(super) struct TacticReplayState {
     /// replayed. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(super) invariant_closer_step: Option<InvariantCloserStep>,
-    pub(super) grouped_contract: bool,
     pub(super) next_opaque_call: u64,
     pub(super) next_kernel_variable: u64,
     pub(super) next_path_choice: usize,
     /// Immutable facts at the execution root. Every proof branch reads the
     /// same entry context, so clones share it rather than copying a
     /// project-sized fact vector.
-    pub(super) execution_start_facts: Arc<Vec<Proposition>>,
     /// Exact non-contract facts selected by a statement certificate, resource
     /// observation, or explicit kernel theorem while the C frontier is still
     /// at function entry.
@@ -183,7 +179,6 @@ pub(super) struct TacticReplayState {
     ///
     /// `None` keeps the previous positional resolution, so every region that
     /// does not record a function-entry snapshot behaves exactly as before.
-    pub(super) function_entry_state: Option<CState>,
     pub(super) concrete_loop_execution: bool,
     /// The execution frontier was intentionally replaced by a branch
     /// interface. Its state is a specification abstraction, not an exact
@@ -706,6 +701,7 @@ pub(super) fn begin_tactic_expansion_capture(
     capture: Option<&mut ExpansionCapture>,
     source_index: usize,
     replay: &TacticReplayState,
+    proof_site: Option<&ProofSite>,
 ) -> bool {
     let Some(capture) = capture else {
         return false;
@@ -713,10 +709,10 @@ pub(super) fn begin_tactic_expansion_capture(
     let sibling_branch_capture = capture.active
         && !replay.deferred_expansion_path_choices.is_empty()
         && capture.source_index == Some(source_index)
-        && replay.proof_site.as_ref() == Some(&capture.site);
+        && proof_site == Some(&capture.site);
     if capture.active && !sibling_branch_capture
         || capture.source_index != Some(source_index)
-        || replay.proof_site.as_ref() != Some(&capture.site)
+        || proof_site != Some(&capture.site)
     {
         return false;
     }
@@ -790,6 +786,7 @@ pub(super) fn take_path_tactic_expansion_capture(
 pub(super) fn resume_deferred_tactic_expansion_capture(
     capture: Option<&mut ExpansionCapture>,
     replay: &TacticReplayState,
+    proof_site: Option<&ProofSite>,
 ) -> Result<(), ClickError> {
     let Some(deferred) = &replay.deferred_tactic_capture else {
         return Ok(());
@@ -799,9 +796,7 @@ pub(super) fn resume_deferred_tactic_expansion_capture(
             "selected-tactic expansion capture was lost before deferred finalization",
         ));
     };
-    if replay.proof_site.as_ref() != Some(&capture.site)
-        || capture.source_index != Some(deferred.source_index)
-    {
+    if proof_site != Some(&capture.site) || capture.source_index != Some(deferred.source_index) {
         return Err(ClickError::new(
             "deferred tactic capture no longer matches the selected proof occurrence",
         ));
@@ -1531,32 +1526,6 @@ mod proof_fact_store_tests {
     }
 
     #[test]
-    fn replay_clones_share_large_execution_entry_fact_sets() {
-        let facts = (0..4096)
-            .map(|index| {
-                Proposition::ConditionIs(
-                    ConditionTerm::Bitvector32SignedLessThan(
-                        Box::new(Bitvector32Term::Variable(Variable(0))),
-                        Box::new(Bitvector32Term::Constant(index)),
-                    ),
-                    true,
-                )
-            })
-            .collect::<Vec<_>>();
-        let replay = TacticReplayState {
-            execution_start_facts: Arc::new(facts),
-            ..TacticReplayState::default()
-        };
-        let cloned = replay.clone();
-
-        assert!(Arc::ptr_eq(
-            &replay.execution_start_facts,
-            &cloned.execution_start_facts
-        ));
-        assert_eq!(cloned.execution_start_facts.len(), 4096);
-    }
-
-    #[test]
     fn persistent_sequence_forks_share_history_and_preserve_order() {
         let mut sequence = PersistentSequence::default();
         for value in 0..4096 {
@@ -1946,11 +1915,11 @@ impl ExecutionFrontier {
 /// Falling back to [`ExecutionFrontier::execution_start_state`] keeps every region that
 /// records no function-entry snapshot on its previous behaviour.
 pub(super) fn old_reference_state<'a>(
-    replay: &'a TacticReplayState,
+    function_entry_state: Option<&'a CState>,
     frontier: &'a ExecutionFrontier,
     current_state: &'a CState,
 ) -> &'a CState {
-    match &replay.function_entry_state {
+    match function_entry_state {
         Some(entry_state) => entry_state,
         None => frontier.execution_start_state(current_state),
     }
@@ -2002,13 +1971,14 @@ impl TacticReplayState {
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a [ExecutionPureFact],
         program_point_states: &'a ProgramPointStates,
+        function_entry_state: Option<&'a CState>,
     ) -> ExecutionView<'a> {
         ExecutionView {
             frontier,
             program_point_states,
             surface_propositions: &self.surface_propositions,
             effect_facts,
-            function_entry_state: self.function_entry_state.as_ref(),
+            function_entry_state,
         }
     }
 }
