@@ -420,7 +420,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
                     fact.proposition(),
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
                 )
             })
             .map(|fact| fact.proposition().clone()),

@@ -556,7 +556,7 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                 obligations,
             }],
             CLValueStorage::Memory { pointer } => {
-                if state.memory.is_retired_heap_address(pointer) {
+                if state.memory.is_deallocated_heap_address(pointer) {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(
                             CUndefinedBehavior::InvalidMemory,

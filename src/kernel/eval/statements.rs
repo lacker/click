@@ -145,7 +145,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
-            if state.memory.is_retired_heap_address(&pointer) {
+            if state.memory.is_deallocated_heap_address(&pointer) {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
                         CUndefinedBehavior::InvalidMemory,
@@ -420,11 +420,11 @@ fn execute_c_heap_free_paths(
             .find_map(|fact| fact.allocation())
             .filter(|(base, _)| **base == pointer)
             .map(|(_, bytes)| bytes.clone());
-        let lifetime_before = state.memory.clone();
+        let before_free = state.memory.clone();
         let mut working_memory = state.memory.clone();
         let bytes = if let Some(bytes) = working_memory.live_heap_block_size(&pointer) {
             bytes.clone()
-        } else if working_memory.is_retired_heap_address(&pointer) {
+        } else if working_memory.is_deallocated_heap_address(&pointer) {
             let error = CInvalidFree::DoubleFree;
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
@@ -525,8 +525,8 @@ fn execute_c_heap_free_paths(
             .free_heap_block(&pointer)
             .expect("validated live heap base should free");
         facts.push(ExecutionPureFact::internal(
-            Proposition::CHeapLifetimeRetired {
-                before: lifetime_before,
+            Proposition::CHeapAllocationFreed {
+                before: before_free,
                 after: memory.clone(),
                 allocation_base: pointer.clone(),
                 bytes: bytes.clone(),

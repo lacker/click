@@ -56,7 +56,7 @@ fn resource_context_fork_updates_are_persistent_and_logarithmic() {
 }
 
 #[test]
-fn consuming_support_retires_only_its_derived_views() {
+fn consuming_support_removes_only_its_derived_views() {
     let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
     let view = CResourceFact::view_token("derived".to_string(), vec![int32(7)]);
     let context = ResourceContext::new()
@@ -105,7 +105,7 @@ fn normalization_preserves_projection_support() {
 }
 
 #[test]
-fn support_retirement_visits_only_the_supported_projections() {
+fn support_removal_visits_only_the_supported_projections() {
     const PROJECTION_COUNT: usize = 8;
     for size in [16_usize, 64, 256, 1024, 4096] {
         let authority =
@@ -613,6 +613,59 @@ fn inserting_a_disjoint_concrete_range_uses_interval_neighbors() {
             "indexed insertion did too much work for {size} existing ranges: {work}"
         );
     }
+}
+
+#[test]
+fn installing_a_certified_resource_group_does_not_recheck_internal_pairs() {
+    let base = Pointer {
+        block: "certified_group".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    for size in [16, 64, 256, 1024] {
+        let facts = (0..size)
+            .map(|index| {
+                CResourceFact::own_memory(memory_range(
+                    base.clone(),
+                    (index * 2) as u32,
+                    (index * 2 + 1) as u32,
+                ))
+            })
+            .collect::<Vec<_>>();
+        ResourceContext::new()
+            .try_compose_with_facts(facts.clone(), &PureFactContext::new())
+            .expect("the resource group must be valid before it is certified");
+        let (installed, work) = crate::instrumentation::measure_deterministic_work(|| {
+            ResourceContext::new()
+                .try_compose_certified_group_into_valid_context_delaying_normalization(
+                    facts,
+                    &PureFactContext::new(),
+                )
+        });
+        assert!(installed.is_ok());
+        assert_eq!(
+            work, 0,
+            "installing a certified size-{size} group rechecked its internal pairs"
+        );
+    }
+}
+
+#[test]
+fn installing_a_certified_resource_group_still_checks_the_existing_frame() {
+    let base = Pointer {
+        block: "certified_group_cross_check".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let existing = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(memory_range(base.clone(), 0, 2)));
+    let overlapping = CResourceFact::own_memory(memory_range(base, 1, 3));
+    let result = existing.try_compose_certified_group_into_valid_context_delaying_normalization(
+        [overlapping],
+        &PureFactContext::new(),
+    );
+    assert!(
+        result.is_err(),
+        "certification of a group's interior must not skip its boundary check"
+    );
 }
 
 #[test]

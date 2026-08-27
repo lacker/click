@@ -5147,7 +5147,7 @@ pub(super) fn frame_certified_ensure_goals(
                     fact.proposition(),
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
                 )
             })
             .map(|fact| fact.proposition().clone()),

@@ -1300,7 +1300,7 @@ pub(super) fn proposition_has_contextual_derivation_rules(proposition: &Proposit
         proposition,
         Proposition::CMemoryMutatesOnly { .. }
             | Proposition::CMemoryEffectSummary { .. }
-            | Proposition::CHeapLifetimeRetired { .. }
+            | Proposition::CHeapAllocationFreed { .. }
     )
 }
 
@@ -1562,7 +1562,7 @@ pub(super) fn assumptions_for_direct_fact_transport(
         match proposition {
             Proposition::ConditionIs(_, _)
             | Proposition::CMemoryEffectSummary { .. }
-            | Proposition::CHeapLifetimeRetired { .. }
+            | Proposition::CHeapAllocationFreed { .. }
             | Proposition::CResourceSeparate { .. }
             // Owned ranges in one composition are pairwise separate; the
             // effect-disjointness legs of direct transport need that
@@ -1610,7 +1610,7 @@ pub(super) fn is_direct_surface_lowering_fact(proposition: &Proposition) -> bool
             | Proposition::CResourceContains { .. }
             | Proposition::CMemoryMutatesOnly { .. }
             | Proposition::CMemoryEffectSummary { .. }
-            | Proposition::CHeapLifetimeRetired { .. }
+            | Proposition::CHeapAllocationFreed { .. }
     )
 }
 

@@ -719,7 +719,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
                 fact,
                 Proposition::CMemoryMutatesOnly { .. }
                     | Proposition::CMemoryEffectSummary { .. }
-                    | Proposition::CHeapLifetimeRetired { .. }
+                    | Proposition::CHeapAllocationFreed { .. }
             )
         })
         .cloned()

@@ -128,7 +128,7 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
                     proposition,
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
                 )
             })
             .cloned()
@@ -351,7 +351,7 @@ fn prove_mutation_footprint_with_policy(
                     proposition,
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
                 )
             })
             .cloned()

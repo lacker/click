@@ -182,7 +182,7 @@ pub(in crate::kernel) fn collect_proposition_bitvector_variables(
                 collect_c_memory_range_bitvector_variables(range, variables);
             }
         }
-        Proposition::CHeapLifetimeRetired {
+        Proposition::CHeapAllocationFreed {
             before,
             after,
             allocation_base,

@@ -178,12 +178,12 @@ pub(super) fn describe_pure_fact(
                 describe_memory_range(range, parameters, arguments)
             })
         ),
-        Proposition::CHeapLifetimeRetired {
+        Proposition::CHeapAllocationFreed {
             allocation_base,
             bytes,
             ..
         } => format!(
-            "retired heap allocation {} ({} bytes)",
+            "freed heap allocation {} ({} bytes)",
             describe_pointer(allocation_base, parameters, arguments),
             describe_bitvector_with_context(bytes, parameters, arguments)
         ),

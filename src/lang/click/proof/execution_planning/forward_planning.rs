@@ -906,7 +906,7 @@ fn advance_execution_proof_statement(
                                     fact,
                                     Proposition::CMemoryEffectSummary { .. }
                                         | Proposition::CMemoryMutatesOnly { .. }
-                                        | Proposition::CHeapLifetimeRetired { .. }
+                                        | Proposition::CHeapAllocationFreed { .. }
                                 )
                         });
                         for surface in loop_clause

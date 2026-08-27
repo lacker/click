@@ -270,7 +270,7 @@ fn successful_heap_allocation_is_fresh_from_every_existing_block() {
 }
 
 #[test]
-fn heap_free_retires_the_complete_block_and_rejects_double_free() {
+fn heap_free_deallocates_the_complete_block_and_rejects_double_free() {
     let success = successful_heap_allocation_state();
     let freed = execute_c_statement_paths(
         &success,
@@ -294,12 +294,12 @@ fn heap_free_retires_the_complete_block_and_rejects_double_free() {
     let Some(CValue::Pointer(pointer)) = freed.locals().get("p") else {
         panic!("freed local should still contain its stale pointer value");
     };
-    assert!(freed.memory().is_retired_heap_address(pointer));
+    assert!(freed.memory().is_deallocated_heap_address(pointer));
     assert!(freed.resources().facts().is_empty());
     assert!(matches!(
         free_facts.as_slice(),
         [ExecutionPureFact {
-            proposition: Proposition::CHeapLifetimeRetired {
+            proposition: Proposition::CHeapAllocationFreed {
                 after,
                 allocation_base,
                 bytes,
@@ -570,12 +570,12 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
         after.memory().load(&unrelated),
         CExpressionOutcome::Value(int32(37))
     );
-    assert!(!after.memory().is_retired_heap_address(&unrelated));
-    assert!(after.memory().is_retired_heap_address(&allocation_base));
+    assert!(!after.memory().is_deallocated_heap_address(&unrelated));
+    assert!(after.memory().is_deallocated_heap_address(&allocation_base));
     assert!(
         after
             .memory()
-            .is_retired_heap_address(&allocation_base.offset_by_int32_elements(1.into()))
+            .is_deallocated_heap_address(&allocation_base.offset_by_int32_elements(1.into()))
     );
 }
 

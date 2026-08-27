@@ -245,7 +245,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         }];
     }
 
-    if memory.is_retired_heap_address(&pointer) {
+    if memory.is_deallocated_heap_address(&pointer) {
         return vec![CExpressionPath {
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::InvalidMemory),
             facts,

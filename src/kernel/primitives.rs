@@ -803,9 +803,10 @@ pub(super) struct CHeapMemory {
     /// Live heap blocks are also present in `blocks`; this set distinguishes
     /// them from automatic storage and memory-havoc markers.
     pub(super) live_allocations: BTreeMap<Pointer, Bitvector32Term>,
-    /// Heap identities are never reused within a proof. Keeping retired
-    /// identities makes double-free and stale-pointer checks explicit.
-    pub(super) retired_allocations: BTreeMap<Pointer, Bitvector32Term>,
+    /// Heap identities are never reused within a proof. These are semantic
+    /// tombstones for double-free and stale-pointer diagnostics, not
+    /// resources or surviving allocation authority.
+    pub(super) deallocated_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// A malloc result whose null/success outcome has not yet been refined by
     /// control flow or direct return. Pending allocations carry no authority
     /// until resolved.
@@ -994,7 +995,7 @@ pub enum CMemoryDerivation {
     /// `allocation_base` is kept rather than only its broad pointer block:
     /// allocations imported from contracts can be subranges of external
     /// memory, where retiring the whole `ExternalArgument` block would also
-    /// retire unrelated objects.
+    /// deallocate unrelated objects.
     HeapFreed {
         base: SharedCMemory,
         allocation_base: Pointer,
@@ -1163,7 +1164,7 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
         memory.blocks.len()
             + memory.cells.len()
             + memory.heap.live_allocations.len()
-            + memory.heap.retired_allocations.len()
+            + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()
             + memory.heap.uninitialized_allocations.len(),
     );
@@ -1297,7 +1298,7 @@ pub(super) struct ResourceContextStorage {
     /// Derived view entries name the exact owned resource that supports them.
     /// Ordinary entries are explicit and therefore absent from this map.
     pub(super) supported_by: PersistentMap<ResourceEntryId, CResourceFact>,
-    /// Reverse support index used to retire only the projections of a
+    /// Reverse support index used to remove only the projections of a
     /// consumed owned resource, without scanning the ambient context.
     pub(super) projections_by_support: PersistentMap<CResourceFact, ResourceEntryIds>,
     /// Certified, snapshot-stable owned expansions for folded resource
@@ -1636,7 +1637,7 @@ pub enum Proposition {
         after: CMemory,
         mutable_ranges: Vec<CMemoryRange>,
     },
-    CHeapLifetimeRetired {
+    CHeapAllocationFreed {
         before: CMemory,
         after: CMemory,
         allocation_base: Pointer,

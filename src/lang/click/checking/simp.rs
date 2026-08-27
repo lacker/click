@@ -1327,7 +1327,7 @@ pub(in crate::lang::click) fn simp_proposition(
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
-        | Proposition::CHeapLifetimeRetired { .. }
+        | Proposition::CHeapAllocationFreed { .. }
         | Proposition::CWhileInvariantRule { .. } => {
             SimpProposition::Proposition(proposition.clone())
         }

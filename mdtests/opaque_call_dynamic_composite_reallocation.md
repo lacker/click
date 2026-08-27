@@ -3,7 +3,7 @@
 An opaque call may return a composite whose allocation and owned range have a
 different dynamic size from the consumed composite. Those returned projections
 describe the successor allocation; they are not persistent caller views of the
-retired input allocation.
+freed input allocation.
 
 ```c filename=replace_dynamic_cell.c
 struct cell_owner {

@@ -485,7 +485,7 @@ fn c_memory_load_is_unchanged_unmemoized(
                     && after_matches
                     && assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
             }
-            Proposition::CHeapLifetimeRetired {
+            Proposition::CHeapAllocationFreed {
                 before: effect_before,
                 after: effect_after,
                 allocation_base,
@@ -2094,7 +2094,7 @@ fn load_unchanged_via_effect_chain(
                     steps.push((step_before, step_after));
                 }
             }
-            Proposition::CHeapLifetimeRetired {
+            Proposition::CHeapAllocationFreed {
                 before: step_before,
                 after: step_after,
                 allocation_base,
@@ -2291,7 +2291,7 @@ fn c_memory_load_is_directly_unchanged(
                         ));
                 before_matches && after_matches && disjoint
             }
-            Proposition::CHeapLifetimeRetired {
+            Proposition::CHeapAllocationFreed {
                 before: effect_before,
                 after: effect_after,
                 allocation_base,

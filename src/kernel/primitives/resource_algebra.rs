@@ -829,7 +829,7 @@ impl ResourceContext {
 
     /// Adds duplicable views derived from one exact owned resource.
     ///
-    /// The reverse support index makes later retirement proportional to the
+    /// The reverse support index makes later removal proportional to the
     /// projections of this authority rather than the size of the context.
     pub(crate) fn unchecked_with_supported_facts(
         mut self,
@@ -1007,6 +1007,30 @@ impl ResourceContext {
             }
         }
         Ok(self)
+    }
+
+    /// Extends a valid context with one already-certified valid resource
+    /// group, checking only pairs that cross the group boundary.
+    ///
+    /// Composite expansion checks its children together before caching the
+    /// group. Rechecking child/child pairs when that expansion is later
+    /// installed can recursively rediscover snapshot and range separation
+    /// through an unrelated call history. Only a conflict with the existing
+    /// caller frame is new information at installation time.
+    pub(crate) fn try_compose_certified_group_into_valid_context_delaying_normalization(
+        self,
+        facts: impl IntoIterator<Item = CResourceFact>,
+        assumptions: &PureFactContext,
+    ) -> Result<Self, ResourceContextValidityError> {
+        let facts = facts.into_iter().collect::<Vec<_>>();
+        for fact in &facts {
+            self.clone()
+                .try_compose_into_valid_context_delaying_normalization(
+                    std::iter::once(fact.clone()),
+                    assumptions,
+                )?;
+        }
+        Ok(self.unchecked_with_facts(facts))
     }
 
     pub fn facts(&self) -> &[CResourceFact] {

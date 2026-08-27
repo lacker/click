@@ -110,7 +110,7 @@ pub(in crate::kernel) fn memory_effect_execution_facts(
                     fact.proposition(),
                     Proposition::CMemoryMutatesOnly { .. }
                         | Proposition::CMemoryEffectSummary { .. }
-                        | Proposition::CHeapLifetimeRetired { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
                 )
         })
         .cloned()
@@ -727,7 +727,7 @@ pub(in crate::kernel) fn merge_facts(
             fact.proposition(),
             Proposition::CMemoryMutatesOnly { .. }
                 | Proposition::CMemoryEffectSummary { .. }
-                | Proposition::CHeapLifetimeRetired { .. }
+                | Proposition::CHeapAllocationFreed { .. }
         ) {
             saw_memory_effect = true;
         }

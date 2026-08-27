@@ -1252,7 +1252,7 @@ fn function_claim_holds_on_prepared_path(
                                 .any(|allowed| memory_range_covers(allowed, nested, assumptions))
                     })
                 }
-                Proposition::CHeapLifetimeRetired {
+                Proposition::CHeapAllocationFreed {
                     before,
                     after,
                     allocation_base,
@@ -1282,7 +1282,7 @@ fn function_claim_holds_on_prepared_path(
                     {
                         return false;
                     }
-                    if !heap_retirement_effect_is_valid(before, after, allocation_base, bytes) {
+                    if !heap_free_effect_is_valid(before, after, allocation_base, bytes) {
                         return false;
                     }
                     if !repeats_transition {
@@ -1368,7 +1368,7 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
             !fresh_blocks.contains(&pointer.block) && !added_allocation_claims.contains(pointer)
         });
     std::sync::Arc::make_mut(&mut stripped.heap)
-        .retired_allocations
+        .deallocated_allocations
         .retain(|pointer, _| !fresh_blocks.contains(&pointer.block));
     std::sync::Arc::make_mut(&mut stripped.heap)
         .pending_allocations
@@ -1379,7 +1379,7 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
     c_effect_memories_definitionally_equal(before, &stripped, assumptions)
 }
 
-fn heap_retirement_effect_is_valid(
+fn heap_free_effect_is_valid(
     before: &CMemory,
     after: &CMemory,
     allocation_base: &Pointer,

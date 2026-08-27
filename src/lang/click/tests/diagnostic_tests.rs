@@ -235,7 +235,7 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
                 Bitvector32Term::Constant(1),
             )],
         }),
-        ExecutionPureFact::new(Proposition::CHeapLifetimeRetired {
+        ExecutionPureFact::new(Proposition::CHeapAllocationFreed {
             before,
             after,
             allocation_base: pointer,
@@ -254,7 +254,7 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
         "{description}"
     );
     assert!(
-        description.contains("retired heap allocation"),
+        description.contains("freed heap allocation"),
         "{description}"
     );
     assert!(!description.contains("CMemory"), "{description}");

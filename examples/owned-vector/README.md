@@ -51,7 +51,7 @@ so folding either resource tests dependent composite-resource definitions.
 - `vector_grow` performs ordinary malloc-copy-install-free growth. Allocation
   failure leaves the vector unchanged; success adds one capacity slot,
   preserves every live element and the length, installs the fresh allocation,
-  and retires the old allocation.
+  and frees the old allocation.
 - `allocated_vector_push` composes those two helpers: it appends immediately
   when capacity remains, or grows first when the vector is full. Allocation
   failure returns `0` without changing the vector; either successful path

@@ -300,7 +300,7 @@ pub(super) fn fact_transport_transition_facts(
         let before = match fact.proposition() {
             Proposition::CMemoryMutatesOnly { before, .. }
             | Proposition::CMemoryEffectSummary { before, .. }
-            | Proposition::CHeapLifetimeRetired { before, .. } => before,
+            | Proposition::CHeapAllocationFreed { before, .. } => before,
             _ => return false,
         };
         source_memories.contains(before)
@@ -321,7 +321,7 @@ fn is_memory_effect_proposition(proposition: &Proposition) -> bool {
         proposition,
         Proposition::CMemoryMutatesOnly { .. }
             | Proposition::CMemoryEffectSummary { .. }
-            | Proposition::CHeapLifetimeRetired { .. }
+            | Proposition::CHeapAllocationFreed { .. }
     )
 }
 
@@ -1990,7 +1990,7 @@ fn execute_step_from_execution_point_selecting_path(
                 fact,
                 Proposition::CMemoryEffectSummary { .. }
                     | Proposition::CMemoryMutatesOnly { .. }
-                    | Proposition::CHeapLifetimeRetired { .. }
+                    | Proposition::CHeapAllocationFreed { .. }
             )
         });
         let mut mapped_invariants = Vec::new();

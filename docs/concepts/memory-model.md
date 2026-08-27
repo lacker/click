@@ -37,11 +37,11 @@ Click tracks two different facts on the successful branch:
   allocation's lifetime; `bytes` may be a supported symbolic runtime extent.
 
 `free(p)` requires both facts for the complete allocation and consumes them.
-`free(NULL)` changes nothing. An interior, stack, opaque, or retired pointer is
-not a valid free target. A successful free retires the whole block identity;
-all aliases and derived addresses then reject loads and stores, and a second
-free is diagnosed separately. Verified function exits also check that live
-allocation authority was returned through the contract or actually freed.
+`free(NULL)` changes nothing. An interior, stack, opaque, or already-freed
+pointer is not a valid free target. A successful free ends the whole block's
+lifetime; all aliases and derived addresses then reject loads and stores, and
+a second free is diagnosed separately. Verified function exits also check
+that live allocation authority was returned through the contract or freed.
 
 The allocation/null refinement and allocation/free transitions are recorded
 as memory-snapshot edges. Registering the pending result has an explicit
@@ -50,19 +50,19 @@ unresolved state. Failed allocation removes that metadata and returns to the
 pre-allocation memory identity without producing allocation authority.
 Successful allocation starts from the pending snapshot but introduces only
 its fresh, uninitialized block. A successful `free` also emits a checked heap
-lifetime-retirement effect connecting its before and after snapshots, exact
-base, and possibly symbolic byte extent. This is deliberately distinct from a
-mutable byte range: retirement changes which allocation identities are live,
-while a mutable range bounds ordinary stores. Exact contract checking and
-modular call verification therefore use the same lifetime model as direct
-execution without pretending deallocation is a byte write.
+`CHeapAllocationFreed` effect connecting its before and after snapshots,
+exact base, and possibly symbolic byte extent. This is deliberately distinct
+from a mutable byte range: deallocation changes which allocation identities
+are live, while a mutable range bounds ordinary stores. Exact contract
+checking and modular call verification therefore use the same allocation
+model as direct execution without pretending deallocation is a byte write.
 
 Writes to a block freshly allocated by the current function are internal while
 that block is being initialized: they do not mutate memory that was externally
 visible at function entry. The function must still return the new access and
 lifetime authority in its contract or free it. Registering allocation authority
 for already-owned storage immediately before a direct `free` is likewise
-bookkeeping, while the actual retirement remains an explicit lifetime effect.
+bookkeeping, while the actual free remains an explicit allocation effect.
 
 ## Argument memory and aliasing
 
@@ -173,7 +173,7 @@ The current `p` argument carries post-state memory. The `old(p)` argument
 carries function-entry memory. Both carry the same C pointer value unless the
 pointer variable itself changed.
 
-Freeing an allocation retires it only in the current and later states. A load
+Freeing an allocation ends its lifetime only in the current and later states. A load
 inside `old(...)` remains a historical entry-state value when the entry
 permissions and bounds justified that load; the corresponding current-state
 load is still rejected as use-after-free.
@@ -193,7 +193,7 @@ mutable dst[0..n], counter[0..1] by frame;
 writes and initialization of a function-fresh allocation are allowed.
 `mutable` means all externally visible writes are inside the listed segments.
 It is an upper bound, not a promise that each cell changed. Allocation and
-retirement must still satisfy their separate lifetime/resource obligations.
+deallocation must still satisfy their separate allocation/resource obligations.
 
 Loop-level effects describe dynamic writes inside a loop. Step effects describe
 one loop body iteration and may use iteration locals.

@@ -81,7 +81,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
             Proposition::ConditionIs(_, _) => 1,
             Proposition::CMemoryMutatesOnly { .. }
             | Proposition::CMemoryEffectSummary { .. }
-            | Proposition::CHeapLifetimeRetired { .. } => 2,
+            | Proposition::CHeapAllocationFreed { .. } => 2,
             _ => 3,
         };
         let mut remaining = candidates

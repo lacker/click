@@ -2311,7 +2311,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     fact.proposition(),
                                                     Proposition::CMemoryMutatesOnly { .. }
                                                         | Proposition::CMemoryEffectSummary { .. }
-                                                        | Proposition::CHeapLifetimeRetired { .. }
+                                                        | Proposition::CHeapAllocationFreed { .. }
                                                 ) && !available.contains(fact.proposition())
                                                 {
                                                     available.push(fact.proposition().clone());

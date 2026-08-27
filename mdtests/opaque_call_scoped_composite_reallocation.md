@@ -1,9 +1,9 @@
 # scoped composite views close before opaque reallocation
 
 Opening an owned composite temporarily exposes its allocation and memory body.
-After the scope closes, an opaque verified call may replace that body and retire
+After the scope closes, an opaque verified call may replace that body and free
 the old allocation. View cores projected from the callee's newly ensured
-ownership are not independent caller views of the retired input allocation.
+ownership are not independent caller views of the freed input allocation.
 
 ```c filename=replace_allocated_cell.c
 struct cell_owner {

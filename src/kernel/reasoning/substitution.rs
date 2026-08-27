@@ -284,12 +284,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_proposition(
                 .map(|range| substitute_bitvector_variable_in_c_memory_range(range, from, to))
                 .collect(),
         },
-        Proposition::CHeapLifetimeRetired {
+        Proposition::CHeapAllocationFreed {
             before,
             after,
             allocation_base,
             bytes,
-        } => Proposition::CHeapLifetimeRetired {
+        } => Proposition::CHeapAllocationFreed {
             before: substitute_bitvector_variable_in_memory(before, from, to),
             after: substitute_bitvector_variable_in_memory(after, from, to),
             allocation_base: substitute_bitvector_variable_in_pointer(allocation_base, from, to),
@@ -1814,9 +1814,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                     )
                 })
                 .collect(),
-            retired_allocations: memory
+            deallocated_allocations: memory
                 .heap
-                .retired_allocations
+                .deallocated_allocations
                 .iter()
                 .map(|(base, bytes)| {
                     (

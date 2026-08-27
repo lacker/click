@@ -172,7 +172,7 @@ pub(in crate::kernel) fn collect_implication_antecedent_order_facts(
         | Proposition::CResourceContains { .. }
         | Proposition::CMemoryMutatesOnly { .. }
         | Proposition::CMemoryEffectSummary { .. }
-        | Proposition::CHeapLifetimeRetired { .. }
+        | Proposition::CHeapAllocationFreed { .. }
         | Proposition::CWhileInvariantRule { .. } => {}
     }
 }

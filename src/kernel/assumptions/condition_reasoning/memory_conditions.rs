@@ -166,7 +166,7 @@ impl PureFactContext {
                     || endpoint_matches(before, right) && endpoint_matches(after, left);
                 matches && self.ranges_directly_disjoint_from_pointer(mutable_ranges, pointer)
             }
-            Proposition::CHeapLifetimeRetired {
+            Proposition::CHeapAllocationFreed {
                 before,
                 after,
                 allocation_base,

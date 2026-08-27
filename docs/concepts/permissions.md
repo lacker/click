@@ -111,7 +111,7 @@ in the caller's resource context until explicitly transferred or consumed.
 
 This distinction matters at deallocation. `free` requires allocation authority
 and complete owned access, then rejects any other direct or composite resource
-that may still refer to the retired allocation. A scoped call borrow has ended
+that may still refer to the freed allocation. A scoped call borrow has ended
 and therefore does not block `free`; a pre-existing persistent view does block
 it locally. A view proved separate from the freed allocation survives.
 
@@ -576,7 +576,7 @@ Click implements:
 - covered subrange splitting and adjacent range rejoining,
 - fixed- or runtime-sized heap allocation authority through the built-in owned
   `allocation(base, bytes)` resource, and
-- complete-access `free`, retired lifetimes, double-free/use-after-free
+- complete-access `free`, ended allocation lifetimes, double-free/use-after-free
   rejection, and verified-exit leak checks.
 
 Not implemented yet:

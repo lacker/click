@@ -220,7 +220,7 @@ impl CMemory {
         mut self,
         pointer: &Pointer,
     ) -> Result<Self, CInvalidFree> {
-        if self.heap.retired_allocations.contains_key(pointer) {
+        if self.heap.deallocated_allocations.contains_key(pointer) {
             return Err(CInvalidFree::DoubleFree);
         }
         let Some(bytes) = std::sync::Arc::make_mut(&mut self.heap)
@@ -245,7 +245,7 @@ impl CMemory {
             std::sync::Arc::make_mut(&mut self.blocks).remove(&pointer.block);
         }
         std::sync::Arc::make_mut(&mut self.heap)
-            .retired_allocations
+            .deallocated_allocations
             .insert(pointer.clone(), bytes.clone());
         std::sync::Arc::make_mut(&mut self.heap)
             .uninitialized_allocations
@@ -290,9 +290,9 @@ impl CMemory {
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
 
-    pub(in crate::kernel) fn is_retired_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(in crate::kernel) fn is_deallocated_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
-            .retired_allocations
+            .deallocated_allocations
             .keys()
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
@@ -307,7 +307,7 @@ impl CMemory {
         bytes: impl Into<Bitvector32Term>,
     ) -> Option<Self> {
         let bytes = bytes.into();
-        if bytes.as_const() == Some(0) || self.heap.retired_allocations.contains_key(&base) {
+        if bytes.as_const() == Some(0) || self.heap.deallocated_allocations.contains_key(&base) {
             return None;
         }
         match self.heap.live_allocations.get(&base) {
@@ -355,7 +355,7 @@ impl CMemory {
         self.blocks.contains_key(&PointerBlock::Heap(identity))
             || self
                 .heap
-                .retired_allocations
+                .deallocated_allocations
                 .keys()
                 .any(|base| base.block == PointerBlock::Heap(identity))
             || self

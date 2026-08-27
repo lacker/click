@@ -320,18 +320,19 @@ exclusive `allocation(base, bytes)` lifetime resource. Returning a different
 value while an allocation outcome remains unresolved is rejected.
 
 Nonnull `free` requires the exact live base, allocation authority, and complete
-owned access. It retires that allocation, clears its cells, consumes those
+owned access. It frees that allocation, clears its cells, consumes those
 resources, and rejects surviving direct or composite resource aliases at the
 `free` transition. A `views` requirement on an opaque call is a scoped borrow:
 call application preserves the caller's original owned or viewed resource but
 does not create a new persistent view on return. Thus a borrow from ownership
 ends before a following `free`, while any independently present view remains
-and must be proved separate or causes `free` to fail locally. Retired identities
-make use-after-free and double-free explicit. `HeapAllocated` and `HeapFreed`
+and must be proved separate or causes `free` to fail locally. Deallocated
+identity tombstones make use-after-free and double-free explicit, but carry no
+resource authority. `HeapAllocated` and `HeapFreed`
 memory derivation DAG edges preserve these transitions for later checking; an allocation
-resource that crosses a verified call is also interpreted as a lifetime effect,
-not as an untrusted ordinary token. Exact execution records every successful
-retirement as `CHeapLifetimeRetired(before, after, base, bytes)`. Effect
+resource that crosses a verified call also determines the allocation delta,
+not an untrusted ordinary token. Exact execution records every successful
+free as `CHeapAllocationFreed(before, after, base, bytes)`. Effect
 certification checks that executing `free(base)` from `before` with the stated
 extent produces `after`, and chains that transition separately from ordinary
 `CMemoryMutatesOnly` and ranged call-havoc effects. This lets a function free
@@ -344,8 +345,8 @@ preexisting footprint. Its memory chain may also cross the bookkeeping step
 that registers allocation authority for already-owned symbolic storage before
 a direct `free`. Both allowances strip only newly introduced trusted heap
 state and then require the remaining memory to match the preceding endpoint
-definitionally; the subsequent retirement still needs its independently
-checked lifetime effect.
+definitionally; the subsequent free still needs its independently checked
+allocation effect.
 
 If a directly required composite resource has an undecided conditional body,
 opaque-contract certification derives both guard cases from the kernel

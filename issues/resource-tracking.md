@@ -20,9 +20,9 @@ Views require an explicit lifetime rule. Click already documents this rule:
 
 - a `views` requirement borrowed from caller ownership is scoped to that
   call and does not create a persistent caller view on return;
-- a view already present in the caller is persistent and blocks retirement
+- a view already present in the caller is persistent and blocks deallocation
   of memory it may reference; and
-- a view proved separate from retired memory survives.
+- a view proved separate from freed memory survives.
 
 The resource engine must enforce that rule identically for direct mutation,
 direct `free`, and opaque verified calls. The proof object should retain the
@@ -41,7 +41,7 @@ the callee from the caller frame, evaluates the callee's returned resources,
 applies allocation-lifetime effects, and installs the resulting memory and
 resource context in the caller's next state. A lifetime transition may reject
 the successor when the caller frame still contains a persistent resource that
-could refer to retired memory.
+could refer to freed memory.
 
 `ResourceContext` is an immutable indexed resource snapshot. This is the
 authoritative resource component of the current C state; proof facts about
@@ -66,7 +66,7 @@ token, and old data range. A later `step()` applies the verified
 `vector_grow(owner)` rule. On its success path, `vector_grow` allocates new
 data, copies the elements, updates the owner, and frees the old data.
 
-The caller frame still contains the persistent observed view of that retired
+The caller frame still contains the persistent observed view of that freed
 range, so the transition correctly refuses to create an invalid successor:
 
 ```text
@@ -119,7 +119,7 @@ to simple replay.
 
 Returned cores are now stored as derived views supported by the exact owned
 resource generation that produced them. `ResourceContext` maintains the
-reverse support index, so consuming an authority retires only its projections;
+reverse support index, so consuming an authority removes only its projections;
 an identical explicit persistent view remains independent and still blocks a
 conflicting lifetime transition. Certified owned expansions are cached on the
 same support record so later inspection does not mint a different symbolic
@@ -146,7 +146,7 @@ of reusing one branch's fresh kernel variables.
 The returned dynamic-range association is now reduced and covered separately.
 Opaque lifetime checking first classifies returned allocation continuity by
 base and size, then checks only the preserved caller frame for resources that
-would survive retirement. Projections of the returned composite describe the
+would survive deallocation. Projections of the returned composite describe the
 successor allocation and are never mistaken for persistent caller views. The
 focused regression uses a returned allocation and owned range whose size is a
 mutable field; it fails on the old kernel with the same stale returned `owns`
@@ -163,7 +163,7 @@ regression holds the affected ensure fixed while growing unrelated facts from
 The repaired call step originally exposed another symptom attributed to the
 parallel state-ownership defect of the replay engine: proof replay retained
 the consumed allocation and counted composite populations after the
-preparatory `open` scope closed, while fresh checking retired that allocation.
+preparatory `open` scope closed, while fresh checking freed that allocation.
 The replay engine has since been retired (2026-08-27), and the checked `Proof`
 now owns every semantic path field. The experiment below records the result of
 re-running this witness on that engine.
@@ -185,12 +185,16 @@ entered, with a focused regression using empty arms and a shared following
 `if`.
 
 The complete owned-vector continuation is not yet a green checkpoint. After
-making its `grown == 1` proof explicit by logical cases, verification crossed
-30 seconds instead of failing or finishing in roughly two seconds. The process
-exited, and the slow prototype was removed. Reduce this nested
-allocation-identity-by-result proof family before resuming the example. Do not
-raise a deadline, expand an incomplete run, duplicate the full continuation,
-or accept the slow success path.
+making its `grown == 1` proof explicit by logical cases, verification originally
+crossed 30 seconds. Profiling found that allocation-delta inspection was
+reinstalling each cached composite expansion as unrelated individual facts and
+rechecking the expansion's already-certified internal pairs. Installing it as
+one certified group now checks only pairs crossing into the preserved caller
+frame. Deterministic regressions cover both the skipped internal checks and a
+rejected cross-boundary overlap. The exact two-split prototype now reaches the
+next prompt proof-driver decline in roughly four seconds; it no longer times
+out. The prototype remains out of the green checkpoint until that ordinary
+proof repair is complete.
 
 ## Remaining roadmap
 
@@ -203,11 +207,10 @@ or accept the slow success path.
    `allocated_vector_push` stale-view failure is avoided by the scoped proof
    repair described above. No resource semantics or new surface tactic is
    needed for this transition.
-2. Reduce and fix the unexpected slowdown when the allocation-identity
-   successor split shares the later `grown` result continuation. The focused
-   reproduction must keep both binary decisions while shrinking the
-   owned-vector proof body, and must complete promptly through the checked
-   `Proof` driver.
+2. Reduce and fix the unexpected slowdown (completed 2026-08-27): cached
+   composite expansions install as certified groups, checking only their
+   boundary against the preserved frame. The allocation-identity and `grown`
+   two-split reproduction now fails promptly at the next ordinary proof shape.
 3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
 4. Close this issue only after the focused lifetime regressions, resource and
@@ -221,13 +224,13 @@ or accept the slow success path.
 
 Open an owned composite, execute the read-only steps needed to select a
 branch, close the scope, then pass the retained owned composite through a
-verified call that may replace and retire an allocation. The success path
+verified call that may replace and free an allocation. The success path
 must advance with no stale temporary views.
 
-### Persistent views still block retirement
+### Persistent views still block deallocation
 
 Retain an explicitly persistent direct and composite view of an allocation
-and confirm that direct `free` and an opaque retiring call both reject the
+and confirm that direct `free` and an opaque deallocating call both reject the
 transition locally. Do not silently drop these views.
 
 ### Independent resources survive
@@ -238,7 +241,7 @@ that it remains in the successor `ResourceContext`.
 ### Path-sensitive lifetime effects
 
 Use a call with success and failure outcomes like `vector_grow`: the success
-path retires the old allocation after temporary scopes are closed, while the
+path frees the old allocation after temporary scopes are closed, while the
 failure path retains the old allocation and its valid persistent caller
 resources.
 
@@ -267,7 +270,7 @@ proof intent must not be weakened.
   `ResourceContext` for resource transfers, consumption, production,
   mutation, and allocation lifetime effects.
 - Call-scoped borrows end at return, persistent views block overlapping
-  retirement, and proven-independent views survive.
+  deallocation, and proven-independent views survive.
 - Direct statements and opaque verified calls implement the same lifetime
   law.
 - Success and failure outcomes retain their distinct resource and allocation

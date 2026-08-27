@@ -7,19 +7,19 @@ struct CFunctionResourceTransfer {
 }
 
 #[derive(Clone, Debug)]
-struct VerifiedCallLifetimePath {
+struct VerifiedCallAllocationDeltaPath {
     facts: Vec<ExecutionPureFact>,
-    result: Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationLifetimeError>,
+    result: Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError>,
 }
 
 #[derive(Clone, Debug)]
-struct PendingVerifiedCallLifetimePath {
+struct PendingVerifiedCallAllocationDeltaPath {
     facts: Vec<ExecutionPureFact>,
     provisional_facts: Vec<ExecutionPureFact>,
 }
 
 #[derive(Clone, Debug)]
-enum VerifiedAllocationLifetimeError {
+enum VerifiedAllocationDeltaError {
     Runtime(CRuntimeError),
     UndecidedAllocationContinuity(ConditionTerm),
     InconsistentReturnedAllocation,
@@ -951,12 +951,12 @@ fn execute_verified_function_rule(
         let return_resources =
             activate_population_body_resources(return_resources, &population_transition);
 
-        // Lifetime effects sometimes depend on a certified outcome case. For
-        // example, a failed reallocation returns the input ownership with its
-        // old allocation, while success returns ownership of a new allocation.
-        // Lower the ensures against the pre-lifetime post-state only to decide
-        // that transition. The public postconditions are lowered again below
-        // against each final memory so their snapshots remain exact.
+        // The allocation delta sometimes depends on a certified outcome case.
+        // For example, a failed reallocation returns the input ownership with
+        // its old allocation, while success returns ownership of a new one.
+        // Lower the ensures against the pre-delta post-state only to decide
+        // that change. Public postconditions are lowered again below against
+        // each final memory so their snapshots remain exact.
         post_state.resources = return_resources.clone();
         let provisional_post_contract_state =
             with_contract_argument_views(&post_state, function, &arguments_path.values);
@@ -977,23 +977,24 @@ fn execute_verified_function_rule(
         )?;
         drop(provisional_ensure_timing);
 
-        let lifetime_timing = crate::instrumentation::OperationTiming::new(
+        let allocation_delta_timing = crate::instrumentation::OperationTiming::new(
             function.name(),
             "verified function rule application",
-            "verified call allocation lifetime effects",
+            "verified call heap allocation delta",
         );
-        let mut pending_lifetime_paths = VecDeque::from([PendingVerifiedCallLifetimePath {
-            facts,
-            provisional_facts,
-        }]);
-        let mut lifetime_paths = Vec::new();
-        while let Some(pending) = pending_lifetime_paths.pop_front() {
+        let mut pending_allocation_delta_paths =
+            VecDeque::from([PendingVerifiedCallAllocationDeltaPath {
+                facts,
+                provisional_facts,
+            }]);
+        let mut allocation_delta_paths = Vec::new();
+        while let Some(pending) = pending_allocation_delta_paths.pop_front() {
             let branch_assumptions = assumptions_with_path_context(
                 &effective_assumptions,
                 &pending.provisional_facts,
                 &obligations,
             );
-            match apply_verified_allocation_lifetime_effects(
+            match apply_verified_heap_allocation_delta(
                 post_state.memory.clone(),
                 &transfer.callee_resources,
                 &caller_resources_after_requirements,
@@ -1001,7 +1002,7 @@ fn execute_verified_function_rule(
                 function,
                 &branch_assumptions,
             ) {
-                Err(VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(condition)) => {
+                Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(condition)) => {
                     for value in [true, false] {
                         let proposition = Proposition::ConditionIs(condition.clone(), value);
                         let mut provisional_facts = pending.provisional_facts.clone();
@@ -1025,26 +1026,28 @@ fn execute_verified_function_rule(
                             &public_branch_assumptions,
                             proposition,
                         )
-                        .expect("a consistent lifetime case must remain consistent publicly");
-                        pending_lifetime_paths.push_back(PendingVerifiedCallLifetimePath {
-                            facts,
-                            provisional_facts,
-                        });
+                        .expect("a consistent allocation case must remain consistent publicly");
+                        pending_allocation_delta_paths.push_back(
+                            PendingVerifiedCallAllocationDeltaPath {
+                                facts,
+                                provisional_facts,
+                            },
+                        );
                     }
                 }
-                Err(VerifiedAllocationLifetimeError::InconsistentReturnedAllocation) => {}
-                result => lifetime_paths.push(VerifiedCallLifetimePath {
+                Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => {}
+                result => allocation_delta_paths.push(VerifiedCallAllocationDeltaPath {
                     facts: pending.facts,
                     result,
                 }),
             }
         }
-        drop(lifetime_timing);
-        for lifetime_path in lifetime_paths {
-            let mut facts = lifetime_path.facts;
-            let (memory, lifetime_effects) = match lifetime_path.result {
+        drop(allocation_delta_timing);
+        for allocation_delta_path in allocation_delta_paths {
+            let mut facts = allocation_delta_path.facts;
+            let (memory, allocation_effects) = match allocation_delta_path.result {
                 Ok(result) => result,
-                Err(VerifiedAllocationLifetimeError::Runtime(error)) => {
+                Err(VerifiedAllocationDeltaError::Runtime(error)) => {
                     paths.push(CFunctionPath {
                         outcome: CFunctionOutcome::RuntimeError(error),
                         facts,
@@ -1052,14 +1055,14 @@ fn execute_verified_function_rule(
                     });
                     continue;
                 }
-                Err(VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(_)) => {
+                Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(_)) => {
                     unreachable!("undecided allocation continuity is split above")
                 }
-                Err(VerifiedAllocationLifetimeError::InconsistentReturnedAllocation) => {
+                Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => {
                     unreachable!("inconsistent returned allocations are discarded above")
                 }
             };
-            facts.extend(lifetime_effects);
+            facts.extend(allocation_effects);
             let mut branch_post_state = post_state.clone();
             branch_post_state.memory = memory;
             let post_contract_state =
@@ -1270,14 +1273,14 @@ mod allocation_continuity_tests {
     }
 }
 
-fn apply_verified_allocation_lifetime_effects(
+fn apply_verified_heap_allocation_delta(
     mut memory: CMemory,
     input_resources: &ResourceContext,
     preserved_caller_resources: &ResourceContext,
     output_resources: &ResourceContext,
     function: &CFunction,
     assumptions: &PureFactContext,
-) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationLifetimeError> {
+) -> Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError> {
     let mut effects = Vec::new();
     let input = expand_all_composite_resource_facts(
         input_resources,
@@ -1286,7 +1289,7 @@ fn apply_verified_allocation_lifetime_effects(
         assumptions,
     )
     .ok_or_else(|| {
-        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
+        VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
             "could not inspect input allocation effects at call".to_string(),
         ))
     })?;
@@ -1297,13 +1300,14 @@ fn apply_verified_allocation_lifetime_effects(
         assumptions,
     )
     .ok_or_else(|| {
-        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
+        VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
             "could not inspect output allocation effects at call".to_string(),
         ))
     })?;
     // Returned projections describe the successor allocation. They decide
     // whether an input allocation continues, but they are not resources that
-    // survived from the caller and therefore cannot be stale after retirement.
+    // survived from the caller and therefore cannot be stale after the old
+    // allocation is freed.
     let preserved = expand_all_composite_resource_facts(
         preserved_caller_resources,
         function.composite_resource_definitions(),
@@ -1311,11 +1315,11 @@ fn apply_verified_allocation_lifetime_effects(
         assumptions,
     )
     .ok_or_else(|| {
-        VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
+        VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
             "could not inspect preserved caller allocation effects at call".to_string(),
         ))
     })?;
-    let lifetime_assumptions = input
+    let allocation_assumptions = input
         .observable_facts_assuming_valid(assumptions)
         .into_iter()
         .fold(assumptions.clone(), |assumptions, fact| {
@@ -1340,7 +1344,7 @@ fn apply_verified_allocation_lifetime_effects(
             fact,
             function.composite_resource_definitions(),
             &memory,
-            &lifetime_assumptions,
+            &allocation_assumptions,
         )
         .is_some()
         {
@@ -1354,21 +1358,17 @@ fn apply_verified_allocation_lifetime_effects(
                     &bytes,
                     output_base,
                     output_bytes,
-                    &lifetime_assumptions,
+                    &allocation_assumptions,
                 ) {
                     AllocationContinuity::Same => retained = true,
                     AllocationContinuity::Distinct => {}
                     AllocationContinuity::Undecided(condition) => {
-                        return Err(
-                            VerifiedAllocationLifetimeError::UndecidedAllocationContinuity(
-                                condition,
-                            ),
-                        );
+                        return Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(
+                            condition,
+                        ));
                     }
                     AllocationContinuity::Inconsistent => {
-                        return Err(
-                            VerifiedAllocationLifetimeError::InconsistentReturnedAllocation,
-                        );
+                        return Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation);
                     }
                 }
             }
@@ -1377,34 +1377,38 @@ fn apply_verified_allocation_lifetime_effects(
             }
         }
         // Only the untransferred caller frame survives independently across
-        // the call. Any such resource that can still refer to the retiring
+        // the call. Any such resource that can still refer to the freed
         // allocation makes this successor unsafe.
         for resource in preserved.facts() {
             if !resource.may_refer_to_memory_block(&base.block)
-                || resource.is_proven_separate_from_allocation(&base, &bytes, &lifetime_assumptions)
+                || resource.is_proven_separate_from_allocation(
+                    &base,
+                    &bytes,
+                    &allocation_assumptions,
+                )
             {
                 continue;
             }
-            return Err(VerifiedAllocationLifetimeError::Runtime(
+            return Err(VerifiedAllocationDeltaError::Runtime(
                 CRuntimeError::StaleResourceAfterFree {
                     resource: resource.clone(),
                 },
             ));
         }
-        let lifetime_before = memory.clone();
+        let before_free = memory.clone();
         if memory.live_heap_block_size(&base).is_none() {
             memory = memory
                 .with_heap_allocation_claim(base.clone(), bytes.clone())
-                .ok_or(VerifiedAllocationLifetimeError::Runtime(
+                .ok_or(VerifiedAllocationDeltaError::Runtime(
                     CRuntimeError::InvalidFree(CInvalidFree::NonHeapPointer),
                 ))?;
         }
         memory = memory.free_heap_block(&base).map_err(|error| {
-            VerifiedAllocationLifetimeError::Runtime(CRuntimeError::InvalidFree(error))
+            VerifiedAllocationDeltaError::Runtime(CRuntimeError::InvalidFree(error))
         })?;
         effects.push(ExecutionPureFact::internal(
-            Proposition::CHeapLifetimeRetired {
-                before: lifetime_before,
+            Proposition::CHeapAllocationFreed {
+                before: before_free,
                 after: memory.clone(),
                 allocation_base: base,
                 bytes,
@@ -1416,7 +1420,7 @@ fn apply_verified_allocation_lifetime_effects(
         let Some((base, bytes)) = fact.allocation() else {
             continue;
         };
-        if input.satisfies_fact(fact, &lifetime_assumptions)
+        if input.satisfies_fact(fact, &allocation_assumptions)
             || memory.live_heap_block_size(base).is_some()
         {
             continue;
@@ -1424,8 +1428,8 @@ fn apply_verified_allocation_lifetime_effects(
         memory = memory
             .with_heap_allocation_claim(base.clone(), bytes.clone())
             .ok_or_else(|| {
-                VerifiedAllocationLifetimeError::Runtime(CRuntimeError::FunctionContract(
-                    "returned allocation conflicts with an existing or retired lifetime"
+                VerifiedAllocationDeltaError::Runtime(CRuntimeError::FunctionContract(
+                    "returned allocation conflicts with an existing or deallocated identity"
                         .to_string(),
                 ))
             })?;
@@ -1948,7 +1952,7 @@ fn evaluate_function_return_resources(
     // The callee has already certified every ensured composite and its
     // instantiated body. Its duplicable cores are therefore observations of
     // certified ownership, not independent persistent caller capabilities.
-    // Record their exact support so consuming that ownership retires only
+    // Record their exact support so consuming that ownership removes only
     // its projections through the reverse index.
     let return_resources = projected_cores_by_support.into_iter().fold(
         return_resources,
@@ -2745,7 +2749,7 @@ fn expand_composite_resource_fact_with_children(
         .cloned()
         .collect::<Vec<_>>();
     expanded = expanded
-        .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
+        .try_compose_certified_group_into_valid_context_delaying_normalization(missing, assumptions)
         .ok()?;
     Some((expanded, children))
 }
@@ -2882,7 +2886,10 @@ pub(super) fn expand_all_composite_resource_facts(
             })
             .collect::<Vec<_>>();
         cached = cached
-            .try_compose_into_valid_context_delaying_normalization(missing, assumptions)
+            .try_compose_certified_group_into_valid_context_delaying_normalization(
+                missing,
+                assumptions,
+            )
             .ok()?;
     }
     expand_composite_resource_context(&cached, definitions, memory, assumptions)
@@ -4124,8 +4131,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
         .collect::<Option<Vec<_>>>()
     else {
         return Ok(Err(CRuntimeError::FunctionContract(
-            "allocation-lifetime checking requires concrete symbolic contract arguments"
-                .to_string(),
+            "allocation-delta checking requires concrete symbolic contract arguments".to_string(),
         )));
     };
     let mut output_state = with_contract_argument_views(state, function, &argument_values);
