@@ -3,6 +3,28 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    /// The certificate of the focused goal's own lineage. Steps in the
+    /// derivation are attributed to the goal they advanced; on an unjoined
+    /// case-split arm, sibling arms' steps interleave in the same chain and
+    /// belong to other lineages. A step-less marker node records the goal
+    /// that was live before it (the split's parent), so walking back
+    /// through markers follows the lineage to the root.
+    pub(in crate::lang::click::proof) fn path_certificate(&self) -> ProofCertificate {
+        let mut steps = Vec::new();
+        let mut goal = self.focused;
+        let mut node = Some(self.node.clone());
+        while let Some(current) = node {
+            match &current.step {
+                Some(step) if current.focused == goal => steps.push(step.as_ref().clone()),
+                Some(_) => {}
+                None => goal = current.focused,
+            }
+            node = current.parent.clone();
+        }
+        steps.reverse();
+        ProofCertificate::from_steps(steps)
+    }
+
     pub(super) fn certificate_after_node(
         &self,
         ancestor: Option<&Arc<ProofNode>>,

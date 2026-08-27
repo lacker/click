@@ -572,7 +572,10 @@ churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
 frontier loop clauses/rules, entry prerequisites/derivations, planned
 transitions, freshness counters, loop-effect goal, and region flags moved
 onto `ExecutionProofState` — `post_execution_tactics` followed as path state; the bag now holds only
-the certificate builder and expansion cursors, and the per-proof constants (proof site,
+the certificate builder and expansion cursors; the drivers' mirrored surface
+record (`record_surface_steps`, the tactic surface scopes) is deleted and
+expansions read the Proof (`path_certificate` follows an unjoined arm's
+lineage), with the case-split offset measured on the Proof, and the per-proof constants (proof site,
 source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
 as `ExecutionProofConstants`, on 2026-08-27; the executor's per-field
 environment parameters collapsed into `proof_context`, with derived

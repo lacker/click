@@ -389,27 +389,12 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
     }
 }
 
-/// One recorded surface mutation inside a tactic's builder scope, replayed
-/// onto the enclosing builder when the scope closes. Both operations resolve
-/// their position against the trailing branch structure, which the scope's
-/// skeleton shares with the enclosing builder, so replaying them reproduces
-/// the enclosing tree exactly.
-#[derive(Clone)]
-pub(super) enum SurfaceScopeOp {
-    Push(SimpleProofStep),
-    ReplaceTrailingBranch(Vec<SimpleProofStep>),
-}
-
 #[derive(Clone, Default)]
 pub(super) struct ProofCertificateBuilder {
     pub(super) steps: Vec<SimpleProofStep>,
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
-    /// When present, every surface mutation is also recorded here so a
-    /// tactic-scoped builder can be replayed onto the builder it was scoped
-    /// from. `None` outside a tactic scope.
-    pub(super) scope_ops: Option<Vec<SurfaceScopeOp>>,
     /// The facts the constructed certificate's own replay will have at the
     /// current point. Planning executes with automatically transported facts,
     /// but certificate replay carries only path facts, statement-local
@@ -758,39 +743,8 @@ pub(super) struct SurfacePathChoice {
 impl ProofCertificateBuilder {
     pub(super) fn push_step(&mut self, step: SimpleProofStep) {
         if self.blocker.is_none() {
-            if let Some(ops) = &mut self.scope_ops {
-                ops.push(SurfaceScopeOp::Push(step.clone()));
-            }
             append_surface_step_to_leaves(&mut self.steps, step);
         }
-    }
-
-    /// Merges the most recent surface branch with `steps`. A contextual frame
-    /// certificate synthesizes the branch structure it framed; when that
-    /// structure mirrors the existing trailing branch, its per-leaf tactics
-    /// are zipped into the matching leaves so the execution records already
-    /// inside the branch survive in the claim-level record. A branch that
-    /// does not mirror the existing one supersedes it instead of nesting
-    /// inside it.
-    pub(super) fn replace_trailing_branch(&mut self, steps: Vec<SimpleProofStep>) {
-        if self.blocker.is_some() {
-            return;
-        }
-        if let Some(ops) = &mut self.scope_ops {
-            ops.push(SurfaceScopeOp::ReplaceTrailingBranch(steps.clone()));
-        }
-        let branch_index = self
-            .steps
-            .iter()
-            .rposition(|step| matches!(step, SimpleProofStep::If { .. }))
-            .expect("trailing branch replacement requires an existing surface branch");
-        if branch_index == self.steps.len() - 1
-            && zip_surface_branches(&mut self.steps[branch_index..], &steps)
-        {
-            return;
-        }
-        self.steps.truncate(branch_index);
-        self.steps.extend(steps);
     }
 
     pub(super) fn push_source_tactic(&mut self, tactic: ProofTactic) {
@@ -837,132 +791,6 @@ impl ProofCertificateBuilder {
             self.path_choices.clear();
         }
     }
-}
-
-/// Zips a synthesized branch into an existing trailing branch when their
-/// conditions coincide: each incoming leaf's tactics extend the matching
-/// existing leaf. Returns `false` — leaving `existing` untouched — when the
-/// incoming steps are not one branch mirroring the existing one.
-fn zip_surface_branches(existing: &mut [SimpleProofStep], incoming: &[SimpleProofStep]) -> bool {
-    let [
-        SimpleProofStep::If {
-            condition: incoming_condition,
-            then_proof: incoming_then,
-            else_proof: incoming_else,
-        },
-    ] = incoming
-    else {
-        return false;
-    };
-    let Some(SimpleProofStep::If {
-        condition,
-        then_proof,
-        else_proof,
-    }) = existing.last_mut()
-    else {
-        return false;
-    };
-    if condition != incoming_condition {
-        return false;
-    }
-    for (existing_branch, incoming_branch) in
-        [(then_proof, incoming_then), (else_proof, incoming_else)]
-    {
-        let steps = &mut existing_branch.steps;
-        if !zip_surface_branches(steps, incoming_branch.steps()) {
-            steps.extend(incoming_branch.steps().iter().cloned());
-        }
-    }
-    true
-}
-
-fn uniform_surface_leaf_suffix(steps: &[SimpleProofStep]) -> Option<Vec<SimpleProofStep>> {
-    fn collect(steps: &[SimpleProofStep], leaves: &mut Vec<Vec<SimpleProofStep>>) {
-        if let [
-            SimpleProofStep::If {
-                then_proof,
-                else_proof,
-                ..
-            },
-        ] = steps
-        {
-            collect(then_proof.steps(), leaves);
-            collect(else_proof.steps(), leaves);
-        } else {
-            leaves.push(steps.to_vec());
-        }
-    }
-
-    let mut leaves = Vec::new();
-    collect(steps, &mut leaves);
-    let first = leaves.first()?.clone();
-    leaves.iter().all(|leaf| *leaf == first).then_some(first)
-}
-
-/// The enclosing builder saved while one tactic runs against a scoped view.
-pub(super) struct TacticSurfaceScope {
-    saved: SharedValue<ProofCertificateBuilder>,
-}
-
-/// Starts a builder scope for one source tactic: the tactic constructs its
-/// surface steps against a view seeded with the enclosing surface branch
-/// skeleton, so the steps it contributes exist as a standalone value — the
-/// tactic's expansion — while every mutation is also recorded for replay onto
-/// the enclosing builder when the scope ends.
-pub(super) fn begin_tactic_surface_scope(replay: &mut TacticReplayState) -> TacticSurfaceScope {
-    let saved = std::mem::take(&mut replay.proof_certificate_builder);
-    // The scope starts unblocked even when the enclosing builder is blocked:
-    // the tactic's own expansion is well-defined either way, and the
-    // enclosing blocker keeps suppressing the replayed mutations when the
-    // scope closes.
-    replay.proof_certificate_builder = ProofCertificateBuilder {
-        steps: surface_branch_skeleton(&saved.steps),
-        last_step_entry: saved.last_step_entry.clone(),
-        scope_ops: Some(Vec::new()),
-        ..ProofCertificateBuilder::default()
-    }
-    .into();
-    TacticSurfaceScope { saved }
-}
-
-/// Ends a tactic's builder scope: replays the recorded mutations onto the
-/// enclosing builder and returns the scoped builder — the tactic's standalone
-/// surface contribution over the branch skeleton it started from.
-pub(super) fn end_tactic_surface_scope(
-    replay: &mut TacticReplayState,
-    scope: TacticSurfaceScope,
-) -> ProofCertificateBuilder {
-    let mut slice = std::mem::replace(&mut replay.proof_certificate_builder, scope.saved);
-    let enclosing = &mut replay.proof_certificate_builder;
-    for op in slice.scope_ops.take().into_iter().flatten() {
-        match op {
-            SurfaceScopeOp::Push(step) => enclosing.push_step(step),
-            SurfaceScopeOp::ReplaceTrailingBranch(steps) => {
-                if enclosing.path_choices.is_empty() {
-                    enclosing.replace_trailing_branch(steps);
-                } else if let Some(suffix) = uniform_surface_leaf_suffix(&steps) {
-                    // The scoped tactic sees only the trailing execution
-                    // branch skeleton, not the enclosing proof-case choice.
-                    // When every execution leaf constructed the same checked
-                    // suffix, keep that suffix after the choice point. Zipping
-                    // it into the earlier branch would make the supposedly
-                    // common pre-choice prefix depend on this proof arm.
-                    enclosing.steps.extend(suffix);
-                } else {
-                    enclosing.block(
-                        "a tactic inside a proof case produced path-dependent surface branches",
-                    );
-                }
-            }
-        }
-    }
-    enclosing.last_step_entry = slice.last_step_entry.clone();
-    if enclosing.blocker.is_none()
-        && let Some(blocker) = &slice.blocker
-    {
-        enclosing.block(blocker.clone());
-    }
-    slice.into_value()
 }
 
 pub(super) fn record_post_execution_surface_tactic(

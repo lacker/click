@@ -1431,9 +1431,7 @@ pub(in crate::lang::click::proof) fn preservation_smart_step<'a>(
     } else {
         proof.apply_planned_smart_step(0)?
     };
-    let checkpoint = proof.checkpoint();
-    let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
-    advanced.record_surface_steps(&steps)
+    Ok(advanced)
 }
 
 /// Drives one preservation program region on the typed boundary `Proof`.
@@ -1492,7 +1490,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                         tactics: vec![indexed.clone()],
                         continuation: Box::new(InternalProofNode::Done),
                     };
-                    let checkpoint = proof.checkpoint();
                     let advanced = advance_checked_linear_continuation(
                         proof.clone(),
                         &segment,
@@ -1520,8 +1517,7 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                             tactic_name(&indexed.tactic)
                         )));
                     };
-                    let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
-                    proof = advanced.record_surface_steps(&steps)?;
+                    proof = advanced;
                     if matches!(indexed.tactic, ProofTactic::CloseInvariants) {
                         proof =
                             proof.record_invariant_closer(indexed.index, indexed.source_index)?;
@@ -1532,8 +1528,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                     ProofTactic::Step => {
                         let checkpoint = proof.checkpoint();
                         proof = proof.apply_step(SimpleProofStep::Step)?;
-                        let steps = proof.certificate_since(&checkpoint)?.steps().to_vec();
-                        proof = proof.record_surface_steps(&steps)?;
                         if indexed.source_index != owning_source_index
                             && let Some(site) = proof_site
                             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
@@ -1623,7 +1617,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
             ..
         } => {
             let proof = proof.with_execution_tactic_index(*index)?;
-            let checkpoint = proof.checkpoint();
             let Some((advanced, _, _, consumed_continuation)) =
                 try_advance_checked_execution_branch(
                     proof,
@@ -1642,8 +1635,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                     "`{claim_label}` tactic {index}: `branch` did not verify as a checked preservation operation"
                 )));
             };
-            let steps = advanced.certificate_since(&checkpoint)?.steps().to_vec();
-            let advanced = advanced.record_surface_steps(&steps)?;
             advance_preservation_region(
                 advanced,
                 if consumed_continuation {
@@ -1667,7 +1658,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
             continuation,
         } => {
             let proof = proof.with_execution_tactic_index(*index)?;
-            let checkpoint = proof.checkpoint();
             let scope = proof.begin_open(resource.clone(), *source_index)?;
             let Some(scope) = advance_checked_open_scope(
                 scope,
@@ -1682,8 +1672,6 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                 )));
             };
             let proof = scope.join()?;
-            let steps = proof.certificate_since(&checkpoint)?.steps().to_vec();
-            let proof = proof.record_surface_steps(&steps)?;
             advance_preservation_region(
                 proof,
                 continuation,

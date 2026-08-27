@@ -449,9 +449,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let surface_tactics =
-            ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
-                .to_proof_tactics();
+        let surface_tactics = leaf.path_certificate().to_proof_tactics();
         let certificate =
             certificate_leaf_for_case_path(&claim_label, &surface_tactics, &case_path)?;
         paths.push(PathCertificate {
@@ -1377,7 +1375,6 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for leaf in leaves {
-        let context_replay = leaf.finalization_view()?.replay.clone();
         let context_execution = leaf.finalization_view()?.execution.clone();
         let context_frontier = leaf.finalization_view()?.frontier.clone();
         let case_path = context_execution
@@ -1388,9 +1385,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 value: choice.value,
             })
             .collect::<Vec<_>>();
-        let source_tactics =
-            ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
-                .to_proof_tactics();
+        let source_tactics = leaf.path_certificate().to_proof_tactics();
         let region_simp = context_execution.region_simp;
         let proof_site = leaf
             .finalization_view()?

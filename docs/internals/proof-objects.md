@@ -37,17 +37,22 @@ during ordinary verification in the intended architecture.
 `ExecutionProofState` owns every semantic path fact: the `CState`, the
 execution frontier (program point, region, region start state, continuations),
 the program-point states recorded on the path, the surface spellings the path
-has lowered, case assumptions, execution facts, frontier-local loop clauses and
-rules, function-entry prerequisites and derivations, planned statement
+has lowered, case assumptions, execution facts, frontier-local loop clauses
+and rules, function-entry prerequisites and derivations, planned statement
 transitions, the freshness counters, the loop-effect goal and region flags,
 branch provenance, deferred post-execution tactics, and the path's unfolded
 predicates. Its `TacticReplayState` holds only cursors: the certificate
-builder and expansion-capture state, all scheduled for retirement in phase 3.
-It lives only as the execution snapshot of a `Proof` goal: the checked drivers
-advance a `Proof`, and every source or generated proof tree is checked that
-way. The earlier interpreter that advanced this context as a parallel engine
-is gone; the remaining duplication of facts and `CState` between the snapshot
-and the `Proof` is tracked for removal in `issues/replay-smell.md`.
+builder and expansion-capture state, both scheduled for retirement in phase 3.
+The checked drivers no longer mirror surface steps into that builder: a
+tactic's expansion and a preservation arm's certificate come from the `Proof`
+itself (`certificate`, `certificate_since`, and the lineage-following
+`path_certificate` for an unjoined case-split arm), and the builder is only
+the planner's construction sink. It lives only as the execution snapshot of a
+`Proof` goal: the checked drivers advance a `Proof`, and every source or
+generated proof tree is checked that way. The earlier interpreter that
+advanced this context as a parallel engine is gone; the remaining duplication
+of facts and `CState` between the snapshot and the `Proof` is tracked for
+removal in `issues/replay-smell.md`.
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface

@@ -578,44 +578,6 @@ impl<'a> Proof<'a> {
         )))
     }
 
-    /// Pushes checked surface steps into this path's transitional surface
-    /// record, which the preservation certificate serializes per leaf.
-    /// Cursor metadata only: the steps were already checked on this Proof.
-    pub(in crate::lang::click::proof) fn record_surface_steps(
-        &self,
-        steps: &[SimpleProofStep],
-    ) -> Result<Self, ClickError> {
-        if steps.is_empty() {
-            return Ok(self.clone());
-        }
-        self.require_execution_frontier("surface recording")?;
-        let mut execution = self
-            .execution()
-            .cloned()
-            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        for step in steps {
-            execution
-                .replay
-                .proof_certificate_builder
-                .push_step(step.clone());
-        }
-        Ok(Self {
-            context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                goals: self.state.goals.replace_frontier_at(
-                    self.focused,
-                    self.facts().clone(),
-                    execution,
-                ),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
-            node: self.node.clone(),
-            focused: self.focused,
-        })
-    }
-
     /// The planner fallback for a smart `execute`: a scratch planning pass
     /// constructs the explicit checked operations for the remaining
     /// execution (a linear sequence, or a planned `if` tree for
@@ -746,7 +708,6 @@ impl<'a> Proof<'a> {
         };
         let tactic_context = context.with_tactic_index(tactic_index);
         let claim_label = context.claim_label;
-        let checkpoint = self.checkpoint();
         let code_region = super::super::structural::resolve_code_region_ref(
             context.function_block,
             region_ref,
@@ -809,14 +770,7 @@ impl<'a> Proof<'a> {
             for step in &construction.steps {
                 executed = executed.apply_step(step.clone())?;
             }
-            let certificate = executed.certificate_since(&checkpoint)?;
             let (recorded, ()) = executed.edit_execution(|execution, _| {
-                for step in certificate.steps() {
-                    execution
-                        .replay
-                        .proof_certificate_builder
-                        .push_step(step.clone());
-                }
                 execution.replay.proof_certificate_builder.last_step_entry =
                     construction.last_step_entry;
             })?;
@@ -979,7 +933,6 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
-        let mut scope = Some(begin_tactic_surface_scope(&mut execution.replay));
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
@@ -988,12 +941,16 @@ impl<'a> Proof<'a> {
         );
         let smart_certificate =
             check_mid_execution_have(have, &mut execution, &tactic_context, &mut facts)?;
-        let slice = end_tactic_surface_scope(
-            &mut execution.replay,
-            scope.take().expect("tactic scope is open"),
-        );
         if capture_this_tactic {
-            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &slice, false);
+            // The tactic's expansion is the law's own surface certificate.
+            let expansion = ProofCertificateBuilder {
+                steps: smart_certificate
+                    .as_ref()
+                    .map(|certificate| certificate.steps().to_vec())
+                    .unwrap_or_default(),
+                ..ProofCertificateBuilder::default()
+            };
+            finish_tactic_expansion_capture(expansion_capture.as_deref_mut(), &expansion, false);
         }
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();
@@ -1150,7 +1107,6 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
-        let mut scope = Some(begin_tactic_surface_scope(&mut execution.replay));
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
@@ -1172,12 +1128,18 @@ impl<'a> Proof<'a> {
             &mut facts,
             source_index,
         )?;
-        let slice = end_tactic_surface_scope(
-            &mut execution.replay,
-            scope.take().expect("tactic scope is open"),
-        );
         if capture_this_tactic {
-            finish_tactic_expansion_capture(expansion_capture, &slice, false);
+            // The tactic's expansion is the expanded loop itself.
+            let expansion = ProofCertificateBuilder {
+                steps: ProofCertificate::from_proof_tactics(std::slice::from_ref(
+                    &ProofTactic::Loop(expanded_loop.clone()),
+                ))
+                .expect("an expanded loop is one simple proof step")
+                .steps()
+                .to_vec(),
+                ..ProofCertificateBuilder::default()
+            };
+            finish_tactic_expansion_capture(expansion_capture, &expansion, false);
         }
         debug_assert!(facts.len() >= base_facts);
         let added = facts[base_facts..].to_vec();

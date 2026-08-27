@@ -275,6 +275,13 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         .expect("the shared disjunction fact closes the right claim");
     assert!(both_closed.is_complete());
 
+    // An unjoined arm's own certificate follows its lineage: the sibling's
+    // interleaved step is attributed elsewhere, while the whole chain
+    // still lists both.
+    assert_eq!(left_closed.path_certificate().steps().len(), 1);
+    assert_eq!(both_closed.path_certificate().steps().len(), 1);
+    assert_eq!(both_closed.certificate().steps().len(), 2);
+
     // A foreign marker from a second split of the same root is rejected.
     let (foreign_proof, foreign_split, foreign_ids) = root
         .split_focused_cases(disjunction.clone())

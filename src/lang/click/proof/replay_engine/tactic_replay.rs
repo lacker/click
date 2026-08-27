@@ -21,7 +21,6 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let replay = &mut execution.replay;
     let state: &CState = &execution.state;
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
 
@@ -151,12 +150,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             (fact, None)
         }
     };
-    let retained_certificate = surface_certificate.clone();
-    if let Some(certificate) = surface_certificate {
-        for step in certificate.steps() {
-            replay.proof_certificate_builder.push_step(step.clone());
-        }
-    }
+    let retained_certificate = surface_certificate;
     // Carry any kernel-issued standard-theorem authority selected
     // inside the point Proof back to the enclosing entry proof.
     if execution
@@ -200,10 +194,6 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     execution
         .surface_propositions
         .record_lowering(&have.proposition, &fact)?;
-    replay
-        .proof_certificate_builder
-        .certificate_facts
-        .insert(fact.clone());
     if execution
         .frontier
         .execution_start_state
@@ -462,7 +452,6 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         LoopStepPolicy::ApplyVerifiedRule,
         None,
     )?;
-    let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
     if let Some(exit_condition) = loop_exit_condition {
         let exit_point = ProgramPointRef {
@@ -497,9 +486,6 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         .frontier_loop_clauses
         .push(loop_template.bound_to_loop(loop_index));
     execution.frontier_loop_rules.push(loop_rule);
-    replay
-        .proof_certificate_builder
-        .push_source_tactic(ProofTactic::Loop(expanded_loop.clone()));
     Ok(expanded_loop)
 }
 
