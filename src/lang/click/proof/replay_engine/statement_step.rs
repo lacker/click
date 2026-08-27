@@ -1,8 +1,7 @@
 use super::*;
 
 pub(in crate::lang::click::proof) struct CheckedStatementStep {
-    pub(in crate::lang::click::proof) replay: TacticReplayState,
-    pub(in crate::lang::click::proof) state: CState,
+    pub(in crate::lang::click::proof) execution: ExecutionProofState,
     pub(in crate::lang::click::proof) facts: ProofFacts,
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) path: Option<(ConditionTerm, bool)>,
@@ -18,8 +17,7 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
 /// restored at their original snapshots.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_statement_step(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     requirement_pure_facts: &ProofFacts,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -32,6 +30,8 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     tactic_index: usize,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<CheckedStatementStep>, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
     let assumptions = requirement_pure_facts.assumptions();
     // A bare `step()` executes in the whole proof context: prerequisites
     // are proved from it, and nothing is transported per step because the
@@ -112,8 +112,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         }
     }
     let successors = execute_step_successors_from_execution_point(
-        replay,
-        state,
+        execution,
         &explicit_premises,
         function_block,
         function,
@@ -134,8 +133,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     Ok(successors
         .into_iter()
         .map(|successor| CheckedStatementStep {
-            replay: successor.replay,
-            state: successor.state,
+            execution: successor.execution,
             facts: requirement_pure_facts.with_statement_facts(successor.pure_facts),
             added_facts: successor.introduced_facts,
             path: successor.path,

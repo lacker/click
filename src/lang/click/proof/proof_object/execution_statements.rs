@@ -19,8 +19,7 @@ impl<'a> Proof<'a> {
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
         let checked = check_statement_step(
-            &mut execution.replay,
-            &mut execution.state,
+            &mut execution,
             &self.facts(),
             context.function_block,
             context.function,
@@ -52,17 +51,16 @@ impl<'a> Proof<'a> {
                     fact,
                     context.parsed_function.parameters(),
                     context.arguments,
-                    &checked.state,
+                    &checked.execution.state,
                 ) {
                     let _ = checked
+                        .execution
                         .replay
                         .surface_propositions
                         .record_lowering(&surface, fact);
                 }
             }
-            let mut successor_execution = execution.clone();
-            successor_execution.replay = checked.replay;
-            successor_execution.state = checked.state.into();
+            let successor_execution = checked.execution;
             (
                 Goal::Frontier(FrontierGoal {
                     selection: frontier.selection,
@@ -98,8 +96,7 @@ impl<'a> Proof<'a> {
                 let mut common_added: Option<Vec<Proposition>> = None;
                 for successor in checked {
                     let CheckedStatementStep {
-                        replay,
-                        state,
+                        execution: successor_execution,
                         facts,
                         added_facts: added,
                         path,
@@ -118,9 +115,6 @@ impl<'a> Proof<'a> {
                         condition = Some(path_condition.clone());
                     }
                     let slot = usize::from(!value);
-                    let mut successor_execution = execution.clone();
-                    successor_execution.replay = replay;
-                    successor_execution.state = state.into();
                     let path_fact = Proposition::ConditionIs(path_condition, value);
                     if by_polarity[slot]
                         .replace((

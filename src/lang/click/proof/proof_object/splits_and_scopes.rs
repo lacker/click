@@ -408,8 +408,7 @@ impl<'a> Proof<'a> {
                     });
                 let base_execution = Arc::new(execution.clone());
                 let mut checked = check_statement_step(
-                    &mut execution.replay,
-                    &mut execution.state,
+                    &mut execution,
                     &facts,
                     context.function_block,
                     context.function,
@@ -448,9 +447,7 @@ impl<'a> Proof<'a> {
             unreachable!("both logical arms were required above")
         };
         let make_goal = |survivor: &Survivor| {
-            let mut execution = (*survivor.base_execution).clone();
-            execution.replay = survivor.checked.replay.clone();
-            execution.state = survivor.checked.state.clone().into();
+            let execution = survivor.checked.execution.clone();
             Goal::Frontier(FrontierGoal {
                 selection,
                 context: GoalContext {

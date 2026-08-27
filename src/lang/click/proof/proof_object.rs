@@ -1063,31 +1063,32 @@ impl Default for ProofLocals {
 /// successors. Pure facts live in `ProofState::facts`; this contains only the
 /// frontier state, legacy replay metadata, and persistent branch provenance.
 #[derive(Clone)]
-struct ExecutionProofState {
-    state: SharedValue<CState>,
-    replay: TacticReplayState,
-    branch_path: PersistentSequence<String>,
+pub(in crate::lang::click::proof) struct ExecutionProofState {
+    pub(in crate::lang::click::proof) state: SharedValue<CState>,
+    pub(in crate::lang::click::proof) replay: TacticReplayState,
+    pub(in crate::lang::click::proof) branch_path: PersistentSequence<String>,
     /// Kernel facts whose checked C-branch Surface spellings must survive a
     /// join for extraction and explicit historical premises.
-    branch_surface_facts: PersistentOrderedSet<Proposition>,
+    pub(in crate::lang::click::proof) branch_surface_facts: PersistentOrderedSet<Proposition>,
     /// Decisions on the currently focused execution lineage. Forks append
     /// one entry in constant time.
-    branch_decisions: PersistentSequence<ExecutionBranchDecision>,
+    pub(in crate::lang::click::proof) branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     /// Path-local lineages aligned with terminal execution candidates. This
     /// is output-sized Proof provenance, never semantic state in a cursor.
-    outcome_branch_decisions: Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
-    last_step_delta: ExecutionProofStepDelta,
-    has_empty_execution_branch_leaf: bool,
+    pub(in crate::lang::click::proof) outcome_branch_decisions:
+        Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
+    pub(in crate::lang::click::proof) last_step_delta: ExecutionProofStepDelta,
+    pub(in crate::lang::click::proof) has_empty_execution_branch_leaf: bool,
     /// Whether a structured execution join (a `branch`, a case split, or a
     /// decided path) produced this state: a converging join leaves one path
     /// and no per-path decision, so the fact is recorded here.
-    has_structured_branch_history: bool,
+    pub(in crate::lang::click::proof) has_structured_branch_history: bool,
     /// The predicates unfolded on this execution path. Distinct from a
     /// goal's `unfolded_predicates`, which are the unfolds visible to one
     /// judgment (a nested scope unfolds locally): this set is path state,
     /// migrated across joins as an arm delta and read by kernel
     /// certification, which exposes these definitions at function entry.
-    unfolded_predicates: SharedVec<String>,
+    pub(in crate::lang::click::proof) unfolded_predicates: SharedVec<String>,
 }
 
 #[derive(Clone)]

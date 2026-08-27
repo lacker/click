@@ -1436,8 +1436,7 @@ pub(super) fn execute_step_from_execution_point(
 }
 
 pub(super) struct ExecutionPointStepSuccessor {
-    pub(super) replay: TacticReplayState,
-    pub(super) state: CState,
+    pub(super) execution: ExecutionProofState,
     pub(super) pure_facts: Vec<Proposition>,
     pub(super) introduced_facts: Vec<Proposition>,
     pub(super) path: Option<(ConditionTerm, bool)>,
@@ -1459,8 +1458,7 @@ fn statement_supports_retained_successor_partition(statement: &CStatement) -> bo
 /// resulting sibling frontiers rather than choosing one operational path.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_step_successors_from_execution_point(
-    replay: &TacticReplayState,
-    state: &CState,
+    execution: &ExecutionProofState,
     available_pure_facts: &[Proposition],
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -1475,6 +1473,8 @@ pub(super) fn execute_step_successors_from_execution_point(
     loop_step_policy: LoopStepPolicy,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<ExecutionPointStepSuccessor>, ClickError> {
+    let replay = &execution.replay;
+    let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
         replay,
         state,
@@ -1533,13 +1533,12 @@ pub(super) fn execute_step_successors_from_execution_point(
     );
     let mut successors = Vec::with_capacity(selected_paths.len());
     for (selected, path) in selected_paths {
-        let mut successor_replay = replay.clone();
-        let mut successor_state = state.clone();
+        let mut successor = execution.clone();
         let mut successor_facts = available_pure_facts.to_vec();
         let assumptions = assumptions_from_propositions(&successor_facts);
         let introduced_facts = execute_step_from_execution_point_selecting_path(
-            &mut successor_replay,
-            &mut successor_state,
+            &mut successor.replay,
+            &mut successor.state,
             &mut successor_facts,
             function_block,
             function,
@@ -1558,8 +1557,7 @@ pub(super) fn execute_step_successors_from_execution_point(
             context,
         )?;
         successors.push(ExecutionPointStepSuccessor {
-            replay: successor_replay,
-            state: successor_state,
+            execution: successor,
             pure_facts: successor_facts,
             introduced_facts,
             path,
