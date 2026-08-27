@@ -2420,22 +2420,20 @@ impl<'a> Proof<'a> {
         let mut proof = self.clone();
         for (index, tactic) in tactics.iter().enumerate() {
             if proof.focused_discharged() {
-                if generated
-                    && index + 1 == tactics.len()
-                    && matches!(tactic, ProofTactic::Assumption)
+                // A final `assumption` after a step that already discharged
+                // the goal (a `transport` whose target is the goal, an exact
+                // theorem conclusion) asserts a closed judgment: a harmless
+                // no-op that emits no redundant certificate step. A final
+                // `simp` likewise. Any other suffix after closure is a
+                // declined shape.
+                if index + 1 == tactics.len()
+                    && matches!(tactic, ProofTactic::Assumption | ProofTactic::Simp)
                 {
                     continue;
                 }
-                // A final `simp` after an exact theorem conclusion is a
-                // harmless search no-op and emits no redundant certificate
-                // step, matching direct smart closure behavior.
                 if matches!(tactic, ProofTactic::Simp) {
                     continue;
                 }
-                // Let the established explicit/source checker diagnose an
-                // invalid suffix after closure. This path has produced no
-                // externally visible mutation, and its source-level wording
-                // remains part of the diagnostic contract.
                 return Ok(None);
             }
             match tactic {

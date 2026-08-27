@@ -2871,6 +2871,126 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
 }
 
 #[test]
+fn nested_have_accepts_trailing_assumption_after_closure() {
+    let click_file = crate::lang::click::parse(
+        r#"
+            int32 identity(int32 x) {
+                ensures returns_x: result == x by { assumption(); }
+            }
+        "#,
+    )
+    .expect("test theorem and function contract should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment =
+        ClickFunctionEnvironment::new(click_file.click_function_definitions());
+    let theorem_definitions =
+        combined_theorem_definitions(&click_file).expect("standard theorem prelude should load");
+    let theorem_environment = TheoremEnvironment::new(&theorem_definitions);
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+        .expect("test C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let state = CState::new();
+    let left = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_000)));
+    let right = CValue::Int32(Bitvector32Term::Variable(Variable(8_000_001)));
+    let arguments = vec![CExpression::Value(left.clone())];
+    let premise = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+        operator: ComparisonOperator::LessThan,
+        right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+    };
+    let conclusion = ClickProposition::Comparison {
+        left: ContractExpression::CFragment(CExpression::Value(left.clone())),
+        operator: ComparisonOperator::LessEqual,
+        right: ContractExpression::CFragment(CExpression::Value(right.clone())),
+    };
+    let kernel_premise = lower_point_proposition_with_assumptions(
+        &premise,
+        &PureFactContext::new(),
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &state,
+        None,
+        &ProgramPointStates::new(),
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the exact premise should lower");
+    let kernel_conclusion = lower_point_proposition_with_assumptions(
+        &conclusion,
+        &PureFactContext::new(),
+        parsed_function.parameters(),
+        &arguments,
+        &state,
+        &state,
+        None,
+        &ProgramPointStates::new(),
+        &predicate_environment,
+        &click_function_environment,
+    )
+    .expect("the theorem conclusion should lower");
+    let application = TheoremApplication {
+        name: "int32_lt_implies_le".to_string(),
+        arguments: vec![
+            ContractExpression::CFragment(CExpression::Value(left)),
+            ContractExpression::CFragment(CExpression::Value(right)),
+        ],
+    };
+    let missing_application = TheoremApplication {
+        name: "int32_lt_implies_le".to_string(),
+        arguments: application.arguments.iter().cloned().rev().collect(),
+    };
+    let pure_facts = vec![kernel_premise.clone()];
+    let mut surface_propositions = SurfacePropositionMap::default();
+    surface_propositions
+        .record_lowering(&premise, &kernel_premise)
+        .expect("the selected premise form should be recorded");
+    let root = Proof::for_execution_frontier(
+        "trailing assumption",
+        0,
+        ExecutionProofState::at_entry(
+            state.clone(),
+            ExecutionFrontier::default(),
+            ProgramPointStates::new(),
+            surface_propositions,
+            PersistentSequence::default(),
+        ),
+        pure_facts,
+        ExecutionProofConstants::default(),
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let _ = &missing_application;
+    // The theorem application's conclusion is the have's goal, so the goal
+    // is discharged before the script's final `assumption`; that trailing
+    // tactic asserts a closed judgment and must not decline the script.
+    let scope = root
+        .begin_have(conclusion.clone())
+        .expect("the have scope opens on the execution proof");
+    let script = [
+        ProofTactic::ApplyTheorem(application.clone()),
+        ProofTactic::Assumption,
+    ];
+    let closed = scope
+        .try_linear_script(&script)
+        .expect("the nested script is a bounded check");
+    assert!(
+        closed.is_some(),
+        "a trailing `assumption` after the discharging application must be accepted"
+    );
+}
+
+#[test]
 fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
     let click_file = crate::lang::click::parse(
         r#"

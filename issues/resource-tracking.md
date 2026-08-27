@@ -172,11 +172,16 @@ owned-vector proof edit remains out of the green scaling checkpoint.
 
 ## Remaining roadmap
 
-1. Re-run the ordinary multi-successor handoff and the scoped population
-   mismatch against the checked `Proof` engine now that the parallel replay
-   model is retired. Do not add resource semantics, different surface
-   syntax, or compatibility-state patches for either witness until a failure
-   is reproduced on that engine.
+1. Re-run on the checked engine (2026-08-27): the multi-successor handoff
+   witness no longer reproduces, and `vector_copy`/`vector_grow` verify after
+   two proof repairs (`mutable ... by frame` instead of an empty
+   `frame() using { }`, whose whole-context reading was an interpreter
+   fallback the reference never promised; a trailing `assumption()` after a
+   discharging `transport` is accepted by the nested scope). The
+   `allocated_vector_push` witness below reproduces unchanged at tactic 1:
+   the persistent `observe` view survives `vector_grow`'s free. That is
+   this issue's own defect. Do not add resource semantics, different surface
+   syntax, or compatibility-state patches for it.
 2. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
 3. Close this issue only after the focused lifetime regressions, resource and

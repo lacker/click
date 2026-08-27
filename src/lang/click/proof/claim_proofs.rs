@@ -103,8 +103,18 @@ fn collect_post_execution_if_have_indices<'a>(
 /// drivers are the single verification engine; a shape they decline is a
 /// gap to close in a driver, never a reason to run a second engine.
 fn unsupported_proof_shape(proof_label: &str) -> ClickError {
+    let declines = take_driver_declines();
+    let declined_at = if declines.is_empty() {
+        String::new()
+    } else {
+        let sites = declines
+            .iter()
+            .map(|location| format!("{}:{}", location.file(), location.line()))
+            .collect::<Vec<_>>();
+        format!(" (driver declines: {})", sites.join(", "))
+    };
     ClickError::new(format!(
-        "`{proof_label}`: this proof shape is not accepted by the checked proof drivers"
+        "`{proof_label}`: this proof shape is not accepted by the checked proof drivers{declined_at}"
     ))
 }
 

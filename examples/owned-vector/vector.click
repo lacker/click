@@ -95,10 +95,7 @@ int32 vector_copy(
         invariant 0 <= i;
         invariant i <= length;
         invariant forall (k: int32) { 0 <= k and k < i implies dst[k] == old(src[k]) };
-        mutable dst[0..length] by {
-            frame() using {
-            }
-        }
+        mutable dst[0..length] by frame;
         initialize by {
             have 0 <= i by {
                 normalize();
@@ -1012,10 +1009,7 @@ int32 vector_fill(struct vector* owner, int32 value) {
     }
     loop as fill_cells {
         invariant i >= 0 and i <= owner->len;
-        mutable owner->data[0..owner->len] by {
-            frame() using {
-            }
-        }
+        mutable owner->data[0..owner->len] by frame;
         initialize by {
             have i >= 0 and i <= owner->len by {
                 have i >= 0 by {
