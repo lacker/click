@@ -109,6 +109,7 @@ impl<'a> Proof<'a> {
                             outcome_branch_decisions: Arc::new(Vec::new()),
                             last_step_delta: ExecutionProofStepDelta::default(),
                             has_empty_execution_branch_leaf: false,
+                            has_structured_branch_history: false,
                         })),
                     },
                 })),

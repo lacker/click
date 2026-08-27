@@ -245,7 +245,7 @@ impl<'a> Proof<'a> {
                     value: take_then,
                     proof_case: false,
                 });
-            arm_execution.replay.has_structured_branch_history = true;
+            arm_execution.has_structured_branch_history = true;
             arm_execution.branch_path.push(format!(
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
@@ -777,7 +777,7 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        execution.replay.has_structured_branch_history = true;
+        execution.has_structured_branch_history = true;
         execution.replay.execution_abstraction = true;
         execution.replay.unfolded_predicates.clear();
         execution.replay.case_assumptions.clear();
@@ -1160,7 +1160,7 @@ impl<'a> Proof<'a> {
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
         execution.outcome_branch_decisions = Arc::new(path_branch_decisions);
-        execution.replay.has_structured_branch_history = true;
+        execution.has_structured_branch_history = true;
         execution.replay.next_opaque_call = then_replay
             .next_opaque_call
             .max(else_replay.next_opaque_call);
@@ -1424,7 +1424,7 @@ impl<'a> Proof<'a> {
                 }
             },
         }
-        execution.replay.has_structured_branch_history = true;
+        execution.has_structured_branch_history = true;
         execution.replay.next_opaque_call = then_replay
             .next_opaque_call
             .max(else_replay.next_opaque_call);

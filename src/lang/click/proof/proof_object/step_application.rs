@@ -678,8 +678,7 @@ impl<'a> Proof<'a> {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
         let path_independent_only = self.node.depth == 0
-            && (execution.paths().len() > 1
-                || execution_state.replay.has_structured_branch_history);
+            && (execution.paths().len() > 1 || execution_state.has_structured_branch_history);
         let available = self.facts().to_vec();
         let pre_state = execution_state
             .replay

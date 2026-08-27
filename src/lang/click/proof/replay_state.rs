@@ -138,10 +138,6 @@ pub(super) struct TacticReplayState {
     pub(super) frontier: ExecutionFrontier,
     pub(super) source_layout: SourceExecutionLayout,
     pub(super) program_point_states: ProgramPointStates,
-    /// This proof path has passed through a frontier-local `branch`. Unlike
-    /// `branch_path`, this excludes pure proof-level `if` diagnostics and can
-    /// therefore distinguish an already selected C path at function exit.
-    pub(super) has_structured_branch_history: bool,
     pub(super) unfolded_predicates: SharedVec<String>,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,

@@ -2813,6 +2813,7 @@ fn advance_checked_open_scope<'a>(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     context: &mut ProofReplayContext,
+    structured_branch_history: bool,
     condition: &ClickProposition,
     value: bool,
     tactic_index: usize,
@@ -2886,7 +2887,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         }
     }
     if context.replay.is_at_function_exit()
-        && context.replay.has_structured_branch_history
+        && structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
     {
         // A source-qualified condition can still be lowered without choosing

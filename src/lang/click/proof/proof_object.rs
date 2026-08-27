@@ -1078,6 +1078,10 @@ struct ExecutionProofState {
     outcome_branch_decisions: Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
     last_step_delta: ExecutionProofStepDelta,
     has_empty_execution_branch_leaf: bool,
+    /// Whether a structured execution join (a `branch`, a case split, or a
+    /// decided path) produced this state: a converging join leaves one path
+    /// and no per-path decision, so the fact is recorded here.
+    has_structured_branch_history: bool,
 }
 
 #[derive(Clone)]

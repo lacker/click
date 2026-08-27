@@ -396,6 +396,7 @@ impl<'a> Proof<'a> {
             let base_facts = arm_context.pure_facts.len();
             let feasible = introduce_proof_case_assumption(
                 &mut arm_context,
+                base_execution.has_structured_branch_history,
                 condition,
                 value,
                 tactic_index,
