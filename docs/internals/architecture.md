@@ -12,7 +12,7 @@ kernel semantic core, and command-line orchestration.
 | `src/lang/click/validation/` | Resolve declarations and enforce source-level type and form rules. |
 | `src/lang/click/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
 | `src/lang/click/checking/` | Evaluate contract forms and connect them to kernel structures. |
-| `src/lang/click/proof/` | Construct persistent checked proofs, interpret tactics, run smart search, and synthesize surface expansions. This directory also contains the remaining compatibility replay adapters. |
+| `src/lang/click/proof/` | Construct persistent checked proofs, interpret tactics, run smart search, and synthesize surface expansions. |
 | `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, and memory reasoning. |
 | `src/cli.rs` | Shared CLI parsing, target selection, durations, and user-facing command metadata. |
 | `src/bin/` | Thin entry points and command-specific reporting for verify, profile, expand, and audit. |

@@ -468,9 +468,7 @@ carries about 40% headroom over the measured need; recalibrate on the CI
 platform before tightening it. The outlined proof-rule and driver adapters
 keep rule-local enum and proposition payloads out of their dispatchers'
 frames; they are stable stack budget boundaries. Changes to those boundaries
-must keep the small-stack canary green. The larger architectural question of
-replacing the parallel mutable replay model is tracked separately in
-`issues/replay-smell.md`.
+must keep the small-stack canary green.
 
 ### Rate-aware performance comparison
 

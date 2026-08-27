@@ -18,11 +18,8 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 2
+## Other open issues: 1
 
-- [Retire the parallel replay proof engine](replay-smell.md): ordinary source
-  verification and expansion still advance a large mutable semantic state in
-  parallel with the checked `Proof` model.
 - [Resource tracking across execution transitions](resource-tracking.md):
   umbrella roadmap for the scoped owned-vector repair, resource-lifetime
   regressions, and final end-to-end unquarantine; its replay-state witness is

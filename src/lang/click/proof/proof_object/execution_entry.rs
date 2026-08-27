@@ -1,7 +1,7 @@
-//! The transitional replay adapter boundary: entering `Proof` from a
-//! entry execution state and exporting checked
-//! results back into replay-owned state. Scheduled for deletion by
-//! `issues/replay-smell.md`; keep doomed adapters co-located here.
+//! Where an execution proof begins and how its snapshot is edited: the
+//! root constructors from an entry execution state, derived roots for loop
+//! effects and post-execution tactics, and the in-place edit of the focused
+//! frontier's execution.
 
 use super::*;
 

@@ -135,10 +135,11 @@ The focused scoped-open regression now passes. Opaque allocation lifetime
 effects lower provisional ensures first, split only when returned and consumed
 allocation identities remain undecided, and retain one checked successor per
 identity case. The checked `Proof` statement operation can retain that binary
-partition. The remaining legacy grouped-replay adapter still rejects the same
-ordinary `step()` because it requires exactly one successor; completing that
-handoff belongs to `replay-smell.md`, not to a new resource operation or surface
-tactic. The generated identity condition is snapshot-qualified, and
+partition. The legacy grouped-replay adapter that rejected the same ordinary `step()`
+for having more than one successor is gone with the parallel replay engine
+(retired 2026-08-27); re-run this witness against the checked `Proof`
+statement operation before adding any resource operation or surface tactic
+for it. The generated identity condition is snapshot-qualified, and
 whole-function replay lowers it separately for each concrete outcome instead
 of reusing one branch's fresh kernel variables.
 
@@ -162,19 +163,20 @@ regression holds the affected ensure fixed while growing unrelated facts from
 The repaired call step finishes promptly and exposes another symptom of the
 replay defect: proof replay retains the consumed allocation and counted
 composite populations after the preparatory `open` scope closes, while fresh
-kernel certification retires that allocation. This is evidence for the same
-parallel state-ownership defect tracked in `replay-smell.md`, not a separate
-scoped resource operation. Its focused reproduction and acceptance criteria
-are now part of that issue; the incomplete owned-vector proof edit remains out
-of the green scaling checkpoint.
+kernel certification retires that allocation. This was attributed to the parallel
+state-ownership defect of the replay engine, which has since been retired
+(2026-08-27): the checked `Proof` now owns every semantic path field. The
+focused reproduction must be re-run against that engine; a remaining
+mismatch is a resource-tracking defect owned here. The incomplete
+owned-vector proof edit remains out of the green scaling checkpoint.
 
 ## Remaining roadmap
 
-1. Complete the Proof-owned execution-region and state-authority migration in
-   `replay-smell.md`. The ordinary multi-successor handoff and the scoped
-   population mismatch are two witnesses of that one architectural defect,
-   not separate replay repairs. Do not add resource semantics, different
-   surface syntax, or compatibility-state patches for either witness.
+1. Re-run the ordinary multi-successor handoff and the scoped population
+   mismatch against the checked `Proof` engine now that the parallel replay
+   model is retired. Do not add resource semantics, different surface
+   syntax, or compatibility-state patches for either witness until a failure
+   is reproduced on that engine.
 2. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
 3. Close this issue only after the focused lifetime regressions, resource and
