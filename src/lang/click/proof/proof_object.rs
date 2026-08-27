@@ -1130,6 +1130,10 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// The states recorded at program points this path has passed, which
     /// `at(point, ...)` premises resolve against.
     pub(in crate::lang::click::proof) program_point_states: ProgramPointStates,
+    /// The surface spellings this path has lowered, paired with their
+    /// kernel propositions, so premises can be written as the source wrote
+    /// them.
+    pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
     /// Execution facts established by the effects run so far on this path.
@@ -1170,10 +1174,11 @@ impl ExecutionProofState {
         &'s self,
         context: &'s ExecutionProofContext<'_>,
     ) -> ExecutionView<'s> {
-        self.replay.view(
+        ExecutionView::new(
             &self.frontier,
             &self.effect_facts,
             &self.program_point_states,
+            &self.surface_propositions,
             context.constants.function_entry_state.as_ref(),
         )
     }
@@ -1185,12 +1190,14 @@ impl ExecutionProofState {
         replay: TacticReplayState,
         frontier: ExecutionFrontier,
         program_point_states: ProgramPointStates,
+        surface_propositions: SurfacePropositionMap,
         branch_path: PersistentSequence<String>,
     ) -> Self {
         Self {
             state: state.into(),
             frontier,
             program_point_states,
+            surface_propositions,
             case_assumptions: PersistentSequence::default(),
             effect_facts: SharedVec::default(),
             frontier_loop_clauses: PersistentSequence::default(),

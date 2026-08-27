@@ -1008,14 +1008,14 @@ mod certificate_tests {
             ),
             true,
         );
-        let replay = TacticReplayState::default();
         let state = CState::new().with_memory(CMemory::new().with_block("current", 4));
 
         let error = checked_surface_comparison_fact_at_point(
-            replay.view(
+            ExecutionView::new(
                 &ExecutionFrontier::default(),
                 &[],
                 &ProgramPointStates::new(),
+                &SurfacePropositionMap::default(),
                 None,
             ),
             &kernel,

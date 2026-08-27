@@ -36,12 +36,13 @@ during ordinary verification in the intended architecture.
 
 `ExecutionProofState` owns a `CState`, the execution frontier (program point,
 region, region start state, continuations), the program-point states recorded
-on the path, the path's case assumptions, effect facts, frontier-local loop
-clauses and rules, branch provenance, the path's unfolded predicates, and a
-`TacticReplayState`; that nested bag still owns fact and resource metadata,
-marks, structural context, deferrals, and certificate builders. The per-proof
-constants (`ExecutionProofConstants`: proof site, source layout, entry facts,
-function-entry state, grouped-contract flag) live on the proof's
+on the path, the surface spellings the path has lowered, the path's case
+assumptions, effect facts, frontier-local loop clauses and rules, branch
+provenance, the path's unfolded predicates, and a `TacticReplayState`; that
+nested bag still owns fact and resource metadata, marks, structural context,
+deferrals, and certificate builders. The per-proof constants
+(`ExecutionProofConstants`: proof site, source layout, entry facts, function-
+entry state, grouped-contract flag) live on the proof's
 `ExecutionProofContext`, not in the path snapshot; the executor takes that
 context alongside the execution state and reads its function, environments,
 claim label, and tactic index from it. A caller that needs a variant derives
@@ -56,9 +57,9 @@ remaining duplication of facts and `CState` between the snapshot and the
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface
-spellings, effect facts, and the `old(...)` reference state. Every owner
-builds it (`ExecutionProofState::view`), so those consumers do not depend on
-where the fields live while they migrate out of the replay bag.
+spellings, effect facts, and the `old(...)` reference state. It is built from
+typed fields only (`ExecutionProofState::view`, or `ExecutionView::new` for a
+planner's scratch state); nothing in it borrows the replay bag.
 
 A surviving source or expansion cursor may own syntax position, focus,
 attribution, and diagnostics. It must not own facts, resources, `CState`, an

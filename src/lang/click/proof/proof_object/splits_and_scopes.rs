@@ -393,7 +393,6 @@ impl<'a> Proof<'a> {
                 let mut execution = (*partition.base_executions[parent_arm]).clone();
                 execution.last_step_delta = ExecutionProofStepDelta::default();
                 execution
-                    .replay
                     .surface_propositions
                     .record_lowering(&surface_fact, &fact)?;
                 execution.case_assumptions.push(ReplayCaseAssumption {
@@ -524,7 +523,6 @@ impl<'a> Proof<'a> {
             let facts = frontier.context.facts.with_fact(fact.clone());
             let mut execution = (*parent_execution).clone();
             execution
-                .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &fact)?;
             execution.case_assumptions.push(ReplayCaseAssumption {
@@ -970,7 +968,6 @@ impl<'a> Proof<'a> {
             };
             execution.last_step_delta = ExecutionProofStepDelta::default();
             execution
-                .replay
                 .surface_propositions
                 .record_lowering(&polarity_surfaces[arm_index], &polarity_facts[arm_index])?;
 
@@ -1378,7 +1375,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             (*execution.state).clone(),
             self.facts().clone(),
-            &mut execution.replay.surface_propositions,
+            &mut execution.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
             context.claim_label,

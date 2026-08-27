@@ -64,6 +64,7 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             Vec::new(),
@@ -2745,9 +2746,9 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_premise.clone());
-        let mut replay = TacticReplayState::default();
-        replay
-            .surface_propositions
+        let replay = TacticReplayState::default();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
             .record_lowering(&premise, &kernel_premise)
             .expect("the selected premise form should be recorded");
         let root = Proof::for_execution_frontier(
@@ -2758,6 +2759,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -2947,9 +2949,9 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_premise.clone());
-        let mut replay = TacticReplayState::default();
-        replay
-            .surface_propositions
+        let replay = TacticReplayState::default();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
             .record_lowering(&premise, &kernel_premise)
             .expect("the selected premise form should be recorded");
         let root = Proof::for_execution_frontier(
@@ -2960,6 +2962,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -6842,9 +6845,9 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(predicate.clone());
-        let mut replay = TacticReplayState::default();
-        replay
-            .surface_propositions
+        let replay = TacticReplayState::default();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
             .record_lowering(&surface, &predicate)
             .expect("the selected predicate form should be recorded");
         let root = Proof::for_execution_frontier(
@@ -6855,6 +6858,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -6980,6 +6984,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7087,6 +7092,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7195,6 +7201,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7320,6 +7327,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7481,9 +7489,9 @@ fn execution_transport_forks_without_copying_unrelated_state() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel.clone());
-        let mut replay = TacticReplayState::default();
-        replay
-            .surface_propositions
+        let replay = TacticReplayState::default();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
             .record_lowering(&surface, &kernel)
             .expect("the source form should be recorded");
         let root = Proof::for_execution_frontier(
@@ -7494,6 +7502,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7544,8 +7553,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             "transport does not copy unrelated effect history"
         );
         assert_eq!(
-            root_execution.replay.surface_propositions,
-            successor_execution.replay.surface_propositions,
+            root_execution.surface_propositions, successor_execution.surface_propositions,
             "an identity transport does not change the recorded surface lowerings"
         );
     }
@@ -7608,9 +7616,9 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
     for size in [16_u32, 64, 256, 1024, 4096] {
         let mut pure_facts = (0..size).map(indexed_fact).collect::<Vec<_>>();
         pure_facts.push(kernel_source.clone());
-        let mut replay = TacticReplayState::default();
-        replay
-            .surface_propositions
+        let replay = TacticReplayState::default();
+        let mut surface_propositions = SurfacePropositionMap::default();
+        surface_propositions
             .record_lowering(&source, &kernel_source)
             .expect("the selected source form should be recorded");
         let root = Proof::for_execution_frontier(
@@ -7621,6 +7629,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7725,6 +7734,7 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7837,10 +7847,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
                 .expect("the unrelated surface fact should be indexed");
             pure_facts.push(fact);
         }
-        let replay = TacticReplayState {
-            surface_propositions,
-            ..TacticReplayState::default()
-        };
+        let replay = TacticReplayState::default();
         let root = Proof::for_execution_frontier(
             "indexed store selection",
             0,
@@ -7849,6 +7856,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                surface_propositions,
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7935,6 +7943,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8070,6 +8079,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                     replay,
                     frontier,
                     ProgramPointStates::new(),
+                    SurfacePropositionMap::default(),
                     PersistentSequence::default(),
                 ),
                 (0..size).map(indexed_fact).collect(),
@@ -8227,6 +8237,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8357,6 +8368,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
                 replay,
                 ExecutionFrontier::default(),
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -8441,6 +8453,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8584,6 +8597,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8872,6 +8886,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -9347,6 +9362,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -9485,6 +9501,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             facts,
@@ -9755,6 +9772,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
                 replay,
                 frontier,
                 ProgramPointStates::new(),
+                SurfacePropositionMap::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),

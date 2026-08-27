@@ -351,10 +351,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()
     };
-    let replay = TacticReplayState {
-        surface_propositions: environment.surface_propositions.clone(),
-        ..TacticReplayState::default()
-    };
+    let replay = TacticReplayState::default();
     record_statement_program_point_state(
         &mut program_point_states,
         environment.function_block,
@@ -377,6 +374,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             replay,
             frontier,
             program_point_states,
+            environment.surface_propositions.clone(),
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
@@ -1257,10 +1255,8 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()
     };
-    let mut replay = TacticReplayState {
-        surface_propositions: environment.surface_propositions.clone(),
-        ..TacticReplayState::default()
-    };
+    let mut surface_propositions = environment.surface_propositions.clone();
+    let replay = TacticReplayState::default();
     record_statement_program_point_state(
         &mut program_point_states,
         environment.function_block,
@@ -1314,9 +1310,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                         kind: ProgramPointKind::Entry,
                     },
                 )?;
-                replay
-                    .surface_propositions
-                    .record_lowering(&surface, &lowered)?;
+                surface_propositions.record_lowering(&surface, &lowered)?;
             }
         }
     }
@@ -1337,6 +1331,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             replay,
             frontier,
             program_point_states,
+            surface_propositions,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),

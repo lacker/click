@@ -327,10 +327,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         function_entry_state: Some(function_entry_state),
         grouped_contract: false,
     };
-    let replay = TacticReplayState {
-        surface_propositions,
-        ..TacticReplayState::default()
-    };
+    let replay = TacticReplayState::default();
     let frontier = ExecutionFrontier::default();
     let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
@@ -349,6 +346,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         replay,
         frontier,
         program_point_states,
+        surface_propositions,
         PersistentSequence::default(),
     );
     // The checked drivers are tried in order: the structural driver owns
@@ -504,10 +502,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         function_entry_state: Some(function_entry_state),
         grouped_contract: true,
     };
-    let replay = TacticReplayState {
-        surface_propositions,
-        ..TacticReplayState::default()
-    };
+    let replay = TacticReplayState::default();
     let frontier = ExecutionFrontier::default();
     let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
@@ -526,6 +521,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         replay,
         frontier,
         program_point_states,
+        surface_propositions,
         PersistentSequence::default(),
     );
     // Same order as the single-claim route: structural, then flat, then the
@@ -1887,7 +1883,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 vec![None::<Proposition>; claims.len()],
                                 vec![None::<Proposition>; claims.len()],
                                 path_requirements.clone(),
-                                replay.surface_propositions.clone(),
+                                proof_execution.surface_propositions.clone(),
                             )
                         },
                     );
@@ -2471,12 +2467,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        replay.view(
-                                            frontier,
-                                            &proof_execution.effect_facts,
-                                            &proof_execution.program_point_states,
-                                            proof_context.constants.function_entry_state.as_ref(),
-                                        ),
+                                        proof_execution.view(proof_context),
                                         &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,

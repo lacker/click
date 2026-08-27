@@ -42,7 +42,6 @@ impl<'a> Proof<'a> {
                 ) {
                     let _ = checked
                         .execution
-                        .replay
                         .surface_propositions
                         .record_lowering(&surface, fact);
                 }
@@ -638,8 +637,7 @@ impl<'a> Proof<'a> {
         let claim_label = context.claim_label;
         let premises = {
             let view = self.finalization_view()?;
-            let (state, replay, frontier, facts) =
-                (view.state, view.replay, view.frontier, &view.facts);
+            let (state, frontier, facts) = (view.state, view.frontier, &view.facts);
             if frontier.is_at_function_entry() || frontier.is_at_function_exit() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one completed execution step"
@@ -706,12 +704,7 @@ impl<'a> Proof<'a> {
                 &transition_facts,
                 context.parsed_function.parameters(),
                 context.arguments,
-                replay.view(
-                    frontier,
-                    &view.execution.effect_facts,
-                    &view.execution.program_point_states,
-                    view.context.constants.function_entry_state.as_ref(),
-                ),
+                view.execution.view(view.context),
                 state,
                 context.predicate_environment,
                 context.click_function_environment,

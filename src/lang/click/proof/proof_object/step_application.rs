@@ -393,7 +393,6 @@ impl<'a> Proof<'a> {
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
             let fact = execution
-                .replay
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
@@ -413,7 +412,6 @@ impl<'a> Proof<'a> {
                 )));
             }
             execution
-                .replay
                 .surface_propositions
                 .record_lowering(surface, &fact)?;
             if !frame_facts.contains(&fact) {
@@ -714,7 +712,7 @@ impl<'a> Proof<'a> {
             path_derivations.push(combined);
         }
         let skeleton = self.contextual_frame_skeleton();
-        let mut construction_replay = execution_state.replay.clone();
+        let mut construction_surface = execution_state.surface_propositions.clone();
         let mut branch_conditions = Vec::new();
         skeleton.collect_conditions(&mut branch_conditions);
         for condition in &branch_conditions {
@@ -761,14 +759,12 @@ impl<'a> Proof<'a> {
                             "could not lower execution outcome branch condition: {message}"
                         ))
                     })?;
-                    construction_replay
-                        .surface_propositions
-                        .record_lowering(surface, &kernel)?;
+                    construction_surface.record_lowering(surface, &kernel)?;
                 }
             }
         }
         let path_tactics = lower_certified_frame_path_tactics(
-            &mut construction_replay,
+            &mut construction_surface,
             &execution_state.frontier,
             &execution_state.effect_facts,
             &execution_state.program_point_states,
@@ -894,7 +890,6 @@ impl<'a> Proof<'a> {
         let mut value_keys = Vec::new();
         for name in &dependency_names {
             for kernel in execution
-                .replay
                 .surface_propositions
                 .current_c_variable_kernel_facts(name)
             {
@@ -1000,7 +995,6 @@ impl<'a> Proof<'a> {
         let execution = self.execution()?;
         let matches = |surface: &ClickProposition| {
             let lowered = execution
-                .replay
                 .surface_propositions
                 .available_kernel_matching(surface, |candidate| {
                     self.facts()
@@ -1016,7 +1010,6 @@ impl<'a> Proof<'a> {
             })
         };
         if let Some(surface) = execution
-            .replay
             .surface_propositions
             .surfaces(kernel)
             .find(|surface| matches(surface))

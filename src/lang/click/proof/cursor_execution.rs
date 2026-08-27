@@ -50,7 +50,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                             "`{claim_label}` tactic {tactic_index}: could not lower `branch ensuring` fact: {message}"
                         ))
                 })?;
-                replay
+                execution
                     .surface_propositions
                     .record_lowering(surface_fact, &fact)?;
                 if !concrete_facts.contains_top_level(&fact)
@@ -249,7 +249,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         "`{claim_label}` tactic {tactic_index}: could not abstract `branch ensuring` fact: {message}"
                     ))
                 })?;
-            replay
+            execution
                 .surface_propositions
                 .record_lowering(surface_fact, &fact)?;
             if !exported_pure_facts.contains(&fact) {
@@ -431,10 +431,11 @@ pub(super) fn execute_branch_step_from_execution_point(
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(
+            ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
             state,
@@ -601,6 +602,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                &mut execution.surface_propositions,
                 proof_context,
                 &current_state,
                 function_block,
@@ -632,6 +634,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            &mut execution.surface_propositions,
             proof_context,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
@@ -860,6 +863,7 @@ fn execute_concrete_loop_head_step(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            &mut execution.surface_propositions,
             proof_context,
             &condition_transition,
             true,
@@ -1499,10 +1503,11 @@ pub(super) fn execute_step_successors_from_execution_point(
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        replay.view(
+        ExecutionView::new(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            &execution.surface_propositions,
             proof_context.constants.function_entry_state.as_ref(),
         ),
         state,
@@ -1651,10 +1656,11 @@ fn execute_step_from_execution_point_selecting_path(
     };
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(
+            ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
             state,
@@ -1802,6 +1808,7 @@ fn execute_step_from_execution_point_selecting_path(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                &mut execution.surface_propositions,
                 proof_context,
                 &current_state,
                 function_block,
@@ -2027,7 +2034,7 @@ fn execute_step_from_execution_point_selecting_path(
                 kind: ProgramPointKind::Exit,
             };
             let exit_surface = surface_with_source_site(surface, &exit_point)?;
-            replay
+            execution
                 .surface_propositions
                 .record_lowering(&exit_surface, target)?;
         }
@@ -2043,6 +2050,7 @@ fn execute_step_from_execution_point_selecting_path(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            &mut execution.surface_propositions,
             proof_context,
             &transition,
             if loop_index.is_some() {
@@ -2072,14 +2080,14 @@ fn execute_step_from_execution_point_selecting_path(
         .iter()
         .filter(|transport| !transport.statement_local)
     {
-        let surfaces = replay
+        let surfaces = execution
             .surface_propositions
             .surfaces(&transport.source)
             .cloned()
             .collect::<Vec<_>>();
         for surface in surfaces {
             let exit_surface = surface_with_source_site(&surface, &exit_point)?;
-            replay
+            execution
                 .surface_propositions
                 .record_lowering(&exit_surface, &transport.target)?;
         }
@@ -2128,7 +2136,7 @@ fn execute_step_from_execution_point_selecting_path(
                 operator,
                 right: at(&store_entry_point, right),
             };
-            replay
+            execution
                 .surface_propositions
                 .record_lowering(&surface, &equation)?;
         }
@@ -2328,6 +2336,7 @@ fn execute_step_from_execution_point_selecting_path(
                     &execution.frontier,
                     &execution.effect_facts,
                     &execution.program_point_states,
+                    &mut execution.surface_propositions,
                     proof_context,
                     state,
                     function_block,

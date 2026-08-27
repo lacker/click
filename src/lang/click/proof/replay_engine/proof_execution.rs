@@ -2879,12 +2879,10 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         let positive_surface = condition.clone();
         let negative_surface = negate_click_proposition(condition);
         let positive = execution
-            .replay
             .surface_propositions
             .available_kernel_matching(&positive_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
         let negative = execution
-            .replay
             .surface_propositions
             .available_kernel_matching(&negative_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
@@ -2900,7 +2898,6 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 negative_surface
             };
             execution
-                .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
             execution.case_assumptions.push(ReplayCaseAssumption {
@@ -2958,7 +2955,6 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 return Ok(false);
             }
             execution
-                .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
             pure_facts.push(kernel_fact.clone());
@@ -3023,7 +3019,6 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         return Ok(false);
     }
     execution
-        .replay
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
     pure_facts.push(kernel_fact.clone());

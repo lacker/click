@@ -171,7 +171,7 @@ impl<'a> Proof<'a> {
             &execution.state,
             None,
             &execution.program_point_states,
-            &execution.replay.surface_propositions,
+            &execution.surface_propositions,
             &execution.unfolded_predicates,
             &execution.effect_facts,
             context.predicate_environment,
@@ -769,7 +769,7 @@ impl<'a> Proof<'a> {
             state: &execution.state,
             result: None,
             program_point_states: &execution.program_point_states,
-            surface_propositions: &execution.replay.surface_propositions,
+            surface_propositions: &execution.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
@@ -1200,16 +1200,14 @@ impl<'a> Proof<'a> {
             &execution.state,
             None,
             &execution.program_point_states,
-            &execution.replay.surface_propositions,
+            &execution.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
         )?;
         execution
-            .replay
             .surface_propositions
             .record_lowering(source, &checked.source)?;
         execution
-            .replay
             .surface_propositions
             .record_lowering(target, &checked.target)?;
         let mut facts = self.facts().clone();

@@ -190,7 +190,6 @@ pub(super) struct TacticReplayState {
     /// It is deliberately separate from `ProofTactic` so internal execution
     /// artifacts cannot masquerade as proof steps.
     pub(super) planned_statement_transitions: SharedVec<PlannedStatementTransition>,
-    pub(super) surface_propositions: SurfacePropositionMap,
     pub(super) proof_certificate_builder: SharedValue<ProofCertificateBuilder>,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common
@@ -1965,18 +1964,18 @@ impl<'a> ExecutionView<'a> {
     }
 }
 
-impl TacticReplayState {
-    pub(super) fn view<'a>(
-        &'a self,
+impl<'a> ExecutionView<'a> {
+    pub(super) fn new(
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a [ExecutionPureFact],
         program_point_states: &'a ProgramPointStates,
+        surface_propositions: &'a SurfacePropositionMap,
         function_entry_state: Option<&'a CState>,
-    ) -> ExecutionView<'a> {
+    ) -> Self {
         ExecutionView {
             frontier,
             program_point_states,
-            surface_propositions: &self.surface_propositions,
+            surface_propositions,
             effect_facts,
             function_entry_state,
         }

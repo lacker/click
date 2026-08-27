@@ -34,7 +34,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
-    for fact in replay.surface_propositions.kernel_facts() {
+    for fact in execution.surface_propositions.kernel_facts() {
         if !have_facts.contains(fact) {
             have_facts.push(fact.clone());
         }
@@ -51,13 +51,14 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &state,
         None,
         None,
-        replay.view(
+        ExecutionView::new(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
+            &execution.surface_propositions,
             proof_context.constants.function_entry_state.as_ref(),
         ),
-        &replay.surface_propositions,
+        &execution.surface_propositions,
         predicate_environment,
         click_function_environment,
         function_block.requires(),
@@ -72,10 +73,11 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let smart_result = match (&checked_proof_result, &smart_unfolds) {
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
-            replay.view(
+            ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
+                &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
             &state,
@@ -106,13 +108,14 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         &state,
                         None,
                         None,
-                        replay.view(
+                        ExecutionView::new(
         &execution.frontier,
         &execution.effect_facts,
         &execution.program_point_states,
+        &execution.surface_propositions,
         proof_context.constants.function_entry_state.as_ref(),
     ),
-                        &replay.surface_propositions,
+                        &execution.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         function_block.requires(),
@@ -140,7 +143,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 proof_context.old_reference_state(&execution.frontier, state),
                 &state,
                 &execution.program_point_states,
-                &replay.surface_propositions,
+                &execution.surface_propositions,
                 predicate_environment,
                 click_function_environment,
                 function_block.requires(),
@@ -194,7 +197,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     // Surface operations have closed the checked Proof. Recording
     // it earlier could make a nontrivial snapshot equality appear
     // reflexive and circularly validate `normalize()`.
-    replay
+    execution
         .surface_propositions
         .record_lowering(&have.proposition, &fact)?;
     replay
@@ -326,7 +329,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         theorem_environment,
         function: &annotated,
         arguments,
-        surface_propositions: &replay.surface_propositions,
+        surface_propositions: &execution.surface_propositions,
         source_layout: &source_layout,
         frontier_loop_certificates: Some(&loop_certificates),
         frontier_loop_source: Some(&loop_source),
@@ -366,7 +369,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         vec![PlanningExecutionContext {
             state: state.clone(),
             pure_facts: loop_pure_facts,
-            surface_propositions: replay.surface_propositions.clone(),
+            surface_propositions: execution.surface_propositions.clone(),
             program_point_states: execution.program_point_states.clone(),
             case_path,
             next_opaque_call: replay.next_opaque_call,
@@ -486,7 +489,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         })?;
         if available_pure_facts.contains(&lowered_exit_condition) {
             let exit_surface = surface_with_source_site(&exit_condition, &exit_point)?;
-            replay
+            execution
                 .surface_propositions
                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
         }

@@ -256,7 +256,7 @@ impl<'a> Proof<'a> {
         let frontier_unfolds = frontier.context.unfolded_predicates.clone();
         let frontier_surface = frontier_snapshot
             .as_ref()
-            .map(|execution| execution.replay.surface_propositions.clone())
+            .map(|execution| execution.surface_propositions.clone())
             .unwrap_or_default();
         let frontier_anchor = frontier_snapshot
             .as_ref()

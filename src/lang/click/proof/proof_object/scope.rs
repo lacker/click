@@ -924,7 +924,6 @@ impl<'a> ProofScope<'a> {
         script: Option<&[ProofTactic]>,
     ) -> Result<(), ClickError> {
         execution
-            .replay
             .surface_propositions
             .record_lowering(proposition, kernel)?;
         execution

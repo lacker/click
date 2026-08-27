@@ -634,7 +634,7 @@ impl<'a> Proof<'a> {
                         let execution = self.execution()?;
                         frontier_anchor = frontier_premise_anchor(execution);
                         (
-                            &execution.replay.surface_propositions,
+                            &execution.surface_propositions,
                             false,
                             frontier_anchor.as_ref(),
                         )
@@ -974,7 +974,7 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) => match self.focused_outcome_point() {
                 Some(point) => (&point.surface_propositions, point.premise_anchor.as_ref()),
                 None => (
-                    &self.execution()?.replay.surface_propositions,
+                    &self.execution()?.surface_propositions,
                     frontier_anchor.as_ref(),
                 ),
             },
@@ -2718,7 +2718,6 @@ impl<'a> Proof<'a> {
             for fact in self.state.added_facts.iter() {
                 if self.facts().contains_top_level(fact)
                     && execution
-                        .replay
                         .surface_propositions
                         .surfaces(fact)
                         .next()
@@ -2744,7 +2743,6 @@ impl<'a> Proof<'a> {
         }
         for name in dependency_names {
             for fact in execution
-                .replay
                 .surface_propositions
                 .current_c_variable_kernel_facts(&name)
             {
@@ -2785,11 +2783,10 @@ impl<'a> Proof<'a> {
                 .get(fact)
                 .and_then(|name| {
                     execution
-                        .replay
                         .surface_propositions
                         .current_c_variable_surface(&fact, name)
                 })
-                .or_else(|| execution.replay.surface_propositions.surfaces(&fact).next());
+                .or_else(|| execution.surface_propositions.surfaces(&fact).next());
             let Some(surface) = surface.cloned() else {
                 // A resource-local justification need not have a standalone
                 // Surface proposition form. The empty simple candidate

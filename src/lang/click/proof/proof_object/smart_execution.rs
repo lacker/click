@@ -302,7 +302,7 @@ impl<'a> Proof<'a> {
             &execution.state,
             None,
             &execution.program_point_states,
-            &execution.replay.surface_propositions,
+            &execution.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
             context.theorem_environment,

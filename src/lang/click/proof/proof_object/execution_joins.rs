@@ -231,7 +231,6 @@ impl<'a> Proof<'a> {
                 ))
             })?;
             arm_execution
-                .replay
                 .surface_propositions
                 .record_lowering(&surface_path_fact, &kernel_path_fact)?;
             arm_execution
@@ -391,7 +390,7 @@ impl<'a> Proof<'a> {
             let ProofAssertion::Fact(surface) = assertion else {
                 continue;
             };
-            if let Some(fact) = execution.replay.surface_propositions.unique_kernel(surface)
+            if let Some(fact) = execution.surface_propositions.unique_kernel(surface)
                 && !facts_before_interface.contains_top_level(fact)
                 && !added_facts.contains(fact)
             {
@@ -828,15 +827,13 @@ impl<'a> Proof<'a> {
                 facts = facts.with_fact(fact.clone());
                 added_facts.push(fact.clone());
             }
-            for surface in then_abstract.replay.surface_propositions.surfaces(fact) {
+            for surface in then_abstract.surface_propositions.surfaces(fact) {
                 if else_abstract
-                    .replay
                     .surface_propositions
                     .surfaces(fact)
                     .any(|candidate| candidate == surface)
                 {
                     execution
-                        .replay
                         .surface_propositions
                         .record_lowering(surface, fact)?;
                 }
@@ -944,9 +941,8 @@ impl<'a> Proof<'a> {
                     )
                 })?;
             for fact in introduced {
-                for surface in arm.replay.surface_propositions.surfaces(&fact) {
+                for surface in arm.surface_propositions.surfaces(&fact) {
                     execution
-                        .replay
                         .surface_propositions
                         .record_lowering(surface, &fact)?;
                 }
@@ -1285,14 +1281,14 @@ impl<'a> Proof<'a> {
             {
                 facts = facts.with_fact(fact.clone());
                 common_added_facts.push(fact.clone());
-                for surface in then_replay.surface_propositions.surfaces(fact) {
-                    if else_replay
+                for surface in arms[0].execution.surface_propositions.surfaces(fact) {
+                    if arms[1]
+                        .execution
                         .surface_propositions
                         .surfaces(fact)
                         .any(|candidate| candidate == surface)
                     {
                         execution
-                            .replay
                             .surface_propositions
                             .record_lowering(surface, fact)?;
                     }
@@ -1486,14 +1482,14 @@ impl<'a> Proof<'a> {
             {
                 facts = facts.with_fact(fact.clone());
                 common_added_facts.push(fact.clone());
-                for surface in then_replay.surface_propositions.surfaces(fact) {
-                    if else_replay
+                for surface in arms[0].execution.surface_propositions.surfaces(fact) {
+                    if arms[1]
+                        .execution
                         .surface_propositions
                         .surfaces(fact)
                         .any(|candidate| candidate == surface)
                     {
                         execution
-                            .replay
                             .surface_propositions
                             .record_lowering(surface, fact)?;
                     }
