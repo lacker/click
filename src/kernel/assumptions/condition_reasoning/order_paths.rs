@@ -1,6 +1,33 @@
 use super::*;
 
 impl PureFactContext {
+    /// Whether one recorded strict order fact separates `left` from `right`
+    /// directly (`left < right` or `right < left`, under either term or its
+    /// canonical alias). This is an indexed lookup only — no derivation, no
+    /// fuel — so an assumption-free walk such as memory-derivation naming can
+    /// refute an offset equality from a recorded bound without reasoning.
+    pub(in crate::kernel) fn direct_strict_order_recorded(
+        &self,
+        left: &Bitvector32Term,
+        right: &Bitvector32Term,
+    ) -> bool {
+        let separated = |endpoint: &Bitvector32Term| {
+            self.signed_order_bounds
+                .get(endpoint)
+                .is_some_and(|bounds| {
+                    bounds.iter().any(|((lower, upper, strict, _), _)| {
+                        *strict
+                            && ((lower == left && upper == right)
+                                || (lower == right && upper == left))
+                    })
+                })
+        };
+        separated(left)
+            || separated(right)
+            || separated(&crate::kernel::eval::canonical_term(left))
+            || separated(&crate::kernel::eval::canonical_term(right))
+    }
+
     pub(in crate::kernel) fn decide_from_order_facts(
         &self,
         condition: &ConditionTerm,

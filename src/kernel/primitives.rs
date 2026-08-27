@@ -954,11 +954,15 @@ impl From<&CMemory> for SharedCMemory {
 /// snapshot comparison (see conventions.md's soundness trap).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CMemoryDerivation {
-    /// `base` with one cell written.
+    /// `base` with one cell written. `context` is the fact context the
+    /// transition executed the store in, frozen on the edge so the
+    /// assumption-free naming walk can refute an offset equality from a
+    /// recorded strict order (an indexed lookup, never a derivation).
     Store {
         base: SharedCMemory,
         pointer: Pointer,
         value: CValue,
+        context: PureFactContext,
     },
     /// `base` with one block declared; no cell changes, so every load reads
     /// exactly what it read in `base`. This fourth edge kind was added after

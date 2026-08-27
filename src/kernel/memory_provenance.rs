@@ -619,58 +619,65 @@ fn memory_derivations_reach(
             "memory derivation walk",
             edge_name,
             || match derivation.as_ref() {
-                CMemoryDerivation::Store { pointer: write, .. } => {
+                CMemoryDerivation::Store {
+                    pointer: write,
+                    context,
+                    ..
+                } => {
                     crate::instrumentation::measure_operation(
                         "kernel",
                         "memory derivation store edge",
                         "store edge: distinct blocks",
                         || write.blocks_proven_distinct(pointer),
-                    ) || crate::instrumentation::measure_operation(
-                        "kernel",
-                        "memory derivation store edge",
-                        "store edge: common-base offsets",
-                        || {
-                            pointer_offsets_with_common_base_proven_distinct(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                        },
-                    ) || crate::instrumentation::measure_operation(
-                        "kernel",
-                        "memory derivation store edge",
-                        "store edge: general pointer distinctness",
-                        || {
-                            pointers_proven_distinct_for_memory_resolution(
-                                write,
-                                pointer,
-                                assumptions,
-                            )
-                        },
-                    ) || crate::instrumentation::measure_operation(
-                        "kernel",
-                        "memory derivation store edge",
-                        "store edge: range-separated pointers",
-                        // The same range-membership route the fact-based
-                        // MutatesOnly arm uses: the write inside one
-                        // separated range and the load inside the other.
-                        // Isolated fuel keeps per-edge work bounded: range
-                        // extents may retain raw load terms, and deciding
-                        // orderings against them must come from exact facts,
-                        // never from re-entering alias resolution.
-                        || {
-                            crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
-                                8_000,
-                                || {
-                                    crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
+                    ) || store_frozen_order_crosses(&current, context, write, pointer)
+                        || crate::instrumentation::measure_operation(
+                            "kernel",
+                            "memory derivation store edge",
+                            "store edge: common-base offsets",
+                            || {
+                                pointer_offsets_with_common_base_proven_distinct(
+                                    write,
+                                    pointer,
+                                    assumptions,
+                                )
+                            },
+                        )
+                        || crate::instrumentation::measure_operation(
+                            "kernel",
+                            "memory derivation store edge",
+                            "store edge: general pointer distinctness",
+                            || {
+                                pointers_proven_distinct_for_memory_resolution(
+                                    write,
+                                    pointer,
+                                    assumptions,
+                                )
+                            },
+                        )
+                        || crate::instrumentation::measure_operation(
+                            "kernel",
+                            "memory derivation store edge",
+                            "store edge: range-separated pointers",
+                            // The same range-membership route the fact-based
+                            // MutatesOnly arm uses: the write inside one
+                            // separated range and the load inside the other.
+                            // Isolated fuel keeps per-edge work bounded: range
+                            // extents may retain raw load terms, and deciding
+                            // orderings against them must come from exact facts,
+                            // never from re-entering alias resolution.
+                            || {
+                                crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
+                                    8_000,
+                                    || {
+                                        crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
                                         write,
                                         pointer,
                                         assumptions,
                                     )
-                                },
-                            )
-                        },
-                    )
+                                    },
+                                )
+                            },
+                        )
                 }
                 // Declaring a block or forgetting cached cells writes nothing,
                 // so every load is untouched — but only the extended-bridging
@@ -793,6 +800,11 @@ pub(super) enum MemoryDagHopJustification {
     /// The havoc edge's frozen context proves the pointer outside the
     /// callee's mutable ranges by range reasoning or ownership.
     CallHavocFrozenContext,
+    /// The store edge's frozen context records a strict order separating
+    /// the written index from the loaded one.
+    StoreFrozenOrder {
+        condition: ConditionTerm,
+    },
     AssumptionDependent(MemoryDagAssumptionKind),
 }
 
@@ -905,9 +917,61 @@ impl MemoryDagHopJustification {
                     base.memory(),
                 )
             }
+            Self::StoreFrozenOrder { condition } => {
+                let CMemoryDerivation::Store {
+                    pointer: write,
+                    context,
+                    ..
+                } = derivation
+                else {
+                    return false;
+                };
+                store_frozen_order_condition(context, write, pointer).as_ref() == Some(condition)
+            }
             Self::AssumptionDependent(_) => false,
         }
     }
+}
+
+/// The common-base distinctness condition of a store and a load that the
+/// store edge's frozen context refutes by one recorded strict order.
+fn store_frozen_order_condition(
+    context: &PureFactContext,
+    write: &Pointer,
+    pointer: &Pointer,
+) -> Option<ConditionTerm> {
+    let condition = pointer_offsets_with_common_base_distinctness_condition(write, pointer)?;
+    let ConditionTerm::Bitvector32Equal(left, right) = &condition else {
+        return None;
+    };
+    context
+        .direct_strict_order_recorded(left, right)
+        .then_some(condition)
+}
+
+/// Whether a store edge's frozen context proves the load misses the written
+/// cell. Memoized per edge and pointer like the call-havoc crossing: the
+/// derived snapshot identifies the edge, and every later naming walk crosses
+/// it for the same cells.
+fn store_frozen_order_crosses(
+    derived: &crate::kernel::SharedCMemory,
+    context: &PureFactContext,
+    write: &Pointer,
+    pointer: &Pointer,
+) -> bool {
+    let key = (derived.clone(), pointer.clone());
+    if let Some(hit) = FROZEN_CROSSING_MEMO.with(|memo| memo.borrow().get(&key).copied()) {
+        return hit;
+    }
+    let crosses = store_frozen_order_condition(context, write, pointer).is_some();
+    FROZEN_CROSSING_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len() >= 100_000 {
+            memo.clear();
+        }
+        memo.insert(key, crosses);
+    });
+    crosses
 }
 
 impl PositiveTermEvidence {
@@ -1483,6 +1547,7 @@ fn memory_dag_cell_source(
             CMemoryDerivation::Store {
                 pointer: write,
                 value,
+                context,
                 ..
             } => {
                 if write == pointer
@@ -1515,6 +1580,10 @@ fn memory_dag_cell_source(
                 // must replay byte-for-byte.
                 if write.blocks_proven_distinct(pointer) {
                     MemoryDagHopJustification::StoreDistinctBlocks
+                } else if let Some(condition) =
+                    store_frozen_order_condition(context, write, pointer)
+                {
+                    MemoryDagHopJustification::StoreFrozenOrder { condition }
                 } else if pointer_offsets_with_common_base_proven_distinct(
                     write,
                     pointer,

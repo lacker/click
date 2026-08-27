@@ -53,6 +53,7 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
             base: recorded_base,
             pointer,
             value,
+            ..
         } => {
             assert_eq!(recorded_base.as_ref(), &base);
             assert_eq!(pointer, &arc_pointer(4));
@@ -754,5 +755,143 @@ fn sibling_materialization_cells_must_not_launder_a_havoc() {
         !c_memory_load_is_unchanged(&materialized, &havocked, &loaded, &PureFactContext::new()),
         "a havoc of the loaded pointer must not be laundered by sibling \
          materialization cells jumping to their common source"
+    );
+}
+
+// --- store edge: frozen-context crossing ---------------------------------
+// A store at a symbolic index keeps every cell a strict order recorded in
+// the transition's context separates from the written one: the naming walk
+// crosses the edge by that frozen context through one indexed lookup, never
+// by reasoning. `CallHavoc` crosses by the same mechanism for ranges.
+
+fn symbolic_element_pointer(index: &Bitvector32Term) -> Pointer {
+    Pointer {
+        block: "arg-memory".into(),
+        offset: PointerOffsetTerm::add(
+            PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(91_000)), 4),
+            PointerOffsetTerm::scale_int32(index.clone(), 4),
+        ),
+    }
+}
+
+#[test]
+fn a_store_at_a_symbolic_index_keeps_a_cell_its_frozen_order_separates() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let index = Bitvector32Term::Variable(Variable(91_001));
+    let length = Bitvector32Term::Variable(Variable(91_002));
+    let written = symbolic_element_pointer(&index);
+    let kept = symbolic_element_pointer(&length);
+    // `kept` is never materialized: the observable is the canonical form of
+    // its load, which only a crossed store edge keeps at the base snapshot.
+    let base = CMemory::new().with_block("arg-memory", 64);
+    let ordered = PureFactContext::new().assume_condition(
+        ConditionTerm::signed_less_than(index.clone(), length.clone()),
+        true,
+    );
+
+    let separated = base
+        .clone()
+        .store_with_context(written.clone(), int32(7), &ordered);
+    assert_eq!(
+        crate::kernel::eval::canonical_form_of_load(
+            crate::kernel::intern_c_memory_ref(&separated),
+            kept.clone()
+        ),
+        crate::kernel::eval::canonical_form_of_load(
+            crate::kernel::intern_c_memory_ref(&base),
+            kept.clone()
+        ),
+        "the frozen order `index < length` separates the loaded cell from the written one"
+    );
+
+    // Interning is first-wins on equal content, so the unordered store
+    // writes a different value to get its own edge.
+    let unordered = base
+        .clone()
+        .store_with_context(written, int32(8), &PureFactContext::new());
+    assert_ne!(
+        crate::kernel::eval::canonical_form_of_load(
+            crate::kernel::intern_c_memory_ref(&unordered),
+            kept.clone()
+        ),
+        crate::kernel::eval::canonical_form_of_load(
+            crate::kernel::intern_c_memory_ref(&base),
+            kept
+        ),
+        "without a recorded order the write may alias the loaded cell"
+    );
+}
+
+#[test]
+fn direct_strict_order_is_an_indexed_lookup() {
+    let a = Bitvector32Term::Variable(Variable(91_101));
+    let b = Bitvector32Term::Variable(Variable(91_102));
+    let c = Bitvector32Term::Variable(Variable(91_103));
+    let context = PureFactContext::new()
+        .assume_condition(ConditionTerm::signed_less_than(a.clone(), b.clone()), true)
+        .assume_condition(ConditionTerm::signed_less_equal(b.clone(), c.clone()), true);
+    assert!(context.direct_strict_order_recorded(&a, &b));
+    assert!(context.direct_strict_order_recorded(&b, &a));
+    assert!(
+        !context.direct_strict_order_recorded(&b, &c),
+        "a non-strict bound does not separate the terms"
+    );
+    assert!(
+        !context.direct_strict_order_recorded(&a, &c),
+        "the lookup is direct: no chaining through `b`"
+    );
+}
+
+#[test]
+fn frozen_order_store_crossing_ignores_unrelated_order_facts() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let samples = [16_u64, 64, 256, 1024, 4096]
+        .into_iter()
+        .map(|size| {
+            let index = Bitvector32Term::Variable(Variable(92_000_000 + size * 10 + 1));
+            let length = Bitvector32Term::Variable(Variable(92_000_000 + size * 10 + 2));
+            let written = symbolic_element_pointer(&index);
+            let kept = symbolic_element_pointer(&length);
+            let mut context = PureFactContext::new();
+            for unrelated in 0..size {
+                context = context.assume_condition(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(Variable(93_000_000 + unrelated * 2)),
+                        Bitvector32Term::Variable(Variable(93_000_000 + unrelated * 2 + 1)),
+                    ),
+                    true,
+                );
+            }
+            let context =
+                context.assume_condition(ConditionTerm::signed_less_than(index, length), true);
+            let base = CMemory::new().with_block(format!("arg-memory-{size}"), 64);
+            let separated = base.clone().store_with_context(written, int32(7), &context);
+            let expected = crate::kernel::eval::canonical_form_of_load(
+                crate::kernel::intern_c_memory_ref(&base),
+                kept.clone(),
+            );
+            let (resolved, work) = crate::instrumentation::measure_deterministic_work(|| {
+                crate::kernel::eval::canonical_form_of_load(
+                    crate::kernel::intern_c_memory_ref(&separated),
+                    kept.clone(),
+                )
+            });
+            assert_eq!(
+                resolved, expected,
+                "the store must be crossed at size {size}"
+            );
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+    let first = samples[0].1;
+    assert!(
+        samples
+            .iter()
+            .all(|(_, work)| *work <= first.saturating_mul(4).max(first + 64)),
+        "crossing a store by its frozen order must not scale with unrelated facts: {samples:?}"
     );
 }

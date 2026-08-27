@@ -198,7 +198,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             state.memory = state
                 .memory
                 .without_possible_aliasing_cells(&pointer, &effective_assumptions)
-                .store(pointer.clone(), value.clone());
+                .store_with_context(pointer.clone(), value.clone(), &effective_assumptions);
             let mut facts = facts;
             facts.push(ExecutionPureFact::certified_store(
                 before_memory,

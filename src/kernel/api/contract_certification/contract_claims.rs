@@ -277,6 +277,7 @@ fn memories_equal_by_matching_derivations(
                 base,
                 pointer,
                 value,
+                ..
             } if pointer.block.starts_with("local:")
                 || store_is_self_materialization(base, pointer, value) =>
             {
@@ -352,11 +353,13 @@ fn memories_equal_by_matching_derivations(
                 base: left_base,
                 pointer: left_pointer,
                 value: left_value,
+                ..
             }),
             Some(CMemoryDerivation::Store {
                 base: right_base,
                 pointer: right_pointer,
                 value: right_value,
+                ..
             }),
         ) => {
             pointers_proven_equal_for_memory_resolution(left_pointer, right_pointer, assumptions)

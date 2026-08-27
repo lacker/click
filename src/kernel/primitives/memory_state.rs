@@ -497,7 +497,19 @@ impl CMemory {
         self
     }
 
-    pub fn store(mut self, pointer: Pointer, value: CValue) -> Self {
+    pub fn store(self, pointer: Pointer, value: CValue) -> Self {
+        self.store_with_context(pointer, value, &PureFactContext::new())
+    }
+
+    /// Writes one cell, freezing `context` on the store edge: a later load of
+    /// another cell of the same base crosses the edge when a strict order
+    /// recorded in that context separates the two indexes.
+    pub fn store_with_context(
+        mut self,
+        pointer: Pointer,
+        value: CValue,
+        context: &PureFactContext,
+    ) -> Self {
         if memory_dag_disabled() {
             std::sync::Arc::make_mut(&mut self.cells).insert(pointer, value);
             return self;
@@ -510,6 +522,7 @@ impl CMemory {
                 base,
                 pointer,
                 value,
+                context: context.clone(),
             },
         );
         self
@@ -574,6 +587,12 @@ impl CMemory {
                 || assumptions
                     .pointers_directly_disjoint_by_range(&normalized_cell_pointer, &normalized_pointer)
         });
+        // Forgetting nothing is not a transition: the memory is the same
+        // snapshot, so a later load keeps resolving through it unchanged
+        // instead of stopping at an edge that records no write.
+        if memory.cells.len() == self.cells.len() {
+            return self.clone();
+        }
         if let Some(base) = base {
             record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
         }
