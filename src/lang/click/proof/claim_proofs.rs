@@ -1070,7 +1070,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         .unwrap_or_default();
     if let Some(view) = &direct_view {
         collect_post_execution_if_have_indices(
-            view.replay.post_execution_tactics.iter(),
+            view.execution.post_execution_tactics.iter(),
             &mut authoritative_outcome_haves,
         );
     }
@@ -1940,19 +1940,23 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                     if let Some(branch_proof) = outcome_proof.as_ref() {
                         select_checked_post_execution_tactics(
                             branch_proof,
-                            replay.post_execution_tactics.iter(),
+                            proof_execution.post_execution_tactics.iter(),
                             &mut selected_post_execution_tactics,
                         )?;
                     } else {
-                        if replay.post_execution_tactics.iter().any(|deferred| {
-                            matches!(deferred.tactic, PostExecutionTactic::If { .. })
-                        }) {
+                        if proof_execution
+                            .post_execution_tactics
+                            .iter()
+                            .any(|deferred| {
+                                matches!(deferred.tactic, PostExecutionTactic::If { .. })
+                            })
+                        {
                             return Err(ClickError::new(format!(
                                 "`{proof_label}` path {path_index}: post-execution `if` has no focused outcome Proof"
                             )));
                         }
                         selected_post_execution_tactics
-                            .extend(replay.post_execution_tactics.iter());
+                            .extend(proof_execution.post_execution_tactics.iter());
                     }
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()

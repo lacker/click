@@ -1142,6 +1142,10 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// path and migrated across joins as arm deltas.
     pub(in crate::lang::click::proof) frontier_loop_clauses: PersistentSequence<StructuralClause>,
     pub(in crate::lang::click::proof) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
+    /// Outcome tactics deferred during execution, applied in order at
+    /// finalization; joins carry each arm's suffix.
+    pub(in crate::lang::click::proof) post_execution_tactics:
+        PersistentSequence<DeferredPostExecutionTactic>,
     /// The execution frontier was intentionally replaced by a branch
     /// interface. Its state is a specification abstraction, not an exact
     /// symbolic body outcome; whole-function kernel certification checks every
@@ -1260,6 +1264,7 @@ impl ExecutionProofState {
             effect_facts: SharedVec::default(),
             frontier_loop_clauses: PersistentSequence::default(),
             frontier_loop_rules: PersistentSequence::default(),
+            post_execution_tactics: PersistentSequence::default(),
             execution_abstraction: Default::default(),
             loop_effect_goal: Default::default(),
             next_path_choice: Default::default(),
@@ -2255,3 +2260,37 @@ mod surface_lowering;
 
 #[cfg(test)]
 mod tests;
+
+impl ExecutionProofState {
+    pub(in crate::lang::click::proof) fn defer_post_execution(
+        &mut self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+    ) {
+        self.post_execution_tactics
+            .push(DeferredPostExecutionTactic {
+                tactic_index,
+                source_index,
+                tactic,
+                surface_recorded: false,
+            });
+    }
+
+    /// Schedules ordered outcome work whose semantics and Surface provenance
+    /// are already owned by a checked `Proof` descendant.
+    pub(in crate::lang::click::proof) fn defer_checked_post_execution(
+        &mut self,
+        tactic_index: usize,
+        source_index: usize,
+        tactic: PostExecutionTactic,
+    ) {
+        self.post_execution_tactics
+            .push(DeferredPostExecutionTactic {
+                tactic_index,
+                source_index,
+                tactic,
+                surface_recorded: true,
+            });
+    }
+}

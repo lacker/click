@@ -1227,17 +1227,19 @@ impl<'a> Proof<'a> {
         // each focused outcome Proof to select one arm and apply those
         // ordinary operations; the joined execution frontier gains no facts,
         // C state, resources, or successor authority from this tree.
-        let then_post_execution = then_replay
+        let then_post_execution = arms[0]
+            .execution
             .post_execution_tactics
-            .suffix_since(&parent_execution.replay.post_execution_tactics)
+            .suffix_since(&parent_execution.post_execution_tactics)
             .ok_or_else(|| {
                 self.step_error(
                     "terminal then-arm finalization cursor does not descend from the split root",
                 )
             })?;
-        let else_post_execution = else_replay
+        let else_post_execution = arms[1]
+            .execution
             .post_execution_tactics
-            .suffix_since(&parent_execution.replay.post_execution_tactics)
+            .suffix_since(&parent_execution.post_execution_tactics)
             .ok_or_else(|| {
                 self.step_error(
                     "terminal else-arm finalization cursor does not descend from the split root",
@@ -1248,7 +1250,7 @@ impl<'a> Proof<'a> {
                 .first()
                 .or_else(|| else_post_execution.first())
                 .expect("a nonempty terminal cursor has one attributed operation");
-            execution.replay.defer_post_execution(
+            execution.defer_post_execution(
                 attribution.tactic_index,
                 attribution.source_index,
                 PostExecutionTactic::If {

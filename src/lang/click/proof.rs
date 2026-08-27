@@ -1155,10 +1155,17 @@ mod certificate_tests {
 
     #[test]
     fn deferred_tactics_retain_their_owning_source_occurrence() {
-        let mut replay = TacticReplayState::default();
-        replay.defer_post_execution(9, 2, PostExecutionTactic::Simp);
+        let mut execution = ExecutionProofState::at_entry(
+            CState::new(),
+            TacticReplayState::default(),
+            ExecutionFrontier::default(),
+            ProgramPointStates::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        );
+        execution.defer_post_execution(9, 2, PostExecutionTactic::Simp);
 
-        let mut deferred_entries = replay.post_execution_tactics.iter();
+        let mut deferred_entries = execution.post_execution_tactics.iter();
         let deferred = deferred_entries
             .next()
             .expect("expected one deferred tactic");

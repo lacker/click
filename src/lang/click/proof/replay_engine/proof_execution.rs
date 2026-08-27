@@ -1335,7 +1335,7 @@ fn defer_post_exit_outcome_tactic<'a>(
         };
         let certificate = framed.certificate_since(&checkpoint)?;
         let (_, deferred) =
-            framed.edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+            framed.edit_execution(|execution, _| execution.post_execution_tactics.pop())?;
         let Some(mut deferred) = deferred else {
             return Ok(None);
         };
@@ -1355,21 +1355,21 @@ fn defer_post_exit_outcome_tactic<'a>(
             .execution_context()
             .and_then(|context| context.constants.proof_site.clone());
         let mut capture = expansion_capture.as_deref_mut();
-        let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
+        let (framed, _) = proof.edit_execution(|execution, _| {
             if begin_tactic_expansion_capture(
                 capture.take(),
                 source_index,
-                replay,
+                &execution.replay,
                 proof_site.as_ref(),
             ) {
-                replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index,
                     source_index,
-                    post_execution_index: replay.post_execution_tactics.len(),
+                    post_execution_index: execution.post_execution_tactics.len(),
                     branch_skeleton,
                 });
             }
-            replay.post_execution_tactics.push(deferred);
+            execution.post_execution_tactics.push(deferred);
         })?;
         return Ok(Some(framed));
     }
@@ -1727,8 +1727,8 @@ fn advance_focused_execution_arm<'a>(
                     return Err(smart_frame_miss_error(&proof));
                 };
                 let certificate = framed.certificate_since(&checkpoint)?;
-                let (_, deferred) = framed
-                    .edit_replay_cursor(|replay, _, _| replay.post_execution_tactics.pop())?;
+                let (_, deferred) =
+                    framed.edit_execution(|execution, _| execution.post_execution_tactics.pop())?;
                 let Some(mut deferred) = deferred else {
                     return Ok(None);
                 };
@@ -1749,21 +1749,21 @@ fn advance_focused_execution_arm<'a>(
                     .execution_context()
                     .and_then(|context| context.constants.proof_site.clone());
                 let mut capture = expansion_capture.as_deref_mut();
-                let (next, _) = proof.edit_replay_cursor(|replay, _, _| {
+                let (next, _) = proof.edit_execution(|execution, _| {
                     if begin_tactic_expansion_capture(
                         capture.take(),
                         source_index,
-                        replay,
+                        &execution.replay,
                         proof_site.as_ref(),
                     ) {
-                        replay.deferred_tactic_capture = Some(DeferredTacticCapture {
+                        execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                             tactic_index,
                             source_index,
-                            post_execution_index: replay.post_execution_tactics.len(),
+                            post_execution_index: execution.post_execution_tactics.len(),
                             branch_skeleton,
                         });
                     }
-                    replay.post_execution_tactics.push(deferred);
+                    execution.post_execution_tactics.push(deferred);
                 })?;
                 proof = next;
                 continue;

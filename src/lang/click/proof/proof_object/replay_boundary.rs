@@ -204,21 +204,13 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
     }
 
-    /// Transitional cursor edit for the in-place interpreter conversion:
-    /// runs one bookkeeping closure over the focused frontier's replay
-    /// cursor, with read access to the frontier's C state and fact context,
-    /// and retains the edited cursor on a successor that adds no provenance
-    /// node. It grants no semantic authority: the interpreter uses it for
-    /// the surface-scope, expansion capture, and deferral bookkeeping it
-    /// previously performed on the loose replay tuple. Deleted with
-    /// `TacticReplayState` in phase 2.
-    pub(in crate::lang::click::proof) fn edit_replay_cursor<R>(
+    /// Edits the focused frontier's execution snapshot in place and returns
+    /// the edit's result alongside the updated proof.
+    pub(in crate::lang::click::proof) fn edit_execution<R>(
         self,
-        edit: impl FnOnce(&mut TacticReplayState, &CState, &ProofFacts) -> R,
+        edit: impl FnOnce(&mut ExecutionProofState, &ProofFacts) -> R,
     ) -> Result<(Self, R), ClickError> {
-        self.edit_frontier_in_place(|_, execution, facts| {
-            edit(&mut execution.replay, &execution.state, facts)
-        })
+        self.edit_frontier_in_place(|_, execution, facts| edit(execution, facts))
     }
 
     /// Edits the focused frontier goal's execution snapshot in place. The
@@ -365,13 +357,11 @@ impl<'a> Proof<'a> {
             execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,
                 source_index,
-                post_execution_index: execution.replay.post_execution_tactics.len(),
+                post_execution_index: execution.post_execution_tactics.len(),
                 branch_skeleton: branch_skeleton(),
             });
         }
-        execution
-            .replay
-            .defer_post_execution(tactic_index, source_index, tactic);
+        execution.defer_post_execution(tactic_index, source_index, tactic);
         let mut state = (*self.state).clone();
         state.goals =
             state

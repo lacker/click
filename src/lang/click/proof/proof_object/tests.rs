@@ -7424,7 +7424,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             .execution()
             .expect("the terminal open retains execution state");
         assert!(terminal_execution.frontier.is_at_function_exit());
-        assert_eq!(terminal_execution.replay.post_execution_tactics.len(), 1);
+        assert_eq!(terminal_execution.post_execution_tactics.len(), 1);
         assert_eq!(
             terminal.certificate().steps(),
             &[SimpleProofStep::Open {

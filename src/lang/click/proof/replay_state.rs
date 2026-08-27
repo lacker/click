@@ -133,7 +133,6 @@ impl<T: Clone> SharedValue<T> {
 
 #[derive(Clone, Default)]
 pub(super) struct TacticReplayState {
-    pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) proof_certificate_builder: SharedValue<ProofCertificateBuilder>,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common
@@ -1387,40 +1386,6 @@ pub(super) struct DeferredPostExecutionTactic {
     pub(super) surface_recorded: bool,
 }
 
-impl TacticReplayState {
-    pub(super) fn defer_post_execution(
-        &mut self,
-        tactic_index: usize,
-        source_index: usize,
-        tactic: PostExecutionTactic,
-    ) {
-        self.post_execution_tactics
-            .push(DeferredPostExecutionTactic {
-                tactic_index,
-                source_index,
-                tactic,
-                surface_recorded: false,
-            });
-    }
-
-    /// Schedules ordered outcome work whose semantics and Surface provenance
-    /// are already owned by a checked `Proof` descendant.
-    pub(super) fn defer_checked_post_execution(
-        &mut self,
-        tactic_index: usize,
-        source_index: usize,
-        tactic: PostExecutionTactic,
-    ) {
-        self.post_execution_tactics
-            .push(DeferredPostExecutionTactic {
-                tactic_index,
-                source_index,
-                tactic,
-                surface_recorded: true,
-            });
-    }
-}
-
 #[cfg(test)]
 mod proof_fact_store_tests {
     use super::*;
@@ -1577,80 +1542,6 @@ mod proof_fact_store_tests {
                 "popping the local suffix should restore the shared ancestor stack"
             );
         }
-    }
-
-    #[test]
-    fn replay_branch_local_histories_share_their_complete_prefixes() {
-        let mut replay = TacticReplayState::default();
-        for index in 0..4096 {
-            replay.defer_post_execution(index, index, PostExecutionTactic::Assumption);
-            replay
-                .deferred_expansion_path_choices
-                .push(SurfacePathChoice {
-                    occurrence: index,
-                    condition: ClickProposition::Comparison {
-                        left: ContractExpression::CFragment(CExpression::Value(int32(0))),
-                        operator: ComparisonOperator::Equal,
-                        right: ContractExpression::CFragment(CExpression::Value(int32(0))),
-                    },
-                    value: true,
-                    tactic_offset: index,
-                });
-        }
-        let ancestor = replay.clone();
-        assert!(
-            replay
-                .post_execution_tactics
-                .shares_tail_with(&ancestor.post_execution_tactics)
-        );
-        assert!(
-            replay
-                .deferred_expansion_path_choices
-                .shares_tail_with(&ancestor.deferred_expansion_path_choices)
-        );
-
-        replay.defer_post_execution(4096, 4096, PostExecutionTactic::Assumption);
-        replay
-            .deferred_expansion_path_choices
-            .push(SurfacePathChoice {
-                occurrence: 4096,
-                condition: ClickProposition::Comparison {
-                    left: ContractExpression::CFragment(CExpression::Value(int32(0))),
-                    operator: ComparisonOperator::Equal,
-                    right: ContractExpression::CFragment(CExpression::Value(int32(0))),
-                },
-                value: false,
-                tactic_offset: 4096,
-            });
-
-        assert_eq!(ancestor.post_execution_tactics.len(), 4096);
-        assert_eq!(replay.post_execution_tactics.len(), 4097);
-        assert!(Arc::ptr_eq(
-            replay
-                .post_execution_tactics
-                .tail
-                .as_ref()
-                .and_then(|tail| tail.parent.as_ref())
-                .expect("post-execution prefix"),
-            ancestor
-                .post_execution_tactics
-                .tail
-                .as_ref()
-                .expect("ancestor post-execution tail")
-        ));
-        assert!(Arc::ptr_eq(
-            replay
-                .deferred_expansion_path_choices
-                .tail
-                .as_ref()
-                .and_then(|tail| tail.parent.as_ref())
-                .expect("deferred path prefix"),
-            ancestor
-                .deferred_expansion_path_choices
-                .tail
-                .as_ref()
-                .expect("ancestor deferred path tail")
-        ));
     }
 
     #[test]

@@ -1023,7 +1023,7 @@ impl<'a> Proof<'a> {
             parent_facts,
             parent_unfolds,
             parent_execution,
-            root_post_execution_count: root_execution.replay.post_execution_tactics.len(),
+            root_post_execution_count: root_execution.post_execution_tactics.len(),
         };
         Ok((successor, record))
     }
@@ -1086,7 +1086,6 @@ impl<'a> Proof<'a> {
                 )));
             }
             let mut added = execution
-                .replay
                 .post_execution_tactics
                 .iter()
                 .skip(record.root_post_execution_count);
@@ -1121,7 +1120,7 @@ impl<'a> Proof<'a> {
         }
 
         let mut execution = (*record.parent_execution).clone();
-        execution.replay.defer_checked_post_execution(
+        execution.defer_checked_post_execution(
             checked_deferrals[0].tactic_index,
             checked_deferrals[0].source_index,
             PostExecutionTactic::CheckedFrameUsing {

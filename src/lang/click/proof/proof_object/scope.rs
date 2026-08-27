@@ -561,7 +561,7 @@ impl<'a> ProofScope<'a> {
             })?;
         let mut facts = body.facts().clone();
         if execution.frontier.is_at_function_exit() {
-            execution.replay.defer_post_execution(
+            execution.defer_post_execution(
                 context.tactic_index,
                 *source_index,
                 PostExecutionTactic::CloseOpen {
@@ -1091,7 +1091,7 @@ impl<'a> ProofScope<'a> {
                 let mut facts = self.body.facts().clone();
                 let mut state = Arc::unwrap_or_clone(self.body.state);
                 if execution.frontier.is_at_function_exit() {
-                    execution.replay.defer_post_execution(
+                    execution.defer_post_execution(
                         context.tactic_index,
                         source_index,
                         PostExecutionTactic::CloseOpen {

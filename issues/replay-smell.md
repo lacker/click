@@ -571,8 +571,8 @@ churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
 `effect_facts`, `program_point_states`, `surface_propositions`, the
 frontier loop clauses/rules, entry prerequisites/derivations, planned
 transitions, freshness counters, loop-effect goal, and region flags moved
-onto `ExecutionProofState` — the bag now holds only the certificate builder
-and expansion cursors, and the per-proof constants (proof site,
+onto `ExecutionProofState` — `post_execution_tactics` followed as path state; the bag now holds only
+the certificate builder and expansion cursors, and the per-proof constants (proof site,
 source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
 as `ExecutionProofConstants`, on 2026-08-27; the executor's per-field
 environment parameters collapsed into `proof_context`, with derived

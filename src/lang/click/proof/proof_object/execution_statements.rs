@@ -807,11 +807,15 @@ impl<'a> Proof<'a> {
                 executed = executed.apply_step(step.clone())?;
             }
             let certificate = executed.certificate_since(&checkpoint)?;
-            let (recorded, ()) = executed.edit_replay_cursor(|replay, _, _| {
+            let (recorded, ()) = executed.edit_execution(|execution, _| {
                 for step in certificate.steps() {
-                    replay.proof_certificate_builder.push_step(step.clone());
+                    execution
+                        .replay
+                        .proof_certificate_builder
+                        .push_step(step.clone());
                 }
-                replay.proof_certificate_builder.last_step_entry = construction.last_step_entry;
+                execution.replay.proof_certificate_builder.last_step_entry =
+                    construction.last_step_entry;
             })?;
             Ok(recorded)
         } else if let Some(blocker) = construction.blocker {
