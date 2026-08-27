@@ -514,10 +514,10 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let claim_label = context.claim_label;
-        let mut planning_replay = execution.replay.clone();
-        planning_replay.planned_statement_transitions.clear();
+        let mut planning = execution.clone();
+        planning.replay.planned_statement_transitions.clear();
         let facts_vec = self.facts().to_vec();
-        planning_replay.proof_certificate_builder = ProofCertificateBuilder {
+        planning.replay.proof_certificate_builder = ProofCertificateBuilder {
             last_step_entry: execution
                 .replay
                 .proof_certificate_builder
@@ -527,12 +527,10 @@ impl<'a> Proof<'a> {
             ..ProofCertificateBuilder::default()
         }
         .into();
-        let mut planning_state = (*execution.state).clone();
         let mut planning_facts = facts_vec;
         let assumptions = assumptions_from_propositions(&planning_facts);
         execute_step_from_execution_point(
-            &mut planning_replay,
-            &mut planning_state,
+            &mut planning,
             &mut planning_facts,
             context.function_block,
             context.function,
@@ -552,7 +550,7 @@ impl<'a> Proof<'a> {
             }),
         )?;
         let construction =
-            std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
         if construction.blocker.is_none()
             && !construction.steps.is_empty()
             && construction.steps.iter().all(|step| {
@@ -786,11 +784,13 @@ impl<'a> Proof<'a> {
                 "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
             )));
         };
-        let (mut planning_replay, mut planning_state, mut planning_facts) = {
+        let (mut planning, mut planning_facts) = {
             let view = self.finalization_view()?;
-            let mut planning_replay = view.replay.clone();
-            planning_replay.planned_statement_transitions.clear();
-            planning_replay.proof_certificate_builder = ProofCertificateBuilder {
+            let mut planning = self.execution().cloned().ok_or_else(|| {
+                self.step_error("execution-frontier proof lost its semantic state")
+            })?;
+            planning.replay.planned_statement_transitions.clear();
+            planning.replay.proof_certificate_builder = ProofCertificateBuilder {
                 last_step_entry: view
                     .replay
                     .proof_certificate_builder
@@ -800,11 +800,10 @@ impl<'a> Proof<'a> {
                 ..ProofCertificateBuilder::default()
             }
             .into();
-            (planning_replay, view.state.clone(), view.facts)
+            (planning, view.facts)
         };
         super::super::cursor_execution::execute_until_statement(
-            &mut planning_replay,
-            &mut planning_state,
+            &mut planning,
             &mut planning_facts,
             context.function_block,
             context.function,
@@ -821,7 +820,7 @@ impl<'a> Proof<'a> {
             }),
         )?;
         let construction =
-            std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
         if construction.blocker.is_none()
             && !construction.steps.is_empty()
             && construction.steps.iter().all(|step| {
@@ -889,15 +888,13 @@ impl<'a> Proof<'a> {
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
         });
-        let mut planning_replay = execution.replay.clone();
-        planning_replay.planned_statement_transitions.clear();
-        planning_replay.proof_certificate_builder = planning_builder(&facts_vec).into();
-        let mut planning_state = (*execution.state).clone();
+        let mut planning = execution.clone();
+        planning.replay.planned_statement_transitions.clear();
+        planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
         let mut planning_facts = facts_vec.clone();
         let direct_result = (!force_all_paths).then(|| {
             execute_rest_from_execution_point(
-                &mut planning_replay,
-                &mut planning_state,
+                &mut planning,
                 &mut planning_facts,
                 context.function_block,
                 context.function,
@@ -910,14 +907,12 @@ impl<'a> Proof<'a> {
             )
         });
         if direct_result.is_none_or(|result| result.is_err()) {
-            planning_replay = execution.replay.clone();
-            planning_replay.planned_statement_transitions.clear();
-            planning_replay.proof_certificate_builder = planning_builder(&facts_vec).into();
-            planning_state = (*execution.state).clone();
+            planning = execution.clone();
+            planning.replay.planned_statement_transitions.clear();
+            planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
             planning_facts = facts_vec.clone();
             bounded_execute_from_execution_point(
-                &mut planning_replay,
-                &mut planning_state,
+                &mut planning,
                 &mut planning_facts,
                 context.function_block,
                 context.function,
@@ -931,7 +926,7 @@ impl<'a> Proof<'a> {
             )?;
         }
         let construction =
-            std::mem::take(&mut planning_replay.proof_certificate_builder).into_value();
+            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
         if let Some(blocker) = &construction.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: smart `execute` could not construct checked Proof operations: {blocker}"
@@ -1020,7 +1015,6 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let state = (*execution.state).clone();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
         let mut scope = Some(begin_tactic_surface_scope(&mut execution.replay));
@@ -1031,9 +1025,7 @@ impl<'a> Proof<'a> {
         );
         let smart_certificate = check_mid_execution_have(
             have,
-            &mut execution.replay,
-            &execution.unfolded_predicates,
-            &state,
+            &mut execution,
             &mut facts,
             context.function_block,
             context.parsed_function,
@@ -1203,7 +1195,6 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let mut state = (*execution.state).clone();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
         let mut scope = Some(begin_tactic_surface_scope(&mut execution.replay));
@@ -1222,9 +1213,7 @@ impl<'a> Proof<'a> {
         let expanded_loop = execute_frontier_local_loop(
             expansion_capture.as_deref_mut(),
             loop_clause,
-            &mut execution.replay,
-            &execution.unfolded_predicates,
-            &mut state,
+            &mut execution,
             &mut facts,
             context.function_block,
             context.parsed_function,
@@ -1245,7 +1234,6 @@ impl<'a> Proof<'a> {
         if capture_this_tactic {
             finish_tactic_expansion_capture(expansion_capture, &slice, false);
         }
-        execution.state = state.into();
         debug_assert!(facts.len() >= base_facts);
         let added = facts[base_facts..].to_vec();
         let mut proof_facts = self.facts().clone();

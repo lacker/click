@@ -11,8 +11,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     target: &ProgramPointRef,
     assertions: &[ProofAssertion],
     tactic_index: usize,
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut ProofFacts,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -24,6 +23,9 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     sibling_join_states: Option<&[&CState]>,
     needs_abstraction: bool,
 ) -> Result<(), ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
+
     let mut concrete_facts = available_pure_facts.clone();
     let mut established_interface_resources = Vec::new();
     for assertion in assertions {
@@ -397,8 +399,7 @@ fn resource_is_direct_observed_core(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_branch_step_from_execution_point(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -415,6 +416,9 @@ pub(super) fn execute_branch_step_from_execution_point(
     construction: Option<ConstructionEnvironments<'_>>,
     context: Option<&PureFactContext>,
 ) -> Result<bool, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
+
     let statement_index = replay.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
@@ -732,8 +736,7 @@ pub(super) fn execute_branch_step_from_execution_point(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_concrete_loop_head_step(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
@@ -751,6 +754,9 @@ fn execute_concrete_loop_head_step(
     remaining: Option<CStatement>,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
+
     replay.concrete_loop_execution = true;
     let CStatement::While {
         condition, body, ..
@@ -1396,8 +1402,7 @@ pub(super) fn collect_planning_statement_transitions<R>(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_step_from_execution_point(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -1414,8 +1419,7 @@ pub(super) fn execute_step_from_execution_point(
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<Vec<Proposition>, ClickError> {
     execute_step_from_execution_point_selecting_path(
-        replay,
-        state,
+        execution,
         available_pure_facts,
         function_block,
         function,
@@ -1537,8 +1541,7 @@ pub(super) fn execute_step_successors_from_execution_point(
         let mut successor_facts = available_pure_facts.to_vec();
         let assumptions = assumptions_from_propositions(&successor_facts);
         let introduced_facts = execute_step_from_execution_point_selecting_path(
-            &mut successor.replay,
-            &mut successor.state,
+            &mut successor,
             &mut successor_facts,
             function_block,
             function,
@@ -1568,8 +1571,7 @@ pub(super) fn execute_step_successors_from_execution_point(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_step_from_execution_point_selecting_path(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -1587,6 +1589,9 @@ fn execute_step_from_execution_point_selecting_path(
     selected_path_fact: Option<&Proposition>,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<Proposition>, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
+
     #[cfg(test)]
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
         PLANNING_STATEMENT_TRANSITIONS.with(|transitions| {
@@ -1605,8 +1610,7 @@ fn execute_step_from_execution_point_selecting_path(
     })?;
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
         let entered = execute_branch_step_from_execution_point(
-            replay,
-            state,
+            execution,
             available_pure_facts,
             function_block,
             function,
@@ -1649,8 +1653,7 @@ fn execute_step_from_execution_point_selecting_path(
         && matches!(loop_step_policy, LoopStepPolicy::EnterBody)
     {
         execute_concrete_loop_head_step(
-            replay,
-            state,
+            execution,
             available_pure_facts,
             function_block,
             parameters,
@@ -2395,8 +2398,7 @@ pub(super) const BOUNDED_EXECUTE_STEP_LIMIT: usize = 10_000;
 
 #[derive(Clone)]
 pub(super) struct BoundedProofFrontier {
-    pub(super) replay: TacticReplayState,
-    pub(super) state: CState,
+    pub(super) execution: ExecutionProofState,
     pub(super) pure_facts: Vec<Proposition>,
 }
 
@@ -2625,8 +2627,7 @@ fn checked_surface_statement_identity_condition(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bounded_execute_from_execution_point(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -2641,52 +2642,51 @@ pub(super) fn bounded_execute_from_execution_point(
     // Each explored path constructs its own surface steps from a clean
     // builder; the paths are merged back into one step sequence (with `if`
     // structure at genuine forks) once the frontiers are complete. Every
-    // path starts from the replay-visible certificate facts at this point.
+    // path starts from the execution.replay-visible certificate facts at this point.
     let base_builder = construction
         .is_some()
-        .then(|| std::mem::take(&mut replay.proof_certificate_builder));
+        .then(|| std::mem::take(&mut execution.replay.proof_certificate_builder));
     if let Some(base) = &base_builder {
-        replay.proof_certificate_builder.certificate_facts = base.certificate_facts.clone();
-        replay.proof_certificate_builder.last_step_entry = base.last_step_entry.clone();
+        execution.replay.proof_certificate_builder.certificate_facts =
+            base.certificate_facts.clone();
+        execution.replay.proof_certificate_builder.last_step_entry = base.last_step_entry.clone();
     }
     let mut pending = vec![BoundedProofFrontier {
-        replay: replay.clone(),
-        state: state.clone(),
+        execution: execution.clone(),
         pure_facts: available_pure_facts.clone(),
     }];
     let mut completed = Vec::new();
     let mut executed_steps = 0;
 
     while let Some(mut frontier) = pending.pop() {
-        if frontier.replay.is_at_function_exit() {
+        if frontier.execution.replay.is_at_function_exit() {
             completed.push(frontier);
             continue;
         }
         if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
-                frontier.replay.frontier.next_statement_index
+                frontier.execution.replay.frontier.next_statement_index
             )));
         }
         executed_steps += 1;
 
-        let statement_index = frontier.replay.frontier.next_statement_index;
+        let statement_index = frontier.execution.replay.frontier.next_statement_index;
         let source_region = frontier
-            .replay
+            .execution.replay
             .source_layout
             .statement(statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `execute` could not resolve source statement({})",
-                    frontier.replay.frontier.next_statement_index
+                    frontier.execution.replay.frontier.next_statement_index
                 ))
             })?;
         if matches!(source_region.kind, SourceStatementKind::If { .. }) {
             for take_then in [false, true] {
                 let mut branch = frontier.clone();
                 let entered = execute_branch_step_from_execution_point(
-                    &mut branch.replay,
-                    &mut branch.state,
+                    &mut branch.execution,
                     &mut branch.pure_facts,
                     function_block,
                     function,
@@ -2711,16 +2711,16 @@ pub(super) fn bounded_execute_from_execution_point(
         }
 
         let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-            &frontier.replay,
-            &frontier.state,
+            &frontier.execution.replay,
+            &frontier.execution.state,
             function,
             arguments,
             claim_label,
             tactic_index,
             "execute",
         )?;
-        let mut preview_next_opaque_call = frontier.replay.next_opaque_call;
-        let mut preview_next_kernel_variable = frontier.replay.next_kernel_variable;
+        let mut preview_next_opaque_call = frontier.execution.replay.next_opaque_call;
+        let mut preview_next_kernel_variable = frontier.execution.replay.next_kernel_variable;
         let transition_label = format!("`{claim_label}` tactic {tactic_index}: `execute`");
         let preview_transitions = certified_statement_transitions(
             &current_state,
@@ -2751,8 +2751,7 @@ pub(super) fn bounded_execute_from_execution_point(
                 let mut branch = frontier.clone();
                 let assumptions = assumptions_from_propositions(&branch.pure_facts);
                 execute_step_from_execution_point_selecting_path(
-                    &mut branch.replay,
-                    &mut branch.state,
+                    &mut branch.execution,
                     &mut branch.pure_facts,
                     function_block,
                     function,
@@ -2783,24 +2782,24 @@ pub(super) fn bounded_execute_from_execution_point(
                     condition_available.push(kernel_condition.clone());
                 }
                 let surface_condition = checked_surface_statement_identity_condition(
-                    &true_branch.replay,
+                    &true_branch.execution.replay,
                     &condition,
                     statement_index,
                     &condition_available,
                     parameters,
                     arguments,
-                    &true_branch.state,
+                    &true_branch.execution.state,
                     environments,
                 )
                 .map(Ok)
                 .unwrap_or_else(|| checked_surface_comparison_fact_at_point(
-                    &true_branch.replay,
+                    &true_branch.execution.replay,
                     &kernel_condition,
                     SurfaceFactMatch::ReplayEquivalent,
                     &condition_available,
                     parameters,
                     arguments,
-                    &true_branch.state,
+                    &true_branch.execution.state,
                     environments.predicate_environment,
                     environments.click_function_environment,
                 ))
@@ -2811,8 +2810,14 @@ pub(super) fn bounded_execute_from_execution_point(
                     ))
                 })?;
                 for (branch, value) in &mut identity_branches {
-                    let tactic_offset = branch.replay.proof_certificate_builder.steps.len();
+                    let tactic_offset = branch
+                        .execution
+                        .replay
+                        .proof_certificate_builder
+                        .steps
+                        .len();
                     branch
+                        .execution
                         .replay
                         .proof_certificate_builder
                         .path_choices
@@ -2832,8 +2837,7 @@ pub(super) fn bounded_execute_from_execution_point(
 
         let assumptions = assumptions_from_propositions(&frontier.pure_facts);
         execute_step_from_execution_point(
-            &mut frontier.replay,
-            &mut frontier.state,
+            &mut frontier.execution,
             &mut frontier.pure_facts,
             function_block,
             function,
@@ -2863,6 +2867,7 @@ pub(super) fn bounded_execute_from_execution_point(
             .iter()
             .map(|frontier| {
                 frontier
+                    .execution
                     .replay
                     .proof_certificate_builder
                     .clone()
@@ -2872,8 +2877,7 @@ pub(super) fn bounded_execute_from_execution_point(
         (base, synthesize_surface_alternatives(paths))
     });
     merge_bounded_execution_frontiers(
-        replay,
-        state,
+        execution,
         available_pure_facts,
         function,
         arguments,
@@ -2892,15 +2896,14 @@ pub(super) fn bounded_execute_from_execution_point(
                 "could not lower certified branch alternatives: {message}"
             )),
         }
-        replay.proof_certificate_builder = base;
+        execution.replay.proof_certificate_builder = base;
     }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn merge_bounded_execution_frontiers(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function: &CFunction,
     arguments: &[CExpression],
@@ -2915,13 +2918,13 @@ pub(super) fn merge_bounded_execution_frontiers(
     }
 
     let execution_start_state = completed[0]
-        .replay
+        .execution.replay
         .frontier
         .execution_start_state
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `execute` has no execution start state"
+                "`{claim_label}` tactic {tactic_index}: `execute` has no execution start execution.state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -2931,21 +2934,21 @@ pub(super) fn merge_bounded_execution_frontiers(
             .skip(1)
             .all(|frontier| frontier.pure_facts.contains(fact))
     });
-    let mut common_program_points = completed[0].replay.program_point_states.clone();
+    let mut common_program_points = completed[0].execution.replay.program_point_states.clone();
     common_program_points.retain(|point, point_state| {
-        completed
-            .iter()
-            .skip(1)
-            .all(|frontier| frontier.replay.program_point_states.get(point) == Some(point_state))
+        completed.iter().skip(1).all(|frontier| {
+            frontier.execution.replay.program_point_states.get(point) == Some(point_state)
+        })
     });
 
     let mut paths = Vec::new();
     for frontier in &completed {
-        let execution = frontier
+        let function_execution = frontier
+            .execution
             .replay
             .execution()
             .expect("completed bounded frontier should have an execution");
-        for path in execution.paths() {
+        for path in function_execution.paths() {
             let mut facts = path.execution_facts();
             for fact in &frontier.pure_facts {
                 let fact = ExecutionPureFact::new(fact.clone());
@@ -2956,7 +2959,7 @@ pub(super) fn merge_bounded_execution_frontiers(
             paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
         }
     }
-    let execution = c_function_execution_candidates_from_outcomes(
+    let function_execution = c_function_execution_candidates_from_outcomes(
         execution_start_state.clone(),
         function.clone(),
         arguments.to_vec(),
@@ -2964,20 +2967,20 @@ pub(super) fn merge_bounded_execution_frontiers(
     );
 
     let mut merged = completed.remove(0);
-    merged.replay.program_point_states = common_program_points;
-    merged.replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
-    merged.state = execution_start_state;
+    merged.execution.replay.program_point_states = common_program_points;
+    merged.execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+        execution: function_execution,
+    };
+    merged.execution.state = execution_start_state.into();
     merged.pure_facts = common_pure_facts;
-    *replay = merged.replay;
-    *state = merged.state;
+    *execution = merged.execution;
     *available_pure_facts = merged.pure_facts;
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_rest_from_execution_point(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -2989,7 +2992,7 @@ pub(super) fn execute_rest_from_execution_point(
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     loop {
-        let can_execute_one_step = match &replay.frontier.point {
+        let can_execute_one_step = match &execution.replay.frontier.point {
             ProofExecutionPoint::FunctionEntry => {
                 split_next_execution_step(function.body()).is_ok()
             }
@@ -3006,8 +3009,7 @@ pub(super) fn execute_rest_from_execution_point(
 
         let assumptions = assumptions_from_propositions(available_pure_facts);
         execute_step_from_execution_point(
-            replay,
-            state,
+            execution,
             available_pure_facts,
             function_block,
             function,
@@ -3025,10 +3027,9 @@ pub(super) fn execute_rest_from_execution_point(
         )?;
     }
 
-    if !replay.is_at_function_exit() {
+    if !execution.replay.is_at_function_exit() {
         bounded_execute_from_execution_point(
-            replay,
-            state,
+            execution,
             available_pure_facts,
             function_block,
             function,
@@ -3046,8 +3047,7 @@ pub(super) fn execute_rest_from_execution_point(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn execute_until_statement(
-    replay: &mut TacticReplayState,
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -3060,31 +3060,35 @@ pub(super) fn execute_until_statement(
     prerequisite_policy: StatementPrerequisitePolicy,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
-    if replay.source_layout.statement(statement_index).is_none() {
+    if execution
+        .replay
+        .source_layout
+        .statement(statement_index)
+        .is_none()
+    {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: function has no source statement({statement_index}); it contains {} statement regions",
-            replay.source_layout.statement_count()
+            execution.replay.source_layout.statement_count()
         )));
     }
 
-    if replay.is_at_function_exit() {
+    if execution.replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
         )));
     }
-    if statement_index < replay.frontier.next_statement_index {
+    if statement_index < execution.replay.frontier.next_statement_index {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
-            replay.frontier.next_statement_index
+            execution.replay.frontier.next_statement_index
         )));
     }
 
-    while replay.frontier.next_statement_index != statement_index {
-        let region_start = replay.frontier.next_statement_index;
+    while execution.replay.frontier.next_statement_index != statement_index {
+        let region_start = execution.replay.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
         execute_step_from_execution_point(
-            replay,
-            state,
+            execution,
             available_pure_facts,
             function_block,
             function,
@@ -3100,15 +3104,15 @@ pub(super) fn execute_until_statement(
             LoopStepPolicy::ApplyVerifiedRule,
             construction,
         )?;
-        if replay.is_at_function_exit() {
+        if execution.replay.is_at_function_exit() {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
             )));
         }
-        if replay.frontier.next_statement_index > statement_index {
+        if execution.replay.frontier.next_statement_index > statement_index {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
-                replay.frontier.next_statement_index
+                execution.replay.frontier.next_statement_index
             )));
         }
     }

@@ -372,15 +372,13 @@ impl<'a> Proof<'a> {
             kind: ProgramPointKind::Entry,
         };
         let mut execution = arm.execution.clone();
-        let mut state = (*execution.state).clone();
         let mut facts = arm.facts.clone();
         let facts_before_interface = facts.clone();
         apply_branch_interface_with_proof_facts(
             &target,
             &assertions,
             context.tactic_index,
-            &mut execution.replay,
-            &mut state,
+            &mut execution,
             &mut facts,
             context.parsed_function.parameters(),
             context.arguments,
@@ -393,7 +391,6 @@ impl<'a> Proof<'a> {
             false,
         )
         .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
-        execution.state = state.into();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
 
@@ -658,7 +655,6 @@ impl<'a> Proof<'a> {
         > {
             let mut execution = arm.execution.clone();
             let mut facts = arm.facts.clone();
-            let mut state = (*execution.state).clone();
             let ProofContext::Execution(context) = self.context.as_ref() else {
                 unreachable!("execution branch retained a non-execution context")
             };
@@ -666,8 +662,7 @@ impl<'a> Proof<'a> {
                 &target,
                 &assertions,
                 context.tactic_index,
-                &mut execution.replay,
-                &mut state,
+                &mut execution,
                 &mut facts,
                 context.parsed_function.parameters(),
                 context.arguments,
@@ -680,7 +675,6 @@ impl<'a> Proof<'a> {
                 true,
             )
             .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
-            execution.state = state.into();
             Ok((execution, facts))
         };
         let (mut then_abstract, then_interface_facts) = abstract_arm(&arms[0])?;

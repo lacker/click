@@ -160,9 +160,7 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let checked = check_unfold_predicate_facts(
-            &mut execution.replay,
-            &mut execution.unfolded_predicates,
-            &execution.state,
+            &mut execution,
             &self.facts(),
             name,
             context.function,

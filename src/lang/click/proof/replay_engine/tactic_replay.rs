@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::prove_pure_proposition_from_context;
+use crate::lang::click::proof::proof_object::ExecutionProofState;
 
 /// The one mid-execution `have` law: checked point proof first, generated
 /// smart plan second, direct derivation last, with the entry-prerequisite,
@@ -7,9 +8,7 @@ use crate::kernel::prove_pure_proposition_from_context;
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_mid_execution_have(
     have: &ProofHave,
-    replay: &mut TacticReplayState,
-    unfolded_predicates: &[String],
-    state: &CState,
+    execution: &mut ExecutionProofState,
     pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -20,6 +19,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<Option<ProofCertificate>, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &CState = &execution.state;
+    let unfolded_predicates: &[String] = &execution.unfolded_predicates;
+
     let _have_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "contract have replay");
     let mut have_facts = pure_facts.clone();
@@ -203,9 +206,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
 pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
-    replay: &mut TacticReplayState,
-    unfolded_predicates: &[String],
-    state: &mut CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -219,6 +220,10 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     tactic_index: usize,
     source_index: usize,
 ) -> Result<StructuralClause, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
+    let unfolded_predicates: &[String] = &execution.unfolded_predicates;
+
     if replay.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop, but execution has reached function exit"
@@ -421,8 +426,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
 
     let assumptions = assumptions_from_propositions(available_pure_facts);
     execute_step_from_execution_point(
-        replay,
-        state,
+        execution,
         available_pure_facts,
         &bound_function_block,
         &annotated,
@@ -438,6 +442,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         LoopStepPolicy::ApplyVerifiedRule,
         None,
     )?;
+    let replay = &mut execution.replay;
+    let state: &mut CState = &mut execution.state;
     if let Some(exit_condition) = loop_exit_condition {
         let exit_point = ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),

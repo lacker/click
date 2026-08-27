@@ -1,5 +1,6 @@
 use super::*;
 use crate::kernel::prove_c_function_contract_predicate_unfolding;
+use crate::lang::click::proof::proof_object::ExecutionProofState;
 
 pub(in crate::lang::click::proof) struct CheckedPredicateUnfold {
     pub(in crate::lang::click::proof) facts: ProofFacts,
@@ -59,9 +60,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_in_facts(
 /// the persistent facts owned by `Proof`.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
-    replay: &mut TacticReplayState,
-    unfolded_predicates: &mut SharedVec<String>,
-    state: &CState,
+    execution: &mut ExecutionProofState,
     available_pure_facts: &ProofFacts,
     name: &String,
     function: &CFunction,
@@ -71,6 +70,10 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     claim_label: &str,
     tactic_index: usize,
 ) -> Result<CheckedPredicateUnfold, ClickError> {
+    let replay = &mut execution.replay;
+    let state: &CState = &execution.state;
+    let unfolded_predicates = &mut execution.unfolded_predicates;
+
     let checked_facts = check_unfold_predicate_in_facts(
         available_pure_facts,
         name,
