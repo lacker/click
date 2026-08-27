@@ -1082,6 +1082,12 @@ struct ExecutionProofState {
     /// decided path) produced this state: a converging join leaves one path
     /// and no per-path decision, so the fact is recorded here.
     has_structured_branch_history: bool,
+    /// The predicates unfolded on this execution path. Distinct from a
+    /// goal's `unfolded_predicates`, which are the unfolds visible to one
+    /// judgment (a nested scope unfolds locally): this set is path state,
+    /// migrated across joins as an arm delta and read by kernel
+    /// certification, which exposes these definitions at function entry.
+    unfolded_predicates: SharedVec<String>,
 }
 
 #[derive(Clone)]
@@ -1102,6 +1108,7 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) state: &'p CState,
     pub(super) facts: Vec<Proposition>,
     pub(super) replay: &'p TacticReplayState,
+    pub(super) unfolded_predicates: &'p SharedVec<String>,
     pub(super) branch_path: &'p PersistentSequence<String>,
     outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],
 }
@@ -1867,7 +1874,7 @@ impl<'a> Proof<'a> {
             ProofContext::Point(context) => context.unfolded_predicates,
             ProofContext::Execution(_) => self
                 .execution()
-                .map(|execution| execution.replay.unfolded_predicates.as_slice())
+                .map(|execution| execution.unfolded_predicates.as_slice())
                 .unwrap_or(&[]),
         };
         let mut names = inherited.to_vec();

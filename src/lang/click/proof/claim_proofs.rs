@@ -1794,7 +1794,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                     } else {
                         Some(Vec::new())
                     };
-                    let mut unfolded_predicates = replay.unfolded_predicates.clone();
+                    let mut unfolded_predicates = direct_view
+                        .as_ref()
+                        .map(|view| view.unfolded_predicates.clone())
+                        .unwrap_or_default();
                     path_requirements = crate::instrumentation::measure_operation(
                         function_block.signature().name(),
                         &proof_label,
@@ -2421,6 +2424,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         transport_available.push(equation);
                                     }
                                 }
+                                let path_unfolds = direct_view
+                                    .as_ref()
+                                    .map(|view| view.unfolded_predicates.to_vec())
+                                    .unwrap_or_default();
                                 let candidates = if premises.is_none() {
                                     Some(fact_transport_candidates_at_outcome(
                                         &transport_available,
@@ -2430,6 +2437,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         post_state,
                                         result,
                                         &replay,
+                                        &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,
                                     )?)

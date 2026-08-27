@@ -780,16 +780,20 @@ fn checked_surface_comparison_fact_at_point_with_availability(
 pub(super) struct ProofCertificateConstructionContext<'a> {
     replay: &'a mut TacticReplayState,
     pub(super) proof_certificate_builder: &'a mut ProofCertificateBuilder,
+    /// The predicates unfolded on the execution path being planned for.
+    pub(super) unfolded_predicates: &'a [String],
 }
 
 impl<'a> ProofCertificateConstructionContext<'a> {
     pub(super) fn new(
         replay: &'a mut TacticReplayState,
         proof_certificate_builder: &'a mut ProofCertificateBuilder,
+        unfolded_predicates: &'a [String],
     ) -> Self {
         Self {
             replay,
             proof_certificate_builder,
+            unfolded_predicates,
         }
     }
 }
@@ -972,7 +976,10 @@ pub(super) fn construct_simple_step_for_planned_operation(
     let available = std::mem::take(&mut builder.certificate_facts);
     let available_facts = available.to_vec();
     {
-        let mut context = ProofCertificateConstructionContext::new(replay, &mut builder);
+        // Planner construction runs on a replay context that carries no typed
+        // path state; the unfold set only refines a transport-planning
+        // diagnostic here.
+        let mut context = ProofCertificateConstructionContext::new(replay, &mut builder, &[]);
         append_simple_proof_step_for_operation(
             &mut context,
             state,
@@ -2182,7 +2189,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 replay.proof_certificate_builder.block(fact_transport_planning_failure(
                                     &surface_source,
                                     &surface_target,
-                                    &replay.unfolded_predicates,
+                                    replay.unfolded_predicates,
                                     &error,
                                 ));
                             }

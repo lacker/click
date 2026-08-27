@@ -6903,7 +6903,6 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
 
         assert!(
             successor_execution
-                .replay
                 .unfolded_predicates
                 .contains(&"selected".to_string())
         );

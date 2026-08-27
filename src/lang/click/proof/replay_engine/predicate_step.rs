@@ -60,6 +60,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_in_facts(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     replay: &mut TacticReplayState,
+    unfolded_predicates: &mut SharedVec<String>,
     state: &CState,
     available_pure_facts: &ProofFacts,
     name: &String,
@@ -79,8 +80,8 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
         tactic_index,
     )?;
     let mut added_unfolded_predicates = Vec::new();
-    if !replay.unfolded_predicates.contains(name) {
-        replay.unfolded_predicates.push(name.clone());
+    if !unfolded_predicates.contains(name) {
+        unfolded_predicates.push(name.clone());
         added_unfolded_predicates.push(name.clone());
     }
     let assumptions = available_pure_facts.assumptions();

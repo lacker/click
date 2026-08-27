@@ -320,8 +320,8 @@ impl<'a> Proof<'a> {
             || replay.frontier_loop_rules.len()
                 != parent_execution.replay.frontier_loop_rules.len()
                     + arm.introduced_loop_rules.len()
-            || replay.unfolded_predicates.len()
-                != parent_execution.replay.unfolded_predicates.len() + arm.introduced_unfolds.len()
+            || arm.execution.unfolded_predicates.len()
+                != parent_execution.unfolded_predicates.len() + arm.introduced_unfolds.len()
             || replay.planned_statement_transitions.len()
                 != parent_execution.replay.planned_statement_transitions.len()
         {
@@ -779,7 +779,7 @@ impl<'a> Proof<'a> {
         }
         execution.has_structured_branch_history = true;
         execution.replay.execution_abstraction = true;
-        execution.replay.unfolded_predicates.clear();
+        execution.unfolded_predicates.clear();
         execution.replay.case_assumptions.clear();
         execution.replay.next_opaque_call = then_abstract
             .replay
@@ -1202,8 +1202,8 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_unfolds)
         {
-            if !execution.replay.unfolded_predicates.contains(name) {
-                execution.replay.unfolded_predicates.push(name.clone());
+            if !execution.unfolded_predicates.contains(name) {
+                execution.unfolded_predicates.push(name.clone());
             }
         }
         migrate_arm_loop_proofs(&mut execution.replay, &arms);
@@ -1466,8 +1466,8 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_unfolds)
         {
-            if !execution.replay.unfolded_predicates.contains(name) {
-                execution.replay.unfolded_predicates.push(name.clone());
+            if !execution.unfolded_predicates.contains(name) {
+                execution.unfolded_predicates.push(name.clone());
             }
         }
         migrate_arm_loop_proofs(&mut execution.replay, &arms);
@@ -1782,9 +1782,8 @@ impl<'a> Proof<'a> {
             .introduced_since(&delta_execution.replay.function_entry_derivations)
             .ok_or_else(not_descended)?;
         let introduced_unfolds = execution
-            .replay
             .unfolded_predicates
-            .suffix_since(&delta_execution.replay.unfolded_predicates)
+            .suffix_since(&delta_execution.unfolded_predicates)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_clauses = execution

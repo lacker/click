@@ -174,7 +174,7 @@ impl<'a> Proof<'a> {
             None,
             &execution.replay.program_point_states,
             &execution.replay.surface_propositions,
-            &execution.replay.unfolded_predicates,
+            &execution.unfolded_predicates,
             &execution.replay.effect_facts,
             context.predicate_environment,
             context.click_function_environment,

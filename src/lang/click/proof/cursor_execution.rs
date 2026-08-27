@@ -123,7 +123,6 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     replay
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
-    replay.unfolded_predicates.clear();
     replay.case_assumptions.clear();
     replay.execution_abstraction = true;
 

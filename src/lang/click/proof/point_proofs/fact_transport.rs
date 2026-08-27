@@ -450,6 +450,7 @@ pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
     post_state: &CState,
     result: &CValue,
     replay: &TacticReplayState,
+    unfolded_predicates: &[String],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<ClickProposition>, ClickError> {
@@ -458,6 +459,7 @@ pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
         check_verification_deadline()?;
         if let Ok(surface) = checked_surface_fact_at_outcome(
             replay,
+            unfolded_predicates,
             kernel,
             SurfaceFactMatch::CanonicalExact,
             available,

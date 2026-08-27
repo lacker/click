@@ -161,6 +161,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let checked = check_unfold_predicate_facts(
             &mut execution.replay,
+            &mut execution.unfolded_predicates,
             &execution.state,
             &self.facts(),
             name,
@@ -379,7 +380,7 @@ impl<'a> Proof<'a> {
             (*execution.state).clone(),
             context.predicate_environment,
             context.click_function_environment,
-            &execution.replay.unfolded_predicates,
+            &execution.unfolded_predicates,
         )?;
         execution.state = checked.state.into();
         execution.last_step_delta = ExecutionProofStepDelta::default();

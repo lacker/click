@@ -8,6 +8,7 @@ use crate::kernel::prove_pure_proposition_from_context;
 pub(in crate::lang::click::proof) fn check_mid_execution_have(
     have: &ProofHave,
     replay: &mut TacticReplayState,
+    unfolded_predicates: &[String],
     state: &CState,
     pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -52,6 +53,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         function_block.requires(),
         function_block.requirement_label_indices(),
         None,
+        unfolded_predicates,
     )?;
     let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
     // Search may materialize a Surface-expressible operation
@@ -96,6 +98,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         function_block.requires(),
                         function_block.requirement_label_indices(),
                         Some((&fact, &proof)),
+                        unfolded_predicates,
                     )?
                     .ok_or_else(|| {
                         ClickError::new(format!(
@@ -201,6 +204,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     expansion_capture: Option<&mut ExpansionCapture>,
     loop_template: &StructuralClause,
     replay: &mut TacticReplayState,
+    unfolded_predicates: &[String],
     state: &mut CState,
     available_pure_facts: &mut Vec<Proposition>,
     function_block: &FunctionBlock,
@@ -327,7 +331,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             !matches!(
                 fact,
                 Proposition::Predicate { name, .. }
-                    if replay.unfolded_predicates.contains(name)
+                    if unfolded_predicates.contains(name)
             )
         })
         .cloned()
@@ -497,6 +501,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
     original_requirements: &[Requirement],
     requirement_label_indices: &BTreeMap<String, usize>,
     generated_plan: Option<(&Proposition, &SourceProof)>,
+    unfolded_predicates: &[String],
 ) -> Result<Option<(Proposition, Option<ProofCertificate>)>, ClickError> {
     enum Plan<'a> {
         DirectSmart,
@@ -557,7 +562,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         predicate_environment,
         click_function_environment,
         theorem_environment,
-        &replay.unfolded_predicates,
+        unfolded_predicates,
         &replay.effect_facts,
         original_requirements,
         requirement_label_indices,

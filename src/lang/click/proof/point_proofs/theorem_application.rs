@@ -382,6 +382,7 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements_with
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     replay: &TacticReplayState,
+    unfolded_predicates: &[String],
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
@@ -543,7 +544,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     if matches!(
         kernel,
         Proposition::ForAll { .. } | Proposition::Exists { .. }
-    ) && !replay.unfolded_predicates.is_empty()
+    ) && !unfolded_predicates.is_empty()
     {
         // A drain that unfolds an ambient predicate replaces the folded fact
         // with its quantified body, so the body can carry a recorded folded
@@ -568,7 +569,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
                 let Ok(unfolded) = unfold_structural_invariant_proposition(
                     predicate_environment,
                     &candidate,
-                    &replay.unfolded_predicates,
+                    unfolded_predicates,
                 ) else {
                     continue;
                 };
@@ -620,7 +621,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
                     let Ok(unfolded) = unfold_structural_invariant_proposition(
                         predicate_environment,
                         &candidate,
-                        &replay.unfolded_predicates,
+                        unfolded_predicates,
                     ) else {
                         continue;
                     };

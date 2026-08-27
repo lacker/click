@@ -110,6 +110,7 @@ impl<'a> Proof<'a> {
                             last_step_delta: ExecutionProofStepDelta::default(),
                             has_empty_execution_branch_leaf: false,
                             has_structured_branch_history: false,
+                            unfolded_predicates: SharedVec::default(),
                         })),
                     },
                 })),
@@ -302,6 +303,7 @@ impl<'a> Proof<'a> {
             state: &execution.state,
             facts: self.facts().to_vec(),
             replay: &execution.replay,
+            unfolded_predicates: &execution.unfolded_predicates,
             branch_path: &execution.branch_path,
             outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),
         })

@@ -138,7 +138,6 @@ pub(super) struct TacticReplayState {
     pub(super) frontier: ExecutionFrontier,
     pub(super) source_layout: SourceExecutionLayout,
     pub(super) program_point_states: ProgramPointStates,
-    pub(super) unfolded_predicates: SharedVec<String>,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
     pub(super) region_invariants_closed: bool,

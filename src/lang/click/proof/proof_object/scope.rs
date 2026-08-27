@@ -586,7 +586,7 @@ impl<'a> ProofScope<'a> {
                 execution.state.into_value(),
                 context.predicate_environment,
                 context.click_function_environment,
-                &execution.replay.unfolded_predicates,
+                &execution.unfolded_predicates,
                 *preserve_exposed_body,
             )?;
             facts = checked.facts;
@@ -1128,7 +1128,7 @@ impl<'a> ProofScope<'a> {
                         execution.state.into_value(),
                         context.predicate_environment,
                         context.click_function_environment,
-                        &execution.replay.unfolded_predicates,
+                        &execution.unfolded_predicates,
                         preserve_exposed_body,
                     )?;
                     facts = checked.facts;

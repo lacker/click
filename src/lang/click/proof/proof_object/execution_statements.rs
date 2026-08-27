@@ -753,7 +753,7 @@ impl<'a> Proof<'a> {
                     fact_transport_planning_failure(
                         surface_source,
                         surface_target,
-                        &replay.unfolded_predicates,
+                        &view.unfolded_predicates,
                         &error,
                     )
                 ))
@@ -1038,6 +1038,7 @@ impl<'a> Proof<'a> {
         let smart_certificate = check_mid_execution_have(
             have,
             &mut execution.replay,
+            &execution.unfolded_predicates,
             &state,
             &mut facts,
             context.function_block,
@@ -1228,6 +1229,7 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             loop_clause,
             &mut execution.replay,
+            &execution.unfolded_predicates,
             &mut state,
             &mut facts,
             context.function_block,
