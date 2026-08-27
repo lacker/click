@@ -338,12 +338,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ProofReplayContext {
-        state,
-        pure_facts,
-        replay: Box::new(replay),
-        branch_path: PersistentSequence::default(),
-    };
+    let initial = ExecutionProofState::at_entry(state, replay, PersistentSequence::default());
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, the flat driver owns linear proofs. A driver
     // declines (`None`) or errors; either hands the claim to the
@@ -352,6 +347,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     // remainder).
     let structural = match try_check_structural_function_proof(
         &initial,
+        &pure_facts,
         &program,
         generated_by_source_index,
         expansion_capture.as_deref_mut(),
@@ -374,6 +370,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     } else {
         match try_check_flat_function_proof(
             &initial,
+            &pure_facts,
             &program,
             generated_by_source_index,
             expansion_capture.as_deref_mut(),
@@ -505,16 +502,12 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ProofReplayContext {
-        state,
-        pure_facts,
-        replay: Box::new(replay),
-        branch_path: PersistentSequence::default(),
-    };
+    let initial = ExecutionProofState::at_entry(state, replay, PersistentSequence::default());
     // Same order as the single-claim route: structural, then flat, then the
     // compatibility interpreter.
     let structural = match try_check_structural_function_proof(
         &initial,
+        &pure_facts,
         &program,
         generated_by_source_index,
         expansion_capture.as_deref_mut(),
@@ -537,6 +530,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     } else {
         match try_check_flat_function_proof(
             &initial,
+            &pure_facts,
             &program,
             generated_by_source_index,
             expansion_capture.as_deref_mut(),

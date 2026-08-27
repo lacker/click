@@ -64,7 +64,7 @@ fn flat_function_proof_stays_on_proof_through_claim_acceptance() {
     );
     assert_eq!(
         context_exports, 0,
-        "the retained Proof must not export back into ProofReplayContext"
+        "the retained Proof must not export back into an entry execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -508,7 +508,7 @@ fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
     );
     assert_eq!(
         context_exports, 0,
-        "the retained grouped Proof must not export into ProofReplayContext"
+        "the retained grouped Proof must not export into an entry execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -584,7 +584,7 @@ fn grouped_n_way_function_outcomes_stay_on_one_proof() {
     );
     assert_eq!(
         context_exports, 0,
-        "the grouped N-way Proof must not export into ProofReplayContext"
+        "the grouped N-way Proof must not export into an entry execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -2276,7 +2276,7 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
     );
     assert_eq!(
         context_exports, 0,
-        "the grouped effect Proof must not export into ProofReplayContext"
+        "the grouped effect Proof must not export into an entry execution state"
     );
     assert_eq!(
         certificate_checks, 0,

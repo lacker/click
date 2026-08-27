@@ -34,8 +34,8 @@ during ordinary verification in the intended architecture.
 
 ## Replay state inside a proof
 
-`ProofReplayContext` still owns a `CState`, pure facts, branch history, and a
-boxed `TacticReplayState`; that nested state owns an execution frontier, fact
+`ExecutionProofState` owns a `CState`, branch provenance, the path's unfolded
+predicates, and a `TacticReplayState`; that nested state owns an execution frontier, fact
 and resource metadata, marks, structural context, loop rules, deferrals, and
 certificate builders. It lives only as the execution snapshot of a `Proof`
 goal: the checked drivers advance a `Proof`, and every source or generated

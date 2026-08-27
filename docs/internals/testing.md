@@ -456,30 +456,22 @@ timings:
 [1/26] examples/input-cursor/input_cursor.click:8:9  incremented_zero_is_one.ensures_0 (simp) ... ok (expand 22ms, verify 29ms, cold original 37ms, cold rewritten 35ms, reexpand 23ms)
 ```
 
-### Compatibility replay stack budget
+### Small-stack canary
 
-Independent checking of explicit and expanded proofs currently uses the
-recursive internal-proof interpreter. The complete mdtest gate, complete
-non-quarantined example gate, and the `sort3` expansion canary each reached a
-maximum of nine live interpreter calls in the 2026-08-20 debugger census. A
-small wrapper rejects depth beyond 12 before entering the large interpreter
-frame, producing an actionable proof error rather than allowing a process
-stack overflow.
-
-`ProofReplayContext` keeps its large `TacticReplayState` behind a `Box`; this
-reduced the ordinary debug interpreter frame from 123,264 to 62,688 bytes.
-`selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.75 MiB
-thread stack, below libtest's 2 MiB default, and pins that representation
-budget. The replay needs between 1216 and 1280 KiB on rustc 1.92 / macOS and
+Checked verification advances a persistent `Proof`; its execution snapshot
+(`ExecutionProofState`) embeds the `TacticReplayState` bag by value, so the
+driver frames carry that representation on the stack.
+`selected_pure_case_split_simp_expands_by_removal` runs on an explicit 1.75
+MiB thread stack, below libtest's 2 MiB default, and pins that representation
+budget. The run needed between 1216 and 1280 KiB on rustc 1.92 / macOS and
 overflowed a 1.25 MiB budget on CI's Linux stable toolchain, so the budget
 carries about 40% headroom over the measured need; recalibrate on the CI
-platform before tightening it. The outlined proof-rule and replay adapters
+platform before tightening it. The outlined proof-rule and driver adapters
 keep rule-local enum and proposition payloads out of their dispatchers'
-frames; they are stable stack budget boundaries, not substitutes for the
-depth guard. Changes to those boundaries must keep the small-stack canary
-green. The larger architectural
-question of replacing the parallel mutable replay model is tracked separately
-in `issues/replay-smell.md`.
+frames; they are stable stack budget boundaries. Changes to those boundaries
+must keep the small-stack canary green. The larger architectural question of
+replacing the parallel mutable replay model is tracked separately in
+`issues/replay-smell.md`.
 
 ### Rate-aware performance comparison
 

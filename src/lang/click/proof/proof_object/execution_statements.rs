@@ -381,15 +381,13 @@ impl<'a> Proof<'a> {
         )?;
         let mut arms: [Option<(Goal, Vec<Proposition>)>; 2] = [None, None];
         for value in [true, false] {
-            let mut arm_context = ProofReplayContext {
-                state: (*base_execution.state).clone(),
-                pure_facts: self.facts().to_vec(),
-                replay: Box::new(base_execution.replay.clone()),
-                branch_path: base_execution.branch_path.clone(),
-            };
-            let base_facts = arm_context.pure_facts.len();
+            let mut arm_execution = base_execution.clone();
+            arm_execution.last_step_delta = ExecutionProofStepDelta::default();
+            let mut arm_facts = self.facts().to_vec();
+            let base_facts = arm_facts.len();
             let feasible = introduce_proof_case_assumption(
-                &mut arm_context,
+                &mut arm_execution,
+                &mut arm_facts,
                 base_execution.has_structured_branch_history,
                 condition,
                 value,
@@ -405,14 +403,14 @@ impl<'a> Proof<'a> {
             }
             // Record where this proof-level case split sits in the path's
             // surface record, exactly as the replayed form recorded it.
-            if arm_context
+            if arm_execution
                 .replay
                 .proof_certificate_builder
                 .blocker
                 .is_none()
             {
-                let tactic_offset = arm_context.replay.proof_certificate_builder.steps.len();
-                arm_context
+                let tactic_offset = arm_execution.replay.proof_certificate_builder.steps.len();
+                arm_execution
                     .replay
                     .proof_certificate_builder
                     .path_choices
@@ -423,16 +421,12 @@ impl<'a> Proof<'a> {
                         tactic_offset,
                     });
             }
-            let added = arm_context.pure_facts[base_facts..].to_vec();
+            let added = arm_facts[base_facts..].to_vec();
             let mut facts = frontier.context.facts.clone();
             for fact in &added {
                 facts = facts.with_fact(fact.clone());
             }
-            let mut execution = base_execution.clone();
-            execution.state = arm_context.state.into();
-            execution.replay = *arm_context.replay;
-            execution.branch_path = arm_context.branch_path;
-            execution.last_step_delta = ExecutionProofStepDelta::default();
+            let execution = arm_execution;
             arms[usize::from(!value)] = Some((
                 Goal::Frontier(FrontierGoal {
                     selection: frontier.selection,

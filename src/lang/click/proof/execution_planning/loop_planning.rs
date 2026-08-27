@@ -368,12 +368,12 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     let root = Proof::for_execution_frontier(
         &claim_label,
         0,
-        ProofReplayContext {
-            state: preservation.state().clone(),
-            pure_facts: pure_facts.to_vec(),
-            replay: Box::new(replay),
-            branch_path: PersistentSequence::default(),
-        },
+        ExecutionProofState::at_entry(
+            preservation.state().clone(),
+            replay,
+            PersistentSequence::default(),
+        ),
+        pure_facts.to_vec(),
         environment.function_block,
         environment.function,
         environment.parsed_function,
@@ -1321,12 +1321,12 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let root = Proof::for_execution_frontier(
         &claim_label,
         internal_proof_first_index(&program).unwrap_or(0),
-        ProofReplayContext {
-            state: preservation.state().clone(),
-            pure_facts: pure_facts.to_vec(),
-            replay: Box::new(replay),
-            branch_path: PersistentSequence::default(),
-        },
+        ExecutionProofState::at_entry(
+            preservation.state().clone(),
+            replay,
+            PersistentSequence::default(),
+        ),
+        pure_facts.to_vec(),
         environment.function_block,
         environment.function,
         environment.parsed_function,

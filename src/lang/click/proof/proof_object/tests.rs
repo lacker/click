@@ -59,18 +59,18 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
         let root = Proof::for_execution_frontier(
             "typed effect goals",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: Vec::new(),
-                replay: Box::new(TacticReplayState {
+            ExecutionProofState::at_entry(
+                CState::new(),
+                TacticReplayState {
                     proof_site: Some(ProofSite::FunctionClaim {
                         function_name: "identity".to_string(),
                         claim,
                     }),
                     ..TacticReplayState::default()
-                }),
-                branch_path: PersistentSequence::default(),
-            },
+                },
+                PersistentSequence::default(),
+            ),
+            Vec::new(),
             function_block,
             &function,
             &parsed_function,
@@ -2750,12 +2750,8 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         let root = Proof::for_execution_frontier(
             "persistent theorem application",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -2956,12 +2952,8 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         let root = Proof::for_execution_frontier(
             "branch theorem search",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -6841,12 +6833,8 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "persistent unfold",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -6964,12 +6952,12 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
         let root = Proof::for_execution_frontier(
             "persistent resource observation",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(TacticReplayState::default()),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(
+                state.clone(),
+                TacticReplayState::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -7068,12 +7056,12 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
         let root = Proof::for_execution_frontier(
             "persistent resource unfold",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(TacticReplayState::default()),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(
+                state.clone(),
+                TacticReplayState::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -7173,12 +7161,12 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
         let root = Proof::for_execution_frontier(
             "persistent resource fold",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(TacticReplayState::default()),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(
+                state.clone(),
+                TacticReplayState::default(),
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -7295,15 +7283,15 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let root = Proof::for_execution_frontier(
             "persistent open scope",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(TacticReplayState {
+            ExecutionProofState::at_entry(
+                state.clone(),
+                TacticReplayState {
                     source_layout: SourceExecutionLayout::new(parsed_function.body()),
                     ..TacticReplayState::default()
-                }),
-                branch_path: PersistentSequence::default(),
-            },
+                },
+                PersistentSequence::default(),
+            ),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -7466,12 +7454,8 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         let root = Proof::for_execution_frontier(
             "persistent transport",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -7594,12 +7578,8 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         let root = Proof::for_execution_frontier(
             "persistent transport search",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -7695,12 +7675,8 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
         let root = Proof::for_execution_frontier(
             "indexed local assignment",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -7814,12 +7790,8 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
         let root = Proof::for_execution_frontier(
             "indexed store selection",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -7897,12 +7869,8 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
         let root = Proof::for_execution_frontier(
             "persistent statement step",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -8025,12 +7993,8 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             Proof::for_execution_frontier(
                 "persistent close invariants",
                 0,
-                ProofReplayContext {
-                    state: CState::new(),
-                    pure_facts: (0..size).map(indexed_fact).collect(),
-                    replay: Box::new(replay),
-                    branch_path: PersistentSequence::default(),
-                },
+                ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+                (0..size).map(indexed_fact).collect(),
                 function_block,
                 &function,
                 &parsed_function,
@@ -8182,12 +8146,8 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "execution proof if scaling",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -8309,12 +8269,8 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "execution proof cases scaling",
             0,
-            ProofReplayContext {
-                state: state.clone(),
-                pure_facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            pure_facts,
             function_block,
             &function,
             &parsed_function,
@@ -8389,12 +8345,8 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         let root = Proof::for_execution_frontier(
             "empty branch proof",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -8533,12 +8485,8 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let root = Proof::for_execution_frontier(
             "nonempty branch proof",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -8813,12 +8761,8 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         Proof::for_execution_frontier(
             "branch interface proof",
             0,
-            ProofReplayContext {
-                state,
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(state, replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -9284,12 +9228,8 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         Proof::for_execution_frontier(
             "nested branch interface proof",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,
@@ -9419,12 +9359,8 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         Proof::for_execution_frontier(
             "decided branch proof",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: facts,
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            facts,
             function_block,
             &function,
             &parsed_function,
@@ -9685,12 +9621,8 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let root = Proof::for_execution_frontier(
             "terminal branch proof",
             0,
-            ProofReplayContext {
-                state: CState::new(),
-                pure_facts: (0..size).map(indexed_fact).collect(),
-                replay: Box::new(replay),
-                branch_path: PersistentSequence::default(),
-            },
+            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
             &parsed_function,

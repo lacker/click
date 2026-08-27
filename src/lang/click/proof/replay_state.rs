@@ -1901,15 +1901,6 @@ pub(super) enum ProofExecutionPoint {
     /// is unrepresentable rather than detected after the fact.
     RegionBoundary,
 }
-
-#[derive(Clone)]
-pub(super) struct ProofReplayContext {
-    pub(super) state: CState,
-    pub(super) pure_facts: Vec<Proposition>,
-    pub(super) replay: Box<TacticReplayState>,
-    pub(super) branch_path: PersistentSequence<String>,
-}
-
 impl TacticReplayState {
     pub(super) fn is_at_function_exit(&self) -> bool {
         matches!(

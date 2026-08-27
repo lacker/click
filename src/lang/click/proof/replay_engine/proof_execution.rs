@@ -751,7 +751,8 @@ fn advance_checked_linear_continuation<'a>(
 /// narrower standalone-step policy.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
-    context: &ProofReplayContext,
+    execution: &ExecutionProofState,
+    pure_facts: &[Proposition],
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     expansion_capture: Option<&mut ExpansionCapture>,
@@ -770,7 +771,8 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
     // captured; only a decline (`Ok(None)`) leaves the cursor untouched.
     let mut staged = expansion_capture.as_deref().cloned();
     let result = try_check_flat_function_proof_inner(
-        context,
+        execution,
+        pure_facts,
         program,
         generated_by_source_index,
         &mut staged,
@@ -795,7 +797,8 @@ pub(in crate::lang::click::proof) fn try_check_flat_function_proof<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn try_check_flat_function_proof_inner<'a>(
-    context: &ProofReplayContext,
+    execution: &ExecutionProofState,
+    pure_facts: &[Proposition],
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     staged_expansion_capture: &mut Option<ExpansionCapture>,
@@ -819,7 +822,8 @@ fn try_check_flat_function_proof_inner<'a>(
     let root = Proof::for_execution_frontier(
         claim_label,
         tactics[0].index,
-        context.clone(),
+        execution.clone(),
+        pure_facts.to_vec(),
         function_block,
         function,
         parsed_function,
@@ -834,7 +838,7 @@ fn try_check_flat_function_proof_inner<'a>(
         root,
         program,
         staged_expansion_capture.as_mut(),
-        context.replay.proof_site.as_ref(),
+        execution.replay.proof_site.as_ref(),
         generated_by_source_index.unwrap_or(usize::MAX),
         Some(claim_label),
     )?
@@ -871,7 +875,8 @@ fn try_check_flat_function_proof_inner<'a>(
 /// expansion metadata.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
-    context: &ProofReplayContext,
+    execution: &ExecutionProofState,
+    pure_facts: &[Proposition],
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     expansion_capture: Option<&mut ExpansionCapture>,
@@ -890,7 +895,8 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
     // captured; only a decline (`Ok(None)`) leaves the cursor untouched.
     let mut staged = expansion_capture.as_deref().cloned();
     let result = try_check_structural_function_proof_inner(
-        context,
+        execution,
+        pure_facts,
         program,
         generated_by_source_index,
         &mut staged,
@@ -915,7 +921,8 @@ pub(in crate::lang::click::proof) fn try_check_structural_function_proof<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn try_check_structural_function_proof_inner<'a>(
-    context: &ProofReplayContext,
+    execution: &ExecutionProofState,
+    pure_facts: &[Proposition],
     program: &InternalProofNode,
     generated_by_source_index: Option<usize>,
     staged_expansion_capture: &mut Option<ExpansionCapture>,
@@ -930,14 +937,15 @@ fn try_check_structural_function_proof_inner<'a>(
     function: &'a CFunction,
     arguments: &'a [CExpression],
 ) -> Result<Option<Proof<'a>>, ClickError> {
-    let proof_site = context.replay.proof_site.clone();
+    let proof_site = execution.replay.proof_site.clone();
     let owning_source_index = generated_by_source_index.unwrap_or(usize::MAX);
     let mut proof = Proof::for_execution_frontier(
         claim_label,
         internal_proof_first_index(program).ok_or_else(|| {
             ClickError::new(format!("`{claim_label}` has no structural proof tactics"))
         })?,
-        context.clone(),
+        execution.clone(),
+        pure_facts.to_vec(),
         function_block,
         function,
         parsed_function,
@@ -2812,7 +2820,8 @@ fn advance_checked_open_scope<'a>(
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
-    context: &mut ProofReplayContext,
+    execution: &mut ExecutionProofState,
+    pure_facts: &mut Vec<Proposition>,
     structured_branch_history: bool,
     condition: &ClickProposition,
     value: bool,
@@ -2830,16 +2839,19 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // fresh kernel variables into both proof arms. Retain the surface
         // condition so final path routing lowers it independently for each
         // concrete outcome.
-        context.replay.case_assumptions.push(ReplayCaseAssumption {
-            tactic_index,
-            condition: condition.clone(),
-            value,
-            fact: None,
-            at_function_entry: false,
-        });
+        execution
+            .replay
+            .case_assumptions
+            .push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: None,
+                at_function_entry: false,
+            });
         return Ok(true);
     }
-    if context.replay.loop_effect_goal.is_some() {
+    if execution.replay.loop_effect_goal.is_some() {
         // A structural-effect replay path may already own the exact C-branch
         // fact under this Surface spelling. Prefer that unambiguous indexed
         // identity to rereading the condition from the heap. Ordinary loop
@@ -2847,19 +2859,15 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // the next iteration's new condition variables.
         let positive_surface = condition.clone();
         let negative_surface = negate_click_proposition(condition);
-        let positive = context
+        let positive = execution
             .replay
             .surface_propositions
-            .available_kernel_matching(&positive_surface, |kernel| {
-                context.pure_facts.contains(kernel)
-            })
+            .available_kernel_matching(&positive_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
-        let negative = context
+        let negative = execution
             .replay
             .surface_propositions
-            .available_kernel_matching(&negative_surface, |kernel| {
-                context.pure_facts.contains(kernel)
-            })
+            .available_kernel_matching(&negative_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
         if positive.is_some() != negative.is_some() {
             let recorded_value = positive.is_some();
@@ -2872,21 +2880,24 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             } else {
                 negative_surface
             };
-            context
+            execution
                 .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
-            context.replay.case_assumptions.push(ReplayCaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: Some(kernel_fact),
-                at_function_entry: context.replay.is_at_function_entry(),
-            });
+            execution
+                .replay
+                .case_assumptions
+                .push(ReplayCaseAssumption {
+                    tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(kernel_fact),
+                    at_function_entry: execution.replay.is_at_function_entry(),
+                });
             return Ok(true);
         }
     }
-    if context.replay.is_at_function_exit()
+    if execution.replay.is_at_function_exit()
         && structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
     {
@@ -2898,13 +2909,13 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // handling below.
         if let Ok(proposition) = lower_point_proposition(
             condition,
-            &context.pure_facts,
+            pure_facts,
             parameters,
             arguments,
-            context.replay.old_reference_state(&context.state),
-            &context.state,
+            execution.replay.old_reference_state(&execution.state),
+            &execution.state,
             None,
-            &context.replay.program_point_states,
+            &execution.replay.program_point_states,
             predicate_environment,
             click_function_environment,
         ) {
@@ -2924,48 +2935,53 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                     proposition => Proposition::Not(Box::new(proposition)),
                 }
             };
-            if context
-                .pure_facts
+            if pure_facts
                 .iter()
                 .any(|available| propositions_are_exact_negations(available, &kernel_fact))
             {
                 return Ok(false);
             }
-            context
+            execution
                 .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
-            context.pure_facts.push(kernel_fact.clone());
-            context.replay.case_assumptions.push(ReplayCaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: Some(kernel_fact),
-                at_function_entry: false,
-            });
+            pure_facts.push(kernel_fact.clone());
+            execution
+                .replay
+                .case_assumptions
+                .push(ReplayCaseAssumption {
+                    tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(kernel_fact),
+                    at_function_entry: false,
+                });
             return Ok(true);
         }
     }
-    if context.replay.is_at_function_exit() {
-        context.replay.case_assumptions.push(ReplayCaseAssumption {
-            tactic_index,
-            condition: condition.clone(),
-            value,
-            fact: None,
-            at_function_entry: false,
-        });
+    if execution.replay.is_at_function_exit() {
+        execution
+            .replay
+            .case_assumptions
+            .push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: None,
+                at_function_entry: false,
+            });
         return Ok(true);
     }
-    let at_function_entry = context.replay.is_at_function_entry();
+    let at_function_entry = execution.replay.is_at_function_entry();
     let proposition = lower_point_proposition(
         condition,
-        &context.pure_facts,
+        pure_facts,
         parameters,
         arguments,
-        context.replay.old_reference_state(&context.state),
-        &context.state,
+        execution.replay.old_reference_state(&execution.state),
+        &execution.state,
         None,
-        &context.replay.program_point_states,
+        &execution.replay.program_point_states,
         predicate_environment,
         click_function_environment,
     )
@@ -2990,25 +3006,27 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             proposition => Proposition::Not(Box::new(proposition)),
         }
     };
-    if context
-        .pure_facts
+    if pure_facts
         .iter()
         .any(|available| propositions_are_exact_negations(available, &kernel_fact))
     {
         return Ok(false);
     }
-    context
+    execution
         .replay
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
-    context.pure_facts.push(kernel_fact.clone());
-    context.replay.case_assumptions.push(ReplayCaseAssumption {
-        tactic_index,
-        condition: condition.clone(),
-        value,
-        fact: Some(kernel_fact),
-        at_function_entry,
-    });
+    pure_facts.push(kernel_fact.clone());
+    execution
+        .replay
+        .case_assumptions
+        .push(ReplayCaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: Some(kernel_fact),
+            at_function_entry,
+        });
     Ok(true)
 }
 

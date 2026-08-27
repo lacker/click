@@ -1091,6 +1091,29 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) unfolded_predicates: SharedVec<String>,
 }
 
+impl ExecutionProofState {
+    /// The execution state at a proof's entry: the frontier's C state and
+    /// replay bag with no branch provenance yet.
+    pub(in crate::lang::click::proof) fn at_entry(
+        state: CState,
+        replay: TacticReplayState,
+        branch_path: PersistentSequence<String>,
+    ) -> Self {
+        Self {
+            state: state.into(),
+            replay,
+            branch_path,
+            branch_surface_facts: PersistentOrderedSet::default(),
+            branch_decisions: PersistentSequence::default(),
+            outcome_branch_decisions: Arc::new(Vec::new()),
+            last_step_delta: ExecutionProofStepDelta::default(),
+            has_empty_execution_branch_leaf: false,
+            has_structured_branch_history: false,
+            unfolded_predicates: SharedVec::default(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct ExecutionBranchDecision {
     condition: ClickProposition,

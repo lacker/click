@@ -40,7 +40,7 @@ logical, execution, memory, and resource operations needed for that checking.
 The checked drivers are the single verification engine: a source or
 generated proof tree is checked by advancing a persistent `Proof`, and a
 shape no driver accepts is a terminal error, never a reason to run a second
-engine. `ProofReplayContext` and `TacticReplayState` still hold the
+engine. `ExecutionProofState` and its `TacticReplayState` still hold the
 execution frontier, marks, structural context, loop rules, deferrals, and
 certificate-construction bookkeeping *inside* a `Proof`'s execution snapshot;
 their remaining duplication of facts and `CState` is tracked by

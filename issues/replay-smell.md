@@ -39,19 +39,16 @@ sections that follow it; do not treat the shapes recorded here as a queue.
 `Proof` owns persistent typed goals and the private provenance nodes connecting
 accepted successors to checked operations. However, its execution model is not
 yet an independent replacement for replay. `Proof::for_execution_frontier`
-still consumes a `ProofReplayContext`, and its internal `ExecutionProofState`
-embeds almost the complete `TacticReplayState`. That payload still contains the
+starts from an `ExecutionProofState::at_entry` state whose
+`ExecutionProofState` embeds almost the complete `TacticReplayState`. That payload still contains the
 execution frontier, program-point states, branch-completion markers, loop
 rules, effect facts, planned transitions, freshness counters, deferred source
 operations, and a parallel certificate builder.
 
-Explicit function-proof verification also constructs `ProofReplayContext`
-directly and threads it by value through `execute_internal_proof`.
-`ProofReplayContext` separately owns `CState`, a fact vector, and branch
-history. Several operations construct a temporary `Proof` from this context
-and then export the checked result back into replay-owned state. Consequently,
-putting an operation behind a `Proof` method does not by itself establish sole
-state ownership while that method reads and rewrites the embedded replay
+(Resolved 2026-08-27: `ProofReplayContext` and `execute_internal_proof` are
+deleted; the executor takes `&mut ExecutionProofState`.) Putting an operation
+behind a `Proof` method does not by itself establish sole state ownership
+while that method reads and rewrites the embedded replay
 payload.
 
 Legacy smart paths also construct `ProofCertificate` values, replay them
@@ -253,8 +250,8 @@ planner — run on boundary `Proof`s with no interpreter call in
    diagnostics into the non-semantic cursor, and delete the
    compatibility-only fields. Unify function exit and the loop back-edge
    as instances of one boundary mechanism when the frontier moves onto
-   `Proof`, and delete `ProofReplayContext` and the `replay_boundary.rs`
-   adapters.
+   `Proof`, and delete the `replay_boundary.rs` adapters
+   (`ProofReplayContext` itself was deleted 2026-08-27).
 3. **Retire the parallel certificate builder.** Move expansion
    serialization entirely onto `ProofNode` ancestry and source
    attribution, then delete `proof_certificate_builder` (the preservation
@@ -568,7 +565,9 @@ Dependency summary, in the remaining-phase numbering: the typed boundary
 interpreter's `Branch` join; phase 1 (complete) deleted
 `execute_internal_proof`, `OrderedProofUnit::Replay`, and the stranded
 `tactic_replay.rs` round trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
-`replay_boundary.rs` and `ProofReplayContext` itself; phase 3 retires the
+`replay_boundary.rs` (`ProofReplayContext` is deleted; the executor now
+takes `&mut ExecutionProofState`, so bag fields can move without signature
+churn); phase 3 retires the
 `proof_certificate_builder` reads inside finalization.
 
 ### Boundary representations the typed region goal must subsume
@@ -824,9 +823,8 @@ semantic transitions, planners, or kernel proof search.
 ### State ownership census
 
 Add a source-level or instrumentation census proving that production source
-interpretation and expansion do not construct or advance
-`ProofReplayContext`, directly mutate replay-owned `CState` or fact
-collections, or maintain a second execution frontier. Surviving cursors must
+interpretation and expansion do not directly mutate replay-owned `CState`
+or fact collections, or maintain a second execution frontier. Surviving cursors must
 have their non-semantic fields individually justified.
 
 ### Deterministic scaling

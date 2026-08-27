@@ -1,5 +1,5 @@
 //! The transitional replay adapter boundary: entering `Proof` from a
-//! `ProofReplayContext` execution frontier and exporting checked
+//! entry execution state and exporting checked
 //! results back into replay-owned state. Scheduled for deletion by
 //! `issues/replay-smell.md`; keep doomed adapters co-located here.
 
@@ -12,7 +12,8 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn for_execution_frontier(
         claim_label: &'a str,
         tactic_index: usize,
-        execution: ProofReplayContext,
+        execution: ExecutionProofState,
+        pure_facts: Vec<Proposition>,
         function_block: &'a FunctionBlock,
         function: &'a CFunction,
         parsed_function: &'a syntax::C0Function,
@@ -38,6 +39,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             execution,
+            pure_facts,
             effect_goals,
             function_block,
             function,
@@ -60,7 +62,8 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn for_execution_frontier_with_effect_goals(
         claim_label: &'a str,
         tactic_index: usize,
-        execution: ProofReplayContext,
+        execution: ExecutionProofState,
+        pure_facts: Vec<Proposition>,
         effect_goals: EffectGoalSelection,
         function_block: &'a FunctionBlock,
         function: &'a CFunction,
@@ -72,12 +75,6 @@ impl<'a> Proof<'a> {
         click_function_environment: &'a ClickFunctionEnvironment,
         theorem_environment: &'a TheoremEnvironment,
     ) -> Self {
-        let ProofReplayContext {
-            state,
-            pure_facts,
-            replay,
-            branch_path,
-        } = execution;
         Self {
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
@@ -100,18 +97,7 @@ impl<'a> Proof<'a> {
                     context: GoalContext {
                         facts: ProofFacts::from_ordered(&pure_facts),
                         unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(ExecutionProofState {
-                            state: state.into(),
-                            replay: *replay,
-                            branch_path,
-                            branch_surface_facts: PersistentOrderedSet::default(),
-                            branch_decisions: PersistentSequence::default(),
-                            outcome_branch_decisions: Arc::new(Vec::new()),
-                            last_step_delta: ExecutionProofStepDelta::default(),
-                            has_empty_execution_branch_leaf: false,
-                            has_structured_branch_history: false,
-                            unfolded_predicates: SharedVec::default(),
-                        })),
+                        execution: Some(Arc::new(execution)),
                     },
                 })),
                 added_facts: Arc::new(Vec::new()),
