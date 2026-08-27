@@ -160,31 +160,57 @@ the general contextual prover for every load. A deterministic multi-size
 regression holds the affected ensure fixed while growing unrelated facts from
 16 through 1,024 and requires bounded work.
 
-The repaired call step finishes promptly and exposes another symptom of the
-replay defect: proof replay retains the consumed allocation and counted
-composite populations after the preparatory `open` scope closes, while fresh
-kernel certification retires that allocation. This was attributed to the parallel
-state-ownership defect of the replay engine, which has since been retired
-(2026-08-27): the checked `Proof` now owns every semantic path field. The
-focused reproduction must be re-run against that engine; a remaining
-mismatch is a resource-tracking defect owned here. The incomplete
-owned-vector proof edit remains out of the green scaling checkpoint.
+The repaired call step originally exposed another symptom attributed to the
+parallel state-ownership defect of the replay engine: proof replay retained
+the consumed allocation and counted composite populations after the
+preparatory `open` scope closed, while fresh checking retired that allocation.
+The replay engine has since been retired (2026-08-27), and the checked `Proof`
+now owns every semantic path field. The experiment below records the result of
+re-running this witness on that engine.
+
+The checked-engine scoped experiment was repeated on 2026-08-27 with the two
+leading C declarations accounted for. The existing surface is sufficient for
+the resource transition itself: open the composite while establishing the
+`owner->len == owner->cap` disjunction, close it, then reopen it only for the
+selected C branch-entry step. The following folded `vector_grow` call advances
+past the old stale-view failure without any new resource operation or contract
+change.
+
+That call exposes its existing allocation-identity successor partition before
+the proof's result split. An empty explicit identity `if` followed by a shared
+second `if` found a bounded proof-object bug: focusing the first partition left
+its immediate-step marker on both arms, so the continuation tried to consume
+the old partition again. The marker is now cleared when the partition is
+entered, with a focused regression using empty arms and a shared following
+`if`.
+
+The complete owned-vector continuation is not yet a green checkpoint. After
+making its `grown == 1` proof explicit by logical cases, verification crossed
+30 seconds instead of failing or finishing in roughly two seconds. The process
+exited, and the slow prototype was removed. Reduce this nested
+allocation-identity-by-result proof family before resuming the example. Do not
+raise a deadline, expand an incomplete run, duplicate the full continuation,
+or accept the slow success path.
 
 ## Remaining roadmap
 
-1. Re-run on the checked engine (2026-08-27): the multi-successor handoff
-   witness no longer reproduces, and `vector_copy`/`vector_grow` verify after
-   two proof repairs (`mutable ... by frame` instead of an empty
+1. Re-run on the checked engine (completed 2026-08-27): the multi-successor
+   handoff witness no longer reproduces, and `vector_copy`/`vector_grow`
+   verify after two proof repairs (`mutable ... by frame` instead of an empty
    `frame() using { }`, whose whole-context reading was an interpreter
    fallback the reference never promised; a trailing `assumption()` after a
    discharging `transport` is accepted by the nested scope). The
-   `allocated_vector_push` witness below reproduces unchanged at tactic 1:
-   the persistent `observe` view survives `vector_grow`'s free. That is
-   this issue's own defect. Do not add resource semantics, different surface
-   syntax, or compatibility-state patches for it.
-2. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
+   `allocated_vector_push` stale-view failure is avoided by the scoped proof
+   repair described above. No resource semantics or new surface tactic is
+   needed for this transition.
+2. Reduce and fix the unexpected slowdown when the allocation-identity
+   successor split shares the later `grown` result continuation. The focused
+   reproduction must keep both binary decisions while shrinking the
+   owned-vector proof body, and must complete promptly through the checked
+   `Proof` driver.
+3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
    unchanged owned-vector proof, remove its quarantine, and run the full gate.
-3. Close this issue only after the focused lifetime regressions, resource and
+4. Close this issue only after the focused lifetime regressions, resource and
    ensure-lowering scaling regressions, scoped population regression, and
    owned-vector end-to-end case are all green. File a new issue only if that
    completed path exposes another independent invariant.

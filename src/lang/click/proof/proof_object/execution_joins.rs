@@ -1928,9 +1928,20 @@ impl<'a> Proof<'a> {
         let arm_index = usize::from(!take_then);
         let mut focused = self.focus(record.ids[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
+        let mut goals = focused.state.goals.clone();
+        // A statement partition is immediate-step provenance, not path
+        // state. Entering either recorded case consumes that marker even
+        // when the source arm is empty; otherwise a shared following `if`
+        // tries to enter the already-consumed statement partition again.
+        if let Some(mut execution) = focused.execution().cloned()
+            && execution.last_step_delta.statement_partition.is_some()
+        {
+            execution.last_step_delta.statement_partition = None;
+            goals = goals.replace_frontier_at(focused.focused, focused.facts().clone(), execution);
+        }
         focused.state = Arc::new(ProofState {
             locals: focused.state.locals.clone(),
-            goals: focused.state.goals.clone(),
+            goals,
             added_facts: Arc::new(path_facts.clone()),
             checked_facts: Arc::new(path_facts),
         });

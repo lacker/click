@@ -355,6 +355,27 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
 }
 
 #[test]
+fn consumed_statement_partition_does_not_capture_shared_following_if() {
+    let (replace_source, caller_source, click_source) = result_case_split_sources();
+    let click_source = click_source.replace(
+        "                if c(replaced) == 0 {",
+        "                if at(statement(1).exit, owner->data) == old(owner->data) {\n                } else {\n                }\n                if c(replaced) == 0 {",
+    );
+    assert!(
+        click_source.contains("if at(statement(1).exit, owner->data)"),
+        "the regression must insert the empty statement-partition split"
+    );
+    verify_c0_sources(
+        &click_source,
+        &[
+            ("replace_allocated_cell.c", replace_source),
+            ("replace_then_branch.c", caller_source),
+        ],
+    )
+    .expect("the shared following if must not re-enter the consumed call partition");
+}
+
+#[test]
 fn result_case_split_collapses_call_successors_at_following_c_if() {
     let (replace_source, caller_source, click_source) = result_case_split_sources();
     let sources = &[
