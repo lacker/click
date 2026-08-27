@@ -150,8 +150,6 @@ pub(super) struct TacticReplayState {
     /// replayed. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(super) invariant_closer_step: Option<InvariantCloserStep>,
-    pub(super) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
-    pub(super) effect_facts: SharedVec<ExecutionPureFact>,
     pub(super) grouped_contract: bool,
     pub(super) next_opaque_call: u64,
     pub(super) next_kernel_variable: u64,
@@ -172,8 +170,6 @@ pub(super) struct TacticReplayState {
     /// Frontier-local loop proofs become part of the checked function proof,
     /// not temporary tactic state.  Final kernel certification rebuilds the
     /// annotated function from these bound clauses and reuses these rules.
-    pub(super) frontier_loop_clauses: PersistentSequence<StructuralClause>,
-    pub(super) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
     /// the same reference under another form — names in this region.
     ///
@@ -2002,12 +1998,16 @@ impl<'a> ExecutionView<'a> {
 }
 
 impl TacticReplayState {
-    pub(super) fn view<'a>(&'a self, frontier: &'a ExecutionFrontier) -> ExecutionView<'a> {
+    pub(super) fn view<'a>(
+        &'a self,
+        frontier: &'a ExecutionFrontier,
+        effect_facts: &'a [ExecutionPureFact],
+    ) -> ExecutionView<'a> {
         ExecutionView {
             frontier,
             program_point_states: &self.program_point_states,
             surface_propositions: &self.surface_propositions,
-            effect_facts: &self.effect_facts,
+            effect_facts,
             function_entry_state: self.function_entry_state.as_ref(),
         }
     }

@@ -1066,10 +1066,14 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     let outcome_substrate = match &unit {
         OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
     };
-    let (state, replay, frontier, branch_path) = match (&unit, &direct_view) {
-        (OrderedProofUnit::Checked(_), Some(view)) => {
-            (view.state, view.replay, view.frontier, view.branch_path)
-        }
+    let (state, replay, frontier, proof_execution, branch_path) = match (&unit, &direct_view) {
+        (OrderedProofUnit::Checked(_), Some(view)) => (
+            view.state,
+            view.replay,
+            view.frontier,
+            view.execution,
+            view.branch_path,
+        ),
         _ => unreachable!("ordered proof unit and finalization view must agree"),
     };
     let retained_surface = match &unit {
@@ -1080,8 +1084,9 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         }
     };
     let pre_state = frontier.execution_start_state(state);
-    let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
-        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
+    let frontier_function_block = (!proof_execution.frontier_loop_clauses.is_empty()).then(|| {
+        function_block
+            .with_bound_frontier_loop_clauses(&proof_execution.frontier_loop_clauses.to_vec())
     });
     let frontier_function = frontier_function_block
         .as_ref()
@@ -1098,11 +1103,12 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             )
         })
         .transpose()?;
-    let frontier_function_environment = (!replay.frontier_loop_rules.is_empty()).then(|| {
-        function_environment
-            .clone()
-            .with_verified_loop_rules(replay.frontier_loop_rules.to_vec())
-    });
+    let frontier_function_environment =
+        (!proof_execution.frontier_loop_rules.is_empty()).then(|| {
+            function_environment
+                .clone()
+                .with_verified_loop_rules(proof_execution.frontier_loop_rules.to_vec())
+        });
     let function = frontier_function.as_ref().unwrap_or(function);
     let function_environment = frontier_function_environment
         .as_ref()
@@ -1126,7 +1132,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 .cloned(),
         );
         certification_facts.extend(
-            replay
+            proof_execution
                 .case_assumptions
                 .iter()
                 .filter(|case| case.at_function_entry)
@@ -1215,7 +1221,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 &proof_label,
                 "independent kernel certification",
                 || {
-                    if replay.frontier_loop_rules.is_empty()
+                    if proof_execution.frontier_loop_rules.is_empty()
                         && let Some((_, _, _, execution)) = certification_cache.iter().find(
                             |(facts, cached_state, concrete_loop_execution, _)| {
                                 facts == &certification_facts
@@ -1243,7 +1249,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     execution_start_assumptions.clone(),
                                     function_environment.clone(),
                                     if replay.concrete_loop_execution
-                                        || !replay.frontier_loop_rules.is_empty()
+                                        || !proof_execution.frontier_loop_rules.is_empty()
                                     {
                                         CExecutionSemantics::APPLY_VERIFIED_RULES
                                     } else {
@@ -1257,7 +1263,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 )
                             },
                         );
-                        if replay.frontier_loop_rules.is_empty() {
+                        if proof_execution.frontier_loop_rules.is_empty() {
                             certification_cache.push((
                                 certification_facts.clone(),
                                 pre_state.clone(),
@@ -1357,7 +1363,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 // path, or a recursive return known to equal zero can be paired
                 // with the unrelated base-case path merely because their final
                 // observable values coincide.
-                if !replay.case_assumptions.is_empty() {
+                if !proof_execution.case_assumptions.is_empty() {
                     let CFunctionOutcome::Return {
                         value: result,
                         state: post_state,
@@ -1372,7 +1378,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             .iter()
                             .map(|fact| fact.proposition().clone()),
                     );
-                    for case in &replay.case_assumptions {
+                    for case in &proof_execution.case_assumptions {
                         let case_fact = if let Some(fact) = &case.fact {
                             fact.clone()
                         } else {
@@ -1458,7 +1464,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             // exit drain below skips it by the same case reasoning.
             let path_excluded_by_proof_branch =
             |replayed: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
-                if replay.case_assumptions.is_empty() {
+                if proof_execution.case_assumptions.is_empty() {
                     return Ok(false);
                 }
                 let CFunctionOutcome::Return {
@@ -1475,7 +1481,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         .iter()
                         .map(|fact| fact.proposition().clone()),
                 );
-                for case in &replay.case_assumptions {
+                for case in &proof_execution.case_assumptions {
                     let fact = if let Some(fact) = &case.fact {
                         fact.clone()
                     } else {
@@ -1659,7 +1665,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         &proof_label,
                         "proof case path routing",
                     );
-                    if !replay.case_assumptions.is_empty() {
+                    if !proof_execution.case_assumptions.is_empty() {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
@@ -1671,7 +1677,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         };
                         let mut routed_assumptions =
                             assumptions_from_propositions(&path_requirements);
-                        for case in &replay.case_assumptions {
+                        for case in &proof_execution.case_assumptions {
                             let case_lowering_timing = crate::instrumentation::OperationTiming::new(
                                 function_block.signature().name(),
                                 &proof_label,
@@ -2259,7 +2265,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         "post-execution have context assembly",
                                         || {
                                             let mut available = path_requirements.clone();
-                                            for fact in &replay.effect_facts {
+                                            for fact in &proof_execution.effect_facts {
                                                 if matches!(
                                                     fact.proposition(),
                                                     Proposition::CMemoryMutatesOnly { .. }
@@ -2271,7 +2277,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 }
                                             }
                                             for equation in crate::kernel::certified_store_equations(
-                                                &replay.effect_facts,
+                                                &proof_execution.effect_facts,
                                             ) {
                                                 if !available.contains(&equation) {
                                                     available.push(equation);
@@ -2279,7 +2285,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             }
                                             for fact in
                                                 crate::kernel::certified_store_loadability_facts(
-                                                    &replay.effect_facts,
+                                                    &proof_execution.effect_facts,
                                                 )
                                             {
                                                 if !available.contains(&fact) {
@@ -2438,7 +2444,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        replay.view(frontier),
+                                        replay.view(frontier, &proof_execution.effect_facts),
                                         &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,
@@ -4143,8 +4149,8 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             specification: specification.clone(),
                             theorem: theorem.clone(),
                             concrete_loop_execution: replay.concrete_loop_execution,
-                            frontier_loop_clauses: replay.frontier_loop_clauses.to_vec(),
-                            frontier_loop_rules: replay.frontier_loop_rules.to_vec(),
+                            frontier_loop_clauses: proof_execution.frontier_loop_clauses.to_vec(),
+                            frontier_loop_rules: proof_execution.frontier_loop_rules.to_vec(),
                             checked_execution: certified_executions[certified_path_index.0].clone(),
                         });
                     }

@@ -290,6 +290,7 @@ impl<'a> Proof<'a> {
             facts: self.facts().to_vec(),
             replay: &execution.replay,
             frontier: &execution.frontier,
+            execution,
             unfolded_predicates: &execution.unfolded_predicates,
             branch_path: &execution.branch_path,
             outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),

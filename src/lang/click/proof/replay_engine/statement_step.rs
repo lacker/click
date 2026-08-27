@@ -60,7 +60,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     )?;
     let pre_state = old_reference_state(replay, &execution.frontier, state).clone();
     let mut explicit_premises = Vec::new();
-    for case in &replay.case_assumptions {
+    for case in &execution.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
         } else {
@@ -94,7 +94,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
             }
         };
         if requirement_pure_facts
-            .replay_available_across_effects(&branch_fact, &replay.effect_facts)
+            .replay_available_across_effects(&branch_fact, &execution.effect_facts)
             && !explicit_premises.contains(&branch_fact)
         {
             explicit_premises.push(branch_fact);

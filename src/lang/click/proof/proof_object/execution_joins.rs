@@ -312,12 +312,10 @@ impl<'a> Proof<'a> {
             || replay.function_entry_derivations.len()
                 != parent_execution.replay.function_entry_derivations.len()
                     + arm.introduced_derivations.len()
-            || replay.frontier_loop_clauses.len()
-                != parent_execution.replay.frontier_loop_clauses.len()
-                    + arm.introduced_loop_clauses.len()
-            || replay.frontier_loop_rules.len()
-                != parent_execution.replay.frontier_loop_rules.len()
-                    + arm.introduced_loop_rules.len()
+            || arm.execution.frontier_loop_clauses.len()
+                != parent_execution.frontier_loop_clauses.len() + arm.introduced_loop_clauses.len()
+            || arm.execution.frontier_loop_rules.len()
+                != parent_execution.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
             || arm.execution.unfolded_predicates.len()
                 != parent_execution.unfolded_predicates.len() + arm.introduced_unfolds.len()
             || replay.planned_statement_transitions.len()
@@ -391,7 +389,7 @@ impl<'a> Proof<'a> {
         )
         .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
         execution.branch_path = parent_execution.branch_path.clone();
-        execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+        execution.case_assumptions = parent_execution.case_assumptions.clone();
 
         let mut added_facts = arm.introduced_facts.clone();
         for assertion in &assertions {
@@ -773,7 +771,7 @@ impl<'a> Proof<'a> {
         execution.has_structured_branch_history = true;
         execution.replay.execution_abstraction = true;
         execution.unfolded_predicates.clear();
-        execution.replay.case_assumptions.clear();
+        execution.case_assumptions.clear();
         execution.replay.next_opaque_call = then_abstract
             .replay
             .next_opaque_call
@@ -788,7 +786,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.replay.effect_facts,
+                &mut execution.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -812,7 +810,7 @@ impl<'a> Proof<'a> {
                 .function_entry_derivations
                 .insert(theorem.clone());
         }
-        migrate_arm_loop_proofs(&mut execution.replay, &arms);
+        migrate_arm_loop_proofs(&mut execution, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1166,7 +1164,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.replay.effect_facts,
+                &mut execution.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -1199,10 +1197,10 @@ impl<'a> Proof<'a> {
                 execution.unfolded_predicates.push(name.clone());
             }
         }
-        migrate_arm_loop_proofs(&mut execution.replay, &arms);
+        migrate_arm_loop_proofs(&mut execution, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
-        execution.replay.case_assumptions = parent_execution.replay.case_assumptions.clone();
+        execution.case_assumptions = parent_execution.case_assumptions.clone();
 
         // A selected-site capture is attribution metadata for one source
         // occurrence. It may be inherited unchanged by both arms, or begin
@@ -1429,7 +1427,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.replay.effect_facts,
+                &mut execution.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -1462,11 +1460,11 @@ impl<'a> Proof<'a> {
                 execution.unfolded_predicates.push(name.clone());
             }
         }
-        migrate_arm_loop_proofs(&mut execution.replay, &arms);
-        migrate_arm_loop_proofs(&mut execution.replay, &arms);
+        migrate_arm_loop_proofs(&mut execution, &arms);
+        migrate_arm_loop_proofs(&mut execution, &arms);
         execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
-        execution.replay.case_assumptions.clear();
+        execution.case_assumptions.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
@@ -1755,9 +1753,8 @@ impl<'a> Proof<'a> {
             .introduced_since(delta_facts)
             .ok_or_else(not_descended)?;
         let introduced_effect_facts = execution
-            .replay
             .effect_facts
-            .suffix_since(&delta_execution.replay.effect_facts)
+            .suffix_since(&delta_execution.effect_facts)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_prerequisites = execution
@@ -1780,15 +1777,13 @@ impl<'a> Proof<'a> {
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_clauses = execution
-            .replay
             .frontier_loop_clauses
-            .suffix_since(&delta_execution.replay.frontier_loop_clauses)
+            .suffix_since(&delta_execution.frontier_loop_clauses)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_rules = execution
-            .replay
             .frontier_loop_rules
-            .suffix_since(&delta_execution.replay.frontier_loop_rules)
+            .suffix_since(&delta_execution.frontier_loop_rules)
             .ok_or_else(not_descended)?
             .to_vec();
         Ok((
@@ -2679,7 +2674,7 @@ fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]
 /// joined replay. A loop is keyed by its code region: the same C loop proved
 /// in both arms is one bound clause and one verified rule.
 fn migrate_arm_loop_proofs(
-    replay: &mut TacticReplayState,
+    execution: &mut ExecutionProofState,
     arms: &[CheckedExecutionJoinArm<'_>; 2],
 ) {
     for arm in arms {
@@ -2688,15 +2683,15 @@ fn migrate_arm_loop_proofs(
             .iter()
             .zip(&arm.introduced_loop_rules)
         {
-            if replay
+            if execution
                 .frontier_loop_clauses
                 .iter()
                 .any(|existing: &StructuralClause| existing.region() == clause.region())
             {
                 continue;
             }
-            replay.frontier_loop_clauses.push(clause.clone());
-            replay.frontier_loop_rules.push(rule.clone());
+            execution.frontier_loop_clauses.push(clause.clone());
+            execution.frontier_loop_rules.push(rule.clone());
         }
     }
 }

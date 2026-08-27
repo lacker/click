@@ -27,7 +27,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         crate::instrumentation::OperationTiming::new("have", claim_label, "contract have replay");
     let mut have_facts = pure_facts.clone();
     have_facts.extend(
-        replay
+        execution
             .effect_facts
             .iter()
             .map(|fact| fact.proposition().clone()),
@@ -49,7 +49,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &state,
         None,
         None,
-        replay.view(&execution.frontier),
+        replay.view(&execution.frontier, &execution.effect_facts),
         &replay.surface_propositions,
         predicate_environment,
         click_function_environment,
@@ -65,7 +65,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let smart_result = match (&checked_proof_result, &smart_unfolds) {
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
-            replay.view(&execution.frontier),
+            replay.view(&execution.frontier, &execution.effect_facts),
             &state,
             &have_facts,
             parsed_function.parameters(),
@@ -94,7 +94,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         &state,
                         None,
                         None,
-                        replay.view(&execution.frontier),
+                        replay.view(&execution.frontier, &execution.effect_facts),
                         &replay.surface_propositions,
                         predicate_environment,
                         click_function_environment,
@@ -117,7 +117,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 claim_label,
                 tactic_index,
                 &have_facts,
-                &replay.effect_facts,
+                &execution.effect_facts,
                 parsed_function.parameters(),
                 arguments,
                 old_reference_state(replay, &execution.frontier, state),
@@ -240,7 +240,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop; current frontier is statement({statement_index})"
         )));
     };
-    if replay
+    if execution
         .frontier_loop_clauses
         .iter()
         .any(|clause| clause.region() == &CodeRegion::Loop(loop_index))
@@ -250,7 +250,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         )));
     }
     let function_with_prior_loops =
-        function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec());
+        function_block.with_bound_frontier_loop_clauses(&execution.frontier_loop_clauses.to_vec());
     let bound_function_block =
         function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
@@ -312,7 +312,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         frontier_loop_certificates: Some(&loop_certificates),
         frontier_loop_source: Some(&loop_source),
     };
-    let case_path = replay
+    let case_path = execution
         .case_assumptions
         .iter()
         .map(|choice| ProofCaseChoice {
@@ -399,7 +399,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         }
     }
     let local_function_environment = function_environment.clone().with_verified_loop_rules(
-        replay
+        execution
             .frontier_loop_rules
             .iter()
             .cloned()
@@ -473,10 +473,10 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
         }
     }
-    replay
+    execution
         .frontier_loop_clauses
         .push(loop_template.bound_to_loop(loop_index));
-    replay.frontier_loop_rules.push(loop_rule);
+    execution.frontier_loop_rules.push(loop_rule);
     replay
         .proof_certificate_builder
         .push_source_tactic(ProofTactic::Loop(expanded_loop.clone()));

@@ -125,7 +125,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     replay
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
-    replay.case_assumptions.clear();
+    execution.case_assumptions.clear();
     replay.execution_abstraction = true;
 
     let mut exported_resources = ResourceContext::new();
@@ -167,7 +167,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
             }
             if !entry_loadables.is_empty() {
                 let mut pre_advance_facts = concrete_facts.clone();
-                for fact in &replay.effect_facts {
+                for fact in &execution.effect_facts {
                     if !pre_advance_facts.contains_top_level(fact.proposition()) {
                         pre_advance_facts = pre_advance_facts.with_fact(fact.proposition().clone());
                     }
@@ -427,7 +427,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(&execution.frontier),
+            replay.view(&execution.frontier, &execution.effect_facts),
             state,
             function,
             arguments,
@@ -586,6 +586,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             construct_simple_step_for_planned_operation(
                 replay,
                 &execution.frontier,
+                &execution.effect_facts,
                 &current_state,
                 function_block,
                 parameters,
@@ -611,6 +612,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         append_condition_transition_certificate(
             replay,
             &execution.frontier,
+            &execution.effect_facts,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
             &current_state,
@@ -829,6 +831,7 @@ fn execute_concrete_loop_head_step(
         append_condition_transition_certificate(
             replay,
             &execution.frontier,
+            &execution.effect_facts,
             &condition_transition,
             true,
             &current_state,
@@ -1484,7 +1487,7 @@ pub(super) fn execute_step_successors_from_execution_point(
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        replay.view(&execution.frontier),
+        replay.view(&execution.frontier, &execution.effect_facts),
         state,
         function,
         arguments,
@@ -1640,7 +1643,7 @@ fn execute_step_from_execution_point_selecting_path(
     };
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(&execution.frontier),
+            replay.view(&execution.frontier, &execution.effect_facts),
             state,
             function,
             arguments,
@@ -1785,6 +1788,7 @@ fn execute_step_from_execution_point_selecting_path(
             construct_simple_step_for_planned_operation(
                 replay,
                 &execution.frontier,
+                &execution.effect_facts,
                 &current_state,
                 function_block,
                 parameters,
@@ -1816,7 +1820,7 @@ fn execute_step_from_execution_point_selecting_path(
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
+            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
             let return_assumptions = assumptions_from_propositions(&transition.pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
                 &execution_start_state,
@@ -2017,6 +2021,7 @@ fn execute_step_from_execution_point_selecting_path(
         deferred_transport_operations = append_statement_transition_certificate(
             replay,
             &execution.frontier,
+            &execution.effect_facts,
             &transition,
             if loop_index.is_some() {
                 loop_step_policy
@@ -2107,7 +2112,7 @@ fn execute_step_from_execution_point_selecting_path(
         }
     }
     let execution_pure_facts = transition.execution_facts;
-    append_execution_effect_facts(&mut replay.effect_facts, &execution_pure_facts);
+    append_execution_effect_facts(&mut execution.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
     let successor_pure_facts = transition.pure_facts;
     let outcome = transition.outcome;
@@ -2214,7 +2219,7 @@ fn execute_step_from_execution_point_selecting_path(
                 &return_assumptions,
             );
             let mut completed_execution_facts = execution_pure_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
+            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
@@ -2235,7 +2240,7 @@ fn execute_step_from_execution_point_selecting_path(
         }
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &replay.effect_facts);
+            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
@@ -2298,6 +2303,7 @@ fn execute_step_from_execution_point_selecting_path(
                 construct_simple_step_for_planned_operation(
                     replay,
                     &execution.frontier,
+                    &execution.effect_facts,
                     state,
                     function_block,
                     parameters,

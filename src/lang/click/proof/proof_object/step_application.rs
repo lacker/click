@@ -245,7 +245,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                        .replay_available_across_effects(kernel, &execution.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -257,7 +257,7 @@ impl<'a> Proof<'a> {
             // or a resource-shaped fact derived atomically from the context.
             let available = |fact: &Proposition| {
                 self.facts()
-                    .replay_available_across_effects(fact, &execution.replay.effect_facts)
+                    .replay_available_across_effects(fact, &execution.effect_facts)
                     || (matches!(
                         fact,
                         Proposition::CResourceContains { .. }
@@ -398,7 +398,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                        .replay_available_across_effects(kernel, &execution.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -407,7 +407,7 @@ impl<'a> Proof<'a> {
                 })?;
             if !self
                 .facts()
-                .replay_available_across_effects(&fact, &execution.replay.effect_facts)
+                .replay_available_across_effects(&fact, &execution.effect_facts)
             {
                 return Err(self.step_error(format!(
                     "`frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
@@ -438,7 +438,6 @@ impl<'a> Proof<'a> {
             let mut loop_effect_facts = frame_facts.clone();
             loop_effect_facts.extend(
                 execution
-                    .replay
                     .effect_facts
                     .iter()
                     .map(|fact| fact.proposition().clone()),
@@ -481,12 +480,11 @@ impl<'a> Proof<'a> {
             // Loop effect clauses are declared by frontier-local `loop`
             // tactics. Bind the exact clauses already checked on this replay
             // before resolving labels or validating the qualified frame.
-            let frame_function_block =
-                (!execution.replay.frontier_loop_clauses.is_empty()).then(|| {
-                    context.function_block.with_bound_frontier_loop_clauses(
-                        &execution.replay.frontier_loop_clauses.to_vec(),
-                    )
-                });
+            let frame_function_block = (!execution.frontier_loop_clauses.is_empty()).then(|| {
+                context
+                    .function_block
+                    .with_bound_frontier_loop_clauses(&execution.frontier_loop_clauses.to_vec())
+            });
             let frame_function_block = frame_function_block
                 .as_ref()
                 .unwrap_or(context.function_block);
@@ -666,7 +664,7 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if !execution_state.frontier.is_at_function_exit()
-            || !execution_state.replay.case_assumptions.is_empty()
+            || !execution_state.case_assumptions.is_empty()
         {
             return Ok(None);
         }
@@ -770,6 +768,7 @@ impl<'a> Proof<'a> {
         let path_tactics = lower_certified_frame_path_tactics(
             &mut construction_replay,
             &execution_state.frontier,
+            &execution_state.effect_facts,
             &execution_state.state,
             &available,
             context.parsed_function.parameters(),
@@ -897,7 +896,7 @@ impl<'a> Proof<'a> {
             {
                 if self
                     .facts()
-                    .replay_available_across_effects(kernel, &execution.replay.effect_facts)
+                    .replay_available_across_effects(kernel, &execution.effect_facts)
                 {
                     candidates.insert(kernel.clone());
                 }
@@ -957,7 +956,7 @@ impl<'a> Proof<'a> {
                     for atom in atoms {
                         if self
                             .facts()
-                            .replay_available_across_effects(&atom, &execution.replay.effect_facts)
+                            .replay_available_across_effects(&atom, &execution.effect_facts)
                         {
                             candidates.insert(atom);
                         }
@@ -1001,7 +1000,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |candidate| {
                     self.facts()
-                        .replay_available_across_effects(candidate, &execution.replay.effect_facts)
+                        .replay_available_across_effects(candidate, &execution.effect_facts)
                 })
                 .cloned()
                 .or_else(|| {

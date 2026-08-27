@@ -2835,16 +2835,13 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // fresh kernel variables into both proof arms. Retain the surface
         // condition so final path routing lowers it independently for each
         // concrete outcome.
-        execution
-            .replay
-            .case_assumptions
-            .push(ReplayCaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: None,
-                at_function_entry: false,
-            });
+        execution.case_assumptions.push(ReplayCaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: None,
+            at_function_entry: false,
+        });
         return Ok(true);
     }
     if execution.replay.loop_effect_goal.is_some() {
@@ -2880,16 +2877,13 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
-            execution
-                .replay
-                .case_assumptions
-                .push(ReplayCaseAssumption {
-                    tactic_index,
-                    condition: condition.clone(),
-                    value,
-                    fact: Some(kernel_fact),
-                    at_function_entry: execution.frontier.is_at_function_entry(),
-                });
+            execution.case_assumptions.push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(kernel_fact),
+                at_function_entry: execution.frontier.is_at_function_entry(),
+            });
             return Ok(true);
         }
     }
@@ -2942,30 +2936,24 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
             pure_facts.push(kernel_fact.clone());
-            execution
-                .replay
-                .case_assumptions
-                .push(ReplayCaseAssumption {
-                    tactic_index,
-                    condition: condition.clone(),
-                    value,
-                    fact: Some(kernel_fact),
-                    at_function_entry: false,
-                });
+            execution.case_assumptions.push(ReplayCaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(kernel_fact),
+                at_function_entry: false,
+            });
             return Ok(true);
         }
     }
     if execution.frontier.is_at_function_exit() {
-        execution
-            .replay
-            .case_assumptions
-            .push(ReplayCaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: None,
-                at_function_entry: false,
-            });
+        execution.case_assumptions.push(ReplayCaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: None,
+            at_function_entry: false,
+        });
         return Ok(true);
     }
     let at_function_entry = execution.frontier.is_at_function_entry();
@@ -3013,16 +3001,13 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
     pure_facts.push(kernel_fact.clone());
-    execution
-        .replay
-        .case_assumptions
-        .push(ReplayCaseAssumption {
-            tactic_index,
-            condition: condition.clone(),
-            value,
-            fact: Some(kernel_fact),
-            at_function_entry,
-        });
+    execution.case_assumptions.push(ReplayCaseAssumption {
+        tactic_index,
+        condition: condition.clone(),
+        value,
+        fact: Some(kernel_fact),
+        at_function_entry,
+    });
     Ok(true)
 }
 

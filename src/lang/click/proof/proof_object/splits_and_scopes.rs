@@ -396,16 +396,13 @@ impl<'a> Proof<'a> {
                     .replay
                     .surface_propositions
                     .record_lowering(&surface_fact, &fact)?;
-                execution
-                    .replay
-                    .case_assumptions
-                    .push(ReplayCaseAssumption {
-                        tactic_index: context.tactic_index,
-                        condition: condition.clone(),
-                        value: take_then,
-                        fact: Some(fact.clone()),
-                        at_function_entry: execution.frontier.is_at_function_entry(),
-                    });
+                execution.case_assumptions.push(ReplayCaseAssumption {
+                    tactic_index: context.tactic_index,
+                    condition: condition.clone(),
+                    value: take_then,
+                    fact: Some(fact.clone()),
+                    at_function_entry: execution.frontier.is_at_function_entry(),
+                });
                 let base_execution = Arc::new(execution.clone());
                 let mut checked = check_statement_step(
                     &mut execution,
@@ -542,16 +539,13 @@ impl<'a> Proof<'a> {
                 .replay
                 .surface_propositions
                 .record_lowering(&surface_fact, &fact)?;
-            execution
-                .replay
-                .case_assumptions
-                .push(ReplayCaseAssumption {
-                    tactic_index: context.tactic_index,
-                    condition: condition.clone(),
-                    value,
-                    fact: Some(fact.clone()),
-                    at_function_entry,
-                });
+            execution.case_assumptions.push(ReplayCaseAssumption {
+                tactic_index: context.tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(fact.clone()),
+                at_function_entry,
+            });
             Ok((
                 Goal::Frontier(FrontierGoal {
                     selection: frontier.selection,
@@ -1267,7 +1261,7 @@ impl<'a> Proof<'a> {
         // A `have` stated at an execution frontier may use the frontier's
         // effect facts exactly as the shared mid-execution law offers them.
         if at_frontier && let Some(execution) = self.execution() {
-            for fact in execution.replay.effect_facts.iter() {
+            for fact in execution.effect_facts.iter() {
                 if !body_facts.contains(fact.proposition()) {
                     body_facts = body_facts.with_fact(fact.proposition().clone());
                 }

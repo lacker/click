@@ -567,7 +567,8 @@ interpreter's `Branch` join; phase 1 (complete) deleted
 `tactic_replay.rs` round trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
 `replay_boundary.rs` (`ProofReplayContext` is deleted; the executor now
 takes `&mut ExecutionProofState`, so bag fields can move without signature
-churn; read-only lowering takes `ExecutionView`; `frontier` moved onto
+churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
+`effect_facts`, and the frontier loop clauses/rules moved onto
 `ExecutionProofState` on 2026-08-27); phase 3 retires the
 `proof_certificate_builder` reads inside finalization.
 

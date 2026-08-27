@@ -2649,7 +2649,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("execution-frontier proof lost its semantic state"));
         };
         if !allow_unrelated_context
-            && (!execution.replay.effect_facts.is_empty()
+            && (!execution.effect_facts.is_empty()
                 || !execution.state.resources().facts().is_empty()
                 || self.facts().prioritized.is_some())
         {

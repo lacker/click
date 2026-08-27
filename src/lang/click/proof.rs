@@ -1012,7 +1012,7 @@ mod certificate_tests {
         let state = CState::new().with_memory(CMemory::new().with_block("current", 4));
 
         let error = checked_surface_comparison_fact_at_point(
-            replay.view(&ExecutionFrontier::default()),
+            replay.view(&ExecutionFrontier::default(), &[]),
             &kernel,
             SurfaceFactMatch::CanonicalExact,
             &[],

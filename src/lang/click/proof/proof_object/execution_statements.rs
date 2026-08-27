@@ -320,13 +320,12 @@ impl<'a> Proof<'a> {
         let mut closer_facts = self.facts().to_vec();
         closer_facts.extend(
             execution
-                .replay
                 .effect_facts
                 .iter()
                 .map(|fact| fact.proposition().clone()),
         );
         closer_facts.extend(crate::kernel::certified_store_equations(
-            &execution.replay.effect_facts,
+            &execution.effect_facts,
         ));
         c_loop_invariants_hold_at_back_edge_using(
             &execution.state,
@@ -697,7 +696,7 @@ impl<'a> Proof<'a> {
                         state.resources().facts(),
                         context.parsed_function.parameters(),
                         context.arguments,
-                        &replay.effect_facts,
+                        &view.execution.effect_facts,
                     )
                 )));
             }
@@ -719,7 +718,7 @@ impl<'a> Proof<'a> {
                 ))
             })?;
             let transition_facts = super::super::cursor_execution::fact_transport_transition_facts(
-                &replay.effect_facts,
+                &view.execution.effect_facts,
                 &source,
             );
             plan_explicit_fact_transport(
@@ -730,7 +729,7 @@ impl<'a> Proof<'a> {
                 &transition_facts,
                 context.parsed_function.parameters(),
                 context.arguments,
-                replay.view(frontier),
+                replay.view(frontier, &view.execution.effect_facts),
                 state,
                 context.predicate_environment,
                 context.click_function_environment,

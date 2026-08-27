@@ -411,6 +411,7 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
 pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     replay: &mut TacticReplayState,
     frontier: &ExecutionFrontier,
+    effect_facts: &[ExecutionPureFact],
     transition: &CertifiedStatementTransition,
     loop_step_policy: LoopStepPolicy,
     state: &CState,
@@ -474,6 +475,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         construct_simple_step_for_planned_operation(
             replay,
             frontier,
+            effect_facts,
             state,
             function_block,
             parameters,
@@ -564,6 +566,7 @@ pub(in crate::lang::click::proof) fn theorem_implication_premises(
 pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     replay: &mut TacticReplayState,
     frontier: &ExecutionFrontier,
+    effect_facts: &[ExecutionPureFact],
     transition: &CertifiedConditionTransition,
     include_path_fact: bool,
     state: &CState,
@@ -596,6 +599,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     construct_simple_step_for_planned_operation(
         replay,
         frontier,
+        effect_facts,
         state,
         function_block,
         parameters,

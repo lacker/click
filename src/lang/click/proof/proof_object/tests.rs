@@ -6899,9 +6899,8 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         );
         assert!(
             root_execution
-                .replay
                 .effect_facts
-                .shares_storage_with(&successor_execution.replay.effect_facts),
+                .shares_storage_with(&successor_execution.effect_facts),
             "unfold does not copy unrelated effect history"
         );
 
@@ -7522,9 +7521,8 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         );
         assert!(
             root_execution
-                .replay
                 .effect_facts
-                .shares_storage_with(&successor_execution.replay.effect_facts),
+                .shares_storage_with(&successor_execution.effect_facts),
             "transport does not copy unrelated effect history"
         );
         assert_eq!(

@@ -431,13 +431,13 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     let mut paths = Vec::new();
     for leaf in completed {
         let context_replay = leaf.finalization_view()?.replay.clone();
+        let context_case_assumptions = leaf.finalization_view()?.execution.case_assumptions.clone();
         if let Some(blocker) = &context_replay.proof_certificate_builder.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
             )));
         }
-        let case_path = context_replay
-            .case_assumptions
+        let case_path = context_case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
                 condition: choice.condition.clone(),
@@ -1371,9 +1371,9 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for leaf in leaves {
         let context_replay = leaf.finalization_view()?.replay.clone();
+        let context_case_assumptions = leaf.finalization_view()?.execution.case_assumptions.clone();
         let context_frontier = leaf.finalization_view()?.frontier.clone();
-        let case_path = context_replay
-            .case_assumptions
+        let case_path = context_case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
                 condition: choice.condition.clone(),

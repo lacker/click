@@ -1068,6 +1068,14 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// Where execution stands: the program point, region, region start
     /// state, and pending continuations.
     pub(in crate::lang::click::proof) frontier: ExecutionFrontier,
+    /// Case assumptions introduced on this path by proof-level splits.
+    pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
+    /// Execution facts established by the effects run so far on this path.
+    pub(in crate::lang::click::proof) effect_facts: SharedVec<ExecutionPureFact>,
+    /// Frontier-local loop clauses and their verified rules, bound on this
+    /// path and migrated across joins as arm deltas.
+    pub(in crate::lang::click::proof) frontier_loop_clauses: PersistentSequence<StructuralClause>,
+    pub(in crate::lang::click::proof) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(in crate::lang::click::proof) replay: TacticReplayState,
     pub(in crate::lang::click::proof) branch_path: PersistentSequence<String>,
     /// Kernel facts whose checked C-branch Surface spellings must survive a
@@ -1097,7 +1105,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 impl ExecutionProofState {
     /// The read-only execution data lowering and point proofs consult.
     pub(in crate::lang::click::proof) fn view(&self) -> ExecutionView<'_> {
-        self.replay.view(&self.frontier)
+        self.replay.view(&self.frontier, &self.effect_facts)
     }
 
     /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
@@ -1120,6 +1128,10 @@ impl ExecutionProofState {
         Self {
             state: state.into(),
             frontier,
+            case_assumptions: PersistentSequence::default(),
+            effect_facts: SharedVec::default(),
+            frontier_loop_clauses: PersistentSequence::default(),
+            frontier_loop_rules: PersistentSequence::default(),
             replay,
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
@@ -1152,6 +1164,7 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) facts: Vec<Proposition>,
     pub(super) replay: &'p TacticReplayState,
     pub(super) frontier: &'p ExecutionFrontier,
+    pub(super) execution: &'p ExecutionProofState,
     pub(super) unfolded_predicates: &'p SharedVec<String>,
     pub(super) branch_path: &'p PersistentSequence<String>,
     outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],
