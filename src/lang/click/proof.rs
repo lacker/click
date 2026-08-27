@@ -30,7 +30,7 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
-use claim_proofs::{OrderedProofUnit, finish_ordered_proof_replay};
+use claim_proofs::{OrderedProofUnit, finish_ordered_proof};
 pub(super) use claim_proofs::{
     prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,
 };

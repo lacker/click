@@ -395,7 +395,7 @@ impl<'a> Proof<'a> {
                 execution
                     .surface_propositions
                     .record_lowering(&surface_fact, &fact)?;
-                execution.case_assumptions.push(ReplayCaseAssumption {
+                execution.case_assumptions.push(CaseAssumption {
                     tactic_index: context.tactic_index,
                     condition: condition.clone(),
                     value: take_then,
@@ -525,7 +525,7 @@ impl<'a> Proof<'a> {
             execution
                 .surface_propositions
                 .record_lowering(&surface_fact, &fact)?;
-            execution.case_assumptions.push(ReplayCaseAssumption {
+            execution.case_assumptions.push(CaseAssumption {
                 tactic_index: context.tactic_index,
                 condition: condition.clone(),
                 value,

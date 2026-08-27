@@ -1843,7 +1843,7 @@ fn execute_step_from_execution_point_selecting_path(
             completed_outcomes,
         );
         let execution_state = execution_start_state.clone();
-        set_replay_execution(
+        set_function_exit_execution(
             &mut execution.frontier,
             claim_label,
             tactic_index,
@@ -2239,7 +2239,7 @@ fn execute_step_from_execution_point_selecting_path(
                 vec![(outcome, completed_execution_facts, obligations)],
             );
             let execution_state = execution_start_state.clone();
-            set_replay_execution(
+            set_function_exit_execution(
                 &mut execution.frontier,
                 claim_label,
                 tactic_index,
@@ -2264,7 +2264,7 @@ fn execute_step_from_execution_point_selecting_path(
                 )],
             );
             let execution_state = execution_start_state.clone();
-            set_replay_execution(
+            set_function_exit_execution(
                 &mut execution.frontier,
                 claim_label,
                 tactic_index,
@@ -3162,7 +3162,7 @@ pub(super) fn sequence_from_statements(statements: &[CStatement]) -> Option<CSta
     Some(rest.iter().cloned().fold(first.clone(), c_seq))
 }
 
-fn set_replay_execution(
+fn set_function_exit_execution(
     frontier: &mut ExecutionFrontier,
     claim_label: &str,
     tactic_index: usize,

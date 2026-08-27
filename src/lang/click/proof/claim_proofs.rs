@@ -1032,7 +1032,7 @@ fn proof_case_fact_conflicts(
     Ok(conflicts)
 }
 
-pub(super) fn finish_ordered_proof_replay<'a>(
+pub(super) fn finish_ordered_proof<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     unit: OrderedProofUnit<'a>,
     source_path: &str,

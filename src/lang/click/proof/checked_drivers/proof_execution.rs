@@ -2870,7 +2870,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // fresh kernel variables into both proof arms. Retain the surface
         // condition so final path routing lowers it independently for each
         // concrete outcome.
-        execution.case_assumptions.push(ReplayCaseAssumption {
+        execution.case_assumptions.push(CaseAssumption {
             tactic_index,
             condition: condition.clone(),
             value,
@@ -2909,7 +2909,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             execution
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
-            execution.case_assumptions.push(ReplayCaseAssumption {
+            execution.case_assumptions.push(CaseAssumption {
                 tactic_index,
                 condition: condition.clone(),
                 value,
@@ -2967,7 +2967,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
             pure_facts.push(kernel_fact.clone());
-            execution.case_assumptions.push(ReplayCaseAssumption {
+            execution.case_assumptions.push(CaseAssumption {
                 tactic_index,
                 condition: condition.clone(),
                 value,
@@ -2978,7 +2978,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         }
     }
     if execution.frontier.is_at_function_exit() {
-        execution.case_assumptions.push(ReplayCaseAssumption {
+        execution.case_assumptions.push(CaseAssumption {
             tactic_index,
             condition: condition.clone(),
             value,
@@ -3031,7 +3031,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
     pure_facts.push(kernel_fact.clone());
-    execution.case_assumptions.push(ReplayCaseAssumption {
+    execution.case_assumptions.push(CaseAssumption {
         tactic_index,
         condition: condition.clone(),
         value,

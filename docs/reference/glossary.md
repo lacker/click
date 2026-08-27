@@ -725,12 +725,11 @@ are pure proofs.
 
 ### Replay
 
-Checking a previously produced explicit proof again. Current implementation
-names use *replay* for compatibility paths that interpret certificates through
-a parallel state representation. Replay isn't a required phase of the proof
-model: explicit and smart tactics can advance the same checked proof object
-directly, while expansion verifies its rewritten Surface Click through the
-ordinary entry point.
+Checking a previously produced explicit proof again: a certificate, or the
+rewritten Surface Click an expansion emits, verified through the ordinary
+entry point. A fact is *replay-available* when that later check can see it
+without search. Replay isn't a phase of the proof model: explicit and smart
+tactics advance the same checked proof object directly.
 
 ### Resource
 

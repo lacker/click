@@ -32,7 +32,7 @@ branches. It can be rendered back to surface tactics for expansion. The
 serialization carries no semantic authority of its own and need not exist
 during ordinary verification in the intended architecture.
 
-## Replay state inside a proof
+## Execution state inside a proof
 
 `ExecutionProofState` owns every semantic path fact: the `CState`, the
 execution frontier (program point, region, region start state, continuations),
@@ -55,15 +55,14 @@ as one `Construction` gate; a bounded execution gives each explored path its
 own sink and synthesizes them at the join. It lives only as the execution
 snapshot of a `Proof` goal: the checked drivers advance a `Proof`, and every
 source or generated proof tree is checked that way. The earlier interpreter
-that advanced this context as a parallel engine is gone; the remaining
-duplication of facts and `CState` between the snapshot and the `Proof` is
-tracked for removal in `issues/replay- smell.md`.
+that advanced this context as a parallel engine is gone; the snapshot owns the
+C store and the goal owns the facts.
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface
 spellings, execution facts, and the `old(...)` reference state. It is built from
 typed fields only (`ExecutionProofState::view`, or `ExecutionView::new` for a
-planner's scratch state); nothing in it borrows the replay bag.
+planner's scratch state); nothing in it borrows a cursor.
 
 A surviving source or expansion cursor may own syntax position, focus,
 attribution, and diagnostics. It must not own facts, resources, `CState`, an

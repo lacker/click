@@ -22,5 +22,5 @@ when evidence exposes one.
 
 - [Resource tracking across execution transitions](resource-tracking.md):
   umbrella roadmap for the scoped owned-vector repair, resource-lifetime
-  regressions, and final end-to-end unquarantine; its replay-state witness is
-  consolidated in the replay-engine issue above.
+  regressions, and final end-to-end unquarantine; its `observe`-view witness
+  reproduces on the checked engine and is tracked in the file.

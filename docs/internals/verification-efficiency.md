@@ -204,8 +204,8 @@ derivations.
 
 ## Checked execution reuse
 
-The current compatibility proof replay and opaque-contract certification may
-share function-body work only through `CCheckedFunctionExecution`, a
+Ordered finalization and opaque-contract certification may share
+function-body work only through `CCheckedFunctionExecution`, a
 kernel-created artifact. The
 artifact seals the exact entry state, annotated function, arguments,
 environment, execution semantics, loop judgment, assumptions, and complete

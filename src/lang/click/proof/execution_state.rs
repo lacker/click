@@ -142,14 +142,14 @@ pub(super) struct ExpansionCursor {
 }
 
 #[derive(Clone)]
-pub(super) struct LoopEffectReplayGoal {
+pub(super) struct LoopEffectGoal {
     pub(super) before_state: CState,
     pub(super) check: CLoopEffectCheck,
     pub(super) closed: bool,
 }
 
 #[derive(Clone)]
-pub(super) struct ReplayCaseAssumption {
+pub(super) struct CaseAssumption {
     pub(super) tactic_index: usize,
     pub(super) condition: ClickProposition,
     pub(super) value: bool,

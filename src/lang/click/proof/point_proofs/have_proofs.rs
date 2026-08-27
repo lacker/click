@@ -2005,7 +2005,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
             &format!("{}.contract", function_block.signature().name()),
             "proof context finishing",
             || {
-                finish_ordered_proof_replay(
+                finish_ordered_proof(
                     expansion_capture.as_deref_mut(),
                     unit,
                     source_path,

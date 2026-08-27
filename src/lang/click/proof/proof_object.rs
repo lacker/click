@@ -1135,7 +1135,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// them.
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
     /// Case assumptions introduced on this path by proof-level splits.
-    pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
+    pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<CaseAssumption>,
     /// Execution facts established by the effects run so far on this path.
     pub(in crate::lang::click::proof) effect_facts: SharedVec<ExecutionPureFact>,
     /// Frontier-local loop clauses and their verified rules, bound on this
@@ -1154,7 +1154,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// symbolic body outcome; whole-function kernel certification checks every
     /// concrete path before any contract claim is exported.
     pub(in crate::lang::click::proof) execution_abstraction: bool,
-    pub(in crate::lang::click::proof) loop_effect_goal: Option<LoopEffectReplayGoal>,
+    pub(in crate::lang::click::proof) loop_effect_goal: Option<LoopEffectGoal>,
     pub(in crate::lang::click::proof) next_path_choice: usize,
     /// Frontier-local loop proofs become part of the checked function proof,
     /// not temporary tactic state.  Final kernel certification rebuilds the
