@@ -390,7 +390,10 @@ impl<'a> Proof<'a> {
                 .blocker
                 .is_none()
             {
-                let tactic_offset = arm_execution.replay.proof_certificate_builder.steps.len();
+                // The split sits after the Proof's own top-level steps: surface
+                // synthesis splits sibling paths at this offset, so it is
+                // measured on the checked derivation, not a mirrored record.
+                let tactic_offset = self.certificate().steps().len();
                 arm_execution
                     .replay
                     .proof_certificate_builder
