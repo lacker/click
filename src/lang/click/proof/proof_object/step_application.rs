@@ -277,10 +277,9 @@ impl<'a> Proof<'a> {
                 fact
             } else {
                 execution
-                    .replay
                     .program_point_states
                     .keys()
-                    .filter_map(|point| execution.replay.program_point_states.get(point))
+                    .filter_map(|point| execution.program_point_states.get(point))
                     .filter_map(|point_state| {
                         lower_point_proposition_with_assumptions(
                             surface,
@@ -290,7 +289,7 @@ impl<'a> Proof<'a> {
                             pre_state,
                             point_state,
                             None,
-                            &execution.replay.program_point_states,
+                            &execution.program_point_states,
                             context.predicate_environment,
                             context.click_function_environment,
                         )
@@ -752,7 +751,7 @@ impl<'a> Proof<'a> {
                         surface,
                         context.predicate_environment,
                         context.click_function_environment,
-                        &execution_state.replay.program_point_states,
+                        &execution_state.program_point_states,
                     )
                     .map_err(|message| {
                         self.step_error(format!(
@@ -769,6 +768,7 @@ impl<'a> Proof<'a> {
             &mut construction_replay,
             &execution_state.frontier,
             &execution_state.effect_facts,
+            &execution_state.program_point_states,
             &execution_state.state,
             &available,
             context.parsed_function.parameters(),
@@ -1038,7 +1038,7 @@ impl<'a> Proof<'a> {
             kernel,
             context.parsed_function.parameters(),
             context.arguments,
-            &execution.replay.program_point_states,
+            &execution.program_point_states,
             &anchor,
         );
         candidates.into_iter().find(|surface| matches(surface))

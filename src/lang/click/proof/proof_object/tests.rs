@@ -69,6 +69,7 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
                     ..TacticReplayState::default()
                 },
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             Vec::new(),
@@ -2755,6 +2756,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -2962,6 +2964,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -6848,6 +6851,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -6971,6 +6975,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
                 state.clone(),
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7076,6 +7081,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
                 state.clone(),
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7182,6 +7188,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
                 state.clone(),
                 TacticReplayState::default(),
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7308,6 +7315,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
                     ..TacticReplayState::default()
                 },
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7477,6 +7485,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7605,6 +7614,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7707,6 +7717,7 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
                 CState::new(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7827,6 +7838,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -7911,6 +7923,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
                 CState::new(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8041,6 +8054,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
                     CState::new(),
                     replay,
                     frontier,
+                    ProgramPointStates::new(),
                     PersistentSequence::default(),
                 ),
                 (0..size).map(indexed_fact).collect(),
@@ -8199,6 +8213,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
                 CState::new(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8327,6 +8342,7 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
                 state.clone(),
                 replay,
                 ExecutionFrontier::default(),
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             pure_facts,
@@ -8409,6 +8425,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
                 CState::new(),
                 replay,
                 frontier,
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8451,7 +8468,6 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             .expect("joined proof should own its continuation");
         assert!(
             execution
-                .replay
                 .program_point_states
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Statement(0),
@@ -8555,6 +8571,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 CState::new(),
                 replay,
                 frontier,
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -8833,7 +8850,13 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         Proof::for_execution_frontier(
             "branch interface proof",
             0,
-            ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state,
+                replay,
+                frontier,
+                ProgramPointStates::new(),
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -9305,6 +9328,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
                 CState::new(),
                 replay,
                 frontier,
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -9360,7 +9384,6 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             .expect("nested join should retain execution");
         assert!(
             execution
-                .replay
                 .program_point_states
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Statement(nested_statement),
@@ -9442,6 +9465,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
                 CState::new(),
                 replay,
                 frontier,
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             facts,
@@ -9710,6 +9734,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
                 CState::new(),
                 replay,
                 frontier,
+                ProgramPointStates::new(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),

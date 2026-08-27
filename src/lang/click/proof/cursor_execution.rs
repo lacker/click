@@ -39,7 +39,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         old_reference_state(replay, &execution.frontier, state),
                         state,
                         None,
-                        &replay.program_point_states,
+                        &execution.program_point_states,
                         predicate_environment,
                         click_function_environment,
                     )
@@ -119,10 +119,10 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     // Branch abstraction discards incidental source-boundary snapshots, but
     // an explicit proof mark is a deliberate historical dependency. Preserve
     // marks that were common to every continuing arm.
-    replay
+    execution
         .program_point_states
         .retain(|point, _| matches!(point.region, CodeRegionRef::Mark(_)));
-    replay
+    execution
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
     execution.case_assumptions.clear();
@@ -224,7 +224,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         }
     }
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());
-    replay
+    execution
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
 
@@ -238,7 +238,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     &entry_state,
                     &abstract_state,
                     None,
-                    &replay.program_point_states,
+                    &execution.program_point_states,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -265,7 +265,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                 ))
             })?;
     abstract_state = abstract_state.with_resource_context(exported_resources);
-    replay
+    execution
         .program_point_states
         .insert(target.clone(), abstract_state.clone());
     *state = abstract_state;
@@ -427,7 +427,11 @@ pub(super) fn execute_branch_step_from_execution_point(
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(&execution.frontier, &execution.effect_facts),
+            replay.view(
+                &execution.frontier,
+                &execution.effect_facts,
+                &execution.program_point_states,
+            ),
             state,
             function,
             arguments,
@@ -457,14 +461,14 @@ pub(super) fn execute_branch_step_from_execution_point(
 
     let construction_point_overrides = construction.is_some().then(|| {
         construction_point_overrides(
-            &replay.program_point_states,
+            &execution.program_point_states,
             function_block,
             &[CodeRegion::Statement(statement_index)],
             ProgramPointKind::Entry,
         )
     });
     record_statement_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
@@ -582,11 +586,15 @@ pub(super) fn execute_branch_step_from_execution_point(
             })
             .unwrap_or(statement_condition);
         if let Some(environments) = construction {
-            let restore = apply_construction_point_view(replay, &construction_point_overrides);
+            let restore = apply_construction_point_view(
+                &mut execution.program_point_states,
+                &construction_point_overrides,
+            );
             construct_simple_step_for_planned_operation(
                 replay,
                 &execution.frontier,
                 &execution.effect_facts,
+                &execution.program_point_states,
                 &current_state,
                 function_block,
                 parameters,
@@ -600,7 +608,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     theorem: condition_transition.theorem.clone(),
                 },
             );
-            restore_construction_point_view(replay, restore);
+            restore_construction_point_view(&mut execution.program_point_states, restore);
             let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
             for fact in &condition_transition.path_facts {
                 certificate_facts.insert(fact.clone());
@@ -608,11 +616,15 @@ pub(super) fn execute_branch_step_from_execution_point(
         }
     }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(replay, &construction_point_overrides);
+        let restore = apply_construction_point_view(
+            &mut execution.program_point_states,
+            &construction_point_overrides,
+        );
         append_condition_transition_certificate(
             replay,
             &execution.frontier,
             &execution.effect_facts,
+            &execution.program_point_states,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
             &current_state,
@@ -622,7 +634,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             arguments,
             construction,
         );
-        restore_construction_point_view(replay, restore);
+        restore_construction_point_view(&mut execution.program_point_states, restore);
     }
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
@@ -658,7 +670,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     .to_vec()
                 {
                     record_statement_program_point_state(
-                        replay,
+                        &mut execution.program_point_states,
                         function_block,
                         exited,
                         ProgramPointKind::Exit,
@@ -711,7 +723,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             execution.frontier.region = ExecutionRegionKind::BranchArm;
             if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_point_state(
-                    replay,
+                    &mut execution.program_point_states,
                     function_block,
                     statement_index,
                     ProgramPointKind::Exit,
@@ -727,7 +739,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     }
     record_current_statement_entry(
         &execution.frontier,
-        replay,
+        &mut execution.program_point_states,
         state,
         function_block,
         function,
@@ -772,7 +784,7 @@ fn execute_concrete_loop_head_step(
 
     let construction_point_overrides = construction.is_some().then(|| {
         construction_point_overrides(
-            &replay.program_point_states,
+            &execution.program_point_states,
             function_block,
             &[
                 CodeRegion::Statement(statement_index),
@@ -782,14 +794,14 @@ fn execute_concrete_loop_head_step(
         )
     });
     record_statement_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
     record_loop_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         loop_index,
         ProgramPointKind::Entry,
@@ -827,11 +839,15 @@ fn execute_concrete_loop_head_step(
         .next()
         .expect("one condition transition was required");
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(replay, &construction_point_overrides);
+        let restore = apply_construction_point_view(
+            &mut execution.program_point_states,
+            &construction_point_overrides,
+        );
         append_condition_transition_certificate(
             replay,
             &execution.frontier,
             &execution.effect_facts,
+            &execution.program_point_states,
             &condition_transition,
             true,
             &current_state,
@@ -841,7 +857,7 @@ fn execute_concrete_loop_head_step(
             arguments,
             construction,
         );
-        restore_construction_point_view(replay, restore);
+        restore_construction_point_view(&mut execution.program_point_states, restore);
     }
     *available_pure_facts = condition_transition.pure_facts;
     execution.frontier.execution_start_state = Some(execution_start_state);
@@ -872,7 +888,7 @@ fn execute_concrete_loop_head_step(
             remaining: (*body).into(),
         };
         record_statement_program_point_state(
-            replay,
+            &mut execution.program_point_states,
             function_block,
             execution.frontier.next_statement_index,
             ProgramPointKind::Entry,
@@ -882,14 +898,14 @@ fn execute_concrete_loop_head_step(
     }
 
     record_statement_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         statement_index,
         ProgramPointKind::Exit,
         current_state.clone(),
     );
     record_loop_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         loop_index,
         ProgramPointKind::Exit,
@@ -903,7 +919,7 @@ fn execute_concrete_loop_head_step(
         .to_vec()
     {
         record_statement_program_point_state(
-            replay,
+            &mut execution.program_point_states,
             function_block,
             exited,
             ProgramPointKind::Exit,
@@ -928,7 +944,7 @@ fn execute_concrete_loop_head_step(
         remaining: remaining.into(),
     };
     record_statement_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         execution.frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -997,14 +1013,14 @@ pub(super) fn next_top_level_statement_from_execution_point(
 }
 
 pub(super) fn record_loop_program_point_state(
-    replay: &mut TacticReplayState,
+    program_point_states: &mut ProgramPointStates,
     function_block: &FunctionBlock,
     loop_index: usize,
     kind: ProgramPointKind,
     state: CState,
 ) {
     record_code_region_program_point_state(
-        &mut replay.program_point_states,
+        program_point_states,
         function_block,
         CodeRegion::Loop(loop_index),
         kind,
@@ -1054,23 +1070,18 @@ fn construction_point_overrides(
 }
 
 fn apply_construction_point_view(
-    replay: &mut TacticReplayState,
+    program_point_states: &mut ProgramPointStates,
     overrides: &[(ProgramPointRef, Option<CState>)],
 ) -> Vec<(ProgramPointRef, Option<CState>)> {
     let mut restore = Vec::with_capacity(overrides.len());
     for (point, prior) in overrides {
-        restore.push((
-            point.clone(),
-            replay.program_point_states.get(point).cloned(),
-        ));
+        restore.push((point.clone(), program_point_states.get(point).cloned()));
         match prior {
             Some(state) => {
-                replay
-                    .program_point_states
-                    .insert(point.clone(), state.clone());
+                program_point_states.insert(point.clone(), state.clone());
             }
             None => {
-                replay.program_point_states.remove(point);
+                program_point_states.remove(point);
             }
         }
     }
@@ -1078,30 +1089,30 @@ fn apply_construction_point_view(
 }
 
 fn restore_construction_point_view(
-    replay: &mut TacticReplayState,
+    program_point_states: &mut ProgramPointStates,
     restore: Vec<(ProgramPointRef, Option<CState>)>,
 ) {
     for (point, value) in restore {
         match value {
             Some(state) => {
-                replay.program_point_states.insert(point, state);
+                program_point_states.insert(point, state);
             }
             None => {
-                replay.program_point_states.remove(&point);
+                program_point_states.remove(&point);
             }
         }
     }
 }
 
 pub(super) fn record_statement_program_point_state(
-    replay: &mut TacticReplayState,
+    program_point_states: &mut ProgramPointStates,
     function_block: &FunctionBlock,
     statement_index: usize,
     kind: ProgramPointKind,
     state: CState,
 ) {
     record_code_region_program_point_state(
-        &mut replay.program_point_states,
+        program_point_states,
         function_block,
         CodeRegion::Statement(statement_index),
         kind,
@@ -1487,7 +1498,11 @@ pub(super) fn execute_step_successors_from_execution_point(
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        replay.view(&execution.frontier, &execution.effect_facts),
+        replay.view(
+            &execution.frontier,
+            &execution.effect_facts,
+            &execution.program_point_states,
+        ),
         state,
         function,
         arguments,
@@ -1643,7 +1658,11 @@ fn execute_step_from_execution_point_selecting_path(
     };
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(&execution.frontier, &execution.effect_facts),
+            replay.view(
+                &execution.frontier,
+                &execution.effect_facts,
+                &execution.program_point_states,
+            ),
             state,
             function,
             arguments,
@@ -1694,14 +1713,14 @@ fn execute_step_from_execution_point_selecting_path(
     }
     let construction_point_overrides = construction.is_some().then(|| {
         construction_point_overrides(
-            &replay.program_point_states,
+            &execution.program_point_states,
             function_block,
             &construction_regions,
             ProgramPointKind::Entry,
         )
     });
     record_statement_program_point_state(
-        replay,
+        &mut execution.program_point_states,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
@@ -1709,7 +1728,7 @@ fn execute_step_from_execution_point_selecting_path(
     );
     if let Some(loop_index) = loop_index {
         record_loop_program_point_state(
-            replay,
+            &mut execution.program_point_states,
             function_block,
             loop_index,
             ProgramPointKind::Entry,
@@ -1784,11 +1803,15 @@ fn execute_step_from_execution_point_selecting_path(
                     }
                 }
             }
-            let restore = apply_construction_point_view(replay, &construction_point_overrides);
+            let restore = apply_construction_point_view(
+                &mut execution.program_point_states,
+                &construction_point_overrides,
+            );
             construct_simple_step_for_planned_operation(
                 replay,
                 &execution.frontier,
                 &execution.effect_facts,
+                &execution.program_point_states,
                 &current_state,
                 function_block,
                 parameters,
@@ -1800,7 +1823,7 @@ fn execute_step_from_execution_point_selecting_path(
                     planned_transition: None,
                 },
             );
-            restore_construction_point_view(replay, restore);
+            restore_construction_point_view(&mut execution.program_point_states, restore);
         }
 
         let mut common_pure_facts = transitions[0].pure_facts.clone();
@@ -2017,11 +2040,15 @@ fn execute_step_from_execution_point_selecting_path(
     }
     let mut deferred_transport_operations = Vec::new();
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(replay, &construction_point_overrides);
+        let restore = apply_construction_point_view(
+            &mut execution.program_point_states,
+            &construction_point_overrides,
+        );
         deferred_transport_operations = append_statement_transition_certificate(
             replay,
             &execution.frontier,
             &execution.effect_facts,
+            &execution.program_point_states,
             &transition,
             if loop_index.is_some() {
                 loop_step_policy
@@ -2034,7 +2061,7 @@ fn execute_step_from_execution_point_selecting_path(
             arguments,
             construction,
         );
-        restore_construction_point_view(replay, restore);
+        restore_construction_point_view(&mut execution.program_point_states, restore);
     }
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
@@ -2124,7 +2151,7 @@ fn execute_step_from_execution_point_selecting_path(
         CStatementOutcome::VerificationDiverges => None,
     } {
         record_statement_program_point_state(
-            replay,
+            &mut execution.program_point_states,
             function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -2132,7 +2159,7 @@ fn execute_step_from_execution_point_selecting_path(
         );
         if let Some(loop_index) = loop_index {
             record_loop_program_point_state(
-                replay,
+                &mut execution.program_point_states,
                 function_block,
                 loop_index,
                 ProgramPointKind::Exit,
@@ -2158,7 +2185,7 @@ fn execute_step_from_execution_point_selecting_path(
                 .to_vec()
             {
                 record_statement_program_point_state(
-                    replay,
+                    &mut execution.program_point_states,
                     function_block,
                     exited,
                     ProgramPointKind::Exit,
@@ -2180,7 +2207,7 @@ fn execute_step_from_execution_point_selecting_path(
                         remaining: remaining.into(),
                     };
                     record_statement_program_point_state(
-                        replay,
+                        &mut execution.program_point_states,
                         function_block,
                         execution.frontier.next_statement_index,
                         ProgramPointKind::Entry,
@@ -2192,7 +2219,7 @@ fn execute_step_from_execution_point_selecting_path(
                     // its statically known continuation, exactly as the arm
                     // recorded it when continuations were popped at runtime.
                     record_statement_program_point_state(
-                        replay,
+                        &mut execution.program_point_states,
                         function_block,
                         source_region.continuation_node,
                         ProgramPointKind::Entry,
@@ -2304,6 +2331,7 @@ fn execute_step_from_execution_point_selecting_path(
                     replay,
                     &execution.frontier,
                     &execution.effect_facts,
+                    &execution.program_point_states,
                     state,
                     function_block,
                     parameters,
@@ -2379,7 +2407,7 @@ fn record_completed_continuation_exits(frontier: &mut ExecutionFrontier) {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_current_statement_entry(
     frontier: &ExecutionFrontier,
-    replay: &mut TacticReplayState,
+    program_point_states: &mut ProgramPointStates,
     state: &CState,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -2401,7 +2429,7 @@ pub(super) fn record_current_statement_entry(
         }
     };
     record_statement_program_point_state(
-        replay,
+        program_point_states,
         function_block,
         frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -2949,11 +2977,12 @@ pub(super) fn merge_bounded_execution_frontiers(
             .skip(1)
             .all(|frontier| frontier.pure_facts.contains(fact))
     });
-    let mut common_program_points = completed[0].execution.replay.program_point_states.clone();
+    let mut common_program_points = completed[0].execution.program_point_states.clone();
     common_program_points.retain(|point, point_state| {
-        completed.iter().skip(1).all(|frontier| {
-            frontier.execution.replay.program_point_states.get(point) == Some(point_state)
-        })
+        completed
+            .iter()
+            .skip(1)
+            .all(|frontier| frontier.execution.program_point_states.get(point) == Some(point_state))
     });
 
     let mut paths = Vec::new();
@@ -2982,7 +3011,7 @@ pub(super) fn merge_bounded_execution_frontiers(
     );
 
     let mut merged = completed.remove(0);
-    merged.execution.replay.program_point_states = common_program_points;
+    merged.execution.program_point_states = common_program_points;
     merged.execution.frontier.point = ProofExecutionPoint::FunctionExit {
         execution: function_execution,
     };

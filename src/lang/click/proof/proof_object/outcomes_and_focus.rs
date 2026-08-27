@@ -449,14 +449,7 @@ pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option
         .proof_certificate_builder
         .last_step_entry
         .clone()
-        .or_else(|| {
-            execution
-                .replay
-                .program_point_states
-                .keys()
-                .next_back()
-                .cloned()
-        })?;
+        .or_else(|| execution.program_point_states.keys().next_back().cloned())?;
     if anchor.kind != ProgramPointKind::Exit {
         return Some(anchor);
     }
@@ -466,7 +459,6 @@ pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option
     };
     Some(
         execution
-            .replay
             .program_point_states
             .contains_key(&entry)
             .then_some(entry)

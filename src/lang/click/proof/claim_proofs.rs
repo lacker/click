@@ -320,7 +320,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
             ClickError::new(format!("`{claim_label}` could not bind function arguments"))
         })?;
     let proof_claims = [*claim];
-    let mut replay = TacticReplayState {
+    let replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, &proof_claims, false),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         execution_start_facts: Arc::new(pure_facts.clone()),
@@ -329,9 +329,10 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         ..TacticReplayState::default()
     };
     let frontier = ExecutionFrontier::default();
+    let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
         &frontier,
-        &mut replay,
+        &mut program_point_states,
         &state,
         function_block,
         &function,
@@ -340,8 +341,13 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         0,
         "proof entry",
     )?;
-    let initial =
-        ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default());
+    let initial = ExecutionProofState::at_entry(
+        state,
+        replay,
+        frontier,
+        program_point_states,
+        PersistentSequence::default(),
+    );
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, the flat driver owns linear proofs. A driver
     // declines (`None`) or errors; either hands the claim to the
@@ -486,7 +492,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         c_function_entry_state(&state, &function, &arguments).ok_or_else(|| {
             ClickError::new(format!("`{proof_label}` could not bind function arguments"))
         })?;
-    let mut replay = TacticReplayState {
+    let replay = TacticReplayState {
         proof_site: proof_site_for_claims(function_block, claims, true),
         source_layout: SourceExecutionLayout::new(parsed_function.body()),
         grouped_contract: true,
@@ -496,9 +502,10 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         ..TacticReplayState::default()
     };
     let frontier = ExecutionFrontier::default();
+    let mut program_point_states = ProgramPointStates::new();
     record_current_statement_entry(
         &frontier,
-        &mut replay,
+        &mut program_point_states,
         &state,
         function_block,
         &function,
@@ -507,8 +514,13 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         0,
         "proof entry",
     )?;
-    let initial =
-        ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default());
+    let initial = ExecutionProofState::at_entry(
+        state,
+        replay,
+        frontier,
+        program_point_states,
+        PersistentSequence::default(),
+    );
     // Same order as the single-claim route: structural, then flat, then the
     // compatibility interpreter.
     let structural = match try_check_structural_function_proof(
@@ -1177,7 +1189,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             pre_state,
                             pre_state,
                             None,
-                            &replay.program_point_states,
+                            &proof_execution.program_point_states,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1392,7 +1404,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 &case.condition,
                                 predicate_environment,
                                 click_function_environment,
-                                &replay.program_point_states,
+                                &proof_execution.program_point_states,
                             ) else {
                                 return false;
                             };
@@ -1495,7 +1507,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &replay.program_point_states,
+                            &proof_execution.program_point_states,
                         ) else {
                             return Ok(false);
                         };
@@ -1696,7 +1708,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &replay.program_point_states,
+                            &proof_execution.program_point_states,
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
@@ -1782,7 +1794,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -2444,7 +2456,11 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        replay.view(frontier, &proof_execution.effect_facts),
+                                        replay.view(
+                                            frontier,
+                                            &proof_execution.effect_facts,
+                                            &proof_execution.program_point_states,
+                                        ),
                                         &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,
@@ -2613,7 +2629,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2680,7 +2696,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &replay.program_point_states,
+                                            &proof_execution.program_point_states,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2751,7 +2767,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2798,7 +2814,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &replay.program_point_states,
+                                            &proof_execution.program_point_states,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2870,7 +2886,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2904,7 +2920,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &replay.program_point_states,
+                                            &proof_execution.program_point_states,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2970,7 +2986,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                     &outcome,
                                     predicate_environment,
                                     click_function_environment,
-                                    &replay.program_point_states,
+                                    &proof_execution.program_point_states,
                                     &unfolded_predicates,
                                 ) {
                                     frame_certified_claim_goals[claim_index] = Some(goal.clone());
@@ -3162,7 +3178,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                         premise,
                                                         predicate_environment,
                                                         click_function_environment,
-                                                        &replay.program_point_states,
+                                                        &proof_execution.program_point_states,
                                                     )
                                                     .or_else(|_| {
                                                         lower_outcome_proposition_with_memory_resolution(
@@ -3175,7 +3191,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                             premise,
                                                             predicate_environment,
                                                             click_function_environment,
-                                                            &replay.program_point_states,
+                                                            &proof_execution.program_point_states,
                                                         )
                                                     })
                                                 })
@@ -3626,7 +3642,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                     .proof_certificate_builder
                                                     .last_step_entry
                                                     .as_ref(),
-                                                &replay.program_point_states,
+                                                &proof_execution.program_point_states,
                                                 &outcome_surface_propositions,
                                                 predicate_environment,
                                                 click_function_environment,
@@ -3752,7 +3768,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                     &outcome,
                                                     predicate_environment,
                                                     click_function_environment,
-                                                    &replay.program_point_states,
+                                                    &proof_execution.program_point_states,
                                                     &unfolded_predicates,
                                                 ) {
                                                     return Err(error);
@@ -3926,7 +3942,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         &unfolded_predicates,
                                     ) {
                                         return Err(error);
@@ -4039,7 +4055,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 &outcome,
                                 predicate_environment,
                                 click_function_environment,
-                                &replay.program_point_states,
+                                &proof_execution.program_point_states,
                                 &unfolded_predicates,
                             );
                             match result {
@@ -4189,7 +4205,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &replay.program_point_states,
+                                        &proof_execution.program_point_states,
                                         &unfolded_predicates,
                                     )
                                     .is_ok()

@@ -153,7 +153,7 @@ impl<'a> Proof<'a> {
             };
             let mut arm_execution = execution.clone();
             record_statement_program_point_state(
-                &mut arm_execution.replay,
+                &mut arm_execution.program_point_states,
                 context.function_block,
                 statement_index,
                 ProgramPointKind::Entry,
@@ -183,7 +183,7 @@ impl<'a> Proof<'a> {
             arm_execution.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_point_state(
-                    &mut arm_execution.replay,
+                    &mut arm_execution.program_point_states,
                     context.function_block,
                     statement_index,
                     ProgramPointKind::Exit,
@@ -197,7 +197,7 @@ impl<'a> Proof<'a> {
             }
             record_current_statement_entry(
                 &arm_execution.frontier,
-                &mut arm_execution.replay,
+                &mut arm_execution.program_point_states,
                 &arm_execution.state,
                 context.function_block,
                 context.function,
@@ -220,7 +220,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 &arm_execution.state,
                 None,
-                &arm_execution.replay.program_point_states,
+                &arm_execution.program_point_states,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -611,11 +611,10 @@ impl<'a> Proof<'a> {
         }
         let common_program_points = arms[0]
             .execution
-            .replay
             .program_point_states
             .common_descendant(
-                &arms[1].execution.replay.program_point_states,
-                &parent_execution.replay.program_point_states,
+                &arms[1].execution.program_point_states,
+                &parent_execution.program_point_states,
             )
             .ok_or_else(|| {
                 self.step_error(
@@ -736,12 +735,11 @@ impl<'a> Proof<'a> {
             [&then_abstract, &else_abstract],
         )?;
         execution.state = abstract_state.clone().into();
-        execution.replay.program_point_states = common_program_points;
+        execution.program_point_states = common_program_points;
         execution
-            .replay
             .program_point_states
             .insert(target, abstract_state.clone());
-        execution.replay.program_point_states.insert(
+        execution.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -817,7 +815,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         record_statement_program_point_state(
-            &mut execution.replay,
+            &mut execution.program_point_states,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -825,7 +823,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.frontier,
-            &mut execution.replay,
+            &mut execution.program_point_states,
             &execution.state,
             context.function_block,
             context.function,
@@ -1066,11 +1064,12 @@ impl<'a> Proof<'a> {
         };
         let then_replay = &arms[0].execution.replay;
         let else_replay = &arms[1].execution.replay;
-        let common_program_points = then_replay
+        let common_program_points = arms[0]
+            .execution
             .program_point_states
             .common_descendant(
-                &else_replay.program_point_states,
-                &parent_execution.replay.program_point_states,
+                &arms[1].execution.program_point_states,
+                &parent_execution.program_point_states,
             )
             .ok_or_else(|| {
                 self.step_error(
@@ -1143,7 +1142,7 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.state = execution_start_state.clone().into();
-        execution.replay.program_point_states = common_program_points;
+        execution.program_point_states = common_program_points;
         execution.frontier.continuations.clear();
         execution.frontier.execution_start_state = Some(execution_start_state);
         execution.frontier.point = ProofExecutionPoint::FunctionExit {
@@ -1382,7 +1381,7 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.state = (**then_state).clone().into();
-        execution.replay.program_point_states.insert(
+        execution.program_point_states.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -1469,7 +1468,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         record_statement_program_point_state(
-            &mut execution.replay,
+            &mut execution.program_point_states,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -1477,7 +1476,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.frontier,
-            &mut execution.replay,
+            &mut execution.program_point_states,
             &execution.state,
             context.function_block,
             context.function,

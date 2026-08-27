@@ -642,7 +642,6 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     )?;
     let mut planning_replay = TacticReplayState {
         surface_propositions: surface_propositions.clone(),
-        program_point_states: program_point_states.clone(),
         ..TacticReplayState::default()
     };
     planning_replay
@@ -718,7 +717,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        planning_replay.view(&ExecutionFrontier::default(), &[]),
+        planning_replay.view(&ExecutionFrontier::default(), &[], program_point_states),
         state,
         available,
         parameters,

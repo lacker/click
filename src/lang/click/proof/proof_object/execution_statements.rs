@@ -238,11 +238,10 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Mark(name.to_string()),
             kind: ProgramPointKind::Entry,
         };
-        if execution.replay.program_point_states.contains_key(&point) {
+        if execution.program_point_states.contains_key(&point) {
             return Err(self.step_error(format!("duplicate proof mark `{name}`")));
         }
         execution
-            .replay
             .program_point_states
             .insert(point, (*execution.state).clone());
         execution.last_step_delta = ExecutionProofStepDelta::default();
@@ -370,7 +369,7 @@ impl<'a> Proof<'a> {
         // form lowers, exactly as the replayed `if` did.
         record_current_statement_entry(
             &base_execution.frontier,
-            &mut base_execution.replay,
+            &mut base_execution.program_point_states,
             &base_execution.state,
             context.function_block,
             context.function,
@@ -678,7 +677,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &replay.program_point_states,
+                &view.execution.program_point_states,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -708,7 +707,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &replay.program_point_states,
+                &view.execution.program_point_states,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -729,7 +728,11 @@ impl<'a> Proof<'a> {
                 &transition_facts,
                 context.parsed_function.parameters(),
                 context.arguments,
-                replay.view(frontier, &view.execution.effect_facts),
+                replay.view(
+                    frontier,
+                    &view.execution.effect_facts,
+                    &view.execution.program_point_states,
+                ),
                 state,
                 context.predicate_environment,
                 context.click_function_environment,

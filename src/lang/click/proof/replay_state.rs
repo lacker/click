@@ -136,7 +136,6 @@ pub(super) struct TacticReplayState {
     pub(super) proof_site: Option<ProofSite>,
     pub(super) loop_effect_goal: Option<LoopEffectReplayGoal>,
     pub(super) source_layout: SourceExecutionLayout,
-    pub(super) program_point_states: ProgramPointStates,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
     pub(super) region_simp: Option<(usize, usize)>,
     pub(super) region_invariants_closed: bool,
@@ -2002,10 +2001,11 @@ impl TacticReplayState {
         &'a self,
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a [ExecutionPureFact],
+        program_point_states: &'a ProgramPointStates,
     ) -> ExecutionView<'a> {
         ExecutionView {
             frontier,
-            program_point_states: &self.program_point_states,
+            program_point_states,
             surface_propositions: &self.surface_propositions,
             effect_facts,
             function_entry_state: self.function_entry_state.as_ref(),

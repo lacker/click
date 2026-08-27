@@ -777,6 +777,7 @@ pub(super) struct ProofCertificateConstructionContext<'a> {
     replay: &'a mut TacticReplayState,
     frontier: &'a ExecutionFrontier,
     effect_facts: &'a [ExecutionPureFact],
+    program_point_states: &'a ProgramPointStates,
     pub(super) proof_certificate_builder: &'a mut ProofCertificateBuilder,
     /// The predicates unfolded on the execution path being planned for.
     pub(super) unfolded_predicates: &'a [String],
@@ -787,6 +788,7 @@ impl<'a> ProofCertificateConstructionContext<'a> {
         replay: &'a mut TacticReplayState,
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a [ExecutionPureFact],
+        program_point_states: &'a ProgramPointStates,
         proof_certificate_builder: &'a mut ProofCertificateBuilder,
         unfolded_predicates: &'a [String],
     ) -> Self {
@@ -794,6 +796,7 @@ impl<'a> ProofCertificateConstructionContext<'a> {
             replay,
             frontier,
             effect_facts,
+            program_point_states,
             proof_certificate_builder,
             unfolded_predicates,
         }
@@ -825,6 +828,7 @@ pub(super) fn lower_certified_frame_path_tactics(
     replay: &mut TacticReplayState,
     frontier: &ExecutionFrontier,
     effect_facts: &[ExecutionPureFact],
+    program_point_states: &ProgramPointStates,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -858,7 +862,7 @@ pub(super) fn lower_certified_frame_path_tactics(
             {
                 check_verification_deadline()?;
                 if let Ok(surface) = checked_surface_frame_premise_at_point(
-                    replay.view(frontier, effect_facts),
+                    replay.view(frontier, effect_facts, program_point_states),
                     &fact,
                     &path_available,
                     parameters,
@@ -914,8 +918,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                     ));
                 }
                 candidate_points.extend(
-                    replay
-                        .program_point_states
+                    program_point_states
                         .iter()
                         .rev()
                         .map(|(point, state)| (point.clone(), state.clone())),
@@ -930,7 +933,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                     })
                     .map(|(point, _)| point);
                 let (conclusion, proof) = lower_surface_atomic_derivation(
-                    replay.view(frontier, effect_facts),
+                    replay.view(frontier, effect_facts, program_point_states),
                     derivation,
                     None,
                     anchor_point.as_ref(),
@@ -971,6 +974,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
     replay: &mut TacticReplayState,
     frontier: &ExecutionFrontier,
     effect_facts: &[ExecutionPureFact],
+    program_point_states: &ProgramPointStates,
     state: &CState,
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
@@ -989,6 +993,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
             replay,
             frontier,
             effect_facts,
+            program_point_states,
             &mut builder,
             &[],
         );
@@ -1137,7 +1142,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     let Ok(lowered) = lower_surface_candidate_at_point(
-                        replay.view(replay.frontier, replay.effect_facts),
+                        replay.view(
+                            replay.frontier,
+                            replay.effect_facts,
+                            replay.program_point_states,
+                        ),
                         &surface,
                         &evidence.transition.pure_facts,
                         parameters,
@@ -1460,7 +1469,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
                     let surface = checked_surface_fact_at_point(
-                        replay.view(replay.frontier, replay.effect_facts),
+                        replay.view(
+                            replay.frontier,
+                            replay.effect_facts,
+                            replay.program_point_states,
+                        ),
                         fact,
                         &selectable_available,
                         parameters,
@@ -1471,7 +1484,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                     )
                     .or_else(|_| {
                         checked_surface_comparison_fact_at_point(
-                            replay.view(replay.frontier, replay.effect_facts),
+                            replay.view(
+                                replay.frontier,
+                                replay.effect_facts,
+                                replay.program_point_states,
+                            ),
                             fact,
                             SurfaceFactMatch::ReplayEquivalent,
                             &selectable_available,
@@ -1496,7 +1513,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                         };
                         let indexed = surface_with_source_site(&surface, &entry_point)?;
                         let lowered = lower_surface_candidate_at_point(
-                            replay.view(replay.frontier, replay.effect_facts),
+                            replay.view(
+                                replay.frontier,
+                                replay.effect_facts,
+                                replay.program_point_states,
+                            ),
                             &indexed,
                             &selectable_available,
                             parameters,
@@ -1710,7 +1731,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     match surface_smart_have_certificate(
-                        replay.view(replay.frontier, replay.effect_facts),
+                        replay.view(
+                            replay.frontier,
+                            replay.effect_facts,
+                            replay.program_point_states,
+                        ),
                         state,
                         &surface_available,
                         parameters,
@@ -1792,7 +1817,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                             return;
                         }
                         match surface_smart_have_certificate(
-                            replay.view(replay.frontier, replay.effect_facts),
+                            replay.view(
+                                replay.frontier,
+                                replay.effect_facts,
+                                replay.program_point_states,
+                            ),
                             state,
                             &surface_available,
                             parameters,
@@ -1818,7 +1847,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                     continue;
                 }
                 if let Ok((conclusion, proof)) = lower_surface_atomic_derivation(
-                    replay.view(replay.frontier, replay.effect_facts),
+                    replay.view(
+                        replay.frontier,
+                        replay.effect_facts,
+                        replay.program_point_states,
+                    ),
                     derivation,
                     None,
                     None,
@@ -1905,17 +1938,22 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 Ok::<_, ClickError>(premises)
             };
-            let premises =
-                contextual_step(replay.view(replay.frontier, replay.effect_facts), &needed).map(
-                    |mut premises| {
-                        for (_, surface) in &loop_summary_premises {
-                            if !premises.contains(surface) {
-                                premises.push(surface.clone());
-                            }
-                        }
-                        premises
-                    },
-                );
+            let premises = contextual_step(
+                replay.view(
+                    replay.frontier,
+                    replay.effect_facts,
+                    replay.program_point_states,
+                ),
+                &needed,
+            )
+            .map(|mut premises| {
+                for (_, surface) in &loop_summary_premises {
+                    if !premises.contains(surface) {
+                        premises.push(surface.clone());
+                    }
+                }
+                premises
+            });
             replay.proof_certificate_builder.block(match premises {
                 Ok(_) => "a detached loop-summary certificate has no surface form; use a frontier-local `loop { ... }` tactic".to_string(),
                 Err(error) => format!(
@@ -2023,7 +2061,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
-                        replay.view(replay.frontier, replay.effect_facts),
+                        replay.view(
+                            replay.frontier,
+                            replay.effect_facts,
+                            replay.program_point_states,
+                        ),
                         candidate,
                         available,
                         parameters,
@@ -2084,7 +2126,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .ok()
                             .and_then(|candidate| {
                                 lower_surface_candidate_at_point(
-                                    replay.view(replay.frontier, replay.effect_facts),
+                                    replay.view(
+                                        replay.frontier,
+                                        replay.effect_facts,
+                                        replay.program_point_states,
+                                    ),
                                     &candidate,
                                     available,
                                     parameters,
@@ -2146,7 +2192,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &transition_facts,
                         parameters,
                         arguments,
-                        replay.view(replay.frontier, replay.effect_facts),
+                        replay.view(replay.frontier, replay.effect_facts, replay.program_point_states),
                         state,
                         predicate_environment,
                         click_function_environment,
@@ -2239,7 +2285,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                 negate_click_proposition(&condition)
             };
             let lowered = lower_surface_candidate_at_point(
-                replay.view(replay.frontier, replay.effect_facts),
+                replay.view(
+                    replay.frontier,
+                    replay.effect_facts,
+                    replay.program_point_states,
+                ),
                 &surface_fact,
                 available,
                 parameters,

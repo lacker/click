@@ -200,7 +200,7 @@ impl<'a> Proof<'a> {
                             pre_state,
                             &execution.state,
                             None,
-                            &execution.replay.program_point_states,
+                            &execution.program_point_states,
                             context.predicate_environment,
                             context.click_function_environment,
                         )

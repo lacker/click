@@ -49,7 +49,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     // step crosses must still lower.
     record_current_statement_entry(
         &execution.frontier,
-        replay,
+        &mut execution.program_point_states,
         state,
         function_block,
         function,
@@ -72,7 +72,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
                 &pre_state,
                 state,
                 None,
-                &replay.program_point_states,
+                &execution.program_point_states,
                 predicate_environment,
                 click_function_environment,
             )

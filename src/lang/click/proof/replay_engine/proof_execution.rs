@@ -2905,7 +2905,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             execution.old_reference_state(&execution.state),
             &execution.state,
             None,
-            &execution.replay.program_point_states,
+            &execution.program_point_states,
             predicate_environment,
             click_function_environment,
         ) {
@@ -2965,7 +2965,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         execution.old_reference_state(&execution.state),
         &execution.state,
         None,
-        &execution.replay.program_point_states,
+        &execution.program_point_states,
         predicate_environment,
         click_function_environment,
     )

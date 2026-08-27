@@ -342,7 +342,8 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
     };
-    let mut replay = TacticReplayState {
+    let mut program_point_states = ProgramPointStates::new();
+    let replay = TacticReplayState {
         proof_site: environment
             .frontier_loop_source
             .and_then(|source| source.proof_site.clone()),
@@ -353,14 +354,14 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ..TacticReplayState::default()
     };
     record_statement_program_point_state(
-        &mut replay,
+        &mut program_point_states,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
     record_loop_program_point_state(
-        &mut replay,
+        &mut program_point_states,
         environment.function_block,
         loop_index,
         ProgramPointKind::Entry,
@@ -373,6 +374,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             preservation.state().clone(),
             replay,
             frontier,
+            program_point_states,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
@@ -1244,6 +1246,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
     };
+    let mut program_point_states = ProgramPointStates::new();
     let mut replay = TacticReplayState {
         proof_site: Some(preserve_site),
 
@@ -1253,13 +1256,13 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ..TacticReplayState::default()
     };
     record_statement_program_point_state(
-        &mut replay,
+        &mut program_point_states,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    replay.program_point_states.insert(
+    program_point_states.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Entry,
@@ -1294,7 +1297,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 environment.initial_state,
                 preservation.state(),
                 None,
-                &replay.program_point_states,
+                &program_point_states,
                 environment.predicate_environment,
                 environment.click_function_environment,
             ) {
@@ -1327,6 +1330,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             preservation.state().clone(),
             replay,
             frontier,
+            program_point_states,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),

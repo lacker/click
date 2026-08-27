@@ -952,7 +952,7 @@ impl<'a> ProofScope<'a> {
                     context.arguments,
                     &pre_state,
                     &execution.state,
-                    &execution.replay.program_point_states,
+                    &execution.program_point_states,
                     context.predicate_environment,
                     context.click_function_environment,
                     assumptions,

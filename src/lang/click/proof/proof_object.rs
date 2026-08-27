@@ -1068,6 +1068,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// Where execution stands: the program point, region, region start
     /// state, and pending continuations.
     pub(in crate::lang::click::proof) frontier: ExecutionFrontier,
+    /// The states recorded at program points this path has passed, which
+    /// `at(point, ...)` premises resolve against.
+    pub(in crate::lang::click::proof) program_point_states: ProgramPointStates,
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<ReplayCaseAssumption>,
     /// Execution facts established by the effects run so far on this path.
@@ -1105,7 +1108,11 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 impl ExecutionProofState {
     /// The read-only execution data lowering and point proofs consult.
     pub(in crate::lang::click::proof) fn view(&self) -> ExecutionView<'_> {
-        self.replay.view(&self.frontier, &self.effect_facts)
+        self.replay.view(
+            &self.frontier,
+            &self.effect_facts,
+            &self.program_point_states,
+        )
     }
 
     /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
@@ -1123,11 +1130,13 @@ impl ExecutionProofState {
         state: CState,
         replay: TacticReplayState,
         frontier: ExecutionFrontier,
+        program_point_states: ProgramPointStates,
         branch_path: PersistentSequence<String>,
     ) -> Self {
         Self {
             state: state.into(),
             frontier,
+            program_point_states,
             case_assumptions: PersistentSequence::default(),
             effect_facts: SharedVec::default(),
             frontier_loop_clauses: PersistentSequence::default(),
