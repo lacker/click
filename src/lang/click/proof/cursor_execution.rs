@@ -427,7 +427,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay,
+            replay.view(),
             state,
             function,
             arguments,
@@ -932,7 +932,7 @@ fn execute_concrete_loop_head_step(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn next_top_level_statement_from_execution_point(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     function: &CFunction,
     arguments: &[CExpression],
@@ -940,7 +940,7 @@ pub(super) fn next_top_level_statement_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
 ) -> Result<NextTopLevelStatement, ClickError> {
-    match &replay.frontier.point {
+    match &view.frontier.point {
         ProofExecutionPoint::FunctionEntry => {
             let execution_start_state = state.clone();
             let current_state = c_function_entry_state(&execution_start_state, function, arguments)
@@ -958,7 +958,7 @@ pub(super) fn next_top_level_statement_from_execution_point(
             Ok((execution_start_state, current_state, statement, remaining))
         }
         ProofExecutionPoint::StatementEntry { remaining } => {
-            let execution_start_state = replay
+            let execution_start_state = view
                 .frontier
                 .execution_start_state
                 .clone()
@@ -978,7 +978,7 @@ pub(super) fn next_top_level_statement_from_execution_point(
         ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
         ))),
-        ProofExecutionPoint::RegionBoundary => Err(ClickError::new(match replay.frontier.region {
+        ProofExecutionPoint::RegionBoundary => Err(ClickError::new(match view.frontier.region {
             ExecutionRegionKind::BranchArm => format!(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` ran past the end of its branch body; an arm of `branch` must stop at the shared continuation"
             ),
@@ -1480,7 +1480,7 @@ pub(super) fn execute_step_successors_from_execution_point(
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        replay,
+        replay.view(),
         state,
         function,
         arguments,
@@ -1636,7 +1636,7 @@ fn execute_step_from_execution_point_selecting_path(
     };
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay,
+            replay.view(),
             state,
             function,
             arguments,
@@ -2478,7 +2478,7 @@ mod statement_successor_partition_tests {
 
 #[allow(clippy::too_many_arguments)]
 fn checked_surface_statement_identity_condition(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     condition: &ConditionTerm,
     statement_index: usize,
     available: &[Proposition],
@@ -2509,10 +2509,10 @@ fn checked_surface_statement_identity_condition(
             &assumptions,
             parameters,
             arguments,
-            replay.old_reference_state(state),
+            view.old_reference_state(state),
             state,
             None,
-            &replay.program_point_states,
+            &view.program_point_states,
             environments.predicate_environment,
             environments.click_function_environment,
         )
@@ -2579,7 +2579,7 @@ fn checked_surface_statement_identity_condition(
         }
     }
     for left_point in &points {
-        let Some(left_state) = replay.program_point_states.get(left_point) else {
+        let Some(left_state) = view.program_point_states.get(left_point) else {
             continue;
         };
         let left_candidate = super::surface_synthesis::synthesize_surface_pointer_offset(
@@ -2593,7 +2593,7 @@ fn checked_surface_statement_identity_condition(
             continue;
         };
         for right_point in &points {
-            let Some(right_state) = replay.program_point_states.get(right_point) else {
+            let Some(right_state) = view.program_point_states.get(right_point) else {
                 continue;
             };
             let right_candidate = super::surface_synthesis::synthesize_surface_pointer_offset(
@@ -2711,7 +2711,7 @@ pub(super) fn bounded_execute_from_execution_point(
         }
 
         let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-            &frontier.execution.replay,
+            frontier.execution.view(),
             &frontier.execution.state,
             function,
             arguments,
@@ -2782,7 +2782,7 @@ pub(super) fn bounded_execute_from_execution_point(
                     condition_available.push(kernel_condition.clone());
                 }
                 let surface_condition = checked_surface_statement_identity_condition(
-                    &true_branch.execution.replay,
+                    true_branch.execution.view(),
                     &condition,
                     statement_index,
                     &condition_available,
@@ -2793,7 +2793,7 @@ pub(super) fn bounded_execute_from_execution_point(
                 )
                 .map(Ok)
                 .unwrap_or_else(|| checked_surface_comparison_fact_at_point(
-                    &true_branch.execution.replay,
+                    true_branch.execution.view(),
                     &kernel_condition,
                     SurfaceFactMatch::ReplayEquivalent,
                     &condition_available,

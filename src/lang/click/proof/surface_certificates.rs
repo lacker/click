@@ -2,7 +2,7 @@ use super::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_surface_atomic_derivation(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     derivation: &PropositionDerivation,
     preferred_conclusion: Option<&ClickProposition>,
     anchor_point: Option<&ProgramPointRef>,
@@ -21,7 +21,7 @@ pub(super) fn lower_surface_atomic_derivation(
             "derivation lowering: conclusion form",
             || {
                 checked_surface_fact_at_point(
-                    replay,
+                    view,
                     derivation.conclusion(),
                     available,
                     parameters,
@@ -42,7 +42,7 @@ pub(super) fn lower_surface_atomic_derivation(
     ) = (derivation.conjunction_parts(), &conclusion)
     {
         let (left, left_proof) = lower_surface_atomic_derivation(
-            replay,
+            view,
             left_derivation,
             Some(surface_left),
             anchor_point,
@@ -54,7 +54,7 @@ pub(super) fn lower_surface_atomic_derivation(
             click_function_environment,
         )?;
         let (right, right_proof) = lower_surface_atomic_derivation(
-            replay,
+            view,
             right_derivation,
             Some(surface_right),
             anchor_point,
@@ -88,7 +88,7 @@ pub(super) fn lower_surface_atomic_derivation(
     {
         let negated_antecedent = ClickProposition::Not(surface_antecedent.clone());
         let (negated_antecedent, proof) = lower_surface_atomic_derivation(
-            replay,
+            view,
             false_proof,
             Some(&negated_antecedent),
             anchor_point,
@@ -137,7 +137,7 @@ pub(super) fn lower_surface_atomic_derivation(
         let synthesize_premise = |premise: &Proposition| {
             if derivation.has_typed_atomic_evidence() {
                 checked_surface_comparison_fact_for_typed_derivation(
-                    replay,
+                    view,
                     premise,
                     SurfaceFactMatch::ReplayEquivalent,
                     available,
@@ -149,7 +149,7 @@ pub(super) fn lower_surface_atomic_derivation(
                 )
             } else {
                 checked_surface_comparison_fact_at_point(
-                    replay,
+                    view,
                     premise,
                     SurfaceFactMatch::ReplayEquivalent,
                     available,
@@ -180,7 +180,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     // parameter-only expression after resources have been
                     // folded can produce `false`, even though the exact
                     // certified entry fact and its form remain
-                    // available. Keep that stable form so fresh replay
+                    // available. Keep that stable form so fresh view
                     // resolves the same recorded fact instead of evaluating
                     // it against the later heap.
                     Some(_)
@@ -191,7 +191,7 @@ pub(super) fn lower_surface_atomic_derivation(
                                     expression,
                                     &parameter_names,
                                 )
-                        ) && replay
+                        ) && view
                             .surface_propositions
                             .available_kernel(&surface, available)
                             == Some(&premise) =>
@@ -217,15 +217,15 @@ pub(super) fn lower_surface_atomic_derivation(
         available,
         parameters,
         arguments,
-        replay.old_reference_state(state),
+        view.old_reference_state(state),
         state,
         None,
-        &replay.program_point_states,
+        &view.program_point_states,
         predicate_environment,
         click_function_environment,
     )
     .map_err(ClickError::new)?;
-    // `normalize()` must also survive a fresh source replay. The full
+    // `normalize()` must also survive a fresh source view. The full
     // certificate-generation context can materialize both sides of a framed
     // snapshot equality to one term; direct surface facts retain the
     // loadability/effect context needed to lower ordinary memory expressions
@@ -241,10 +241,10 @@ pub(super) fn lower_surface_atomic_derivation(
         &facts_for_direct_surface_lowering(available),
         parameters,
         arguments,
-        replay.old_reference_state(state),
+        view.old_reference_state(state),
         state,
         None,
-        &replay.program_point_states,
+        &view.program_point_states,
         predicate_environment,
         click_function_environment,
     )
@@ -254,8 +254,7 @@ pub(super) fn lower_surface_atomic_derivation(
         let surface_premises = pairs
             .iter()
             .map(|(_, surface)| {
-                replay
-                    .surface_propositions
+                view.surface_propositions
                     .available_kernel(surface, available)
                     .cloned()
                     .map(Ok)
@@ -265,10 +264,10 @@ pub(super) fn lower_surface_atomic_derivation(
                             available,
                             parameters,
                             arguments,
-                            replay.old_reference_state(state),
+                            view.old_reference_state(state),
                             state,
                             None,
-                            &replay.program_point_states,
+                            &view.program_point_states,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -279,7 +278,7 @@ pub(super) fn lower_surface_atomic_derivation(
         crate::instrumentation::measure_operation(
             "have",
             "atomic derivation lowering",
-            "derivation lowering: replay derivation check",
+            "derivation lowering: view derivation check",
             || {
                 check_atomic_premise_derivation_goal(
                     &lowered_conclusion,
@@ -764,7 +763,7 @@ pub(super) fn lower_surface_atomic_derivation(
         && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
     {
         return Err(ClickError::new(format!(
-            "surface premises do not replay the atomic derivation of {}\nunexpressed derivation premises: {}",
+            "surface premises do not view the atomic derivation of {}\nunexpressed derivation premises: {}",
             describe_pure_fact(&lowered_conclusion, parameters, arguments),
             describe_unexpressed_pure_facts(&unexpressed_premises, parameters, arguments,),
         )));
@@ -1033,14 +1032,13 @@ pub(super) fn lower_surface_atomic_derivation(
         return Ok((conclusion, SourceProof::Script(tactics)));
     }
     // A `rewrite` step substitutes the exact terms of its equality, so its
-    // premise is usable only when the surface form lowers at replay to
+    // premise is usable only when the surface form lowers at view to
     // the same kernel equality the plan rewrote with. A snapshot-bridged
     // form (the same fact recorded against an earlier memory) denotes
     // the value only through frame reasoning, which the simple rewrite
     // cannot check; those premises stay available to the transport path.
     let surface_replays_kernel = |kernel: &Proposition, surface: &ClickProposition| {
-        replay
-            .surface_propositions
+        view.surface_propositions
             .available_kernel(surface, available)
             .cloned()
             .map(Ok)
@@ -1050,10 +1048,10 @@ pub(super) fn lower_surface_atomic_derivation(
                     available,
                     parameters,
                     arguments,
-                    replay.old_reference_state(state),
+                    view.old_reference_state(state),
                     state,
                     None,
-                    &replay.program_point_states,
+                    &view.program_point_states,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1116,7 +1114,7 @@ pub(super) fn lower_surface_atomic_derivation(
         &conclusion,
         &premise_pairs,
         available,
-        &replay.effect_facts,
+        &view.effect_facts,
         state,
     ) {
         ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
@@ -1146,7 +1144,7 @@ pub(super) fn lower_surface_atomic_derivation(
     );
     let transport_recognition = assumptions_from_propositions(available);
     for (_, surface_source) in &premise_pairs {
-        let source = replay
+        let source = view
             .surface_propositions
             .available_kernel(surface_source, available)
             .cloned()
@@ -1157,10 +1155,10 @@ pub(super) fn lower_surface_atomic_derivation(
                     available,
                     parameters,
                     arguments,
-                    replay.old_reference_state(state),
+                    view.old_reference_state(state),
                     state,
                     None,
-                    &replay.program_point_states,
+                    &view.program_point_states,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1183,10 +1181,10 @@ pub(super) fn lower_surface_atomic_derivation(
             &source,
             &lowered_conclusion,
             available,
-            &replay.effect_facts,
+            &view.effect_facts,
             parameters,
             arguments,
-            replay,
+            view,
             state,
             predicate_environment,
             click_function_environment,
@@ -5368,7 +5366,7 @@ pub(super) fn comparison_program_point_variants(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_surface_candidate_at_point(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     candidate: &ClickProposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -5379,7 +5377,7 @@ pub(super) fn lower_surface_candidate_at_point(
 ) -> Result<Proposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     lower_surface_candidate_at_point_with_assumptions(
-        replay,
+        view,
         candidate,
         &assumptions,
         parameters,
@@ -5392,7 +5390,7 @@ pub(super) fn lower_surface_candidate_at_point(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_surface_candidate_at_point_with_assumptions(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     candidate: &ClickProposition,
     assumptions: &PureFactContext,
     parameters: &[syntax::C0Parameter],
@@ -5411,7 +5409,7 @@ pub(super) fn lower_surface_candidate_at_point_with_assumptions(
     lower_outcome_proposition_with_environment(
         &mut values,
         &array_refs,
-        replay.old_reference_state(state),
+        view.old_reference_state(state),
         state,
         None,
         &assumptions,
@@ -5419,7 +5417,7 @@ pub(super) fn lower_surface_candidate_at_point_with_assumptions(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        &replay.program_point_states,
+        &view.program_point_states,
         &mut active_functions,
     )
     .map_err(ClickError::new)

@@ -1092,6 +1092,11 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 }
 
 impl ExecutionProofState {
+    /// The read-only execution data lowering and point proofs consult.
+    pub(in crate::lang::click::proof) fn view(&self) -> ExecutionView<'_> {
+        self.replay.view()
+    }
+
     /// The execution state at a proof's entry: the frontier's C state and
     /// replay bag with no branch provenance yet.
     pub(in crate::lang::click::proof) fn at_entry(

@@ -35,14 +35,20 @@ during ordinary verification in the intended architecture.
 ## Replay state inside a proof
 
 `ExecutionProofState` owns a `CState`, branch provenance, the path's unfolded
-predicates, and a `TacticReplayState`; that nested state owns an execution frontier, fact
-and resource metadata, marks, structural context, loop rules, deferrals, and
-certificate builders. It lives only as the execution snapshot of a `Proof`
-goal: the checked drivers advance a `Proof`, and every source or generated
-proof tree is checked that way. The earlier interpreter that advanced this
-context as a parallel engine is gone; the remaining duplication of facts and
-`CState` between the snapshot and the `Proof` is tracked for removal in
-`issues/replay-smell.md`.
+predicates, and a `TacticReplayState`; that nested state owns an execution
+frontier, fact and resource metadata, marks, structural context, loop rules,
+deferrals, and certificate builders. It lives only as the execution snapshot
+of a `Proof` goal: the checked drivers advance a `Proof`, and every source or
+generated proof tree is checked that way. The earlier interpreter that
+advanced this context as a parallel engine is gone; the remaining duplication
+of facts and `CState` between the snapshot and the `Proof` is tracked for
+removal in `issues/replay-smell.md`.
+
+Lowering and point proofs read execution data through `ExecutionView`, a
+borrowed view of the frontier, recorded program-point states, surface
+spellings, effect facts, and the `old(...)` reference state. Every owner
+builds it (`ExecutionProofState::view`), so those consumers do not depend on
+where the fields live while they migrate out of the replay bag.
 
 A surviving source or expansion cursor may own syntax position, focus,
 attribution, and diagnostics. It must not own facts, resources, `CState`, an

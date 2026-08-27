@@ -640,21 +640,21 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         &unfolded_predicates,
         prelowered_goal,
     )?;
-    let mut proof_certificate_builder = TacticReplayState {
+    let mut planning_replay = TacticReplayState {
         surface_propositions: surface_propositions.clone(),
         program_point_states: program_point_states.clone(),
         ..TacticReplayState::default()
     };
-    proof_certificate_builder
+    planning_replay
         .surface_propositions
         .record_lowering(proposition, &fact)?;
     if !unfolded_predicates.is_empty() {
         let assumptions = assumptions_from_propositions(available);
-        let recorded_unfoldings = proof_certificate_builder
+        let recorded_unfoldings = planning_replay
             .surface_propositions
             .kernel_facts()
             .flat_map(|kernel| {
-                proof_certificate_builder
+                planning_replay
                     .surface_propositions
                     .surfaces(kernel)
                     .filter_map(|surface| {
@@ -695,7 +695,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             })
             .collect::<Vec<_>>();
         for (surface, kernel) in recorded_unfoldings {
-            proof_certificate_builder
+            planning_replay
                 .surface_propositions
                 .record_lowering(&surface, &kernel)?;
         }
@@ -713,12 +713,12 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             &assumptions,
         )
         .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
-        proof_certificate_builder
+        planning_replay
             .surface_propositions
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        &mut proof_certificate_builder,
+        planning_replay.view(),
         state,
         available,
         parameters,

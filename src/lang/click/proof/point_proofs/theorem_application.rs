@@ -381,7 +381,7 @@ pub(in crate::lang::click::proof) fn lower_theorem_application_requirements_with
 
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     unfolded_predicates: &[String],
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
@@ -407,7 +407,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             surface,
             predicate_environment,
             click_function_environment,
-            &replay.program_point_states,
+            &view.program_point_states,
         )
         .map_err(ClickError::new)
     };
@@ -425,21 +425,21 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     // ordinary premises. Check them before synthesizing variants at every
     // retained program point; an ambiguous form simply fails `check` and
     // falls through to the point-qualified search below.
-    if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
+    if let Ok(surface) = view.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
     // A statement-indexed form denotes the recorded proposition at that
     // program point. Re-lowering it after the function outcome can
     // materialize a dead local and turn an exact assignment equation into a
     // tautology, even though the recorded form remains a valid premise.
-    let recorded_surfaces = replay
+    let recorded_surfaces = view
         .surface_propositions
         .surfaces(kernel)
         .collect::<Vec<_>>();
     for surface in recorded_surfaces.into_iter().rev() {
         if (proposition_contains_at_expression(surface)
             || proposition_contains_old_expression(surface))
-            && replay
+            && view
                 .surface_propositions
                 .available_kernel(surface, available)
                 .is_some_and(&matches_kernel)
@@ -448,7 +448,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         }
     }
     let (exact_points, compatible_points) =
-        snapshot_indexed_program_points(kernel, &replay.program_point_states);
+        snapshot_indexed_program_points(kernel, &view.program_point_states);
     for (point, point_state) in exact_points.iter().chain(&compatible_points) {
         check_verification_deadline()?;
         let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
@@ -467,10 +467,10 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         }
     }
     let mut bases = Vec::new();
-    if let Ok(surface) = replay.surface_propositions.surface(kernel) {
+    if let Ok(surface) = view.surface_propositions.surface(kernel) {
         bases.push(surface.clone());
     }
-    for recorded in replay.surface_propositions.kernel_facts() {
+    for recorded in view.surface_propositions.kernel_facts() {
         check_verification_deadline()?;
         // The quantifier-shape test is checked first on purpose: it is the
         // weaker of the two conditions, so whenever it holds the mutual
@@ -484,7 +484,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             std::slice::from_ref(recorded),
         )
         .is_some())
-            && let Ok(surface) = replay.surface_propositions.surface(recorded)
+            && let Ok(surface) = view.surface_propositions.surface(recorded)
             && !bases.contains(surface)
         {
             bases.push(surface.clone());
@@ -552,7 +552,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         // loop below to start from. Unfold that recorded form at the
         // surface and let the round trip decide.
         let mut kernel_folded_bases = Vec::new();
-        for surface in replay.surface_propositions.surfaces(kernel) {
+        for surface in view.surface_propositions.surfaces(kernel) {
             if matches!(surface, ClickProposition::PredicateCall { .. })
                 && !kernel_folded_bases.contains(surface)
             {
@@ -590,13 +590,13 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
                 continue;
             }
             let mut folded_bases = Vec::new();
-            for surface in replay.surface_propositions.surfaces(fact) {
+            for surface in view.surface_propositions.surfaces(fact) {
                 if !folded_bases.contains(surface) {
                     folded_bases.push(surface.clone());
                 }
             }
             let (folded_exact_points, folded_compatible_points) =
-                snapshot_indexed_program_points(fact, &replay.program_point_states);
+                snapshot_indexed_program_points(fact, &view.program_point_states);
             for state in std::iter::once(post_state).chain(
                 folded_exact_points
                     .iter()

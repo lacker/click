@@ -9,7 +9,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
     effect_facts: &[ExecutionPureFact],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -18,7 +18,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
         .iter()
         .filter_map(|kernel| {
             let surface = checked_surface_comparison_fact_at_point(
-                replay,
+                view,
                 kernel,
                 SurfaceFactMatch::ReplayEquivalent,
                 available,
@@ -103,7 +103,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
             .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
             .count();
         return Err(ClickError::new(format!(
-            "explicit surface premises do not replay the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unsynthesizable ambient facts: {unavailable_count} (internal facts omitted)",
+            "explicit surface premises do not view the certified fact transport\n  source: {source:?}\n  target: {target:?}\n  selected surface premises: {}\n  unsynthesizable ambient facts: {unavailable_count} (internal facts omitted)",
             selected.len(),
         )));
     }
@@ -449,7 +449,7 @@ pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     unfolded_predicates: &[String],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -458,7 +458,7 @@ pub(in crate::lang::click::proof) fn fact_transport_candidates_at_outcome(
     for kernel in available {
         check_verification_deadline()?;
         if let Ok(surface) = checked_surface_fact_at_outcome(
-            replay,
+            view,
             unfolded_predicates,
             kernel,
             SurfaceFactMatch::CanonicalExact,

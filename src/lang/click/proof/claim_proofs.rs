@@ -2430,7 +2430,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        &replay,
+                                        replay.view(),
                                         &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,

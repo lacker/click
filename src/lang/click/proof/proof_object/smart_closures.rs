@@ -2612,7 +2612,7 @@ impl<'a> Proof<'a> {
         };
         // Structural frontiers belong to the branch and loop operations.
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &execution.replay,
+            execution.view(),
             &execution.state,
             context.function,
             context.arguments,
@@ -2658,7 +2658,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-            &execution.replay,
+            execution.view(),
             &execution.state,
             context.function,
             context.arguments,

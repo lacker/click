@@ -48,7 +48,7 @@ impl<'a> Proof<'a> {
         }
         let Ok((_, _, CStatement::If { condition, .. }, _)) =
             next_top_level_statement_from_execution_point(
-                &execution.replay,
+                execution.view(),
                 &execution.state,
                 context.function,
                 context.arguments,
@@ -111,7 +111,7 @@ impl<'a> Proof<'a> {
         };
         let (execution_start_state, current_state, statement, remaining) =
             next_top_level_statement_from_execution_point(
-                &execution.replay,
+                execution.view(),
                 &execution.state,
                 context.function,
                 context.arguments,
@@ -466,7 +466,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &parent_execution.replay,
+            parent_execution.view(),
             &parent_execution.state,
             context.function,
             context.arguments,
@@ -1001,7 +1001,7 @@ impl<'a> Proof<'a> {
             (condition, [false, false])
         } else {
             let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-                &parent_execution.replay,
+                parent_execution.view(),
                 &parent_execution.state,
                 context.function,
                 context.arguments,
@@ -2057,7 +2057,7 @@ impl<'a> Proof<'a> {
             unreachable!("execution branch retained a non-execution context")
         };
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &record.parent_execution.replay,
+            record.parent_execution.view(),
             &record.parent_execution.state,
             context.function,
             context.arguments,

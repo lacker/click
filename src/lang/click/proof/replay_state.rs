@@ -1963,3 +1963,55 @@ impl TacticReplayState {
         }
     }
 }
+
+/// The execution data that lowering and point proofs read: the frontier,
+/// the recorded program-point states, the surface spellings, the effect
+/// facts, and the state `old(...)` resolves to. Owners build it from
+/// wherever they keep those fields, so consumers do not depend on the
+/// replay bag's layout.
+#[derive(Clone, Copy)]
+pub(super) struct ExecutionView<'a> {
+    pub(super) frontier: &'a ExecutionFrontier,
+    pub(super) program_point_states: &'a ProgramPointStates,
+    pub(super) surface_propositions: &'a SurfacePropositionMap,
+    pub(super) effect_facts: &'a [ExecutionPureFact],
+    function_entry_state: Option<&'a CState>,
+}
+
+impl<'a> ExecutionView<'a> {
+    /// The state the current region started from, or the current state
+    /// when no region is open.
+    pub(super) fn execution_start_state<'s>(&self, current_state: &'s CState) -> &'s CState
+    where
+        'a: 's,
+    {
+        self.frontier
+            .execution_start_state
+            .as_ref()
+            .unwrap_or(current_state)
+    }
+
+    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
+    /// a contract clause is lowered here.
+    pub(super) fn old_reference_state<'s>(&self, current_state: &'s CState) -> &'s CState
+    where
+        'a: 's,
+    {
+        match self.function_entry_state {
+            Some(entry_state) => entry_state,
+            None => self.execution_start_state(current_state),
+        }
+    }
+}
+
+impl TacticReplayState {
+    pub(super) fn view(&self) -> ExecutionView<'_> {
+        ExecutionView {
+            frontier: &self.frontier,
+            program_point_states: &self.program_point_states,
+            surface_propositions: &self.surface_propositions,
+            effect_facts: &self.effect_facts,
+            function_entry_state: self.function_entry_state.as_ref(),
+        }
+    }
+}

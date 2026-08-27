@@ -473,7 +473,7 @@ impl<'a> Proof<'a> {
                     .execution()
                     .expect("execution proof owns semantic state");
                 match checked_surface_comparison_fact_at_point_with_indexed_facts(
-                    &execution.replay,
+                    execution.view(),
                     &matched,
                     SurfaceFactMatch::CanonicalExact,
                     &self.facts(),

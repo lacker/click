@@ -728,7 +728,7 @@ impl<'a> Proof<'a> {
                 &transition_facts,
                 context.parsed_function.parameters(),
                 context.arguments,
-                replay,
+                replay.view(),
                 state,
                 context.predicate_environment,
                 context.click_function_environment,

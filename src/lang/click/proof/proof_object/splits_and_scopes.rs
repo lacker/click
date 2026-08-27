@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
         };
         let statement_index = execution.replay.frontier.next_statement_index;
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
-            &execution.replay,
+            execution.view(),
             &execution.state,
             context.function,
             context.arguments,

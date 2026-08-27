@@ -17,7 +17,7 @@ fn proposition_is_reflexive_equality(proposition: &Proposition) -> bool {
 }
 
 pub(super) fn checked_surface_fact_at_point(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -28,7 +28,7 @@ pub(super) fn checked_surface_fact_at_point(
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     checked_surface_fact_at_point_with_assumptions(
-        replay,
+        view,
         kernel,
         &assumptions,
         parameters,
@@ -41,7 +41,7 @@ pub(super) fn checked_surface_fact_at_point(
 
 #[allow(clippy::too_many_arguments)]
 fn checked_surface_fact_at_point_with_assumptions(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     assumptions: &PureFactContext,
     parameters: &[syntax::C0Parameter],
@@ -56,20 +56,19 @@ fn checked_surface_fact_at_point_with_assumptions(
             assumptions,
             parameters,
             arguments,
-            replay.old_reference_state(state),
+            view.old_reference_state(state),
             state,
             None,
-            &replay.program_point_states,
+            &view.program_point_states,
             predicate_environment,
             click_function_environment,
         )
         .map_err(ClickError::new)
     };
-    if let Ok(surface) = replay.surface_propositions.checked_surface(kernel, check) {
+    if let Ok(surface) = view.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
-    if let Ok(ClickProposition::Loadable { segment }) = replay.surface_propositions.surface(kernel)
-    {
+    if let Ok(ClickProposition::Loadable { segment }) = view.surface_propositions.surface(kernel) {
         let mut old_segment = segment.clone();
         old_segment.state = ContractSegmentState::Old;
         let old_candidate = ClickProposition::Loadable {
@@ -79,8 +78,7 @@ fn checked_surface_fact_at_point_with_assumptions(
             return Ok(old_candidate);
         }
     }
-    if let Ok(ClickProposition::Defined { expression }) =
-        replay.surface_propositions.surface(kernel)
+    if let Ok(ClickProposition::Defined { expression }) = view.surface_propositions.surface(kernel)
     {
         let old_candidate = ClickProposition::Defined {
             expression: ContractExpression::Old(Box::new(expression.clone())),
@@ -100,7 +98,7 @@ fn checked_surface_fact_at_point_with_assumptions(
                     matches!((left, right), (Term::CMemory(_), Term::CMemory(_))) || left == right
                 })
         };
-        for recorded in replay.surface_propositions.kernel_facts() {
+        for recorded in view.surface_propositions.kernel_facts() {
             let Proposition::Predicate {
                 name: recorded_name,
                 arguments,
@@ -114,11 +112,11 @@ fn checked_surface_fact_at_point_with_assumptions(
             let Ok(ClickProposition::PredicateCall {
                 name: surface_name,
                 arguments: surface_arguments,
-            }) = replay.surface_propositions.surface(recorded)
+            }) = view.surface_propositions.surface(recorded)
             else {
                 continue;
             };
-            for point in replay.program_point_states.keys().rev() {
+            for point in view.program_point_states.keys().rev() {
                 let candidate = ClickProposition::PredicateCall {
                     name: surface_name.clone(),
                     arguments: surface_arguments
@@ -145,10 +143,9 @@ fn checked_surface_fact_at_point_with_assumptions(
             "kernel fact belongs to a different recorded memory snapshot: {kernel:?}"
         )));
     }
-    let resolved_kernel =
-        crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
+    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, &view.effect_facts);
     // Representative selection can derive facts through load variables
-    // whose defining facts are not in this replay's effect stream; the
+    // whose defining facts are not in this view's effect stream; the
     // registry is the kernel's own record of what each one stands for, and
     // resolving through it is the sanctioned display direction.
     let resolved_kernel =
@@ -170,7 +167,7 @@ fn checked_surface_fact_at_point_with_assumptions(
     // that is correct only until the cell changes.
     if crate::kernel::proposition_mentions_registered_load_variable(kernel) {
         let (exact_points, compatible_points) =
-            snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
+            snapshot_indexed_program_points(&resolved_kernel, &view.program_point_states);
         for (point, point_state) in exact_points.iter().chain(&compatible_points) {
             let Some(candidate) = synthesize_surface_proposition(
                 &resolved_kernel,
@@ -226,7 +223,7 @@ fn checked_surface_fact_at_point_with_assumptions(
 
 #[allow(clippy::too_many_arguments)]
 fn checked_surface_frame_premise_at_point(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -236,7 +233,7 @@ fn checked_surface_frame_premise_at_point(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     checked_surface_fact_at_point(
-        replay,
+        view,
         kernel,
         available,
         parameters,
@@ -250,7 +247,7 @@ fn checked_surface_frame_premise_at_point(
         // of an earlier recorded `old(...)` comparison. The snapshot-blind
         // index recovers only forms in that structural bucket.
         checked_surface_comparison_fact_for_typed_derivation(
-            replay,
+            view,
             kernel,
             SurfaceFactMatch::CanonicalExact,
             available,
@@ -351,7 +348,7 @@ pub(super) enum SurfaceFactMatch {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn checked_surface_comparison_fact_at_point(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
@@ -363,7 +360,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     checked_surface_comparison_fact_at_point_with_availability(
-        replay,
+        view,
         kernel,
         match_kind,
         available,
@@ -380,7 +377,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &ProofFacts,
@@ -392,7 +389,7 @@ pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     checked_surface_comparison_fact_at_point_with_availability(
-        replay,
+        view,
         kernel,
         match_kind,
         &[],
@@ -409,7 +406,7 @@ pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
@@ -421,7 +418,7 @@ pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
     checked_surface_comparison_fact_at_point_with_availability(
-        replay,
+        view,
         kernel,
         match_kind,
         available,
@@ -438,7 +435,7 @@ pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
 
 #[allow(clippy::too_many_arguments)]
 fn checked_surface_comparison_fact_at_point_with_availability(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
     available: &[Proposition],
@@ -492,10 +489,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             assumptions,
             parameters,
             arguments,
-            replay.old_reference_state(state),
+            view.old_reference_state(state),
             state,
             None,
-            &replay.program_point_states,
+            &view.program_point_states,
             predicate_environment,
             click_function_environment,
         )
@@ -503,18 +500,18 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         .is_ok_and(&fact_is_available)
     };
     // A snapshot-indexed form paired with this exact available kernel fact
-    // is replayable through the replay engine's program-point record. Requiring
+    // is replayable through the view engine's program-point record. Requiring
     // it to lower again against the current heap would incorrectly demand that
     // old loads remain loadable now. Current-state forms do not have that
     // stable anchor and still go through `strictly_replayable` below.
-    let mut recorded_surfaces = replay
+    let mut recorded_surfaces = view
         .surface_propositions
         .surfaces(kernel)
         .cloned()
         .collect::<Vec<_>>();
     if allow_snapshot_blind_candidates {
-        for candidate in replay.surface_propositions.snapshot_blind_kernels(kernel) {
-            for surface in replay.surface_propositions.surfaces(candidate) {
+        for candidate in view.surface_propositions.snapshot_blind_kernels(kernel) {
+            for surface in view.surface_propositions.surfaces(candidate) {
                 if !recorded_surfaces.contains(surface) {
                     recorded_surfaces.push(surface.clone());
                 }
@@ -533,7 +530,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                     expression,
                     &parameter_names,
                 )
-        ) && replay
+        ) && view
             .surface_propositions
             .available_kernel_matching(surface, &fact_is_available)
             == Some(kernel)
@@ -544,17 +541,17 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     for surface in recorded_surfaces.iter().rev() {
         if (proposition_contains_at_expression(surface)
             || proposition_contains_old_expression(surface))
-            && replay
+            && view
                 .surface_propositions
                 .available_kernel_matching(surface, &fact_is_available)
                 .is_some_and(&matches_kernel)
             // A recorded pair can name a program point outside the current
-            // replay scope (for example a function-prefix statement inside a
+            // view scope (for example a function-prefix statement inside a
             // loop-region proof). The candidate lowering resolves recorded
             // snapshots without demanding current loadability, so it is the
             // right scope check here.
             && lower_surface_candidate_at_point_with_assumptions(
-                replay,
+                view,
                 surface,
                 assumptions,
                 parameters,
@@ -576,7 +573,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     let prefer_anchored = crate::kernel::proposition_mentions_registered_load_variable(kernel);
     if !prefer_anchored
         && let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
-            replay,
+            view,
             kernel,
             assumptions,
             parameters,
@@ -596,8 +593,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             bases.push(surface.clone());
         }
     }
-    let resolved_kernel =
-        crate::kernel::resolve_minted_load_variables(kernel, &replay.effect_facts);
+    let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, &view.effect_facts);
     // Load variables represent loads whose snapshots the point index needs;
     // resolve through the registry when no defining fact is in scope, and
     // index points from the load term rather than the kernel variable.
@@ -607,7 +603,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         resolved_kernel
     };
     let (exact_points, compatible_points) =
-        snapshot_indexed_program_points(&resolved_kernel, &replay.program_point_states);
+        snapshot_indexed_program_points(&resolved_kernel, &view.program_point_states);
     if let Some(surface) =
         synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         && !bases.contains(&surface)
@@ -627,7 +623,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             .iter()
             .find(|base| {
                 lower_surface_candidate_at_point_with_assumptions(
-                    replay,
+                    view,
                     base,
                     assumptions,
                     parameters,
@@ -655,7 +651,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         for base in &bases {
             if let Ok(candidate) = surface_with_source_site(base, point)
                 && lower_surface_candidate_at_point_with_assumptions(
-                    replay,
+                    view,
                     &candidate,
                     assumptions,
                     parameters,
@@ -700,7 +696,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             ];
             for candidate in candidates {
                 let lowered = lower_surface_candidate_at_point_with_assumptions(
-                    replay,
+                    view,
                     &candidate,
                     assumptions,
                     parameters,
@@ -729,7 +725,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             for candidate in variants {
                 check_verification_deadline()?;
                 if lower_surface_candidate_at_point_with_assumptions(
-                    replay,
+                    view,
                     &candidate,
                     assumptions,
                     parameters,
@@ -748,7 +744,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     if prefer_anchored {
         if let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
-            replay,
+            view,
             kernel,
             assumptions,
             parameters,
@@ -854,7 +850,7 @@ pub(super) fn lower_certified_frame_path_tactics(
             {
                 check_verification_deadline()?;
                 if let Ok(surface) = checked_surface_frame_premise_at_point(
-                    replay,
+                    replay.view(),
                     &fact,
                     &path_available,
                     parameters,
@@ -926,7 +922,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                     })
                     .map(|(point, _)| point);
                 let (conclusion, proof) = lower_surface_atomic_derivation(
-                    replay,
+                    replay.view(),
                     derivation,
                     None,
                     anchor_point.as_ref(),
@@ -1125,7 +1121,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     let Ok(lowered) = lower_surface_candidate_at_point(
-                        replay,
+                        replay.view(),
                         &surface,
                         &evidence.transition.pure_facts,
                         parameters,
@@ -1448,7 +1444,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     // replayed by the ordinary executor, which remains the
                     // authority on whether the selected premise is sufficient.
                     let surface = checked_surface_fact_at_point(
-                        replay,
+                        replay.view(),
                         fact,
                         &selectable_available,
                         parameters,
@@ -1459,7 +1455,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     )
                     .or_else(|_| {
                         checked_surface_comparison_fact_at_point(
-                            replay,
+                            replay.view(),
                             fact,
                             SurfaceFactMatch::ReplayEquivalent,
                             &selectable_available,
@@ -1484,7 +1480,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         };
                         let indexed = surface_with_source_site(&surface, &entry_point)?;
                         let lowered = lower_surface_candidate_at_point(
-                            replay,
+                            replay.view(),
                             &indexed,
                             &selectable_available,
                             parameters,
@@ -1698,7 +1694,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     match surface_smart_have_certificate(
-                        replay,
+                        replay.view(),
                         state,
                         &surface_available,
                         parameters,
@@ -1780,7 +1776,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             return;
                         }
                         match surface_smart_have_certificate(
-                            replay,
+                            replay.view(),
                             state,
                             &surface_available,
                             parameters,
@@ -1806,7 +1802,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     continue;
                 }
                 if let Ok((conclusion, proof)) = lower_surface_atomic_derivation(
-                    replay,
+                    replay.view(),
                     derivation,
                     None,
                     None,
@@ -1839,7 +1835,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect::<Vec<_>>();
-            let contextual_step = |replay: &TacticReplayState, needed: &[Proposition]| {
+            let contextual_step = |view: ExecutionView<'_>, needed: &[Proposition]| {
                 let normalized_needed = needed
                     .iter()
                     .map(|fact| (fact, normalize_proposition(fact), fact.clone()))
@@ -1848,7 +1844,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 for (fact, normalized, materialized) in normalized_needed {
                     let check_candidate = |available_fact: &Proposition| {
                         checked_surface_comparison_fact_at_point(
-                            replay,
+                            view,
                             available_fact,
                             SurfaceFactMatch::CanonicalExact,
                             &surface_available,
@@ -1893,7 +1889,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 Ok::<_, ClickError>(premises)
             };
-            let premises = contextual_step(replay, &needed).map(|mut premises| {
+            let premises = contextual_step(replay.view(), &needed).map(|mut premises| {
                 for (_, surface) in &loop_summary_premises {
                     if !premises.contains(surface) {
                         premises.push(surface.clone());
@@ -2008,7 +2004,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
-                        replay,
+                        replay.view(),
                         candidate,
                         available,
                         parameters,
@@ -2069,7 +2065,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .ok()
                             .and_then(|candidate| {
                                 lower_surface_candidate_at_point(
-                                    replay,
+                                    replay.view(),
                                     &candidate,
                                     available,
                                     parameters,
@@ -2131,7 +2127,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &transition_facts,
                         parameters,
                         arguments,
-                        replay,
+                        replay.view(),
                         state,
                         predicate_environment,
                         click_function_environment,
@@ -2224,7 +2220,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 negate_click_proposition(&condition)
             };
             let lowered = lower_surface_candidate_at_point(
-                replay,
+                replay.view(),
                 &surface_fact,
                 available,
                 parameters,
@@ -2374,7 +2370,7 @@ pub(super) fn smart_simp_unfold_prefix(proof: &SourceProof) -> Option<Vec<String
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_simp_plan_proof(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2404,7 +2400,7 @@ pub(super) fn surface_simp_plan_proof(
         SimpEvidence::Normalize => SourceProof::Script(vec![ProofTactic::Normalize]),
         SimpEvidence::Derivation(derivation) => {
             let (_, proof) = lower_surface_atomic_derivation(
-                replay,
+                view,
                 derivation,
                 Some(&active_surface_goal),
                 None,
@@ -2452,7 +2448,7 @@ enum PremiseForm {
 /// planner result itself has no semantic authority.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn construct_smart_have_plan(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2473,10 +2469,10 @@ pub(super) fn construct_smart_have_plan(
         available,
         parameters,
         arguments,
-        replay.old_reference_state(state),
+        view.old_reference_state(state),
         state,
-        &replay.program_point_states,
-        &replay.surface_propositions,
+        &view.program_point_states,
+        &view.surface_propositions,
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
@@ -2489,7 +2485,7 @@ pub(super) fn construct_smart_have_plan(
         "smart have operation materialization",
     );
     let proof = surface_smart_have_proof(
-        replay,
+        view,
         state,
         available,
         parameters,
@@ -2505,7 +2501,7 @@ pub(super) fn construct_smart_have_plan(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_proof(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2538,7 +2534,7 @@ pub(super) fn surface_smart_have_proof(
                 simp.premises
                     .iter()
                     .map(|surface| {
-                        if let Some(kernel) = replay
+                        if let Some(kernel) = view
                             .surface_propositions
                             .available_kernel(surface, restricted_context_available)
                             .cloned()
@@ -2550,10 +2546,10 @@ pub(super) fn surface_smart_have_proof(
                             &facts_for_restricted_simp_lowering(restricted_context_available),
                             parameters,
                             arguments,
-                            replay.old_reference_state(state),
+                            view.old_reference_state(state),
                             state,
                             None,
-                            &replay.program_point_states,
+                            &view.program_point_states,
                             predicate_environment,
                             click_function_environment,
                         );
@@ -2590,7 +2586,7 @@ pub(super) fn surface_smart_have_proof(
                         {
                             // Load variables are kernel-internal
                             // names; recorded equalities chained through one
-                            // are the same user-level fact, and replay closes
+                            // are the same user-level fact, and view closes
                             // over the same chain, so the listed form is
                             // exactly citable.
                             return Ok((lowered.clone(), PremiseForm::ExactlyAvailable));
@@ -2643,10 +2639,10 @@ pub(super) fn surface_smart_have_proof(
             &facts_for_restricted_simp_lowering(available),
             parameters,
             arguments,
-            replay.old_reference_state(state),
+            view.old_reference_state(state),
             state,
             None,
-            &replay.program_point_states,
+            &view.program_point_states,
             predicate_environment,
             click_function_environment,
         )
@@ -2682,7 +2678,7 @@ pub(super) fn surface_smart_have_proof(
         SourceProof::Script(tactics)
     } else {
         surface_simp_plan_proof(
-            replay,
+            view,
             state,
             certificate_available,
             parameters,
@@ -2699,7 +2695,7 @@ pub(super) fn surface_smart_have_proof(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn surface_smart_have_certificate(
-    replay: &TacticReplayState,
+    view: ExecutionView<'_>,
     state: &CState,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -2711,7 +2707,7 @@ pub(super) fn surface_smart_have_certificate(
     unfolded_predicates: &[String],
 ) -> Result<ProofCertificate, ClickError> {
     let proof = surface_smart_have_proof(
-        replay,
+        view,
         state,
         available,
         parameters,
