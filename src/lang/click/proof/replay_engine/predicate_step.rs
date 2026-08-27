@@ -127,7 +127,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
         replay
             .surface_propositions
             .record_lowering(&surface, &kernel)?;
-        let contract_unfolding = replay
+        let contract_unfolding = execution
             .frontier
             .execution_start_state
             .as_ref()

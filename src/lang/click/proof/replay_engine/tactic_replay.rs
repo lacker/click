@@ -45,11 +45,11 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &have_facts,
         parsed_function.parameters(),
         arguments,
-        replay.old_reference_state(&state),
+        old_reference_state(replay, &execution.frontier, state),
         &state,
         None,
         None,
-        replay.view(),
+        replay.view(&execution.frontier),
         &replay.surface_propositions,
         predicate_environment,
         click_function_environment,
@@ -65,7 +65,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let smart_result = match (&checked_proof_result, &smart_unfolds) {
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
-            replay.view(),
+            replay.view(&execution.frontier),
             &state,
             &have_facts,
             parsed_function.parameters(),
@@ -90,11 +90,11 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         &have_facts,
                         parsed_function.parameters(),
                         arguments,
-                        replay.old_reference_state(&state),
+                        old_reference_state(replay, &execution.frontier, state),
                         &state,
                         None,
                         None,
-                        replay.view(),
+                        replay.view(&execution.frontier),
                         &replay.surface_propositions,
                         predicate_environment,
                         click_function_environment,
@@ -120,7 +120,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 &replay.effect_facts,
                 parsed_function.parameters(),
                 arguments,
-                replay.old_reference_state(&state),
+                old_reference_state(replay, &execution.frontier, state),
                 &state,
                 &replay.program_point_states,
                 &replay.surface_propositions,
@@ -139,7 +139,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     }
     // Carry any kernel-issued standard-theorem authority selected
     // inside the point Proof back to the enclosing entry proof.
-    if replay
+    if execution
         .frontier
         .execution_start_state
         .as_ref()
@@ -155,7 +155,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 application,
                 parsed_function.parameters(),
                 arguments,
-                replay.old_reference_state(&state),
+                old_reference_state(replay, &execution.frontier, state),
                 &state,
                 &replay.program_point_states,
                 predicate_environment,
@@ -184,7 +184,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         .proof_certificate_builder
         .certificate_facts
         .insert(fact.clone());
-    if replay
+    if execution
         .frontier
         .execution_start_state
         .as_ref()
@@ -224,12 +224,12 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let state: &mut CState = &mut execution.state;
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
 
-    if replay.is_at_function_exit() {
+    if execution.frontier.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop, but execution has reached function exit"
         )));
     }
-    let statement_index = replay.frontier.next_statement_index;
+    let statement_index = execution.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` could not resolve source statement({statement_index})"
@@ -255,7 +255,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
-    let initial_state = replay.execution_start_state(state).clone();
+    let initial_state = execution.frontier.execution_start_state(state).clone();
     let annotated = annotated_function(
         &bound_function_block,
         parsed_function,
@@ -266,15 +266,15 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         resource_environment,
         false,
     )?;
-    if replay.is_at_function_entry() {
+    if execution.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not bind function arguments"
                 ))
             })?;
-        replay.frontier.execution_start_state = Some(initial_state.clone());
-        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.execution_start_state = Some(initial_state.clone());
+        execution.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: annotated.body().clone().into(),
         };
         *state = entry_state;
@@ -406,7 +406,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             .chain(std::iter::once(loop_rule.clone())),
     );
 
-    if let ProofExecutionPoint::StatementEntry { remaining } = &replay.frontier.point {
+    if let ProofExecutionPoint::StatementEntry { remaining } = &execution.frontier.point {
         let (_, tail) = split_next_source_operation(remaining).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not isolate the current source loop: {message}"
@@ -417,7 +417,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         if let Some(tail) = tail {
             flatten_top_level_sequence(&tail, &mut statements).map_err(ClickError::new)?;
         }
-        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: sequence_from_statements(&statements)
                 .expect("the current loop always contributes one statement")
                 .into(),

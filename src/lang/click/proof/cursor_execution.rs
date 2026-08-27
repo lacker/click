@@ -36,7 +36,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         concrete_facts.assumptions(),
                         parameters,
                         arguments,
-                        replay.old_reference_state(state),
+                        old_reference_state(replay, &execution.frontier, state),
                         state,
                         None,
                         &replay.program_point_states,
@@ -105,7 +105,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         *available_pure_facts = concrete_facts;
         return Ok(());
     }
-    let entry_state = replay.execution_start_state(state).clone();
+    let entry_state = execution.frontier.execution_start_state(state).clone();
     let abstraction = match sibling_join_states {
         Some(states) => abstract_c_state_for_join_across(state, states, stable_join_locals),
         None => abstract_c_state_for_join(state, stable_join_locals),
@@ -419,7 +419,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
-    let statement_index = replay.frontier.next_statement_index;
+    let statement_index = execution.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
@@ -427,7 +427,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(),
+            replay.view(&execution.frontier),
             state,
             function,
             arguments,
@@ -585,6 +585,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             let restore = apply_construction_point_view(replay, &construction_point_overrides);
             construct_simple_step_for_planned_operation(
                 replay,
+                &execution.frontier,
                 &current_state,
                 function_block,
                 parameters,
@@ -609,6 +610,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         let restore = apply_construction_point_view(replay, &construction_point_overrides);
         append_condition_transition_certificate(
             replay,
+            &execution.frontier,
             &condition_transition,
             condition_was_proven || matches!(branch_step_policy, BranchStepPolicy::RequireProven),
             &current_state,
@@ -630,12 +632,12 @@ pub(super) fn execute_branch_step_from_execution_point(
     } else {
         *else_branch
     };
-    replay.frontier.next_statement_index = if selected_then {
+    execution.frontier.next_statement_index = if selected_then {
         then_statement_index
     } else {
         else_statement_index
     };
-    replay.frontier.execution_start_state = Some(execution_start_state);
+    execution.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state;
     match arm_mode {
         BranchArmMode::Inline => {
@@ -647,7 +649,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 // The empty arm completes this branch region immediately; the
                 // patched layout supplies its control successor and the
                 // statically completed branch regions.
-                let skip_index = replay.frontier.next_statement_index;
+                let skip_index = execution.frontier.next_statement_index;
                 for exited in replay
                     .source_layout
                     .exited_branch_regions(skip_index)
@@ -668,19 +670,19 @@ pub(super) fn execute_branch_step_from_execution_point(
                 match remaining {
                     Some(tail) => {
                         if let Some(successor) = successor {
-                            replay.frontier.next_statement_index = successor;
+                            execution.frontier.next_statement_index = successor;
                         }
-                        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                        execution.frontier.point = ProofExecutionPoint::StatementEntry {
                             remaining: tail.into(),
                         };
                     }
-                    None => match resume_after_completed_region(replay) {
+                    None => match resume_after_completed_region(&mut execution.frontier) {
                         Some(tail) => {
-                            replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                            execution.frontier.point = ProofExecutionPoint::StatementEntry {
                                 remaining: tail.into(),
                             };
                         }
-                        None if finish_exhausted_region(replay) => {}
+                        None if finish_exhausted_region(&mut execution.frontier) => {}
                         None => {
                             return Err(ClickError::new(format!(
                                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
@@ -693,7 +695,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     Some(tail) => c_seq(selected_branch, tail),
                     None => selected_branch,
                 };
-                replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                execution.frontier.point = ProofExecutionPoint::StatementEntry {
                     remaining: spliced.into(),
                 };
             }
@@ -703,8 +705,8 @@ pub(super) fn execute_branch_step_from_execution_point(
             // exhausting it reaches the typed region boundary, and the join
             // restores the parent frontier. Enclosing continuations belong
             // to the parent, never to a bounded arm.
-            replay.frontier.continuations = PersistentSequence::default();
-            replay.frontier.region = ExecutionRegionKind::BranchArm;
+            execution.frontier.continuations = PersistentSequence::default();
+            execution.frontier.region = ExecutionRegionKind::BranchArm;
             if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_point_state(
                     replay,
@@ -713,15 +715,16 @@ pub(super) fn execute_branch_step_from_execution_point(
                     ProgramPointKind::Exit,
                     state.clone(),
                 );
-                replay.frontier.point = ProofExecutionPoint::RegionBoundary;
+                execution.frontier.point = ProofExecutionPoint::RegionBoundary;
             } else {
-                replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                execution.frontier.point = ProofExecutionPoint::StatementEntry {
                     remaining: selected_branch.into(),
                 };
             }
         }
     }
     record_current_statement_entry(
+        &execution.frontier,
         replay,
         state,
         function_block,
@@ -825,6 +828,7 @@ fn execute_concrete_loop_head_step(
         let restore = apply_construction_point_view(replay, &construction_point_overrides);
         append_condition_transition_certificate(
             replay,
+            &execution.frontier,
             &condition_transition,
             true,
             &current_state,
@@ -837,7 +841,7 @@ fn execute_concrete_loop_head_step(
         restore_construction_point_view(replay, restore);
     }
     *available_pure_facts = condition_transition.pure_facts;
-    replay.frontier.execution_start_state = Some(execution_start_state);
+    execution.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state.clone();
 
     if condition_transition.is_true {
@@ -845,7 +849,7 @@ fn execute_concrete_loop_head_step(
             Some(remaining) => c_seq(loop_statement, remaining),
             None => loop_statement,
         };
-        replay
+        execution
             .frontier
             .continuations
             .push(ProofExecutionContinuation {
@@ -853,7 +857,7 @@ fn execute_concrete_loop_head_step(
                 next_statement_index: statement_index,
                 kind: ProofExecutionContinuationKind::LoopIteration,
             });
-        replay.frontier.next_statement_index = replay
+        execution.frontier.next_statement_index = replay
             .source_layout
             .loop_body_entry(loop_index)
             .ok_or_else(|| {
@@ -861,13 +865,13 @@ fn execute_concrete_loop_head_step(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
                 ))
             })?;
-        replay.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.point = ProofExecutionPoint::StatementEntry {
             remaining: (*body).into(),
         };
         record_statement_program_point_state(
             replay,
             function_block,
-            replay.frontier.next_statement_index,
+            execution.frontier.next_statement_index,
             ProgramPointKind::Entry,
             current_state,
         );
@@ -904,26 +908,26 @@ fn execute_concrete_loop_head_step(
         );
     }
     let next = if let Some(remaining) = remaining {
-        replay.frontier.next_statement_index = continuation_node;
+        execution.frontier.next_statement_index = continuation_node;
         Some(remaining)
     } else {
-        resume_after_completed_region(replay)
+        resume_after_completed_region(&mut execution.frontier)
     };
     let Some(remaining) = next else {
-        if finish_exhausted_region(replay) {
+        if finish_exhausted_region(&mut execution.frontier) {
             return Ok(());
         }
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
     };
-    replay.frontier.point = ProofExecutionPoint::StatementEntry {
+    execution.frontier.point = ProofExecutionPoint::StatementEntry {
         remaining: remaining.into(),
     };
     record_statement_program_point_state(
         replay,
         function_block,
-        replay.frontier.next_statement_index,
+        execution.frontier.next_statement_index,
         ProgramPointKind::Entry,
         current_state,
     );
@@ -1480,7 +1484,7 @@ pub(super) fn execute_step_successors_from_execution_point(
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        replay.view(),
+        replay.view(&execution.frontier),
         state,
         function,
         arguments,
@@ -1602,7 +1606,7 @@ fn execute_step_from_execution_point_selecting_path(
             ));
         });
     }
-    let statement_index = replay.frontier.next_statement_index;
+    let statement_index = execution.frontier.next_statement_index;
     let source_region = replay.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
@@ -1636,7 +1640,7 @@ fn execute_step_from_execution_point_selecting_path(
     };
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_execution_point(
-            replay.view(),
+            replay.view(&execution.frontier),
             state,
             function,
             arguments,
@@ -1780,6 +1784,7 @@ fn execute_step_from_execution_point_selecting_path(
             let restore = apply_construction_point_view(replay, &construction_point_overrides);
             construct_simple_step_for_planned_operation(
                 replay,
+                &execution.frontier,
                 &current_state,
                 function_block,
                 parameters,
@@ -1830,14 +1835,14 @@ fn execute_step_from_execution_point_selecting_path(
         );
         let replay_state = execution_start_state.clone();
         set_replay_execution(
-            replay,
+            &mut execution.frontier,
             claim_label,
             tactic_index,
             tactic_name,
             execution_start_state,
             completed,
         )?;
-        replay.frontier.next_statement_index = source_region.continuation_node;
+        execution.frontier.next_statement_index = source_region.continuation_node;
         *available_pure_facts = common_pure_facts;
         *state = replay_state;
         return Ok(common_introduced_facts);
@@ -2011,6 +2016,7 @@ fn execute_step_from_execution_point_selecting_path(
         let restore = apply_construction_point_view(replay, &construction_point_overrides);
         deferred_transport_operations = append_statement_transition_certificate(
             replay,
+            &execution.frontier,
             &transition,
             if loop_index.is_some() {
                 loop_step_policy
@@ -2155,28 +2161,28 @@ fn execute_step_from_execution_point_selecting_path(
                 );
             }
             let remaining = if let Some(remaining) = remaining {
-                replay.frontier.next_statement_index = source_region.continuation_node;
+                execution.frontier.next_statement_index = source_region.continuation_node;
                 Some(remaining)
             } else {
-                resume_after_completed_region(replay)
+                resume_after_completed_region(&mut execution.frontier)
             };
             *available_pure_facts = successor_pure_facts;
-            replay.frontier.execution_start_state = Some(execution_start_state);
+            execution.frontier.execution_start_state = Some(execution_start_state);
             *state = next_state.clone();
             match remaining {
                 Some(remaining) => {
-                    replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
                         remaining: remaining.into(),
                     };
                     record_statement_program_point_state(
                         replay,
                         function_block,
-                        replay.frontier.next_statement_index,
+                        execution.frontier.next_statement_index,
                         ProgramPointKind::Entry,
                         next_state,
                     );
                 }
-                None if finish_exhausted_region(replay) => {
+                None if finish_exhausted_region(&mut execution.frontier) => {
                     // The region's boundary state is also the entry state of
                     // its statically known continuation, exactly as the arm
                     // recorded it when continuations were popped at runtime.
@@ -2197,7 +2203,7 @@ fn execute_step_from_execution_point_selecting_path(
         }
         CStatementOutcome::Return { .. } => {
             if matches!(&outcome, CStatementOutcome::Return { .. }) {
-                record_completed_continuation_exits(replay);
+                record_completed_continuation_exits(&mut execution.frontier);
             }
             let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
@@ -2217,14 +2223,14 @@ fn execute_step_from_execution_point_selecting_path(
             );
             let replay_state = execution_start_state.clone();
             set_replay_execution(
-                replay,
+                &mut execution.frontier,
                 claim_label,
                 tactic_index,
                 tactic_name,
                 execution_start_state,
                 completed,
             )?;
-            replay.frontier.next_statement_index = source_region.continuation_node;
+            execution.frontier.next_statement_index = source_region.continuation_node;
             *state = replay_state;
         }
         CStatementOutcome::VerificationDiverges => {
@@ -2242,14 +2248,14 @@ fn execute_step_from_execution_point_selecting_path(
             );
             let replay_state = execution_start_state.clone();
             set_replay_execution(
-                replay,
+                &mut execution.frontier,
                 claim_label,
                 tactic_index,
                 tactic_name,
                 execution_start_state,
                 completed,
             )?;
-            replay.frontier.next_statement_index = source_region.continuation_node;
+            execution.frontier.next_statement_index = source_region.continuation_node;
             *state = replay_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
@@ -2291,6 +2297,7 @@ fn execute_step_from_execution_point_selecting_path(
             if let Some(environments) = construction {
                 construct_simple_step_for_planned_operation(
                     replay,
+                    &execution.frontier,
                     state,
                     function_block,
                     parameters,
@@ -2336,20 +2343,22 @@ pub(super) enum BranchArmMode {
 /// continuation. A bounded region — a loop-preservation body or a branch
 /// arm — reaches its typed boundary; a whole-function region has no boundary
 /// short of `return`, so the caller keeps its end-of-function error.
-pub(super) fn finish_exhausted_region(replay: &mut TacticReplayState) -> bool {
-    match replay.frontier.region {
+pub(super) fn finish_exhausted_region(frontier: &mut ExecutionFrontier) -> bool {
+    match frontier.region {
         ExecutionRegionKind::LoopBody | ExecutionRegionKind::BranchArm => {
-            debug_assert!(replay.frontier.continuations.is_empty());
-            replay.frontier.point = ProofExecutionPoint::RegionBoundary;
+            debug_assert!(frontier.continuations.is_empty());
+            frontier.point = ProofExecutionPoint::RegionBoundary;
             true
         }
         ExecutionRegionKind::Function => false,
     }
 }
 
-pub(super) fn resume_after_completed_region(replay: &mut TacticReplayState) -> Option<CStatement> {
-    while let Some(continuation) = replay.frontier.continuations.pop() {
-        replay.frontier.next_statement_index = continuation.next_statement_index;
+pub(super) fn resume_after_completed_region(
+    frontier: &mut ExecutionFrontier,
+) -> Option<CStatement> {
+    while let Some(continuation) = frontier.continuations.pop() {
+        frontier.next_statement_index = continuation.next_statement_index;
         if let Some(remaining) = continuation.remaining {
             return Some(Arc::unwrap_or_clone(remaining));
         }
@@ -2357,12 +2366,13 @@ pub(super) fn resume_after_completed_region(replay: &mut TacticReplayState) -> O
     None
 }
 
-fn record_completed_continuation_exits(replay: &mut TacticReplayState) {
-    while replay.frontier.continuations.pop().is_some() {}
+fn record_completed_continuation_exits(frontier: &mut ExecutionFrontier) {
+    while frontier.continuations.pop().is_some() {}
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_current_statement_entry(
+    frontier: &ExecutionFrontier,
     replay: &mut TacticReplayState,
     state: &CState,
     function_block: &FunctionBlock,
@@ -2372,7 +2382,7 @@ pub(super) fn record_current_statement_entry(
     tactic_index: usize,
     tactic_name: &str,
 ) -> Result<(), ClickError> {
-    let current_state = match &replay.frontier.point {
+    let current_state = match &frontier.point {
         ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -2387,7 +2397,7 @@ pub(super) fn record_current_statement_entry(
     record_statement_program_point_state(
         replay,
         function_block,
-        replay.frontier.next_statement_index,
+        frontier.next_statement_index,
         ProgramPointKind::Entry,
         current_state,
     );
@@ -2659,19 +2669,19 @@ pub(super) fn bounded_execute_from_execution_point(
     let mut executed_steps = 0;
 
     while let Some(mut frontier) = pending.pop() {
-        if frontier.execution.replay.is_at_function_exit() {
+        if frontier.execution.frontier.is_at_function_exit() {
             completed.push(frontier);
             continue;
         }
         if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
-                frontier.execution.replay.frontier.next_statement_index
+                frontier.execution.frontier.next_statement_index
             )));
         }
         executed_steps += 1;
 
-        let statement_index = frontier.execution.replay.frontier.next_statement_index;
+        let statement_index = frontier.execution.frontier.next_statement_index;
         let source_region = frontier
             .execution.replay
             .source_layout
@@ -2679,7 +2689,7 @@ pub(super) fn bounded_execute_from_execution_point(
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `execute` could not resolve source statement({})",
-                    frontier.execution.replay.frontier.next_statement_index
+                    frontier.execution.frontier.next_statement_index
                 ))
             })?;
         if matches!(source_region.kind, SourceStatementKind::If { .. }) {
@@ -2918,8 +2928,7 @@ pub(super) fn merge_bounded_execution_frontiers(
     }
 
     let execution_start_state = completed[0]
-        .execution.replay
-        .frontier
+        .execution.frontier
         .execution_start_state
         .clone()
         .ok_or_else(|| {
@@ -2945,7 +2954,7 @@ pub(super) fn merge_bounded_execution_frontiers(
     for frontier in &completed {
         let function_execution = frontier
             .execution
-            .replay
+            .frontier
             .execution()
             .expect("completed bounded frontier should have an execution");
         for path in function_execution.paths() {
@@ -2968,7 +2977,7 @@ pub(super) fn merge_bounded_execution_frontiers(
 
     let mut merged = completed.remove(0);
     merged.execution.replay.program_point_states = common_program_points;
-    merged.execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+    merged.execution.frontier.point = ProofExecutionPoint::FunctionExit {
         execution: function_execution,
     };
     merged.execution.state = execution_start_state.into();
@@ -2992,7 +3001,7 @@ pub(super) fn execute_rest_from_execution_point(
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
     loop {
-        let can_execute_one_step = match &execution.replay.frontier.point {
+        let can_execute_one_step = match &execution.frontier.point {
             ProofExecutionPoint::FunctionEntry => {
                 split_next_execution_step(function.body()).is_ok()
             }
@@ -3027,7 +3036,7 @@ pub(super) fn execute_rest_from_execution_point(
         )?;
     }
 
-    if !execution.replay.is_at_function_exit() {
+    if !execution.frontier.is_at_function_exit() {
         bounded_execute_from_execution_point(
             execution,
             available_pure_facts,
@@ -3072,20 +3081,20 @@ pub(super) fn execute_until_statement(
         )));
     }
 
-    if execution.replay.is_at_function_exit() {
+    if execution.frontier.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
         )));
     }
-    if statement_index < execution.replay.frontier.next_statement_index {
+    if statement_index < execution.frontier.next_statement_index {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
-            execution.replay.frontier.next_statement_index
+            execution.frontier.next_statement_index
         )));
     }
 
-    while execution.replay.frontier.next_statement_index != statement_index {
-        let region_start = execution.replay.frontier.next_statement_index;
+    while execution.frontier.next_statement_index != statement_index {
+        let region_start = execution.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
         execute_step_from_execution_point(
             execution,
@@ -3104,15 +3113,15 @@ pub(super) fn execute_until_statement(
             LoopStepPolicy::ApplyVerifiedRule,
             construction,
         )?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
             )));
         }
-        if execution.replay.frontier.next_statement_index > statement_index {
+        if execution.frontier.next_statement_index > statement_index {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
-                execution.replay.frontier.next_statement_index
+                execution.frontier.next_statement_index
             )));
         }
     }
@@ -3165,19 +3174,19 @@ pub(super) fn sequence_from_statements(statements: &[CStatement]) -> Option<CSta
 }
 
 fn set_replay_execution(
-    replay: &mut TacticReplayState,
+    frontier: &mut ExecutionFrontier,
     claim_label: &str,
     tactic_index: usize,
     tactic_name: &str,
     execution_start_state: CState,
     execution: CFunctionExecutionCandidates,
 ) -> Result<(), ClickError> {
-    if replay.is_at_function_exit() {
+    if frontier.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
         )));
     }
-    replay.frontier.execution_start_state = Some(execution_start_state);
-    replay.frontier.point = ProofExecutionPoint::FunctionExit { execution };
+    frontier.execution_start_state = Some(execution_start_state);
+    frontier.point = ProofExecutionPoint::FunctionExit { execution };
     Ok(())
 }

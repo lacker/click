@@ -333,19 +333,20 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
+    let frontier = ExecutionFrontier {
+        point: ProofExecutionPoint::StatementEntry {
+            remaining: body.clone().into(),
+        },
+        region: ExecutionRegionKind::LoopBody,
+        execution_start_state: Some(preservation.state().clone()),
+        next_statement_index: loop_body_statement_index,
+        ..ExecutionFrontier::default()
+    };
     let mut replay = TacticReplayState {
         proof_site: environment
             .frontier_loop_source
             .and_then(|source| source.proof_site.clone()),
-        frontier: ExecutionFrontier {
-            point: ProofExecutionPoint::StatementEntry {
-                remaining: body.clone().into(),
-            },
-            region: ExecutionRegionKind::LoopBody,
-            execution_start_state: Some(preservation.state().clone()),
-            next_statement_index: loop_body_statement_index,
-            ..ExecutionFrontier::default()
-        },
+
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
@@ -371,6 +372,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ExecutionProofState::at_entry(
             preservation.state().clone(),
             replay,
+            frontier,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
@@ -402,11 +404,10 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         let is_branch = view
             .replay
             .source_layout
-            .statement(view.replay.frontier.next_statement_index)
+            .statement(view.frontier.next_statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
         if is_branch {
-            let ProofExecutionPoint::StatementEntry { remaining } = &view.replay.frontier.point
-            else {
+            let ProofExecutionPoint::StatementEntry { remaining } = &view.frontier.point else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` automatic preservation branch is not at a statement entry"
                 )));
@@ -1234,17 +1235,18 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let loop_body_statement_index = source_layout.loop_body_entry(loop_index).ok_or_else(|| {
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
+    let frontier = ExecutionFrontier {
+        point: ProofExecutionPoint::StatementEntry {
+            remaining: body.clone().into(),
+        },
+        region: ExecutionRegionKind::LoopBody,
+        execution_start_state: Some(preservation.state().clone()),
+        next_statement_index: loop_body_statement_index,
+        ..ExecutionFrontier::default()
+    };
     let mut replay = TacticReplayState {
         proof_site: Some(preserve_site),
-        frontier: ExecutionFrontier {
-            point: ProofExecutionPoint::StatementEntry {
-                remaining: body.clone().into(),
-            },
-            region: ExecutionRegionKind::LoopBody,
-            execution_start_state: Some(preservation.state().clone()),
-            next_statement_index: loop_body_statement_index,
-            ..ExecutionFrontier::default()
-        },
+
         source_layout,
         function_entry_state: Some(environment.initial_state.clone()),
         surface_propositions: environment.surface_propositions.clone(),
@@ -1324,6 +1326,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ExecutionProofState::at_entry(
             preservation.state().clone(),
             replay,
+            frontier,
             PersistentSequence::default(),
         ),
         pure_facts.to_vec(),
@@ -1368,6 +1371,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for leaf in leaves {
         let context_replay = leaf.finalization_view()?.replay.clone();
+        let context_frontier = leaf.finalization_view()?.frontier.clone();
         let case_path = context_replay
             .case_assumptions
             .iter()
@@ -1382,7 +1386,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         let region_simp = context_replay.region_simp;
         let proof_site = context_replay.proof_site.clone();
         let invariants_already_closed = context_replay.region_invariants_closed;
-        let statement_index = context_replay.frontier.next_statement_index;
+        let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some(step) = context_replay.invariant_closer_step {
                 (

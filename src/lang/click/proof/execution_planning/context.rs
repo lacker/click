@@ -410,6 +410,7 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     replay: &mut TacticReplayState,
+    frontier: &ExecutionFrontier,
     transition: &CertifiedStatementTransition,
     loop_step_policy: LoopStepPolicy,
     state: &CState,
@@ -472,6 +473,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     if let Some(environments) = construction {
         construct_simple_step_for_planned_operation(
             replay,
+            frontier,
             state,
             function_block,
             parameters,
@@ -561,6 +563,7 @@ pub(in crate::lang::click::proof) fn theorem_implication_premises(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     replay: &mut TacticReplayState,
+    frontier: &ExecutionFrontier,
     transition: &CertifiedConditionTransition,
     include_path_fact: bool,
     state: &CState,
@@ -592,6 +595,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     };
     construct_simple_step_for_planned_operation(
         replay,
+        frontier,
         state,
         function_block,
         parameters,

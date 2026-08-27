@@ -959,9 +959,7 @@ impl<'a> Proof<'a> {
         let frontier_anchor = match self.context.as_ref() {
             ProofContext::Execution(_) if self.focused_outcome_point().is_none() => {
                 self.execution().map(|execution| ProgramPointRef {
-                    region: CodeRegionRef::Statement(
-                        execution.replay.frontier.next_statement_index,
-                    ),
+                    region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
                     kind: ProgramPointKind::Entry,
                 })
             }

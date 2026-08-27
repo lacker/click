@@ -328,7 +328,9 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         surface_propositions,
         ..TacticReplayState::default()
     };
+    let frontier = ExecutionFrontier::default();
     record_current_statement_entry(
+        &frontier,
         &mut replay,
         &state,
         function_block,
@@ -338,7 +340,8 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ExecutionProofState::at_entry(state, replay, PersistentSequence::default());
+    let initial =
+        ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default());
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, the flat driver owns linear proofs. A driver
     // declines (`None`) or errors; either hands the claim to the
@@ -492,7 +495,9 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         surface_propositions,
         ..TacticReplayState::default()
     };
+    let frontier = ExecutionFrontier::default();
     record_current_statement_entry(
+        &frontier,
         &mut replay,
         &state,
         function_block,
@@ -502,7 +507,8 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ExecutionProofState::at_entry(state, replay, PersistentSequence::default());
+    let initial =
+        ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default());
     // Same order as the single-claim route: structural, then flat, then the
     // compatibility interpreter.
     let structural = match try_check_structural_function_proof(
@@ -1060,8 +1066,10 @@ pub(super) fn finish_ordered_proof_replay<'a>(
     let outcome_substrate = match &unit {
         OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
     };
-    let (state, replay, branch_path) = match (&unit, &direct_view) {
-        (OrderedProofUnit::Checked(_), Some(view)) => (view.state, view.replay, view.branch_path),
+    let (state, replay, frontier, branch_path) = match (&unit, &direct_view) {
+        (OrderedProofUnit::Checked(_), Some(view)) => {
+            (view.state, view.replay, view.frontier, view.branch_path)
+        }
         _ => unreachable!("ordered proof unit and finalization view must agree"),
     };
     let retained_surface = match &unit {
@@ -1071,7 +1079,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             retained
         }
     };
-    let pre_state = replay.execution_start_state(state);
+    let pre_state = frontier.execution_start_state(state);
     let frontier_function_block = (!replay.frontier_loop_clauses.is_empty()).then(|| {
         function_block.with_bound_frontier_loop_clauses(&replay.frontier_loop_clauses.to_vec())
     });
@@ -1100,7 +1108,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         .as_ref()
         .unwrap_or(function_environment);
     let result = (|| {
-        let execution = replay.execution().ok_or_else(|| {
+        let execution = frontier.execution().ok_or_else(|| {
             ClickError::new(format!(
                 "`{proof_label}` execution proof must reach function exit with `step()`, `execute()`, or `execute()`"
             ))
@@ -1931,7 +1939,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             tactic_index: *tactic_index,
                                             tactic_name: tactic_name.to_string(),
                                             class: tactic_class.to_string(),
-                                            statement_index: replay.frontier.next_statement_index,
+                                            statement_index: frontier.next_statement_index,
                                             source_index: *source_index,
                                         },
                                     ),
@@ -1943,7 +1951,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 source_index: *source_index,
                                 tactic_name: tactic_name.to_string(),
                                 tactic_class: tactic_class.to_string(),
-                                statement_index: replay.frontier.next_statement_index,
+                                statement_index: frontier.next_statement_index,
                             };
                             push_timing_tactic(timing_context.clone());
                             TacticTiming {
@@ -1952,7 +1960,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                 source_index: *source_index,
                                 tactic_name: tactic_name.to_string(),
                                 tactic_class,
-                                statement_index: replay.frontier.next_statement_index,
+                                statement_index: frontier.next_statement_index,
                                 start: std::time::Instant::now(),
                                 context: timing_context,
                             }
@@ -2430,7 +2438,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        replay.view(),
+                                        replay.view(frontier),
                                         &path_unfolds,
                                         predicate_environment,
                                         click_function_environment,

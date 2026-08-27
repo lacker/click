@@ -34,15 +34,16 @@ during ordinary verification in the intended architecture.
 
 ## Replay state inside a proof
 
-`ExecutionProofState` owns a `CState`, branch provenance, the path's unfolded
-predicates, and a `TacticReplayState`; that nested state owns an execution
-frontier, fact and resource metadata, marks, structural context, loop rules,
-deferrals, and certificate builders. It lives only as the execution snapshot
-of a `Proof` goal: the checked drivers advance a `Proof`, and every source or
-generated proof tree is checked that way. The earlier interpreter that
-advanced this context as a parallel engine is gone; the remaining duplication
-of facts and `CState` between the snapshot and the `Proof` is tracked for
-removal in `issues/replay-smell.md`.
+`ExecutionProofState` owns a `CState`, the execution frontier (program point,
+region, region start state, continuations), branch provenance, the path's
+unfolded predicates, and a `TacticReplayState`; that nested bag still owns
+program-point states, fact and resource metadata, marks, structural context,
+loop rules, deferrals, and certificate builders. It lives only as the
+execution snapshot of a `Proof` goal: the checked drivers advance a `Proof`,
+and every source or generated proof tree is checked that way. The earlier
+interpreter that advanced this context as a parallel engine is gone; the
+remaining duplication of facts and `CState` between the snapshot and the
+`Proof` is tracked for removal in `issues/replay-smell.md`.
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface

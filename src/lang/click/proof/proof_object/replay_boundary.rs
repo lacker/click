@@ -289,6 +289,7 @@ impl<'a> Proof<'a> {
             state: &execution.state,
             facts: self.facts().to_vec(),
             replay: &execution.replay,
+            frontier: &execution.frontier,
             unfolded_predicates: &execution.unfolded_predicates,
             branch_path: &execution.branch_path,
             outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),
@@ -312,7 +313,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
-        if !execution.replay.is_at_function_exit() {
+        if !execution.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("post-execution tactics can be scheduled only at function exit")
             );

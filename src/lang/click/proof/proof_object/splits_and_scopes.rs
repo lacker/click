@@ -219,7 +219,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Ok(None);
         };
-        let statement_index = execution.replay.frontier.next_statement_index;
+        let statement_index = execution.frontier.next_statement_index;
         let (_, _, statement, _) = next_top_level_statement_from_execution_point(
             execution.view(),
             &execution.state,
@@ -300,7 +300,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         for execution in &partition.base_executions {
-            let statement_index = execution.replay.frontier.next_statement_index;
+            let statement_index = execution.frontier.next_statement_index;
             let Some(region) = execution.replay.source_layout.statement(statement_index) else {
                 return Ok(None);
             };
@@ -404,7 +404,7 @@ impl<'a> Proof<'a> {
                         condition: condition.clone(),
                         value: take_then,
                         fact: Some(fact.clone()),
-                        at_function_entry: execution.replay.is_at_function_entry(),
+                        at_function_entry: execution.frontier.is_at_function_entry(),
                     });
                 let base_execution = Arc::new(execution.clone());
                 let mut checked = check_statement_step(
@@ -534,7 +534,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("an execution frontier has an execution context")
         };
-        let at_function_entry = parent_execution.replay.is_at_function_entry();
+        let at_function_entry = parent_execution.frontier.is_at_function_entry();
         let arm = |surface_fact: ClickProposition, fact: Proposition, value: bool| {
             let facts = frontier.context.facts.with_fact(fact.clone());
             let mut execution = (*parent_execution).clone();
@@ -603,7 +603,7 @@ impl<'a> Proof<'a> {
             parent_unfolds: frontier.context.unfolded_predicates.clone(),
             parent_execution: parent_execution.clone(),
             execution_start_state: parent_execution
-                .replay
+                .frontier
                 .execution_start_state(&parent_execution.state)
                 .clone(),
         };
@@ -882,10 +882,10 @@ impl<'a> Proof<'a> {
         let root_execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution outcome `if` lost its semantic frontier"))?;
-        if !root_execution.replay.is_at_function_exit() {
+        if !root_execution.frontier.is_at_function_exit() {
             return Err(self.step_error("execution outcome `if` requires function exit"));
         }
-        let checked = root_execution.replay.execution().ok_or_else(|| {
+        let checked = root_execution.frontier.execution().ok_or_else(|| {
             self.step_error("execution outcome `if` has no checked execution paths")
         })?;
         let then_fact =
@@ -978,7 +978,7 @@ impl<'a> Proof<'a> {
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
             let paths = std::mem::take(&mut partition_paths[arm_index]);
-            execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+            execution.frontier.point = ProofExecutionPoint::FunctionExit {
                 execution: c_function_execution_candidates_from_outcomes(
                     execution_state.clone(),
                     function.clone(),
@@ -1101,7 +1101,7 @@ impl<'a> Proof<'a> {
                     "execution outcome {name} arm lost its semantic frontier"
                 ))
             })?;
-            if !execution.replay.is_at_function_exit() {
+            if !execution.frontier.is_at_function_exit() {
                 return Err(self.step_error(format!(
                     "execution outcome {name} arm did not remain at function exit"
                 )));
@@ -1386,7 +1386,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Err(self.step_error("`open` must begin before execution reaches function exit"));
         }
         let checked = open_composite_resource_for_proof(

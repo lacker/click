@@ -37,7 +37,7 @@ impl<'a> Proof<'a> {
         };
         let parent_execution = Arc::new(execution.clone());
         let execution_start_state = execution
-            .replay
+            .frontier
             .execution_start_state(&execution.state)
             .clone();
         let make_goal = |mut checked: CheckedStatementStep| {
@@ -268,7 +268,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(
                 self.step_error("`close_invariants` is only available in a loop-region proof")
             );
@@ -313,7 +313,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
-        if execution.replay.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("loop invariant closure requires a loop-region proof"));
         }
 
@@ -370,6 +370,7 @@ impl<'a> Proof<'a> {
         // entry snapshot before any step has crossed it; record it so the
         // form lowers, exactly as the replayed `if` did.
         record_current_statement_entry(
+            &base_execution.frontier,
             &mut base_execution.replay,
             &base_execution.state,
             context.function_block,
@@ -661,14 +662,15 @@ impl<'a> Proof<'a> {
         let claim_label = context.claim_label;
         let premises = {
             let view = self.finalization_view()?;
-            let (state, replay, facts) = (view.state, view.replay, &view.facts);
-            if replay.is_at_function_entry() || replay.is_at_function_exit() {
+            let (state, replay, frontier, facts) =
+                (view.state, view.replay, view.frontier, &view.facts);
+            if frontier.is_at_function_entry() || frontier.is_at_function_exit() {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `transport` requires a current statement frontier after at least one completed execution step"
                 )));
             }
             let assumptions = assumptions_from_propositions(facts);
-            let pre_state = replay.old_reference_state(state);
+            let pre_state = old_reference_state(replay, frontier, state);
             let source = lower_point_proposition(
                 surface_source,
                 facts,
@@ -728,7 +730,7 @@ impl<'a> Proof<'a> {
                 &transition_facts,
                 context.parsed_function.parameters(),
                 context.arguments,
-                replay.view(),
+                replay.view(frontier),
                 state,
                 context.predicate_environment,
                 context.click_function_environment,
@@ -1110,7 +1112,7 @@ impl<'a> Proof<'a> {
         execution.replay.invariant_closer_step = Some(InvariantCloserStep {
             tactic_index,
             source_index,
-            statement_index: execution.replay.frontier.next_statement_index,
+            statement_index: execution.frontier.next_statement_index,
         });
         Ok(Self {
             context: self.context.clone(),
@@ -1144,7 +1146,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("a region `simp` is only available in a loop-region proof"));
         }
         execution.replay.region_simp = Some((tactic_index, source_index));
@@ -1202,7 +1204,7 @@ impl<'a> Proof<'a> {
             tactic_index,
             source_index,
             &ProofTactic::Loop(loop_clause.clone()),
-            execution.replay.frontier.next_statement_index,
+            execution.frontier.next_statement_index,
         );
         let expanded_loop = execute_frontier_local_loop(
             expansion_capture.as_deref_mut(),

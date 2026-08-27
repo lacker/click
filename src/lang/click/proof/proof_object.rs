@@ -259,7 +259,7 @@ impl<'a> ExecutionSplit<'a> {
         )
         .is_some()
             || !matches!(
-                self.parent_execution.replay.frontier.region,
+                self.parent_execution.frontier.region,
                 ExecutionRegionKind::Function
             );
         self.sole_feasible_arm().is_some()
@@ -332,7 +332,7 @@ fn derive_execution_join_continuation(
     continuation_remaining: &Option<Arc<CStatement>>,
     continuation_index: usize,
 ) -> Option<ExecutionBranchJoinContinuation> {
-    let mut continuations = root_execution.replay.frontier.continuations.clone();
+    let mut continuations = root_execution.frontier.continuations.clone();
     if let Some(remaining) = continuation_remaining {
         return Some(ExecutionBranchJoinContinuation {
             remaining: remaining.clone(),
@@ -1065,6 +1065,9 @@ impl Default for ProofLocals {
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) state: SharedValue<CState>,
+    /// Where execution stands: the program point, region, region start
+    /// state, and pending continuations.
+    pub(in crate::lang::click::proof) frontier: ExecutionFrontier,
     pub(in crate::lang::click::proof) replay: TacticReplayState,
     pub(in crate::lang::click::proof) branch_path: PersistentSequence<String>,
     /// Kernel facts whose checked C-branch Surface spellings must survive a
@@ -1094,7 +1097,16 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 impl ExecutionProofState {
     /// The read-only execution data lowering and point proofs consult.
     pub(in crate::lang::click::proof) fn view(&self) -> ExecutionView<'_> {
-        self.replay.view()
+        self.replay.view(&self.frontier)
+    }
+
+    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
+    /// a contract clause is lowered here.
+    pub(in crate::lang::click::proof) fn old_reference_state<'a>(
+        &'a self,
+        current_state: &'a CState,
+    ) -> &'a CState {
+        old_reference_state(&self.replay, &self.frontier, current_state)
     }
 
     /// The execution state at a proof's entry: the frontier's C state and
@@ -1102,10 +1114,12 @@ impl ExecutionProofState {
     pub(in crate::lang::click::proof) fn at_entry(
         state: CState,
         replay: TacticReplayState,
+        frontier: ExecutionFrontier,
         branch_path: PersistentSequence<String>,
     ) -> Self {
         Self {
             state: state.into(),
+            frontier,
             replay,
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
@@ -1137,6 +1151,7 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) state: &'p CState,
     pub(super) facts: Vec<Proposition>,
     pub(super) replay: &'p TacticReplayState,
+    pub(super) frontier: &'p ExecutionFrontier,
     pub(super) unfolded_predicates: &'p SharedVec<String>,
     pub(super) branch_path: &'p PersistentSequence<String>,
     outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],

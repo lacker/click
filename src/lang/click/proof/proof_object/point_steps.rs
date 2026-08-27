@@ -150,12 +150,8 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let pre_state = execution
-            .replay
-            .old_reference_state(&execution.state)
-            .clone();
+        let pre_state = execution.old_reference_state(&execution.state).clone();
         let retain_function_entry_derivation = execution
-            .replay
             .frontier
             .execution_start_state
             .as_ref()
@@ -767,7 +763,7 @@ impl<'a> Proof<'a> {
             effect_facts: &execution.replay.effect_facts,
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: execution.replay.execution_start_state(&execution.state),
+            pre_state: execution.frontier.execution_start_state(&execution.state),
             state: &execution.state,
             result: None,
             program_point_states: &execution.replay.program_point_states,
@@ -865,14 +861,14 @@ impl<'a> Proof<'a> {
         let mut execution = self.execution().cloned().ok_or_else(|| {
             self.step_error("post-execution case split lost its execution frontier")
         })?;
-        if !execution.replay.is_at_function_exit() {
+        if !execution.frontier.is_at_function_exit() {
             return Err(self.step_error("post-execution case split requires function exit"));
         }
-        let checked = execution.replay.execution().cloned().ok_or_else(|| {
+        let checked = execution.frontier.execution().cloned().ok_or_else(|| {
             self.step_error("post-execution case split has no checked execution paths")
         })?;
         let pre_state = execution
-            .replay
+            .frontier
             .execution_start_state(&execution.state)
             .clone();
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
@@ -961,7 +957,7 @@ impl<'a> Proof<'a> {
             checked.arguments().to_vec(),
             paths,
         );
-        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+        execution.frontier.point = ProofExecutionPoint::FunctionExit {
             execution: candidates,
         };
         execution.outcome_branch_decisions = Arc::new(decisions_by_path);
@@ -986,11 +982,11 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("post-execution `if` lost its execution frontier"))?;
-        if !execution.replay.is_at_function_exit() {
+        if !execution.frontier.is_at_function_exit() {
             return Err(self.step_error("post-execution `if` requires function exit"));
         }
         let checked = execution
-            .replay
+            .frontier
             .execution()
             .ok_or_else(|| self.step_error("post-execution `if` has no checked execution paths"))?;
         for path_index in 0..checked.paths().len() {
@@ -1041,7 +1037,7 @@ impl<'a> Proof<'a> {
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: execution.replay.execution_start_state(&execution.state),
+            pre_state: execution.frontier.execution_start_state(&execution.state),
             state: &point.state,
             result: Some(point.result.as_ref()),
             program_point_states: &execution.replay.program_point_states,
@@ -1185,10 +1181,7 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         execution.last_step_delta = ExecutionProofStepDelta::default();
-        let pre_state = execution
-            .replay
-            .old_reference_state(&execution.state)
-            .clone();
+        let pre_state = execution.old_reference_state(&execution.state).clone();
         let checked = check_point_fact_transport_using_facts(
             source,
             target,

@@ -68,6 +68,7 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
                     }),
                     ..TacticReplayState::default()
                 },
+                ExecutionFrontier::default(),
                 PersistentSequence::default(),
             ),
             Vec::new(),
@@ -2750,7 +2751,12 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         let root = Proof::for_execution_frontier(
             "persistent theorem application",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -2952,7 +2958,12 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         let root = Proof::for_execution_frontier(
             "branch theorem search",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -6833,7 +6844,12 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "persistent unfold",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -6955,6 +6971,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 TacticReplayState::default(),
+                ExecutionFrontier::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7059,6 +7076,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 TacticReplayState::default(),
+                ExecutionFrontier::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7164,6 +7182,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             ExecutionProofState::at_entry(
                 state.clone(),
                 TacticReplayState::default(),
+                ExecutionFrontier::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7289,6 +7308,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
                     source_layout: SourceExecutionLayout::new(parsed_function.body()),
                     ..TacticReplayState::default()
                 },
+                ExecutionFrontier::default(),
                 PersistentSequence::default(),
             ),
             (0..size).map(indexed_fact).collect(),
@@ -7364,7 +7384,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         assert!(
             closed
                 .execution()
-                .is_some_and(|execution| !execution.replay.is_at_function_exit())
+                .is_some_and(|execution| !execution.frontier.is_at_function_exit())
         );
 
         let mut missing = resource.clone();
@@ -7387,7 +7407,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let terminal_execution = terminal
             .execution()
             .expect("the terminal open retains execution state");
-        assert!(terminal_execution.replay.is_at_function_exit());
+        assert!(terminal_execution.frontier.is_at_function_exit());
         assert_eq!(terminal_execution.replay.post_execution_tactics.len(), 1);
         assert_eq!(
             terminal.certificate().steps(),
@@ -7454,7 +7474,12 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         let root = Proof::for_execution_frontier(
             "persistent transport",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -7578,7 +7603,12 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         let root = Proof::for_execution_frontier(
             "persistent transport search",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -7675,7 +7705,12 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
         let root = Proof::for_execution_frontier(
             "indexed local assignment",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -7711,7 +7746,7 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
             !selected
                 .execution()
                 .expect("assignment successor retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
     }
@@ -7790,7 +7825,12 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
         let root = Proof::for_execution_frontier(
             "indexed store selection",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -7869,7 +7909,12 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
         let root = Proof::for_execution_frontier(
             "persistent statement step",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -7924,7 +7969,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             completed
                 .execution()
                 .expect("statement successor retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
         assert!(matches!(
@@ -7986,14 +8031,20 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 
     for size in [16_u32, 64, 256, 1024, 4096] {
         let make_root = |loop_invariant_region: bool| {
-            let mut replay = TacticReplayState::default();
+            let replay = TacticReplayState::default();
+            let mut frontier = ExecutionFrontier::default();
             if loop_invariant_region {
-                replay.frontier.region = ExecutionRegionKind::LoopBody;
+                frontier.region = ExecutionRegionKind::LoopBody;
             }
             Proof::for_execution_frontier(
                 "persistent close invariants",
                 0,
-                ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+                ExecutionProofState::at_entry(
+                    CState::new(),
+                    replay,
+                    frontier,
+                    PersistentSequence::default(),
+                ),
                 (0..size).map(indexed_fact).collect(),
                 function_block,
                 &function,
@@ -8146,7 +8197,12 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "execution proof if scaling",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -8269,7 +8325,12 @@ fn execution_proof_cases_split_is_logarithmic_in_unrelated_facts() {
         let root = Proof::for_execution_frontier(
             "execution proof cases scaling",
             0,
-            ExecutionProofState::at_entry(state.clone(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                state.clone(),
+                replay,
+                ExecutionFrontier::default(),
+                PersistentSequence::default(),
+            ),
             pure_facts,
             function_block,
             &function,
@@ -8337,15 +8398,21 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut statement_delta: Option<Vec<Proposition>> = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
             "empty branch proof",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                frontier,
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -8413,7 +8480,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             completed
                 .execution()
                 .expect("completed proof retains execution state")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
     }
@@ -8473,7 +8540,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
     let mut allocation_samples = Vec::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             proof_site: Some(ProofSite::FunctionClaim {
                 function_name: "constant".to_string(),
@@ -8481,11 +8548,17 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             }),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
             "nonempty branch proof",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                frontier,
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -8601,7 +8674,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             completed
                 .execution()
                 .expect("completed proof retains execution state")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
         let framed = completed
@@ -8690,7 +8763,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             sibling_completed
                 .execution()
                 .expect("completed sibling join retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
         // The failed foreign join left the sibling state untouched.
@@ -8753,15 +8826,16 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         right: value(0),
     };
     let make_root = |size: u32, state: CState| {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
             "branch interface proof",
             0,
-            ExecutionProofState::at_entry(state, replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(state, replay, frontier, PersistentSequence::default()),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -8826,7 +8900,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             completed
                 .execution()
                 .expect("completed interface proof retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
     }
@@ -8927,7 +9001,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         completed
             .execution()
             .expect("the completed sibling interface proof retains execution")
-            .replay
+            .frontier
             .is_at_function_exit()
     );
     // A failed sibling interface join is transactional.
@@ -9220,15 +9294,21 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         right: ContractExpression::CFragment(CExpression::Value(int32(0))),
     };
     let make_root = |size: u32| {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
             "nested branch interface proof",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                frontier,
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -9291,7 +9371,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
                 .is_some()
         );
         assert!(
-            execution.replay.is_at_region_boundary(),
+            execution.frontier.is_at_region_boundary(),
             "the nested join ends the outer arm's own region"
         );
         let joined = joined
@@ -9311,7 +9391,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             completed
                 .execution()
                 .expect("completed nested proof retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
     }
@@ -9351,15 +9431,21 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let function_environment = CExecutionEnvironment::new();
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let make_root = |facts: Vec<Proposition>| {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         Proof::for_execution_frontier(
             "decided branch proof",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                frontier,
+                PersistentSequence::default(),
+            ),
             facts,
             function_block,
             &function,
@@ -9447,7 +9533,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             completed
                 .execution()
                 .expect("completed decided proof retains execution")
-                .replay
+                .frontier
                 .is_at_function_exit()
         );
     }
@@ -9539,7 +9625,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         completed
             .execution()
             .expect("the completed decided sibling proof retains execution")
-            .replay
+            .frontier
             .is_at_function_exit()
     );
     // The decided interface finish mirrors the plain decided finish
@@ -9613,15 +9699,21 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let mut expected_outcome_fact_sizes = None;
     for size in [16_u32, 64, 256, 1024, 4096] {
-        let mut replay = TacticReplayState {
+        let replay = TacticReplayState {
             source_layout: SourceExecutionLayout::new(parsed_function.body()),
             ..TacticReplayState::default()
         };
-        replay.frontier.next_statement_index = 0;
+        let mut frontier = ExecutionFrontier::default();
+        frontier.next_statement_index = 0;
         let root = Proof::for_execution_frontier(
             "terminal branch proof",
             0,
-            ExecutionProofState::at_entry(CState::new(), replay, PersistentSequence::default()),
+            ExecutionProofState::at_entry(
+                CState::new(),
+                replay,
+                frontier,
+                PersistentSequence::default(),
+            ),
             (0..size).map(indexed_fact).collect(),
             function_block,
             &function,
@@ -9673,9 +9765,9 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let execution = joined
             .execution()
             .expect("terminal join should retain execution state");
-        assert!(execution.replay.is_at_function_exit());
+        assert!(execution.frontier.is_at_function_exit());
         let outcome_paths = execution
-            .replay
+            .frontier
             .execution()
             .expect("terminal join should retain outcomes")
             .paths();
@@ -9744,10 +9836,10 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let sibling_execution = sibling_joined
             .execution()
             .expect("the sibling terminal join retains execution state");
-        assert!(sibling_execution.replay.is_at_function_exit());
+        assert!(sibling_execution.frontier.is_at_function_exit());
         assert_eq!(
             sibling_execution
-                .replay
+                .frontier
                 .execution()
                 .expect("the sibling terminal join retains outcomes")
                 .paths()

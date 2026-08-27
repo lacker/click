@@ -609,11 +609,7 @@ fn advance_checked_linear_continuation<'a>(
         check_verification_deadline()?;
         // Every source driver starts a tactic with an empty step delta.
         proof = proof.start_source_tactic()?;
-        let statement_index = proof
-            .finalization_view()?
-            .replay
-            .frontier
-            .next_statement_index;
+        let statement_index = proof.finalization_view()?.frontier.next_statement_index;
         let terminal_frame = matches!(
             indexed.tactic,
             ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }
@@ -2892,12 +2888,12 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                     condition: condition.clone(),
                     value,
                     fact: Some(kernel_fact),
-                    at_function_entry: execution.replay.is_at_function_entry(),
+                    at_function_entry: execution.frontier.is_at_function_entry(),
                 });
             return Ok(true);
         }
     }
-    if execution.replay.is_at_function_exit()
+    if execution.frontier.is_at_function_exit()
         && structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
     {
@@ -2912,7 +2908,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             pure_facts,
             parameters,
             arguments,
-            execution.replay.old_reference_state(&execution.state),
+            execution.old_reference_state(&execution.state),
             &execution.state,
             None,
             &execution.replay.program_point_states,
@@ -2959,7 +2955,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             return Ok(true);
         }
     }
-    if execution.replay.is_at_function_exit() {
+    if execution.frontier.is_at_function_exit() {
         execution
             .replay
             .case_assumptions
@@ -2972,13 +2968,13 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             });
         return Ok(true);
     }
-    let at_function_entry = execution.replay.is_at_function_entry();
+    let at_function_entry = execution.frontier.is_at_function_entry();
     let proposition = lower_point_proposition(
         condition,
         pure_facts,
         parameters,
         arguments,
-        execution.replay.old_reference_state(&execution.state),
+        execution.old_reference_state(&execution.state),
         &execution.state,
         None,
         &execution.replay.program_point_states,

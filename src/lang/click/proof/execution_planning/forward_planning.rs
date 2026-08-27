@@ -718,7 +718,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             .record_lowering(&unfolded_surface, &unfolded_fact)?;
     }
     let surface_proof = surface_simp_plan_proof(
-        planning_replay.view(),
+        planning_replay.view(&ExecutionFrontier::default()),
         state,
         available,
         parameters,

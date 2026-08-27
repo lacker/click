@@ -9,7 +9,7 @@ impl<'a> Proof<'a> {
     /// grants no authority to advance the proof.
     pub(in crate::lang::click::proof) fn is_at_function_exit(&self) -> bool {
         self.execution()
-            .is_some_and(|execution| execution.replay.is_at_function_exit())
+            .is_some_and(|execution| execution.frontier.is_at_function_exit())
     }
 
     /// Whether the focused execution frontier still owns a function effect
@@ -36,7 +36,7 @@ impl<'a> Proof<'a> {
     /// its own statement tree is exhausted and no code lies beyond it.
     pub(in crate::lang::click::proof) fn is_at_region_boundary(&self) -> bool {
         self.execution()
-            .is_some_and(|execution| execution.replay.is_at_region_boundary())
+            .is_some_and(|execution| execution.frontier.is_at_region_boundary())
     }
 
     /// Whether checked execution retained an infeasible sibling as an empty
@@ -249,7 +249,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let checked = execution.replay.execution().ok_or_else(|| {
+        let checked = execution.frontier.execution().ok_or_else(|| {
             self.step_error("outcome goals require execution to have reached function exit")
         })?;
         let frontier_snapshot = frontier.context.execution.clone();
@@ -381,7 +381,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Ok(false);
         }
         if execution.state.memory().has_pending_heap_allocation() {
@@ -391,7 +391,7 @@ impl<'a> Proof<'a> {
             // that frontier from the unchanged Proof root.
             return Ok(false);
         }
-        let statement_index = execution.replay.frontier.next_statement_index;
+        let statement_index = execution.frontier.next_statement_index;
         let source_region = execution
             .replay
             .source_layout
@@ -431,8 +431,8 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
-        Ok((!execution.replay.is_at_function_exit())
-            .then_some(execution.replay.frontier.next_statement_index))
+        Ok((!execution.frontier.is_at_function_exit())
+            .then_some(execution.frontier.next_statement_index))
     }
 }
 

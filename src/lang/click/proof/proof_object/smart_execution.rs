@@ -157,12 +157,12 @@ impl<'a> Proof<'a> {
         let execution = self.execution().ok_or_else(|| {
             self.step_error("execution fact-transport search lost its semantic frontier")
         })?;
-        if execution.replay.is_at_function_entry() {
+        if execution.frontier.is_at_function_entry() {
             return Err(self.step_error(
                 "`transport` requires a current statement frontier after at least one execution step",
             ));
         }
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Ok(None);
         }
         match self.search_fact_transport_from_candidates(
@@ -293,7 +293,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let pre_state = execution.replay.old_reference_state(&execution.state);
+        let pre_state = execution.old_reference_state(&execution.state);
         self.select_theorem_application_step_at_point(
             application,
             context.parsed_function.parameters(),

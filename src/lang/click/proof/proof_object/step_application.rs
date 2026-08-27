@@ -236,7 +236,7 @@ impl<'a> Proof<'a> {
         let execution = goal.context.execution.as_deref().ok_or_else(|| {
             self.step_error("result-aware `frame using` lost its execution snapshot")
         })?;
-        let pre_state = execution.replay.execution_start_state(&execution.state);
+        let pre_state = execution.frontier.execution_start_state(&execution.state);
 
         let mut point = (*goal.point).clone();
         let mut frame_facts = Vec::with_capacity(premises.len());
@@ -474,7 +474,7 @@ impl<'a> Proof<'a> {
                 checked_facts: Arc::new(frame_facts),
             });
         }
-        if !execution.replay.is_at_function_exit() {
+        if !execution.frontier.is_at_function_exit() {
             return Err(self.step_error("`frame using` requires function exit"));
         }
         if let Some(region) = region {
@@ -530,13 +530,10 @@ impl<'a> Proof<'a> {
 
         let effect_indices = self.selected_effect_indices(context)?;
 
-        let checked_execution = execution.replay.execution().ok_or_else(|| {
+        let checked_execution = execution.frontier.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
-        let pre_state = execution
-            .replay
-            .old_reference_state(&execution.state)
-            .clone();
+        let pre_state = execution.old_reference_state(&execution.state).clone();
         for effect_index in &effect_indices {
             let claim = FunctionClaimRef::Effect(
                 *effect_index,
@@ -668,21 +665,19 @@ impl<'a> Proof<'a> {
         let execution_state = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if !execution_state.replay.is_at_function_exit()
+        if !execution_state.frontier.is_at_function_exit()
             || !execution_state.replay.case_assumptions.is_empty()
         {
             return Ok(None);
         }
         let effect_indices = self.selected_effect_indices(context)?;
-        let execution = execution_state.replay.execution().ok_or_else(|| {
+        let execution = execution_state.frontier.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
         let path_independent_only = self.node.depth == 0
             && (execution.paths().len() > 1 || execution_state.has_structured_branch_history);
         let available = self.facts().to_vec();
-        let pre_state = execution_state
-            .replay
-            .old_reference_state(&execution_state.state);
+        let pre_state = execution_state.old_reference_state(&execution_state.state);
         let mut path_derivations = Vec::with_capacity(execution.paths().len());
         for (path_index, path) in execution.paths().iter().enumerate() {
             if !path.obligations().is_empty() {
@@ -774,6 +769,7 @@ impl<'a> Proof<'a> {
         }
         let path_tactics = lower_certified_frame_path_tactics(
             &mut construction_replay,
+            &execution_state.frontier,
             &execution_state.state,
             &available,
             context.parsed_function.parameters(),
@@ -1036,7 +1032,7 @@ impl<'a> Proof<'a> {
         // A fact about an earlier value of a body variable denotes at the
         // recorded entry of the statement that read it.
         let anchor = ProgramPointRef {
-            region: CodeRegionRef::Statement(execution.replay.frontier.next_statement_index),
+            region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
         let candidates = super::smart_closures::synthesize_surface_at_recorded_points(

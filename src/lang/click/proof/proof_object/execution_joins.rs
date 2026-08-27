@@ -37,7 +37,7 @@ impl<'a> Proof<'a> {
         {
             return Ok(false);
         }
-        let statement_index = execution.replay.frontier.next_statement_index;
+        let statement_index = execution.frontier.next_statement_index;
         if !execution
             .replay
             .source_layout
@@ -90,7 +90,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let statement_index = execution.replay.frontier.next_statement_index;
+        let statement_index = execution.frontier.next_statement_index;
         let source_region = execution
             .replay
             .source_layout
@@ -168,20 +168,19 @@ impl<'a> Proof<'a> {
                     "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
                 ));
             }
-            arm_execution.replay.frontier.next_statement_index = if take_then {
+            arm_execution.frontier.next_statement_index = if take_then {
                 then_statement_index
             } else {
                 else_statement_index
             };
-            arm_execution.replay.frontier.execution_start_state =
-                Some(execution_start_state.clone());
+            arm_execution.frontier.execution_start_state = Some(execution_start_state.clone());
             arm_execution.state = resolved_state.into();
             // The arm frontier owns exactly the arm's own statement tree:
             // exhausting it reaches the typed region boundary, and the join
             // restores the parent frontier. Enclosing continuations belong
             // to the parent, never to a bounded arm.
-            arm_execution.replay.frontier.continuations = PersistentSequence::default();
-            arm_execution.replay.frontier.region = ExecutionRegionKind::BranchArm;
+            arm_execution.frontier.continuations = PersistentSequence::default();
+            arm_execution.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_point_state(
                     &mut arm_execution.replay,
@@ -190,13 +189,14 @@ impl<'a> Proof<'a> {
                     ProgramPointKind::Exit,
                     (*arm_execution.state).clone(),
                 );
-                arm_execution.replay.frontier.point = ProofExecutionPoint::RegionBoundary;
+                arm_execution.frontier.point = ProofExecutionPoint::RegionBoundary;
             } else {
-                arm_execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                arm_execution.frontier.point = ProofExecutionPoint::StatementEntry {
                     remaining: Arc::new(selected_branch.clone()),
                 };
             }
             record_current_statement_entry(
+                &arm_execution.frontier,
                 &mut arm_execution.replay,
                 &arm_execution.state,
                 context.function_block,
@@ -211,9 +211,7 @@ impl<'a> Proof<'a> {
             } else {
                 negate_click_proposition(&surface_condition)
             };
-            let pre_state = arm_execution
-                .replay
-                .old_reference_state(&arm_execution.state);
+            let pre_state = arm_execution.old_reference_state(&arm_execution.state);
             let kernel_path_fact = lower_point_proposition_with_assumptions(
                 &surface_path_fact,
                 transition.pure_facts.assumptions(),
@@ -349,8 +347,9 @@ impl<'a> Proof<'a> {
         assertions: Vec<ProofAssertion>,
         arm: &CheckedExecutionJoinArm<'_>,
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
-        let replay = &arm.execution.replay;
-        if !replay.is_at_region_boundary() && !replay.is_at_function_exit() {
+        if !arm.execution.frontier.is_at_region_boundary()
+            && !arm.execution.frontier.is_at_function_exit()
+        {
             return Err(self.step_error(format!(
                 "the sole feasible {} `branch ensuring` arm has not reached its region boundary or function exit",
                 if take_then { "then" } else { "else" }
@@ -447,8 +446,9 @@ impl<'a> Proof<'a> {
         take_then: bool,
         arm: &CheckedExecutionJoinArm<'_>,
     ) -> Result<SimpleProofStep, ClickError> {
-        let replay = &arm.execution.replay;
-        if !replay.is_at_region_boundary() && !replay.is_at_function_exit() {
+        if !arm.execution.frontier.is_at_region_boundary()
+            && !arm.execution.frontier.is_at_function_exit()
+        {
             return Err(self.step_error(format!(
                 "the sole feasible {} execution arm has not reached its region boundary or function exit",
                 if take_then { "then" } else { "else" }
@@ -598,8 +598,7 @@ impl<'a> Proof<'a> {
             continuation_index,
         );
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
-            let replay = &arm.execution.replay;
-            if !replay.is_at_region_boundary() {
+            if !arm.execution.frontier.is_at_region_boundary() {
                 return Err(self.step_error(format!(
                     "{name} `branch ensuring` arm has not reached its region boundary"
                 )));
@@ -751,20 +750,20 @@ impl<'a> Proof<'a> {
             },
             abstract_state.clone(),
         );
-        execution.replay.frontier.execution_start_state = Some(execution_start_state);
+        execution.frontier.execution_start_state = Some(execution_start_state);
         match join_continuation {
             Some(join) => {
-                execution.replay.frontier.next_statement_index = join.next_statement_index;
-                execution.replay.frontier.continuations = join.continuations;
-                execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                execution.frontier.next_statement_index = join.next_statement_index;
+                execution.frontier.continuations = join.continuations;
+                execution.frontier.point = ProofExecutionPoint::StatementEntry {
                     remaining: join.remaining,
                 };
             }
             None => {
                 // The joined `branch ensuring` ends its enclosing region:
                 // the parent rests at its own typed boundary.
-                execution.replay.frontier.continuations = PersistentSequence::default();
-                if !finish_exhausted_region(&mut execution.replay) {
+                execution.frontier.continuations = PersistentSequence::default();
+                if !finish_exhausted_region(&mut execution.frontier) {
                     return Err(self.step_error(
                         "execution `branch` reached the end of the function without a return",
                     ));
@@ -827,6 +826,7 @@ impl<'a> Proof<'a> {
             abstract_state,
         );
         record_current_statement_entry(
+            &execution.frontier,
             &mut execution.replay,
             &execution.state,
             context.function_block,
@@ -1034,8 +1034,7 @@ impl<'a> Proof<'a> {
             )
         };
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
-            let replay = &arm.execution.replay;
-            if !replay.is_at_function_exit() {
+            if !arm.execution.frontier.is_at_function_exit() {
                 return Err(self.step_error(format!(
                     "{name} branch arm has not completed at function exit"
                 )));
@@ -1091,7 +1090,7 @@ impl<'a> Proof<'a> {
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
-                .replay
+                .frontier
                 .execution()
                 .expect("validated terminal arm is at function exit");
             for (arm_path_index, path) in completed.paths().iter().enumerate() {
@@ -1147,9 +1146,9 @@ impl<'a> Proof<'a> {
         )?;
         execution.state = execution_start_state.clone().into();
         execution.replay.program_point_states = common_program_points;
-        execution.replay.frontier.continuations.clear();
-        execution.replay.frontier.execution_start_state = Some(execution_start_state);
-        execution.replay.frontier.point = ProofExecutionPoint::FunctionExit {
+        execution.frontier.continuations.clear();
+        execution.frontier.execution_start_state = Some(execution_start_state);
+        execution.frontier.point = ProofExecutionPoint::FunctionExit {
             execution: outcomes,
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
@@ -1361,8 +1360,7 @@ impl<'a> Proof<'a> {
                     "cannot use the empty execution join for a nonempty {name} arm"
                 )));
             }
-            let replay = &arm.execution.replay;
-            if !replay.is_at_region_boundary() {
+            if !arm.execution.frontier.is_at_region_boundary() {
                 return Err(self.step_error(format!(
                     "{name} branch arm has not reached its shared continuation"
                 )));
@@ -1393,24 +1391,24 @@ impl<'a> Proof<'a> {
             },
             (**then_state).clone(),
         );
-        execution.replay.frontier.execution_start_state = Some(execution_start_state);
+        execution.frontier.execution_start_state = Some(execution_start_state);
         // The parent frontier continues around the joined state: its own
         // tail when it has one; otherwise control returns through the
         // parent's enclosing loop-iteration continuations, and an exhausted
         // bounded region rests at its typed boundary.
         match continuation_remaining {
             Some(remaining) => {
-                execution.replay.frontier.next_statement_index = continuation_index;
-                execution.replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+                execution.frontier.next_statement_index = continuation_index;
+                execution.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
             }
-            None => match resume_after_completed_region(&mut execution.replay) {
+            None => match resume_after_completed_region(&mut execution.frontier) {
                 Some(remaining) => {
-                    execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }
                 None => {
-                    if !finish_exhausted_region(&mut execution.replay) {
+                    if !finish_exhausted_region(&mut execution.frontier) {
                         return Err(self.step_error(
                             "execution `branch` reached the end of the function without a return",
                         ));
@@ -1480,6 +1478,7 @@ impl<'a> Proof<'a> {
             (**then_state).clone(),
         );
         record_current_statement_entry(
+            &execution.frontier,
             &mut execution.replay,
             &execution.state,
             context.function_block,
@@ -1630,7 +1629,7 @@ impl<'a> Proof<'a> {
             &record.common_facts,
             &record.parent_unfolds,
             &record.parent_execution,
-            record.parent_execution.replay.frontier.next_statement_index,
+            record.parent_execution.frontier.next_statement_index,
             record.execution_start_state.clone(),
             Some(record.surface_condition.clone()),
             [then_view, else_view],
@@ -2414,29 +2413,24 @@ impl<'a> Proof<'a> {
         // sole arm ended at its typed boundary or returned: a function-exit
         // frontier reached inside an arm belongs to the enclosing region, so
         // source-ordered outcome tactics see it as the function's exit.
-        execution.replay.frontier.region = record.parent_execution.replay.frontier.region;
-        if !execution.replay.is_at_region_boundary() {
+        execution.frontier.region = record.parent_execution.frontier.region;
+        if !execution.frontier.is_at_region_boundary() {
             return Ok(());
         }
-        execution.replay.frontier.continuations = record
-            .parent_execution
-            .replay
-            .frontier
-            .continuations
-            .clone();
-        execution.replay.frontier.next_statement_index = record.continuation_index;
+        execution.frontier.continuations = record.parent_execution.frontier.continuations.clone();
+        execution.frontier.next_statement_index = record.continuation_index;
         match record.continuation_remaining.clone() {
             Some(remaining) => {
-                execution.replay.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+                execution.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
             }
-            None => match resume_after_completed_region(&mut execution.replay) {
+            None => match resume_after_completed_region(&mut execution.frontier) {
                 Some(remaining) => {
-                    execution.replay.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }
                 None => {
-                    if !finish_exhausted_region(&mut execution.replay) {
+                    if !finish_exhausted_region(&mut execution.frontier) {
                         return Err(self.step_error(
                             "decided `branch` reached the end of the function without a return",
                         ));
@@ -2460,7 +2454,7 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(self.clone());
         };
-        if !execution.replay.is_at_region_boundary() {
+        if !execution.frontier.is_at_region_boundary() {
             return Ok(self.clone());
         }
         let mut execution = execution.clone();
@@ -2526,7 +2520,7 @@ impl<'a> Proof<'a> {
                 .goals
                 .get(id)
                 .and_then(|goal| goal.context().execution.as_deref())
-                .is_some_and(|execution| execution.replay.is_at_function_exit())
+                .is_some_and(|execution| execution.frontier.is_at_function_exit())
         })
     }
 
@@ -2540,7 +2534,7 @@ impl<'a> Proof<'a> {
                     .goals
                     .get(*id)
                     .and_then(|goal| goal.context().execution.as_deref())
-                    .is_some_and(|execution| execution.replay.is_at_function_exit())
+                    .is_some_and(|execution| execution.frontier.is_at_function_exit())
             })
     }
 

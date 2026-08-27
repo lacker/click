@@ -191,7 +191,7 @@ impl<'a> Proof<'a> {
                 let kernel = match &surface {
                     Some(surface) => {
                         let surface = self.substitute_point_locals_in_proposition(surface)?;
-                        let pre_state = execution.replay.old_reference_state(&execution.state);
+                        let pre_state = execution.old_reference_state(&execution.state);
                         lower_point_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
@@ -263,7 +263,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("`observe` must run before execution reaches function exit")
             );
@@ -314,7 +314,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Err(self
                 .step_error("resource `unfold` must run before execution reaches function exit"));
         }
@@ -357,15 +357,12 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("resource `fold` must run before execution reaches function exit")
             );
         }
-        let pre_state = execution
-            .replay
-            .old_reference_state(&execution.state)
-            .clone();
+        let pre_state = execution.old_reference_state(&execution.state).clone();
         let checked = fold_composite_resource_for_proof(
             context.resource_environment,
             resource,
@@ -410,7 +407,7 @@ impl<'a> Proof<'a> {
         let execution = goal.context.execution.as_deref().ok_or_else(|| {
             self.step_error("outcome resource `fold` lost its execution snapshot")
         })?;
-        let pre_state = execution.replay.execution_start_state(&execution.state);
+        let pre_state = execution.frontier.execution_start_state(&execution.state);
         let outcome = CFunctionOutcome::Return {
             value: (*goal.point.result).clone(),
             state: (*goal.point.state).clone(),

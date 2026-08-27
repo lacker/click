@@ -135,7 +135,6 @@ impl<T: Clone> SharedValue<T> {
 pub(super) struct TacticReplayState {
     pub(super) proof_site: Option<ProofSite>,
     pub(super) loop_effect_goal: Option<LoopEffectReplayGoal>,
-    pub(super) frontier: ExecutionFrontier,
     pub(super) source_layout: SourceExecutionLayout,
     pub(super) program_point_states: ProgramPointStates,
     pub(super) post_execution_tactics: PersistentSequence<DeferredPostExecutionTactic>,
@@ -1901,27 +1900,24 @@ pub(super) enum ProofExecutionPoint {
     /// is unrepresentable rather than detected after the fact.
     RegionBoundary,
 }
-impl TacticReplayState {
+impl ExecutionFrontier {
     pub(super) fn is_at_function_exit(&self) -> bool {
-        matches!(
-            self.frontier.point,
-            ProofExecutionPoint::FunctionExit { .. }
-        )
+        matches!(self.point, ProofExecutionPoint::FunctionExit { .. })
     }
 
     pub(super) fn is_at_function_entry(&self) -> bool {
-        matches!(self.frontier.point, ProofExecutionPoint::FunctionEntry)
+        matches!(self.point, ProofExecutionPoint::FunctionEntry)
     }
 
     /// Execution reached the typed back-edge boundary of a bounded region:
     /// the region's own statement tree is exhausted and no enclosing
     /// continuation remains.
     pub(super) fn is_at_region_boundary(&self) -> bool {
-        matches!(self.frontier.point, ProofExecutionPoint::RegionBoundary)
+        matches!(self.point, ProofExecutionPoint::RegionBoundary)
     }
 
     pub(super) fn execution(&self) -> Option<&CFunctionExecutionCandidates> {
-        match &self.frontier.point {
+        match &self.point {
             ProofExecutionPoint::FunctionEntry
             | ProofExecutionPoint::StatementEntry { .. }
             | ProofExecutionPoint::RegionBoundary => None,
@@ -1930,37 +1926,38 @@ impl TacticReplayState {
     }
 
     pub(super) fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
-        self.frontier
-            .execution_start_state
-            .as_ref()
-            .unwrap_or(current_state)
+        self.execution_start_state.as_ref().unwrap_or(current_state)
     }
+}
 
-    /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
-    /// a contract clause is lowered here.
-    ///
-    /// This is the one place that answers "which memory does `old` mean", so
-    /// the answer is a *named* snapshot rather than whichever state happens to
-    /// sit at the enclosing frame's `pre_state` position. When the region
-    /// recorded its function-entry snapshot, that snapshot is the answer —
-    /// it is the same `CState` the Click -> Spec lowering used as
-    /// `SpecMemory::Fixed(entry_memory)` for every `old` operand in this
-    /// function's contracts, so both sides name the same interned node.
-    ///
-    /// Nothing here is trusted on the strength of the naming alone. A lowered
-    /// candidate is accepted only by exact equality against the certified
-    /// proposition, and a `MemoryLoad` carries its snapshot inside the term,
-    /// so a candidate resolved to the wrong state cannot match: selecting the
-    /// state by name adds a form to search, and the certificate check
-    /// remains the thing that validates it.
-    ///
-    /// Falling back to [`Self::execution_start_state`] keeps every region that
-    /// records no function-entry snapshot on its previous behaviour.
-    pub(super) fn old_reference_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
-        match &self.function_entry_state {
-            Some(entry_state) => entry_state,
-            None => self.execution_start_state(current_state),
-        }
+/// The state that `old(...)` and `at(function.entry, ...)` resolve to when
+/// a contract clause is lowered here.
+///
+/// This is the one place that answers "which memory does `old` mean", so
+/// the answer is a *named* snapshot rather than whichever state happens to
+/// sit at the enclosing frame's `pre_state` position. When the region
+/// recorded its function-entry snapshot, that snapshot is the answer —
+/// it is the same `CState` the Click -> Spec lowering used as
+/// `SpecMemory::Fixed(entry_memory)` for every `old` operand in this
+/// function's contracts, so both sides name the same interned node.
+///
+/// Nothing here is trusted on the strength of the naming alone. A lowered
+/// candidate is accepted only by exact equality against the certified
+/// proposition, and a `MemoryLoad` carries its snapshot inside the term,
+/// so a candidate resolved to the wrong state cannot match: selecting the
+/// state by name adds a form to search, and the certificate check
+/// remains the thing that validates it.
+///
+/// Falling back to [`ExecutionFrontier::execution_start_state`] keeps every region that
+/// records no function-entry snapshot on its previous behaviour.
+pub(super) fn old_reference_state<'a>(
+    replay: &'a TacticReplayState,
+    frontier: &'a ExecutionFrontier,
+    current_state: &'a CState,
+) -> &'a CState {
+    match &replay.function_entry_state {
+        Some(entry_state) => entry_state,
+        None => frontier.execution_start_state(current_state),
     }
 }
 
@@ -2005,9 +2002,9 @@ impl<'a> ExecutionView<'a> {
 }
 
 impl TacticReplayState {
-    pub(super) fn view(&self) -> ExecutionView<'_> {
+    pub(super) fn view<'a>(&'a self, frontier: &'a ExecutionFrontier) -> ExecutionView<'a> {
         ExecutionView {
-            frontier: &self.frontier,
+            frontier,
             program_point_states: &self.program_point_states,
             surface_propositions: &self.surface_propositions,
             effect_facts: &self.effect_facts,

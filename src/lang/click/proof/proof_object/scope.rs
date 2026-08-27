@@ -560,7 +560,7 @@ impl<'a> ProofScope<'a> {
                     .step_error("open resource branch lost its execution frontier")
             })?;
         let mut facts = body.facts().clone();
-        if execution.replay.is_at_function_exit() {
+        if execution.frontier.is_at_function_exit() {
             execution.replay.defer_post_execution(
                 context.tactic_index,
                 *source_index,
@@ -570,10 +570,7 @@ impl<'a> ProofScope<'a> {
                 },
             );
         } else {
-            let pre_state = execution
-                .replay
-                .old_reference_state(&execution.state)
-                .clone();
+            let pre_state = execution.old_reference_state(&execution.state).clone();
             let checked = close_open_resource_for_proof(
                 context.resource_environment,
                 resource,
@@ -934,7 +931,6 @@ impl<'a> ProofScope<'a> {
             .certificate_facts
             .insert(kernel.clone());
         let at_entry = execution
-            .replay
             .frontier
             .execution_start_state
             .as_ref()
@@ -947,10 +943,7 @@ impl<'a> ProofScope<'a> {
             let ProofTactic::ApplyTheoremUsing { application, .. } = tactic else {
                 continue;
             };
-            let pre_state = execution
-                .replay
-                .old_reference_state(&execution.state)
-                .clone();
+            let pre_state = execution.old_reference_state(&execution.state).clone();
             if let Some(derivation) =
                 kernel_standard_theorem_derivation_at_current_point_with_assumptions(
                     context.theorem_environment,
@@ -1102,7 +1095,7 @@ impl<'a> ProofScope<'a> {
                     })?;
                 let mut facts = self.body.facts().clone();
                 let mut state = Arc::unwrap_or_clone(self.body.state);
-                if execution.replay.is_at_function_exit() {
+                if execution.frontier.is_at_function_exit() {
                     execution.replay.defer_post_execution(
                         context.tactic_index,
                         source_index,
@@ -1112,10 +1105,7 @@ impl<'a> ProofScope<'a> {
                         },
                     );
                 } else {
-                    let pre_state = execution
-                        .replay
-                        .old_reference_state(&execution.state)
-                        .clone();
+                    let pre_state = execution.old_reference_state(&execution.state).clone();
                     let checked = close_open_resource_for_proof(
                         context.resource_environment,
                         &resource,

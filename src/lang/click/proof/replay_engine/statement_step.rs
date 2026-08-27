@@ -48,6 +48,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     // written `at(statement(N).entry, ...)` for the statement this
     // step crosses must still lower.
     record_current_statement_entry(
+        &execution.frontier,
         replay,
         state,
         function_block,
@@ -57,7 +58,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         tactic_index,
         tactic_name,
     )?;
-    let pre_state = replay.old_reference_state(state).clone();
+    let pre_state = old_reference_state(replay, &execution.frontier, state).clone();
     let mut explicit_premises = Vec::new();
     for case in &replay.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
