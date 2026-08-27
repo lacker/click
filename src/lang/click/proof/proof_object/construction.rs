@@ -20,24 +20,9 @@ impl<'a> Proof<'a> {
             return Ok(self.clone());
         }
         Ok(Self {
-            context: Arc::new(ProofContext::Execution(ExecutionProofContext {
-                claim_label: context.claim_label,
-                tactic_index,
-                function_block: context.function_block,
-                function: context.function,
-                parsed_function: context.parsed_function,
-                arguments: context.arguments,
-                function_environment: context.function_environment,
-                resource_environment: context.resource_environment,
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
-                theorem_environment: context.theorem_environment,
-                proof_site: context.proof_site.clone(),
-                source_layout: context.source_layout.clone(),
-                execution_start_facts: context.execution_start_facts.clone(),
-                function_entry_state: context.function_entry_state.clone(),
-                grouped_contract: context.grouped_contract,
-            })),
+            context: Arc::new(ProofContext::Execution(
+                context.with_tactic_index(tactic_index),
+            )),
             state: self.state.clone(),
             node: self.node.clone(),
             focused: self.focused,

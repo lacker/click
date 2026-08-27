@@ -61,15 +61,17 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_in_facts(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     execution: &mut ExecutionProofState,
+    proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &ProofFacts,
     name: &String,
-    function: &CFunction,
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
 ) -> Result<CheckedPredicateUnfold, ClickError> {
+    let function = proof_context.function;
+    let arguments = proof_context.arguments;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &CState = &execution.state;
     let unfolded_predicates = &mut execution.unfolded_predicates;

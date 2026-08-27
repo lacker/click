@@ -159,17 +159,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let checked = check_unfold_predicate_facts(
-            &mut execution,
-            &self.facts(),
-            name,
-            context.function,
-            context.arguments,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.claim_label,
-            context.tactic_index,
-        )?;
+        let checked = check_unfold_predicate_facts(&mut execution, context, &self.facts(), name)?;
         let mut unfolded_predicates = self.focused_goal_unfolds().clone();
         for name in &checked.added_unfolded_predicates {
             unfolded_predicates.insert(name.clone());

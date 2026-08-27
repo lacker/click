@@ -408,6 +408,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         let view = proof.finalization_view()?;
         let is_branch = view
             .context
+            .constants
             .source_layout
             .statement(view.frontier.next_statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
@@ -1394,7 +1395,12 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             ProofCertificate::from_steps(context_replay.proof_certificate_builder.steps.clone())
                 .to_proof_tactics();
         let region_simp = context_replay.region_simp;
-        let proof_site = leaf.finalization_view()?.context.proof_site.clone();
+        let proof_site = leaf
+            .finalization_view()?
+            .context
+            .constants
+            .proof_site
+            .clone();
         let invariants_already_closed = context_replay.region_invariants_closed;
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =

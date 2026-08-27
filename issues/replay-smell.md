@@ -571,7 +571,10 @@ churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
 `effect_facts`, `program_point_states`, and the frontier loop clauses/rules
 moved onto `ExecutionProofState`, and the per-proof constants (proof site,
 source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
-as `ExecutionProofConstants`, on 2026-08-27); phase 3 retires the
+as `ExecutionProofConstants`, on 2026-08-27; the executor's per-field
+environment parameters collapsed into `proof_context`, with derived
+contexts `with_tactic_index`/`with_loop_binding` for the two substituting
+callers); phase 3 retires the
 `proof_certificate_builder` reads inside finalization.
 
 ### Boundary representations the typed region goal must subsume

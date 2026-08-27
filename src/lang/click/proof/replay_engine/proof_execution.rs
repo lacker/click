@@ -1353,7 +1353,7 @@ fn defer_post_exit_outcome_tactic<'a>(
         let (source_index, tactic_index) = (indexed.source_index, indexed.index);
         let proof_site = proof
             .execution_context()
-            .and_then(|context| context.proof_site.clone());
+            .and_then(|context| context.constants.proof_site.clone());
         let mut capture = expansion_capture.as_deref_mut();
         let (framed, _) = proof.edit_replay_cursor(|replay, _, _| {
             if begin_tactic_expansion_capture(
@@ -1747,7 +1747,7 @@ fn advance_focused_execution_arm<'a>(
                 let (source_index, tactic_index) = (indexed.source_index, indexed.index);
                 let proof_site = proof
                     .execution_context()
-                    .and_then(|context| context.proof_site.clone());
+                    .and_then(|context| context.constants.proof_site.clone());
                 let mut capture = expansion_capture.as_deref_mut();
                 let (next, _) = proof.edit_replay_cursor(|replay, _, _| {
                     if begin_tactic_expansion_capture(
@@ -2846,13 +2846,14 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     structured_branch_history: bool,
     condition: &ClickProposition,
     value: bool,
-    tactic_index: usize,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
 ) -> Result<bool, ClickError> {
+    let tactic_index = proof_context.tactic_index;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let claim_label = proof_context.claim_label;
+
     if proof_case_is_statement_identity_condition(condition) {
         // An opaque call's allocation-identity split owns several certified
         // statement successors. Lowering this snapshot-qualified condition

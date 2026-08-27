@@ -42,13 +42,17 @@ clauses and rules, branch provenance, the path's unfolded predicates, and a
 marks, structural context, deferrals, and certificate builders. The per-proof
 constants (`ExecutionProofConstants`: proof site, source layout, entry facts,
 function-entry state, grouped-contract flag) live on the proof's
-`ExecutionProofContext`, not in the path snapshot; the executor receives that
-context alongside the execution state. It lives only as the execution snapshot
-of a `Proof` goal: the checked drivers advance a `Proof`, and every source or
-generated proof tree is checked that way. The earlier interpreter that
-advanced this context as a parallel engine is gone; the remaining duplication
-of facts and `CState` between the snapshot and the `Proof` is tracked for
-removal in `issues/replay-smell.md`.
+`ExecutionProofContext`, not in the path snapshot; the executor takes that
+context alongside the execution state and reads its function, environments,
+claim label, and tactic index from it. A caller that needs a variant derives
+one: `with_tactic_index` attributes one tactic's execution, and
+`with_loop_binding` runs a `loop` step against the loop-bound function block,
+annotated function, and rule-carrying environment. It lives only as the
+execution snapshot of a `Proof` goal: the checked drivers advance a `Proof`,
+and every source or generated proof tree is checked that way. The earlier
+interpreter that advanced this context as a parallel engine is gone; the
+remaining duplication of facts and `CState` between the snapshot and the
+`Proof` is tracked for removal in `issues/replay-smell.md`.
 
 Lowering and point proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded program-point states, surface

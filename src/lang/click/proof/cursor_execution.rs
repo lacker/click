@@ -10,20 +10,21 @@ use std::sync::Arc;
 pub(super) fn apply_branch_interface_with_proof_facts(
     target: &ProgramPointRef,
     assertions: &[ProofAssertion],
-    tactic_index: usize,
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut ProofFacts,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    claim_label: &str,
     stable_join_locals: &BTreeMap<String, CValue>,
     sibling_join_states: Option<&[&CState]>,
     needs_abstraction: bool,
 ) -> Result<(), ClickError> {
+    let tactic_index = proof_context.tactic_index;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let resource_environment = proof_context.resource_environment;
+    let claim_label = proof_context.claim_label;
+
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
@@ -403,12 +404,6 @@ pub(super) fn execute_branch_step_from_execution_point(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    claim_label: &str,
-    tactic_index: usize,
     tactic_name: &str,
     requested_branch: Option<bool>,
     prerequisite_policy: StatementPrerequisitePolicy,
@@ -418,11 +413,18 @@ pub(super) fn execute_branch_step_from_execution_point(
     construction: Option<ConstructionEnvironments<'_>>,
     context: Option<&PureFactContext>,
 ) -> Result<bool, ClickError> {
+    let function_block = proof_context.function_block;
+    let function = proof_context.function;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
     let statement_index = execution.frontier.next_statement_index;
-    let source_region = proof_context.source_layout.statement(statement_index).ok_or_else(|| {
+    let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
@@ -433,7 +435,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
-                proof_context.function_entry_state.as_ref(),
+                proof_context.constants.function_entry_state.as_ref(),
             ),
             state,
             function,
@@ -563,6 +565,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         // the second comparison's current operand is an entry value selected
         // by the first comparison.
         let condition = proof_context
+            .constants
             .function_entry_state
             .as_ref()
             .and_then(|entry_state| {
@@ -670,6 +673,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 // statically completed branch regions.
                 let skip_index = execution.frontier.next_statement_index;
                 for exited in proof_context
+                    .constants
                     .source_layout
                     .exited_branch_regions(skip_index)
                     .to_vec()
@@ -683,6 +687,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     );
                 }
                 let successor = proof_context
+                    .constants
                     .source_layout
                     .statement(skip_index)
                     .map(|region| region.continuation_node);
@@ -761,11 +766,6 @@ fn execute_concrete_loop_head_step(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    claim_label: &str,
-    tactic_index: usize,
     tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     statement_index: usize,
@@ -777,6 +777,12 @@ fn execute_concrete_loop_head_step(
     remaining: Option<CStatement>,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    let function_block = proof_context.function_block;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
@@ -883,7 +889,7 @@ fn execute_concrete_loop_head_step(
                 next_statement_index: statement_index,
                 kind: ProofExecutionContinuationKind::LoopIteration,
             });
-        execution.frontier.next_statement_index = proof_context.source_layout
+        execution.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -920,6 +926,7 @@ fn execute_concrete_loop_head_step(
     // A loop at the end of a branch arm completes the recorded chain of
     // enclosing branch regions when it exits.
     for exited in proof_context
+        .constants
         .source_layout
         .exited_branch_regions(statement_index)
         .to_vec()
@@ -1429,14 +1436,7 @@ pub(super) fn execute_step_from_execution_point(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
     _assumptions: &PureFactContext,
-    function_environment: &CExecutionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
@@ -1447,14 +1447,7 @@ pub(super) fn execute_step_from_execution_point(
         execution,
         proof_context,
         available_pure_facts,
-        function_block,
-        function,
-        parameters,
-        arguments,
         _assumptions,
-        function_environment,
-        claim_label,
-        tactic_index,
         tactic_name,
         prerequisite_policy,
         fact_transport_policy,
@@ -1491,19 +1484,18 @@ pub(super) fn execute_step_successors_from_execution_point(
     execution: &ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &[Proposition],
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<ExecutionPointStepSuccessor>, ClickError> {
+    let function = proof_context.function;
+    let arguments = proof_context.arguments;
+    let function_environment = proof_context.function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &execution.replay;
     let state: &CState = &execution.state;
     let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
@@ -1511,7 +1503,7 @@ pub(super) fn execute_step_successors_from_execution_point(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
-            proof_context.function_entry_state.as_ref(),
+            proof_context.constants.function_entry_state.as_ref(),
         ),
         state,
         function,
@@ -1576,14 +1568,7 @@ pub(super) fn execute_step_successors_from_execution_point(
             &mut successor,
             proof_context,
             &mut successor_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
             &assumptions,
-            function_environment,
-            claim_label,
-            tactic_index,
             tactic_name,
             prerequisite_policy,
             fact_transport_policy,
@@ -1607,14 +1592,7 @@ fn execute_step_from_execution_point_selecting_path(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
     _assumptions: &PureFactContext,
-    function_environment: &CExecutionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     tactic_name: &str,
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
@@ -1623,6 +1601,14 @@ fn execute_step_from_execution_point_selecting_path(
     selected_path_fact: Option<&Proposition>,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<Proposition>, ClickError> {
+    let function_block = proof_context.function_block;
+    let function = proof_context.function;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let function_environment = proof_context.function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
 
@@ -1637,7 +1623,7 @@ fn execute_step_from_execution_point_selecting_path(
         });
     }
     let statement_index = execution.frontier.next_statement_index;
-    let source_region = proof_context.source_layout.statement(statement_index).ok_or_else(|| {
+    let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
         ))
@@ -1647,12 +1633,6 @@ fn execute_step_from_execution_point_selecting_path(
             execution,
             proof_context,
             available_pure_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
-            claim_label,
-            tactic_index,
             "step",
             None,
             prerequisite_policy,
@@ -1675,7 +1655,7 @@ fn execute_step_from_execution_point_selecting_path(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
-                proof_context.function_entry_state.as_ref(),
+                proof_context.constants.function_entry_state.as_ref(),
             ),
             state,
             function,
@@ -1696,11 +1676,6 @@ fn execute_step_from_execution_point_selecting_path(
             execution,
             proof_context,
             available_pure_facts,
-            function_block,
-            parameters,
-            arguments,
-            claim_label,
-            tactic_index,
             tactic_name,
             prerequisite_policy,
             statement_index,
@@ -1978,7 +1953,10 @@ fn execute_step_from_execution_point_selecting_path(
             .iter()
             .any(|required| proposition_tree_contains(required, conclusion))
             && exact_fact_is_available(conclusion, available_pure_facts)
-            && !proof_context.execution_start_facts.contains(conclusion)
+            && !proof_context
+                .constants
+                .execution_start_facts
+                .contains(conclusion)
         {
             replay
                 .function_entry_execution_prerequisites
@@ -2197,6 +2175,7 @@ fn execute_step_from_execution_point_selecting_path(
             // Completing this statement statically completes the recorded
             // chain of enclosing branch regions it ends.
             for exited in proof_context
+                .constants
                 .source_layout
                 .exited_branch_regions(statement_index)
                 .to_vec()
@@ -2692,16 +2671,16 @@ pub(super) fn bounded_execute_from_execution_point(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     prerequisite_policy: StatementPrerequisitePolicy,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    let function = proof_context.function;
+    let parameters = proof_context.parsed_function.parameters();
+    let arguments = proof_context.arguments;
+    let function_environment = proof_context.function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     // Each explored path constructs its own surface steps from a clean
     // builder; the paths are merged back into one step sequence (with `if`
     // structure at genuine forks) once the frontiers are complete. Every
@@ -2736,7 +2715,7 @@ pub(super) fn bounded_execute_from_execution_point(
 
         let statement_index = frontier.execution.frontier.next_statement_index;
         let source_region = proof_context
-            .source_layout
+            .constants.source_layout
             .statement(statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
@@ -2751,12 +2730,6 @@ pub(super) fn bounded_execute_from_execution_point(
                     &mut branch.execution,
                     proof_context,
                     &mut branch.pure_facts,
-                    function_block,
-                    function,
-                    parameters,
-                    arguments,
-                    claim_label,
-                    tactic_index,
                     "execute",
                     Some(take_then),
                     prerequisite_policy,
@@ -2817,14 +2790,7 @@ pub(super) fn bounded_execute_from_execution_point(
                     &mut branch.execution,
                     proof_context,
                     &mut branch.pure_facts,
-                    function_block,
-                    function,
-                    parameters,
-                    arguments,
                     &assumptions,
-                    function_environment,
-                    claim_label,
-                    tactic_index,
                     "execute",
                     prerequisite_policy,
                     StatementFactTransportPolicy::Automatic,
@@ -2904,14 +2870,7 @@ pub(super) fn bounded_execute_from_execution_point(
             &mut frontier.execution,
             proof_context,
             &mut frontier.pure_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
             &assumptions,
-            function_environment,
-            claim_label,
-            tactic_index,
             "execute",
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
@@ -3047,15 +3006,10 @@ pub(super) fn execute_rest_from_execution_point(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    let function = proof_context.function;
+
     loop {
         let can_execute_one_step = match &execution.frontier.point {
             ProofExecutionPoint::FunctionEntry => {
@@ -3077,14 +3031,7 @@ pub(super) fn execute_rest_from_execution_point(
             execution,
             proof_context,
             available_pure_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
             &assumptions,
-            function_environment,
-            claim_label,
-            tactic_index,
             "execute",
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
@@ -3098,13 +3045,6 @@ pub(super) fn execute_rest_from_execution_point(
             execution,
             proof_context,
             available_pure_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
-            function_environment,
-            claim_label,
-            tactic_index,
             StatementPrerequisitePolicy::Planning,
             construction,
         )?;
@@ -3117,25 +3057,22 @@ pub(super) fn execute_until_statement(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
     statement_index: usize,
-    claim_label: &str,
-    tactic_index: usize,
     prerequisite_policy: StatementPrerequisitePolicy,
     construction: Option<ConstructionEnvironments<'_>>,
 ) -> Result<(), ClickError> {
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     if proof_context
+        .constants
         .source_layout
         .statement(statement_index)
         .is_none()
     {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: function has no source statement({statement_index}); it contains {} statement regions",
-            proof_context.source_layout.statement_count()
+            proof_context.constants.source_layout.statement_count()
         )));
     }
 
@@ -3158,14 +3095,7 @@ pub(super) fn execute_until_statement(
             execution,
             proof_context,
             available_pure_facts,
-            function_block,
-            function,
-            parameters,
-            arguments,
             &assumptions,
-            function_environment,
-            claim_label,
-            tactic_index,
             "execute_until",
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,

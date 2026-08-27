@@ -91,11 +91,7 @@ impl<'a> Proof<'a> {
                 predicate_environment,
                 click_function_environment,
                 theorem_environment,
-                proof_site: constants.proof_site,
-                source_layout: constants.source_layout,
-                execution_start_facts: constants.execution_start_facts,
-                function_entry_state: constants.function_entry_state,
-                grouped_contract: constants.grouped_contract,
+                constants: Arc::new(constants),
             })),
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
@@ -161,11 +157,10 @@ impl<'a> Proof<'a> {
                 predicate_environment: context.predicate_environment,
                 click_function_environment: context.click_function_environment,
                 theorem_environment: context.theorem_environment,
-                proof_site: Some(site),
-                source_layout: context.source_layout.clone(),
-                execution_start_facts: context.execution_start_facts.clone(),
-                function_entry_state: context.function_entry_state.clone(),
-                grouped_contract: context.grouped_contract,
+                constants: Arc::new(ExecutionProofConstants {
+                    proof_site: Some(site),
+                    ..(*context.constants).clone()
+                }),
             })),
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
@@ -352,7 +347,7 @@ impl<'a> Proof<'a> {
                 expansion_capture,
                 nested_source_index,
                 &execution.replay,
-                context.proof_site.as_ref(),
+                context.constants.proof_site.as_ref(),
             ) {
                 execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                     tactic_index: nested_tactic_index,
@@ -365,7 +360,7 @@ impl<'a> Proof<'a> {
             expansion_capture,
             source_index,
             &execution.replay,
-            context.proof_site.as_ref(),
+            context.constants.proof_site.as_ref(),
         ) {
             execution.replay.deferred_tactic_capture = Some(DeferredTacticCapture {
                 tactic_index,

@@ -39,6 +39,7 @@ impl<'a> Proof<'a> {
         }
         let statement_index = execution.frontier.next_statement_index;
         if !context
+            .constants
             .source_layout
             .statement(statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }))
@@ -91,6 +92,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let statement_index = execution.frontier.next_statement_index;
         let source_region = context
+            .constants
             .source_layout
             .statement(statement_index)
             .ok_or_else(|| {
@@ -373,16 +375,9 @@ impl<'a> Proof<'a> {
         apply_branch_interface_with_proof_facts(
             &target,
             &assertions,
-            context.tactic_index,
             &mut execution,
             context,
             &mut facts,
-            context.parsed_function.parameters(),
-            context.arguments,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.resource_environment,
-            context.claim_label,
             &BTreeMap::new(),
             None,
             false,
@@ -657,16 +652,9 @@ impl<'a> Proof<'a> {
             apply_branch_interface_with_proof_facts(
                 &target,
                 &assertions,
-                context.tactic_index,
                 &mut execution,
                 context,
                 &mut facts,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.predicate_environment,
-                context.click_function_environment,
-                context.resource_environment,
-                context.claim_label,
                 &stable_join_locals,
                 Some(&sibling_join_states),
                 true)

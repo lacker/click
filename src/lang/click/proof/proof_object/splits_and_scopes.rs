@@ -301,7 +301,7 @@ impl<'a> Proof<'a> {
         };
         for execution in &partition.base_executions {
             let statement_index = execution.frontier.next_statement_index;
-            let Some(region) = context.source_layout.statement(statement_index) else {
+            let Some(region) = context.constants.source_layout.statement(statement_index) else {
                 return Ok(None);
             };
             if !matches!(region.kind, SourceStatementKind::If { .. }) {
@@ -404,21 +404,8 @@ impl<'a> Proof<'a> {
                     at_function_entry: execution.frontier.is_at_function_entry(),
                 });
                 let base_execution = Arc::new(execution.clone());
-                let mut checked = check_statement_step(
-                    &mut execution,
-                    context,
-                    &facts,
-                    context.function_block,
-                    context.function,
-                    context.parsed_function,
-                    context.arguments,
-                    context.function_environment,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                    context.claim_label,
-                    arm_steps[logical_arm].0,
-                    None,
-                )?;
+                let arm_context = context.with_tactic_index(arm_steps[logical_arm].0);
+                let mut checked = check_statement_step(&mut execution, &arm_context, &facts, None)?;
                 match checked.len() {
                     0 => {}
                     1 if survivor.is_none() => {

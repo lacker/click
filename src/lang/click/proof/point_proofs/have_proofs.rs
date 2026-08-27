@@ -1983,7 +1983,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
         let (replay, proof_site) = match &unit {
             OrderedProofUnit::Checked(proof) => {
                 let view = proof.finalization_view()?;
-                (view.replay, view.context.proof_site.as_ref())
+                (view.replay, view.context.constants.proof_site.as_ref())
             }
         };
         let path_choices = replay.deferred_expansion_path_choices.to_vec();

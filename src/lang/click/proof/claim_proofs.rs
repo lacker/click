@@ -1147,7 +1147,11 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 "execution proof could not prove any complete execution path for `{proof_label}`"
             )));
         }
-        let mut certification_facts = proof_context.execution_start_facts.as_ref().clone();
+        let mut certification_facts = proof_context
+            .constants
+            .execution_start_facts
+            .as_ref()
+            .clone();
         certification_facts.extend(
             replay
                 .function_entry_execution_prerequisites
@@ -2471,7 +2475,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             frontier,
                                             &proof_execution.effect_facts,
                                             &proof_execution.program_point_states,
-                                            proof_context.function_entry_state.as_ref(),
+                                            proof_context.constants.function_entry_state.as_ref(),
                                         ),
                                         &path_unfolds,
                                         predicate_environment,
@@ -3465,7 +3469,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         };
                                         closures[claim_index] =
                                             ClaimClosure::by_checked_certificate(&certificate);
-                                        if proof_context.grouped_contract {
+                                        if proof_context.constants.grouped_contract {
                                             path_grouped_surface_closers
                                                 .extend(certificate.to_proof_tactics());
                                         }
@@ -3601,7 +3605,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: resource `simp` produced an invalid surface certificate: {error:?}"
                                                     ))
                                                 })?;
-                                        if proof_context.grouped_contract {
+                                        if proof_context.constants.grouped_contract {
                                             for (claim_index, _) in &direct_resource_claims {
                                                 closures[*claim_index] =
                                                     ClaimClosure::by_grouped_transition(
@@ -3708,7 +3712,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                             // current proposition claim would
                                             // close it early and shift the
                                             // trailing resource closers.
-                                            let scope_surface_goal = if proof_context.grouped_contract
+                                            let scope_surface_goal = if proof_context.constants.grouped_contract
                                                 && !direct_resource_claims.is_empty()
                                             {
                                                 unfold_structural_invariant_proposition(
@@ -3803,7 +3807,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                         let mut surface_goals = Vec::new();
                                         for (_, goal, _) in &direct_claims {
                                             surface_goals.push(
-                                                if proof_context.grouped_contract
+                                                if proof_context.constants.grouped_contract
                                                     && !direct_resource_claims.is_empty()
                                                 {
                                                     unfold_structural_invariant_proposition(
@@ -3832,7 +3836,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 (outcome, keep)
                                             })?;
                                         if let Some(certificate) = direct_certificate {
-                                            if proof_context.grouped_contract {
+                                            if proof_context.constants.grouped_contract {
                                                 // The grouped transition's tactic
                                                 // stream closes claims in order;
                                                 // checked resource productions
@@ -4246,7 +4250,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                 append_surface_tactics_flat(steps, path_tactics)
             }
         };
-        if proof_context.grouped_contract {
+        if proof_context.constants.grouped_contract {
             let mut expanded = retained_surface.clone();
             if surface_post_tactics_by_path
                 .iter()

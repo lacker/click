@@ -870,7 +870,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                         frontier,
                         effect_facts,
                         program_point_states,
-                        proof_context.function_entry_state.as_ref(),
+                        proof_context.constants.function_entry_state.as_ref(),
                     ),
                     &fact,
                     &path_available,
@@ -917,7 +917,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                 // Prefer the stable function-entry selector. Statement-entry
                 // states are transient planning artifacts.
                 let mut candidate_points = Vec::new();
-                if let Some(entry_state) = &proof_context.function_entry_state {
+                if let Some(entry_state) = &proof_context.constants.function_entry_state {
                     candidate_points.push((
                         ProgramPointRef {
                             region: CodeRegionRef::Function,
@@ -946,7 +946,7 @@ pub(super) fn lower_certified_frame_path_tactics(
                         frontier,
                         effect_facts,
                         program_point_states,
-                        proof_context.function_entry_state.as_ref(),
+                        proof_context.constants.function_entry_state.as_ref(),
                     ),
                     derivation,
                     None,
@@ -1162,7 +1162,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay.frontier,
                             replay.effect_facts,
                             replay.program_point_states,
-                            replay.context.function_entry_state.as_ref(),
+                            replay.context.constants.function_entry_state.as_ref(),
                         ),
                         &surface,
                         &evidence.transition.pure_facts,
@@ -1306,7 +1306,12 @@ pub(super) fn append_simple_proof_step_for_operation(
                     else {
                         continue;
                     };
-                    if replay.context.execution_start_facts.contains(predicate) {
+                    if replay
+                        .context
+                        .constants
+                        .execution_start_facts
+                        .contains(predicate)
+                    {
                         let point = ProgramPointRef {
                             region: CodeRegionRef::Function,
                             kind: ProgramPointKind::Entry,
@@ -1490,7 +1495,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay.frontier,
                             replay.effect_facts,
                             replay.program_point_states,
-                            replay.context.function_entry_state.as_ref(),
+                            replay.context.constants.function_entry_state.as_ref(),
                         ),
                         fact,
                         &selectable_available,
@@ -1506,7 +1511,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 replay.frontier,
                                 replay.effect_facts,
                                 replay.program_point_states,
-                                replay.context.function_entry_state.as_ref(),
+                                replay.context.constants.function_entry_state.as_ref(),
                             ),
                             fact,
                             SurfaceFactMatch::ReplayEquivalent,
@@ -1536,7 +1541,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 replay.frontier,
                                 replay.effect_facts,
                                 replay.program_point_states,
-                                replay.context.function_entry_state.as_ref(),
+                                replay.context.constants.function_entry_state.as_ref(),
                             ),
                             &indexed,
                             &selectable_available,
@@ -1586,6 +1591,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         ) => {
             let loop_index = replay
                 .context
+                .constants
                 .source_layout
                 .statement(replay.frontier.next_statement_index)
                 .and_then(|region| match region.kind {
@@ -1756,7 +1762,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay.frontier,
                             replay.effect_facts,
                             replay.program_point_states,
-                            replay.context.function_entry_state.as_ref(),
+                            replay.context.constants.function_entry_state.as_ref(),
                         ),
                         state,
                         &surface_available,
@@ -1843,7 +1849,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 replay.frontier,
                                 replay.effect_facts,
                                 replay.program_point_states,
-                                replay.context.function_entry_state.as_ref(),
+                                replay.context.constants.function_entry_state.as_ref(),
                             ),
                             state,
                             &surface_available,
@@ -1874,7 +1880,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         replay.frontier,
                         replay.effect_facts,
                         replay.program_point_states,
-                        replay.context.function_entry_state.as_ref(),
+                        replay.context.constants.function_entry_state.as_ref(),
                     ),
                     derivation,
                     None,
@@ -1967,7 +1973,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     replay.frontier,
                     replay.effect_facts,
                     replay.program_point_states,
-                    replay.context.function_entry_state.as_ref(),
+                    replay.context.constants.function_entry_state.as_ref(),
                 ),
                 &needed,
             )
@@ -2090,7 +2096,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay.frontier,
                             replay.effect_facts,
                             replay.program_point_states,
-                            replay.context.function_entry_state.as_ref(),
+                            replay.context.constants.function_entry_state.as_ref(),
                         ),
                         candidate,
                         available,
@@ -2156,7 +2162,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                         replay.frontier,
                                         replay.effect_facts,
                                         replay.program_point_states,
-                                        replay.context.function_entry_state.as_ref(),
+                                        replay.context.constants.function_entry_state.as_ref(),
                                     ),
                                     &candidate,
                                     available,
@@ -2223,7 +2229,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             replay.frontier,
                             replay.effect_facts,
                             replay.program_point_states,
-                            replay.context.function_entry_state.as_ref(),
+                            replay.context.constants.function_entry_state.as_ref(),
                         ),
                         state,
                         predicate_environment,
@@ -2321,7 +2327,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     replay.frontier,
                     replay.effect_facts,
                     replay.program_point_states,
-                    replay.context.function_entry_state.as_ref(),
+                    replay.context.constants.function_entry_state.as_ref(),
                 ),
                 &surface_fact,
                 available,

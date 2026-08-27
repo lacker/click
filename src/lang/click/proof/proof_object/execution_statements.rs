@@ -18,21 +18,7 @@ impl<'a> Proof<'a> {
         execution.last_step_delta = ExecutionProofStepDelta::default();
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
-        let checked = check_statement_step(
-            &mut execution,
-            context,
-            &self.facts(),
-            context.function_block,
-            context.function,
-            context.parsed_function,
-            context.arguments,
-            context.function_environment,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.claim_label,
-            context.tactic_index,
-            fact_context,
-        )?;
+        let checked = check_statement_step(&mut execution, context, &self.facts(), fact_context)?;
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             unreachable!("the frontier requirement was checked above");
         };
@@ -357,6 +343,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("a preservation `if` requires an execution proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         self.require_execution_frontier("proof `if`")?;
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             unreachable!("the frontier requirement was checked above")
@@ -387,17 +374,11 @@ impl<'a> Proof<'a> {
             let base_facts = arm_facts.len();
             let feasible = introduce_proof_case_assumption(
                 &mut arm_execution,
-                context,
+                &tactic_context,
                 &mut arm_facts,
                 base_execution.has_structured_branch_history,
                 condition,
                 value,
-                tactic_index,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.predicate_environment,
-                context.click_function_environment,
-                context.claim_label,
             )?;
             if !feasible {
                 continue;
@@ -503,6 +484,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("smart `step` requires an execution-frontier proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         self.require_execution_frontier("`step`")?;
         let execution = self
             .execution()
@@ -526,16 +508,9 @@ impl<'a> Proof<'a> {
         let assumptions = assumptions_from_propositions(&planning_facts);
         execute_step_from_execution_point(
             &mut planning,
-            context,
+            &tactic_context,
             &mut planning_facts,
-            context.function_block,
-            context.function,
-            context.parsed_function.parameters(),
-            context.arguments,
             &assumptions,
-            context.function_environment,
-            claim_label,
-            tactic_index,
             "step",
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
@@ -735,7 +710,7 @@ impl<'a> Proof<'a> {
                     frontier,
                     &view.execution.effect_facts,
                     &view.execution.program_point_states,
-                    view.context.function_entry_state.as_ref(),
+                    view.context.constants.function_entry_state.as_ref(),
                 ),
                 state,
                 context.predicate_environment,
@@ -773,6 +748,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`execute_until` requires an execution-frontier proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         let claim_label = context.claim_label;
         let checkpoint = self.checkpoint();
         let code_region = super::super::structural::resolve_code_region_ref(
@@ -806,16 +782,9 @@ impl<'a> Proof<'a> {
         };
         super::super::cursor_execution::execute_until_statement(
             &mut planning,
-            context,
+            &tactic_context,
             &mut planning_facts,
-            context.function_block,
-            context.function,
-            context.parsed_function.parameters(),
-            context.arguments,
-            context.function_environment,
             target_statement_index,
-            claim_label,
-            tactic_index,
             StatementPrerequisitePolicy::Planning,
             Some(ConstructionEnvironments {
                 predicate_environment: context.predicate_environment,
@@ -871,6 +840,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("smart `execute` requires an execution-frontier proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         let claim_label = context.claim_label;
         self.require_execution_frontier("`execute`")?;
         let execution = self
@@ -898,15 +868,8 @@ impl<'a> Proof<'a> {
         let direct_result = (!force_all_paths).then(|| {
             execute_rest_from_execution_point(
                 &mut planning,
-                context,
+                &tactic_context,
                 &mut planning_facts,
-                context.function_block,
-                context.function,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.function_environment,
-                context.claim_label,
-                tactic_index,
                 construction_environments,
             )
         });
@@ -917,15 +880,8 @@ impl<'a> Proof<'a> {
             planning_facts = facts_vec.clone();
             bounded_execute_from_execution_point(
                 &mut planning,
-                context,
+                &tactic_context,
                 &mut planning_facts,
-                context.function_block,
-                context.function,
-                context.parsed_function.parameters(),
-                context.arguments,
-                context.function_environment,
-                context.claim_label,
-                tactic_index,
                 StatementPrerequisitePolicy::Planning,
                 construction_environments,
             )?;
@@ -1014,6 +970,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`have` requires an execution-frontier proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         self.require_execution_frontier("`have`")?;
         let mut execution = self
             .execution()
@@ -1027,22 +984,10 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             source_index,
             &execution.replay,
-            context.proof_site.as_ref(),
+            context.constants.proof_site.as_ref(),
         );
-        let smart_certificate = check_mid_execution_have(
-            have,
-            &mut execution,
-            context,
-            &mut facts,
-            context.function_block,
-            context.parsed_function,
-            context.arguments,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.theorem_environment,
-            context.claim_label,
-            tactic_index,
-        )?;
+        let smart_certificate =
+            check_mid_execution_have(have, &mut execution, &tactic_context, &mut facts)?;
         let slice = end_tactic_surface_scope(
             &mut execution.replay,
             scope.take().expect("tactic scope is open"),
@@ -1196,6 +1141,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`loop` requires an execution-frontier proof"));
         };
+        let tactic_context = context.with_tactic_index(tactic_index);
         self.require_execution_frontier("`loop`")?;
         let mut execution = self
             .execution()
@@ -1209,7 +1155,7 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             source_index,
             &execution.replay,
-            context.proof_site.as_ref(),
+            context.constants.proof_site.as_ref(),
         );
         let _timing = TacticTiming::new(
             context.claim_label,
@@ -1222,18 +1168,8 @@ impl<'a> Proof<'a> {
             expansion_capture.as_deref_mut(),
             loop_clause,
             &mut execution,
-            context,
+            &tactic_context,
             &mut facts,
-            context.function_block,
-            context.parsed_function,
-            context.function_environment,
-            context.predicate_environment,
-            context.click_function_environment,
-            context.resource_environment,
-            context.theorem_environment,
-            context.arguments,
-            context.claim_label,
-            tactic_index,
             source_index,
         )?;
         let slice = end_tactic_surface_scope(

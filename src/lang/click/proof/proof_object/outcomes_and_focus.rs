@@ -396,6 +396,7 @@ impl<'a> Proof<'a> {
         };
         let statement_index = execution.frontier.next_statement_index;
         let source_region = context
+            .constants
             .source_layout
             .statement(statement_index)
             .ok_or_else(|| {

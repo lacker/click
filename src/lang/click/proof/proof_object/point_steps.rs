@@ -775,7 +775,7 @@ impl<'a> Proof<'a> {
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
-            requirement_facts: &context.execution_start_facts,
+            requirement_facts: &context.constants.execution_start_facts,
         })
     }
 

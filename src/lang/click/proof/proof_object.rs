@@ -835,14 +835,12 @@ pub(in crate::lang::click::proof) struct ExecutionProofContext<'a> {
     pub(in crate::lang::click::proof) predicate_environment: &'a PredicateEnvironment,
     pub(in crate::lang::click::proof) click_function_environment: &'a ClickFunctionEnvironment,
     pub(in crate::lang::click::proof) theorem_environment: &'a TheoremEnvironment,
-    pub(in crate::lang::click::proof) proof_site: Option<ProofSite>,
-    pub(in crate::lang::click::proof) source_layout: SourceExecutionLayout,
-    pub(in crate::lang::click::proof) execution_start_facts: Arc<Vec<Proposition>>,
-    pub(in crate::lang::click::proof) function_entry_state: Option<CState>,
-    pub(in crate::lang::click::proof) grouped_contract: bool,
+    /// Shared by every context derived from this proof (tactic-index
+    /// re-attribution, loop-bound executions), so deriving one is cheap.
+    pub(in crate::lang::click::proof) constants: Arc<ExecutionProofConstants>,
 }
 
-impl ExecutionProofContext<'_> {
+impl<'a> ExecutionProofContext<'a> {
     /// The state that `old(...)` and `at(function.entry, ...)` resolve to when
     /// a contract clause is lowered at `frontier`.
     pub(in crate::lang::click::proof) fn old_reference_state<'s>(
@@ -850,7 +848,39 @@ impl ExecutionProofContext<'_> {
         frontier: &'s ExecutionFrontier,
         current_state: &'s CState,
     ) -> &'s CState {
-        old_reference_state(self.function_entry_state.as_ref(), frontier, current_state)
+        old_reference_state(
+            self.constants.function_entry_state.as_ref(),
+            frontier,
+            current_state,
+        )
+    }
+
+    /// The same proof, attributing subsequent diagnostics to `tactic_index`.
+    pub(in crate::lang::click::proof) fn with_tactic_index(&self, tactic_index: usize) -> Self {
+        Self {
+            tactic_index,
+            constants: self.constants.clone(),
+            ..*self
+        }
+    }
+
+    /// The same proof executing a function whose frontier loop clauses are
+    /// bound: a `loop` tactic runs its one step against the bound block,
+    /// the annotated function, and an environment carrying the verified
+    /// loop rules, then returns to the enclosing context.
+    pub(in crate::lang::click::proof) fn with_loop_binding<'l>(
+        &'l self,
+        function_block: &'l FunctionBlock,
+        function: &'l CFunction,
+        function_environment: &'l CExecutionEnvironment,
+    ) -> ExecutionProofContext<'l> {
+        ExecutionProofContext {
+            function_block,
+            function,
+            function_environment,
+            constants: self.constants.clone(),
+            ..*self
+        }
     }
 }
 
@@ -1144,7 +1174,7 @@ impl ExecutionProofState {
             &self.frontier,
             &self.effect_facts,
             &self.program_point_states,
-            context.function_entry_state.as_ref(),
+            context.constants.function_entry_state.as_ref(),
         )
     }
 

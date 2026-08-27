@@ -11,15 +11,16 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    arguments: &[CExpression],
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
 ) -> Result<Option<ProofCertificate>, ClickError> {
+    let function_block = proof_context.function_block;
+    let parsed_function = proof_context.parsed_function;
+    let arguments = proof_context.arguments;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let theorem_environment = proof_context.theorem_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &CState = &execution.state;
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
@@ -54,7 +55,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             &execution.frontier,
             &execution.effect_facts,
             &execution.program_point_states,
-            proof_context.function_entry_state.as_ref(),
+            proof_context.constants.function_entry_state.as_ref(),
         ),
         &replay.surface_propositions,
         predicate_environment,
@@ -75,7 +76,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 &execution.frontier,
                 &execution.effect_facts,
                 &execution.program_point_states,
-                proof_context.function_entry_state.as_ref(),
+                proof_context.constants.function_entry_state.as_ref(),
             ),
             &state,
             &have_facts,
@@ -109,7 +110,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &execution.frontier,
         &execution.effect_facts,
         &execution.program_point_states,
-        proof_context.function_entry_state.as_ref(),
+        proof_context.constants.function_entry_state.as_ref(),
     ),
                         &replay.surface_propositions,
                         predicate_environment,
@@ -225,18 +226,19 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    function_block: &FunctionBlock,
-    parsed_function: &syntax::C0Function,
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    resource_environment: &ResourceEnvironment,
-    theorem_environment: &TheoremEnvironment,
-    arguments: &[CExpression],
-    claim_label: &str,
-    tactic_index: usize,
     source_index: usize,
 ) -> Result<StructuralClause, ClickError> {
+    let function_block = proof_context.function_block;
+    let parsed_function = proof_context.parsed_function;
+    let function_environment = proof_context.function_environment;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let resource_environment = proof_context.resource_environment;
+    let theorem_environment = proof_context.theorem_environment;
+    let arguments = proof_context.arguments;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let replay = &mut execution.replay;
     let state: &mut CState = &mut execution.state;
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
@@ -247,7 +249,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         )));
     }
     let statement_index = execution.frontier.next_statement_index;
-    let source_region = proof_context.source_layout.statement(statement_index).ok_or_else(|| {
+    let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` could not resolve source statement({statement_index})"
         ))
@@ -309,7 +311,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let loop_certificates = std::cell::RefCell::new(LoopProofCertificates::default());
     let loop_source = FrontierLoopProofSource::new(
         loop_template,
-        proof_context.proof_site.clone(),
+        proof_context.constants.proof_site.clone(),
         claim_label,
         source_index,
     );
@@ -441,19 +443,17 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         };
     }
 
+    let loop_context = proof_context.with_loop_binding(
+        &bound_function_block,
+        &annotated,
+        &local_function_environment,
+    );
     let assumptions = assumptions_from_propositions(available_pure_facts);
     execute_step_from_execution_point(
         execution,
-        proof_context,
+        &loop_context,
         available_pure_facts,
-        &bound_function_block,
-        &annotated,
-        parsed_function.parameters(),
-        arguments,
         &assumptions,
-        &local_function_environment,
-        claim_label,
-        tactic_index,
         "loop",
         StatementPrerequisitePolicy::Exact,
         StatementFactTransportPolicy::Automatic,

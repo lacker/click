@@ -20,17 +20,17 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     requirement_pure_facts: &ProofFacts,
-    function_block: &FunctionBlock,
-    function: &CFunction,
-    parsed_function: &syntax::C0Function,
-    arguments: &[CExpression],
-    function_environment: &CExecutionEnvironment,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    claim_label: &str,
-    tactic_index: usize,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<CheckedStatementStep>, ClickError> {
+    let function_block = proof_context.function_block;
+    let function = proof_context.function;
+    let parsed_function = proof_context.parsed_function;
+    let arguments = proof_context.arguments;
+    let predicate_environment = proof_context.predicate_environment;
+    let click_function_environment = proof_context.click_function_environment;
+    let claim_label = proof_context.claim_label;
+    let tactic_index = proof_context.tactic_index;
+
     let state: &mut CState = &mut execution.state;
     let assumptions = requirement_pure_facts.assumptions();
     // A bare `step()` executes in the whole proof context: prerequisites
@@ -118,13 +118,6 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         execution,
         proof_context,
         &explicit_premises,
-        function_block,
-        function,
-        parsed_function.parameters(),
-        arguments,
-        function_environment,
-        claim_label,
-        tactic_index,
         tactic_name,
         prerequisite_policy,
         // A step transports nothing: the kernel keeps the names of cells it
