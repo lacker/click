@@ -384,19 +384,13 @@ impl<'a> Proof<'a> {
             }
             // Record where this proof-level case split sits in the path's
             // surface record, exactly as the replayed form recorded it.
-            if arm_execution
-                .replay
-                .proof_certificate_builder
-                .blocker
-                .is_none()
-            {
+            if arm_execution.surface_record.blocker.is_none() {
                 // The split sits after the Proof's own top-level steps: surface
                 // synthesis splits sibling paths at this offset, so it is
                 // measured on the checked derivation, not a mirrored record.
                 let tactic_offset = self.certificate().steps().len();
                 arm_execution
-                    .replay
-                    .proof_certificate_builder
+                    .surface_record
                     .path_choices
                     .push(SurfacePathChoice {
                         occurrence: tactic_index,
@@ -496,16 +490,11 @@ impl<'a> Proof<'a> {
         let mut planning = execution.clone();
         planning.planned_statement_transitions.clear();
         let facts_vec = self.facts().to_vec();
-        planning.replay.proof_certificate_builder = ProofCertificateBuilder {
-            last_step_entry: execution
-                .replay
-                .proof_certificate_builder
-                .last_step_entry
-                .clone(),
-            certificate_facts: ProofFactStore::from_ordered(facts_vec.clone()),
+        planning.surface_record.certificate_facts = ProofFactStore::from_ordered(facts_vec.clone());
+        let mut sink = ProofCertificateBuilder {
+            last_step_entry: execution.surface_record.last_step_entry.clone(),
             ..ProofCertificateBuilder::default()
-        }
-        .into();
+        };
         let mut planning_facts = facts_vec;
         let assumptions = assumptions_from_propositions(&planning_facts);
         execute_step_from_execution_point(
@@ -517,13 +506,15 @@ impl<'a> Proof<'a> {
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
-            Some(ConstructionEnvironments {
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
+            Some(Construction {
+                environments: ConstructionEnvironments {
+                    predicate_environment: context.predicate_environment,
+                    click_function_environment: context.click_function_environment,
+                },
+                sink: &mut sink,
             }),
         )?;
-        let construction =
-            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
+        let construction = sink;
         if construction.blocker.is_none()
             && !construction.steps.is_empty()
             && construction.steps.iter().all(|step| {
@@ -548,10 +539,7 @@ impl<'a> Proof<'a> {
                 .execution()
                 .cloned()
                 .ok_or_else(|| proof.step_error("smart `step` lost its semantic state"))?;
-            successor_execution
-                .replay
-                .proof_certificate_builder
-                .last_step_entry = construction.last_step_entry;
+            successor_execution.surface_record.last_step_entry = construction.last_step_entry;
             return Ok(Self {
                 context: proof.context.clone(),
                 state: Arc::new(ProofState {
@@ -719,23 +707,19 @@ impl<'a> Proof<'a> {
                 "`{claim_label}` tactic {tactic_index}: `execute_until` expects a statement region"
             )));
         };
-        let (mut planning, mut planning_facts) = {
+        let (mut planning, mut planning_facts, mut sink) = {
             let view = self.finalization_view()?;
             let mut planning = self.execution().cloned().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
             })?;
             planning.planned_statement_transitions.clear();
-            planning.replay.proof_certificate_builder = ProofCertificateBuilder {
-                last_step_entry: view
-                    .replay
-                    .proof_certificate_builder
-                    .last_step_entry
-                    .clone(),
-                certificate_facts: ProofFactStore::from_ordered(view.facts.clone()),
+            planning.surface_record.certificate_facts =
+                ProofFactStore::from_ordered(view.facts.clone());
+            let sink = ProofCertificateBuilder {
+                last_step_entry: view.execution.surface_record.last_step_entry.clone(),
                 ..ProofCertificateBuilder::default()
-            }
-            .into();
-            (planning, view.facts)
+            };
+            (planning, view.facts, sink)
         };
         super::super::cursor_execution::execute_until_statement(
             &mut planning,
@@ -743,13 +727,15 @@ impl<'a> Proof<'a> {
             &mut planning_facts,
             target_statement_index,
             StatementPrerequisitePolicy::Planning,
-            Some(ConstructionEnvironments {
-                predicate_environment: context.predicate_environment,
-                click_function_environment: context.click_function_environment,
+            Some(Construction {
+                environments: ConstructionEnvironments {
+                    predicate_environment: context.predicate_environment,
+                    click_function_environment: context.click_function_environment,
+                },
+                sink: &mut sink,
             }),
         )?;
-        let construction =
-            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
+        let construction = sink;
         if construction.blocker.is_none()
             && !construction.steps.is_empty()
             && construction.steps.iter().all(|step| {
@@ -771,8 +757,7 @@ impl<'a> Proof<'a> {
                 executed = executed.apply_step(step.clone())?;
             }
             let (recorded, ()) = executed.edit_execution(|execution, _| {
-                execution.replay.proof_certificate_builder.last_step_entry =
-                    construction.last_step_entry;
+                execution.surface_record.last_step_entry = construction.last_step_entry;
             })?;
             Ok(recorded)
         } else if let Some(blocker) = construction.blocker {
@@ -802,46 +787,49 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let facts_vec = self.facts().to_vec();
-        let planning_builder = |certificate_facts: &[Proposition]| ProofCertificateBuilder {
-            last_step_entry: execution
-                .replay
-                .proof_certificate_builder
-                .last_step_entry
-                .clone(),
-            certificate_facts: ProofFactStore::from_ordered(certificate_facts.to_vec()),
+        let planning_sink = || ProofCertificateBuilder {
+            last_step_entry: execution.surface_record.last_step_entry.clone(),
             ..ProofCertificateBuilder::default()
         };
-        let construction_environments = Some(ConstructionEnvironments {
+        let construction_environments = ConstructionEnvironments {
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
-        });
+        };
         let mut planning = execution.clone();
         planning.planned_statement_transitions.clear();
-        planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
+        planning.surface_record.certificate_facts = ProofFactStore::from_ordered(facts_vec.clone());
+        let mut sink = planning_sink();
         let mut planning_facts = facts_vec.clone();
         let direct_result = (!force_all_paths).then(|| {
             execute_rest_from_execution_point(
                 &mut planning,
                 &tactic_context,
                 &mut planning_facts,
-                construction_environments,
+                Some(Construction {
+                    environments: construction_environments,
+                    sink: &mut sink,
+                }),
             )
         });
         if direct_result.is_none_or(|result| result.is_err()) {
             planning = execution.clone();
             planning.planned_statement_transitions.clear();
-            planning.replay.proof_certificate_builder = planning_builder(&facts_vec).into();
+            planning.surface_record.certificate_facts =
+                ProofFactStore::from_ordered(facts_vec.clone());
+            sink = planning_sink();
             planning_facts = facts_vec.clone();
             bounded_execute_from_execution_point(
                 &mut planning,
                 &tactic_context,
                 &mut planning_facts,
                 StatementPrerequisitePolicy::Planning,
-                construction_environments,
+                Some(Construction {
+                    environments: construction_environments,
+                    sink: &mut sink,
+                }),
             )?;
         }
-        let construction =
-            std::mem::take(&mut planning.replay.proof_certificate_builder).into_value();
+        let construction = sink;
         if let Some(blocker) = &construction.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: smart `execute` could not construct checked Proof operations: {blocker}"
@@ -889,10 +877,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| proof.step_error("smart `execute` lost its semantic state"))?;
-        successor_execution
-            .replay
-            .proof_certificate_builder
-            .last_step_entry = construction.last_step_entry;
+        successor_execution.surface_record.last_step_entry = construction.last_step_entry;
         Ok(Self {
             context: proof.context.clone(),
             state: Arc::new(ProofState {

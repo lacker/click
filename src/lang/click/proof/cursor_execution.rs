@@ -409,7 +409,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     branch_step_policy: BranchStepPolicy,
     complete_empty_branch: bool,
     arm_mode: BranchArmMode,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
     context: Option<&PureFactContext>,
 ) -> Result<bool, ClickError> {
     let function_block = proof_context.function_block;
@@ -590,7 +590,8 @@ pub(super) fn execute_branch_step_from_execution_point(
                 })
             })
             .unwrap_or(statement_condition);
-        if let Some(environments) = construction {
+        if let Some(construction) = construction.as_mut() {
+            let environments = construction.environments;
             let restore = apply_construction_point_view(
                 &mut execution.program_point_states,
                 &construction_point_overrides,
@@ -598,6 +599,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             construct_simple_step_for_planned_operation(
                 execution,
                 proof_context,
+                construction.sink,
                 &current_state,
                 function_block,
                 parameters,
@@ -611,9 +613,8 @@ pub(super) fn execute_branch_step_from_execution_point(
                     theorem: condition_transition.theorem.clone(),
                 },
             );
-            let replay = &mut execution.replay;
             restore_construction_point_view(&mut execution.program_point_states, restore);
-            let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
+            let certificate_facts = &mut execution.surface_record.certificate_facts;
             for fact in &condition_transition.path_facts {
                 certificate_facts.insert(fact.clone());
             }
@@ -634,7 +635,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             function_block,
             parameters,
             arguments,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
@@ -770,7 +771,7 @@ fn execute_concrete_loop_head_step(
     current_state: CState,
     loop_statement: CStatement,
     remaining: Option<CStatement>,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Result<(), ClickError> {
     let function_block = proof_context.function_block;
     let parameters = proof_context.parsed_function.parameters();
@@ -857,7 +858,7 @@ fn execute_concrete_loop_head_step(
             function_block,
             parameters,
             arguments,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
@@ -1431,7 +1432,7 @@ pub(super) fn execute_step_from_execution_point(
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Result<Vec<Proposition>, ClickError> {
     execute_step_from_execution_point_selecting_path(
         execution,
@@ -1442,7 +1443,7 @@ pub(super) fn execute_step_from_execution_point(
         prerequisite_policy,
         fact_transport_policy,
         loop_step_policy,
-        construction,
+        construction.as_mut().map(Construction::reborrow),
         None,
         None,
     )
@@ -1587,7 +1588,7 @@ fn execute_step_from_execution_point_selecting_path(
     prerequisite_policy: StatementPrerequisitePolicy,
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
     selected_path_fact: Option<&Proposition>,
     context: Option<&PureFactContext>,
 ) -> Result<Vec<Proposition>, ClickError> {
@@ -1628,7 +1629,7 @@ fn execute_step_from_execution_point_selecting_path(
             BranchStepPolicy::RequireProven,
             false,
             BranchArmMode::Inline,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
             context,
         )?;
         debug_assert!(entered);
@@ -1675,7 +1676,7 @@ fn execute_step_from_execution_point_selecting_path(
             current_state,
             source_statement,
             remaining,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         )?;
         return Ok(Vec::new());
     }
@@ -1745,8 +1746,9 @@ fn execute_step_from_execution_point_selecting_path(
         // control flow and needs no proof-level case split: all successors
         // complete the function at the same statement boundary.
         if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
-            && let Some(environments) = construction
+            && let Some(construction) = construction.as_mut()
         {
+            let environments = construction.environments;
             let mut prerequisite_derivations = Vec::new();
             let mut exact_premises = Vec::new();
             for transition in &transitions {
@@ -1790,6 +1792,7 @@ fn execute_step_from_execution_point_selecting_path(
             construct_simple_step_for_planned_operation(
                 execution,
                 proof_context,
+                construction.sink,
                 &current_state,
                 function_block,
                 parameters,
@@ -2039,7 +2042,7 @@ fn execute_step_from_execution_point_selecting_path(
             function_block,
             parameters,
             arguments,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         );
         restore_construction_point_view(&mut execution.program_point_states, restore);
     }
@@ -2311,10 +2314,12 @@ fn execute_step_from_execution_point_selecting_path(
         // the execution; the transports do not change the state.
         let exit_state = (*execution.state).clone();
         for operation in &deferred_transport_operations {
-            if let Some(environments) = construction {
+            if let Some(construction) = construction.as_mut() {
+                let environments = construction.environments;
                 construct_simple_step_for_planned_operation(
                     execution,
                     proof_context,
+                    construction.sink,
                     &exit_state,
                     function_block,
                     parameters,
@@ -2323,8 +2328,7 @@ fn execute_step_from_execution_point_selecting_path(
                     operation,
                 );
             }
-            let replay = &mut execution.replay;
-            let certificate_facts = &mut replay.proof_certificate_builder.certificate_facts;
+            let certificate_facts = &mut execution.surface_record.certificate_facts;
             match operation {
                 ConstructionEvidence::CertifiedFactTransport { target, .. } => {
                     certificate_facts.insert(target.clone());
@@ -2428,6 +2432,8 @@ pub(super) const BOUNDED_EXECUTE_STEP_LIMIT: usize = 10_000;
 pub(super) struct BoundedProofFrontier {
     pub(super) execution: ExecutionProofState,
     pub(super) pure_facts: Vec<Proposition>,
+    /// This path's construction sink while planning constructs steps.
+    pub(super) sink: Option<ProofCertificateBuilder>,
 }
 
 fn certified_transition_condition_partition(
@@ -2659,7 +2665,7 @@ pub(super) fn bounded_execute_from_execution_point(
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
     prerequisite_policy: StatementPrerequisitePolicy,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Result<(), ClickError> {
     let function = proof_context.function;
     let parameters = proof_context.parsed_function.parameters();
@@ -2672,17 +2678,18 @@ pub(super) fn bounded_execute_from_execution_point(
     // builder; the paths are merged back into one step sequence (with `if`
     // structure at genuine forks) once the frontiers are complete. Every
     // path starts from the execution.replay-visible certificate facts at this point.
-    let base_builder = construction
-        .is_some()
-        .then(|| std::mem::take(&mut execution.replay.proof_certificate_builder));
-    if let Some(base) = &base_builder {
-        execution.replay.proof_certificate_builder.certificate_facts =
-            base.certificate_facts.clone();
-        execution.replay.proof_certificate_builder.last_step_entry = base.last_step_entry.clone();
-    }
+    // Each explored path constructs its own surface steps into its own sink,
+    // seeded with the planning anchor; the paths are merged back into one
+    // step sequence (with `if` structure at genuine forks) once complete.
     let mut pending = vec![BoundedProofFrontier {
         execution: execution.clone(),
         pure_facts: available_pure_facts.clone(),
+        sink: construction
+            .as_ref()
+            .map(|construction| ProofCertificateBuilder {
+                last_step_entry: construction.sink.last_step_entry.clone(),
+                ..ProofCertificateBuilder::default()
+            }),
     }];
     let mut completed = Vec::new();
     let mut executed_steps = 0;
@@ -2723,7 +2730,13 @@ pub(super) fn bounded_execute_from_execution_point(
                     BranchStepPolicy::Explore,
                     false,
                     BranchArmMode::Inline,
-                    construction,
+                    construction.as_ref().map(|construction| Construction {
+                        environments: construction.environments,
+                        sink: branch
+                            .sink
+                            .as_mut()
+                            .expect("construction implies a branch sink"),
+                    }),
                     None,
                 )?;
                 if entered {
@@ -2782,13 +2795,20 @@ pub(super) fn bounded_execute_from_execution_point(
                     prerequisite_policy,
                     StatementFactTransportPolicy::Automatic,
                     LoopStepPolicy::EnterBody,
-                    construction,
+                    construction.as_ref().map(|construction| Construction {
+                        environments: construction.environments,
+                        sink: branch
+                            .sink
+                            .as_mut()
+                            .expect("construction implies a branch sink"),
+                    }),
                     Some(&selected_path_fact),
                     None,
                 )?;
                 identity_branches.push((branch, value));
             }
-            if let Some(environments) = construction {
+            if let Some(construction) = construction.as_mut() {
+                let environments = construction.environments;
                 let kernel_condition = Proposition::ConditionIs(condition.clone(), true);
                 let (true_branch, _) = identity_branches
                     .iter()
@@ -2827,23 +2847,17 @@ pub(super) fn bounded_execute_from_execution_point(
                     ))
                 })?;
                 for (branch, value) in &mut identity_branches {
-                    let tactic_offset = branch
-                        .execution
-                        .replay
-                        .proof_certificate_builder
-                        .steps
-                        .len();
-                    branch
-                        .execution
-                        .replay
-                        .proof_certificate_builder
-                        .path_choices
-                        .push(SurfacePathChoice {
-                            occurrence: statement_index,
-                            condition: surface_condition.clone(),
-                            value: *value,
-                            tactic_offset,
-                        });
+                    let sink = branch
+                        .sink
+                        .as_mut()
+                        .expect("construction implies a branch sink");
+                    let tactic_offset = sink.steps.len();
+                    sink.path_choices.push(SurfacePathChoice {
+                        occurrence: statement_index,
+                        condition: surface_condition.clone(),
+                        value: *value,
+                        tactic_offset,
+                    });
                 }
             }
             for (branch, _) in identity_branches {
@@ -2862,7 +2876,14 @@ pub(super) fn bounded_execute_from_execution_point(
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::EnterBody,
-            construction)
+            construction.as_ref().map(|construction| Construction {
+                environments: construction.environments,
+                sink: frontier
+                    .sink
+                    .as_mut()
+                    .expect("construction implies a frontier sink"),
+            }),
+        )
         .map_err(|error| {
             ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute` failed after {executed_steps} small execution steps: {}",
@@ -2872,19 +2893,12 @@ pub(super) fn bounded_execute_from_execution_point(
         pending.push(frontier);
     }
 
-    let synthesized_paths = base_builder.map(|base| {
+    let synthesized_paths = construction.as_mut().map(|construction| {
         let paths = completed
             .iter()
-            .map(|frontier| {
-                frontier
-                    .execution
-                    .replay
-                    .proof_certificate_builder
-                    .clone()
-                    .into_value()
-            })
+            .map(|frontier| frontier.sink.clone().unwrap_or_default())
             .collect::<Vec<_>>();
-        (base, synthesize_surface_alternatives(paths))
+        (construction, synthesize_surface_alternatives(paths))
     });
     merge_bounded_execution_frontiers(
         execution,
@@ -2895,18 +2909,17 @@ pub(super) fn bounded_execute_from_execution_point(
         claim_label,
         tactic_index,
     )?;
-    if let Some((mut base, synthesized)) = synthesized_paths {
+    if let Some((construction, synthesized)) = synthesized_paths {
         match synthesized {
             Ok(steps) => {
                 for step in steps {
-                    base.push_step(step);
+                    construction.sink.push_step(step);
                 }
             }
-            Err(message) => base.block(format!(
+            Err(message) => construction.sink.block(format!(
                 "could not lower certified branch alternatives: {message}"
             )),
         }
-        execution.replay.proof_certificate_builder = base;
     }
     Ok(())
 }
@@ -2993,7 +3006,7 @@ pub(super) fn execute_rest_from_execution_point(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Result<(), ClickError> {
     let function = proof_context.function;
 
@@ -3023,7 +3036,7 @@ pub(super) fn execute_rest_from_execution_point(
             StatementPrerequisitePolicy::Planning,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         )?;
     }
 
@@ -3033,7 +3046,7 @@ pub(super) fn execute_rest_from_execution_point(
             proof_context,
             available_pure_facts,
             StatementPrerequisitePolicy::Planning,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         )?;
     }
     Ok(())
@@ -3046,7 +3059,7 @@ pub(super) fn execute_until_statement(
     available_pure_facts: &mut Vec<Proposition>,
     statement_index: usize,
     prerequisite_policy: StatementPrerequisitePolicy,
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Result<(), ClickError> {
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
@@ -3087,7 +3100,7 @@ pub(super) fn execute_until_statement(
             prerequisite_policy,
             StatementFactTransportPolicy::Automatic,
             LoopStepPolicy::ApplyVerifiedRule,
-            construction,
+            construction.as_mut().map(Construction::reborrow),
         )?;
         if execution.frontier.is_at_function_exit() {
             return Err(ClickError::new(format!(

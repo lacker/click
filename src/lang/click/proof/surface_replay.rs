@@ -980,6 +980,7 @@ pub(super) fn lower_certified_frame_path_tactics(
 pub(super) fn construct_simple_step_for_planned_operation(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
+    sink: &mut ProofCertificateBuilder,
     state: &CState,
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
@@ -987,15 +988,14 @@ pub(super) fn construct_simple_step_for_planned_operation(
     environments: ConstructionEnvironments<'_>,
     operation: &ConstructionEvidence,
 ) {
-    let mut builder = std::mem::take(&mut execution.replay.proof_certificate_builder);
-    let available = std::mem::take(&mut builder.certificate_facts);
+    let available = std::mem::take(&mut execution.surface_record.certificate_facts);
     let available_facts = available.to_vec();
     {
         // Planner construction runs on a replay context that carries no typed
         // path state; the unfold set only refines a transport-planning
         // diagnostic here.
         let mut context =
-            ProofCertificateConstructionContext::new(execution, proof_context, &mut builder, &[]);
+            ProofCertificateConstructionContext::new(execution, proof_context, sink, &[]);
         append_simple_proof_step_for_operation(
             &mut context,
             state,
@@ -1010,8 +1010,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
             None,
         );
     }
-    builder.certificate_facts = available;
-    execution.replay.proof_certificate_builder = builder;
+    execution.surface_record.certificate_facts = available;
 }
 
 #[allow(clippy::too_many_arguments)]

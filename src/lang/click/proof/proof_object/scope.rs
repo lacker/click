@@ -927,8 +927,7 @@ impl<'a> ProofScope<'a> {
             .surface_propositions
             .record_lowering(proposition, kernel)?;
         execution
-            .replay
-            .proof_certificate_builder
+            .surface_record
             .certificate_facts
             .insert(kernel.clone());
         let at_entry = execution

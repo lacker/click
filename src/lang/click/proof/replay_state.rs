@@ -133,7 +133,6 @@ impl<T: Clone> SharedValue<T> {
 
 #[derive(Clone, Default)]
 pub(super) struct TacticReplayState {
-    pub(super) proof_certificate_builder: SharedValue<ProofCertificateBuilder>,
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     /// C branch choices enclosing a selected tactic in their common
     /// continuation. Deferred post-execution expansion is finalized after
@@ -395,13 +394,6 @@ pub(super) struct ProofCertificateBuilder {
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
-    /// The facts the constructed certificate's own replay will have at the
-    /// current point. Planning executes with automatically transported facts,
-    /// but certificate replay carries only path facts, statement-local
-    /// rewrites, and explicit surface transports across each step. Premises
-    /// are written against this replay-visible set so every generated
-    /// `using` list names a fact its replay can actually check.
-    pub(super) certificate_facts: ProofFactStore,
     /// Prevents the planner-metadata wrapper for a statement transition from
     /// re-entering itself while it emits the ordinary surface step.
     pub(super) lowering_planned_transition: bool,
@@ -467,6 +459,41 @@ impl ProofFactStore {
 /// Environments a planning executor needs to construct the [`SimpleProofStep`]
 /// for each committed search move at the moment the move is made. Passing
 /// `None` runs the executor without surface construction (ordinary replay).
+/// The path's surface record: what the constructed certificate's own replay
+/// knows at this point. Planning sinks seed from it and write the anchor
+/// back; a proof-level case split records its choice here.
+#[derive(Clone, Default)]
+pub(super) struct SurfaceRecord {
+    /// The statement entry the most recent step recorded, which premises
+    /// written `at(statement(N).entry, ...)` resolve against.
+    pub(super) last_step_entry: Option<ProgramPointRef>,
+    pub(super) path_choices: Vec<SurfacePathChoice>,
+    pub(super) blocker: Option<String>,
+    /// The facts the constructed certificate's own replay will have at the
+    /// current point. Planning executes with automatically transported facts,
+    /// but certificate replay carries only path facts, statement-local
+    /// rewrites, and explicit surface transports across each step. Premises
+    /// are written against this replay-visible set so every generated
+    /// `using` list names a fact its replay can actually check.
+    pub(super) certificate_facts: ProofFactStore,
+}
+
+/// One planning call's construction gate: the environments the constructed
+/// steps lower against and the sink they are recorded into.
+pub(super) struct Construction<'a> {
+    pub(super) environments: ConstructionEnvironments<'a>,
+    pub(super) sink: &'a mut ProofCertificateBuilder,
+}
+
+impl Construction<'_> {
+    pub(super) fn reborrow(&mut self) -> Construction<'_> {
+        Construction {
+            environments: self.environments,
+            sink: self.sink,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ConstructionEnvironments<'a> {
     pub(super) predicate_environment: &'a PredicateEnvironment,

@@ -448,8 +448,7 @@ impl<'a> Proof<'a> {
 /// anchor their premises by this one law.
 pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option<ProgramPointRef> {
     let anchor = execution
-        .replay
-        .proof_certificate_builder
+        .surface_record
         .last_step_entry
         .clone()
         .or_else(|| execution.program_point_states.keys().next_back().cloned())?;

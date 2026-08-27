@@ -1146,6 +1146,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// finalization; joins carry each arm's suffix.
     pub(in crate::lang::click::proof) post_execution_tactics:
         PersistentSequence<DeferredPostExecutionTactic>,
+    /// The path's surface record: replay-visible certificate facts, the
+    /// premise anchor, and proof-level case choices.
+    pub(in crate::lang::click::proof) surface_record: SurfaceRecord,
     /// The execution frontier was intentionally replaced by a branch
     /// interface. Its state is a specification abstraction, not an exact
     /// symbolic body outcome; whole-function kernel certification checks every
@@ -1265,6 +1268,7 @@ impl ExecutionProofState {
             frontier_loop_clauses: PersistentSequence::default(),
             frontier_loop_rules: PersistentSequence::default(),
             post_execution_tactics: PersistentSequence::default(),
+            surface_record: SurfaceRecord::default(),
             execution_abstraction: Default::default(),
             loop_effect_goal: Default::default(),
             next_path_choice: Default::default(),

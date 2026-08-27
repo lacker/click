@@ -417,7 +417,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) -> Vec<ConstructionEvidence> {
     let mut exact_premises = transition.planning_premises.clone();
     for transport in &transition.fact_transports {
@@ -441,11 +441,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     // premise instead of treating the evaluator's identical output as newly
     // discovered information.
     for fact in &transition.path_facts {
-        if execution
-            .replay
-            .proof_certificate_builder
-            .certificate_facts
-            .contains(fact)
+        if execution.surface_record.certificate_facts.contains(fact)
             && !exact_premises.contains(fact)
         {
             exact_premises.push(fact.clone());
@@ -471,10 +467,12 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             next_opaque_call: execution.next_opaque_call,
             next_kernel_variable: execution.next_kernel_variable,
         });
-    if let Some(environments) = construction {
+    if let Some(construction) = construction.as_mut() {
+        let environments = construction.environments;
         construct_simple_step_for_planned_operation(
             execution,
             proof_context,
+            construction.sink,
             state,
             function_block,
             parameters,
@@ -486,7 +484,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         // step, adds the transition's path facts, and rewrites
         // statement-local transports; automatic planning transports stay out
         // of the replay-visible set.
-        let certificate_facts = &mut execution.replay.proof_certificate_builder.certificate_facts;
+        let certificate_facts = &mut execution.surface_record.certificate_facts;
         for fact in &transition.path_facts {
             certificate_facts.insert(fact.clone());
         }
@@ -572,7 +570,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     function_block: &FunctionBlock,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    construction: Option<ConstructionEnvironments<'_>>,
+    mut construction: Option<Construction<'_>>,
 ) {
     let mut exact_premises = if include_path_fact {
         theorem_implication_premises(&transition.theorem)
@@ -591,12 +589,14 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
             }
         }
     }
-    let Some(environments) = construction else {
+    let Some(construction) = construction.as_mut() else {
         return;
     };
+    let environments = construction.environments;
     construct_simple_step_for_planned_operation(
         execution,
         proof_context,
+        construction.sink,
         state,
         function_block,
         parameters,
@@ -611,7 +611,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     // A condition step introduces evaluation guards and path facts without
     // touching memory; extend the replay-visible set with exactly what this
     // transition adds over the planning context.
-    let certificate_facts = &mut execution.replay.proof_certificate_builder.certificate_facts;
+    let certificate_facts = &mut execution.surface_record.certificate_facts;
     for fact in &transition.pure_facts {
         if !available.contains(fact) {
             certificate_facts.insert(fact.clone());

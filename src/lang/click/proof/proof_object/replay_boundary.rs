@@ -141,7 +141,7 @@ impl<'a> Proof<'a> {
             check: check.clone(),
             closed: false,
         });
-        execution.replay.proof_certificate_builder = ProofCertificateBuilder::default().into();
+        execution.surface_record = SurfaceRecord::default();
         execution.last_step_delta = ExecutionProofStepDelta::default();
 
         Ok(Proof {

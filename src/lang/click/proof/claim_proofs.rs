@@ -1097,7 +1097,13 @@ pub(super) fn finish_ordered_proof_replay<'a>(
         };
     let retained_surface = match &unit {
         OrderedProofUnit::Checked(proof) => {
-            let mut retained = replay.proof_certificate_builder.clone();
+            let record = &proof_execution.surface_record;
+            let mut retained = ProofCertificateBuilder {
+                last_step_entry: record.last_step_entry.clone(),
+                path_choices: record.path_choices.clone(),
+                blocker: record.blocker.clone(),
+                ..ProofCertificateBuilder::default()
+            };
             retained.steps = surface_steps_from_checked_proof(proof)?;
             retained
         }
@@ -3652,9 +3658,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                                                 pre_state,
                                                 post_state,
                                                 Some(result),
-                                                replay
-                                                    .proof_certificate_builder
-                                                    .last_step_entry
+                                                proof_execution.surface_record.last_step_entry
                                                     .as_ref(),
                                                 &proof_execution.program_point_states,
                                                 &outcome_surface_propositions,
@@ -4281,8 +4285,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
             // tying builders to produced theorems silently dropped such arms
             // (and duplicated builders when a context certified many paths).
             for claim in claims {
-                claim_surface_builders
-                    .push((claim.verified_claim(), expanded.clone().into_value()));
+                claim_surface_builders.push((claim.verified_claim(), expanded.clone()));
             }
         } else {
             for (claim_index, claim) in claims.iter().enumerate() {
@@ -4315,7 +4318,7 @@ pub(super) fn finish_ordered_proof_replay<'a>(
                         theorem.expansion_blocker = expanded.blocker.clone();
                     }
                 }
-                claim_surface_builders.push((verified_claim, expanded.into_value()));
+                claim_surface_builders.push((verified_claim, expanded));
             }
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {

@@ -575,7 +575,9 @@ onto `ExecutionProofState` — `post_execution_tactics` followed as path state; 
 the certificate builder and expansion cursors; the drivers' mirrored surface
 record (`record_surface_steps`, the tactic surface scopes) is deleted and
 expansions read the Proof (`path_certificate` follows an unjoined arm's
-lineage), with the case-split offset measured on the Proof, and the per-proof constants (proof site,
+lineage), with the case-split offset measured on the Proof; the builder left the bag:
+`SurfaceRecord` is typed path state and planning owns explicit sinks
+(`Construction { environments, sink }`), and the per-proof constants (proof site,
 source layout, entry facts/state, grouped flag) onto `ExecutionProofContext`
 as `ExecutionProofConstants`, on 2026-08-27; the executor's per-field
 environment parameters collapsed into `proof_context`, with derived

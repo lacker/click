@@ -434,9 +434,8 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     }
     let mut paths = Vec::new();
     for leaf in completed {
-        let context_replay = leaf.finalization_view()?.replay.clone();
         let context_execution = leaf.finalization_view()?.execution.clone();
-        if let Some(blocker) = &context_replay.proof_certificate_builder.blocker {
+        if let Some(blocker) = &context_execution.surface_record.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
             )));

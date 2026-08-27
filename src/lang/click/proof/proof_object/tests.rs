@@ -6904,13 +6904,6 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         );
         assert!(
             root_execution
-                .replay
-                .proof_certificate_builder
-                .shares_storage_with(&successor_execution.replay.proof_certificate_builder),
-            "unfold does not copy unrelated certificate history"
-        );
-        assert!(
-            root_execution
                 .effect_facts
                 .shares_storage_with(&successor_execution.effect_facts),
             "unfold does not copy unrelated effect history"
@@ -7538,13 +7531,6 @@ fn execution_transport_forks_without_copying_unrelated_state() {
                 .state
                 .shares_storage_with(&successor_execution.state),
             "transport does not alter the C state"
-        );
-        assert!(
-            root_execution
-                .replay
-                .proof_certificate_builder
-                .shares_storage_with(&successor_execution.replay.proof_certificate_builder),
-            "transport does not copy unrelated certificate history"
         );
         assert!(
             root_execution
