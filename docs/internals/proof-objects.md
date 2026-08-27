@@ -111,9 +111,5 @@ The target invariants are:
 - persistent proof-state sharing must not permit mutation of an earlier state;
 - instrumentation can observe work but cannot change the validity decision.
 
-Until the compatibility migration finishes, the parallel replay types above
-are an explicit exception to the first invariant. Don't add new semantic fields
-or operations to them.
-
 The former chronological proof-object design log is preserved at
 `design/proof-object-api.md`; this page describes the current architecture.

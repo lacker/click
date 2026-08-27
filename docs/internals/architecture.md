@@ -1,9 +1,7 @@
 # Architecture
 
 Click is divided into a source-language front end, proof construction, a
-kernel semantic core, and command-line orchestration. Some source-checking and
-expansion paths still pass through a transitional compatibility replay engine;
-that engine isn't part of the intended proof model.
+kernel semantic core, and command-line orchestration.
 
 ## Repository map
 
@@ -58,10 +56,9 @@ it can advance proof state only through checked operations. CLI rendering and
 profiling don't decide validity. Expansion is accepted only after the complete
 rendered source verifies through the ordinary entry point.
 
-Current compatibility paths add independent internal certificate replay before
-that rewritten-source check. Don't treat this duplication as an additional
-trust guarantee that must be preserved; the ordinary `Proof` transition
-boundary and rewritten-source verification are the durable invariants.
+The ordinary `Proof` transition boundary and rewritten-source verification
+are the durable invariants; no separate certificate replay sits in front of
+that check.
 
 OS process wrappers aren't part of the proof architecture. CLI commands and
 fixture gates call the shared bounded verification engine directly. Deadlines

@@ -158,7 +158,7 @@ planner — run on boundary `Proof`s with no interpreter call in
    `execute_until` planner core is inlined on the threaded Proof, and
    the smart `transport` pre-pass applies the explicit `transport using`
    law). One transitional wrap/export pair remains at the function
-   boundary, plus two cursor adapters in `replay_boundary.rs`
+   boundary, plus two cursor adapters in `execution_entry.rs`
    (`begin_source_tactic`/`edit_replay_cursor` and `replay_cursor`) for
    the surface-scope, capture, and deferral bookkeeping the loop used to
    perform on the loose tuple; all go with phase 2. Threading made one
@@ -234,7 +234,7 @@ planner — run on boundary `Proof`s with no interpreter call in
      `claim_proofs.rs` fallbacks (a shape no driver accepts is the
      terminal `unsupported_proof_shape`), and the interpreter-only
      helpers (`apply_branch_interface`, `require_function_exit`,
-     `try_exact_execute_to_exit`, the `replay_boundary.rs` cursor
+     `try_exact_execute_to_exit`, the `execution_entry.rs` cursor
      adapters `into_execution_context` / `replay_cursor` /
      `begin_source_tactic`, and others) — 2,485 lines. The checked
      drivers are the single engine; the last shapes were closed by
@@ -250,7 +250,7 @@ planner — run on boundary `Proof`s with no interpreter call in
    diagnostics into the non-semantic cursor, and delete the
    compatibility-only fields. Unify function exit and the loop back-edge
    as instances of one boundary mechanism when the frontier moves onto
-   `Proof`, and delete the `replay_boundary.rs` adapters
+   `Proof`, and delete the `execution_entry.rs` adapters
    (`ProofReplayContext` itself was deleted 2026-08-27).
 3. **Retire the parallel certificate builder.** Move expansion
    serialization entirely onto `ProofNode` ancestry and source
@@ -481,12 +481,12 @@ Taken after `proof_object.rs` was mechanically split into concern modules.
 The replay adapters (`for_execution_frontier`,
 `for_execution_frontier_with_effect_goals`, `start_loop_effect_goal`,
 `into_execution_context`, `finalization_view`) are co-located in
-`src/lang/click/proof/proof_object/replay_boundary.rs`, so phase 2 deletes
+`src/lang/click/proof/proof_object/execution_entry.rs`, so phase 2 deletes
 one file rather than hunting scattered methods.
 
 ### `TacticReplayState` fields by ownership
 
-`TacticReplayState` (`replay_state.rs:135`) has 36 fields. Line references
+`TacticReplayState` (`execution_state.rs:135`) has 36 fields. Line references
 are as of this census date.
 
 Semantic fields whose destination is typed `Proof` state: `loop_effect_goal`
@@ -549,7 +549,7 @@ Nothing is expansion-only: `click expand` threads capture state through the
 identical verification paths, so every site above is on ordinary
 verification.
 
-`tactic_replay.rs` formerly contained roughly twenty wrap/op/unwrap round
+`tactic_laws.rs` formerly contained roughly twenty wrap/op/unwrap round
 trips (`try_smart_step_on_proof` and friends, plus inline per-tactic
 arms). The phase-1 interpreter conversion deleted them: the tactic loop
 threads one `Proof`, and its only remaining boundary is the wrap/export
@@ -564,8 +564,8 @@ Dependency summary, in the remaining-phase numbering: the typed boundary
 (complete) unblocked both `loop_planning.rs` sites (now deleted) and the
 interpreter's `Branch` join; phase 1 (complete) deleted
 `execute_internal_proof`, `OrderedProofUnit::Replay`, and the stranded
-`tactic_replay.rs` round trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
-`replay_boundary.rs` (`ProofReplayContext` is deleted; the executor now
+`tactic_laws.rs` round trips; phase 2 lets the `try_check_*` roots start as `Proof` and deletes
+`execution_entry.rs` (`ProofReplayContext` is deleted; the executor now
 takes `&mut ExecutionProofState`, so bag fields can move without signature
 churn; read-only lowering takes `ExecutionView`; `frontier`, `case_assumptions`,
 `effect_facts`, `program_point_states`, `surface_propositions`, the
@@ -590,7 +590,7 @@ callers); phase 3 retires the
 ### Boundary representations the typed region goal must subsume
 
 The execution position is not a `Proof` concept today.
-`ProofExecutionPoint` (`replay_state.rs:1897`) has exactly three states —
+`ProofExecutionPoint` (`execution_state.rs:1897`) has exactly three states —
 `FunctionEntry`, `StatementEntry`, `FunctionExit` — with no region or
 back-edge variant, and `FrontierGoal` (`proof_object.rs:1297`) carries only
 an effect selection and context: "execute to function exit", "execute this

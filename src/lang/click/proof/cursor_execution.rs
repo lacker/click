@@ -1842,7 +1842,7 @@ fn execute_step_from_execution_point_selecting_path(
             arguments.to_vec(),
             completed_outcomes,
         );
-        let replay_state = execution_start_state.clone();
+        let execution_state = execution_start_state.clone();
         set_replay_execution(
             &mut execution.frontier,
             claim_label,
@@ -1853,7 +1853,7 @@ fn execute_step_from_execution_point_selecting_path(
         )?;
         execution.frontier.next_statement_index = source_region.continuation_node;
         *available_pure_facts = common_pure_facts;
-        *state = replay_state;
+        *state = execution_state;
         return Ok(common_introduced_facts);
     }
     if transitions.len() != 1 {
@@ -2238,7 +2238,7 @@ fn execute_step_from_execution_point_selecting_path(
                 arguments.to_vec(),
                 vec![(outcome, completed_execution_facts, obligations)],
             );
-            let replay_state = execution_start_state.clone();
+            let execution_state = execution_start_state.clone();
             set_replay_execution(
                 &mut execution.frontier,
                 claim_label,
@@ -2248,7 +2248,7 @@ fn execute_step_from_execution_point_selecting_path(
                 completed,
             )?;
             execution.frontier.next_statement_index = source_region.continuation_node;
-            *state = replay_state;
+            *state = execution_state;
         }
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
@@ -2263,7 +2263,7 @@ fn execute_step_from_execution_point_selecting_path(
                     transition_obligations,
                 )],
             );
-            let replay_state = execution_start_state.clone();
+            let execution_state = execution_start_state.clone();
             set_replay_execution(
                 &mut execution.frontier,
                 claim_label,
@@ -2273,7 +2273,7 @@ fn execute_step_from_execution_point_selecting_path(
                 completed,
             )?;
             execution.frontier.next_statement_index = source_region.continuation_node;
-            *state = replay_state;
+            *state = execution_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
             let outcome = CFunctionOutcome::UndefinedBehavior(kind);

@@ -19,13 +19,13 @@ pub(in crate::lang::click) use proof_object::{
     count_execution_context_exports, count_explicit_linear_fallbacks,
     count_smart_loop_effect_frame_candidates, count_source_certificate_checks,
 };
+mod checked_drivers;
+mod execution_state;
 mod pure_theorems;
-mod replay_engine;
-mod replay_state;
 mod resources;
 mod structural;
 mod surface_certificates;
-mod surface_replay;
+mod surface_construction;
 mod surface_synthesis;
 mod theorem_application;
 mod timing;
@@ -48,11 +48,20 @@ pub(in crate::lang::click) fn collect_planning_statement_transitions<R>(
 ) -> (R, Vec<(String, usize, String)>) {
     cursor_execution::collect_planning_statement_transitions(operation)
 }
+#[cfg(test)]
+pub(in crate::lang::click) use checked_drivers::collect_internal_proof_execution_labels;
+#[cfg(test)]
+pub(in crate::lang::click) use checked_drivers::count_internal_proof_executions;
+#[cfg(test)]
+pub(in crate::lang::click) use checked_drivers::count_root_internal_proof_executions;
+use checked_drivers::*;
 use execution_planning::*;
 pub(super) use execution_planning::{
     StatementFactTransportPolicy, StatementPrerequisitePolicy, certified_statement_transitions,
     verify_loop_execution_proofs,
 };
+use execution_state::*;
+pub(super) use execution_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{
     SnapshotBlindPropositionKey, condition_polarity_equivalent, exactly_available_fact,
@@ -69,20 +78,11 @@ use pure_theorems::{
 pub(super) use pure_theorems::{
     pure_theorem_array_refs, pure_theorem_parameter_values, verify_theorem_definitions,
 };
-#[cfg(test)]
-pub(in crate::lang::click) use replay_engine::collect_internal_proof_execution_labels;
-#[cfg(test)]
-pub(in crate::lang::click) use replay_engine::count_internal_proof_executions;
-#[cfg(test)]
-pub(in crate::lang::click) use replay_engine::count_root_internal_proof_executions;
-use replay_engine::*;
-use replay_state::*;
-pub(super) use replay_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
 pub(super) use resources::instantiate_composite_resource_body_resources;
 use resources::*;
 use structural::*;
 use surface_certificates::*;
-use surface_replay::*;
+use surface_construction::*;
 #[cfg(test)]
 use surface_synthesis::{SURFACE_SYNTHESIS_DEPTH_LIMIT, bitvector_term_is_load_free};
 use surface_synthesis::{

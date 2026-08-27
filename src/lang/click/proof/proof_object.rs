@@ -2247,12 +2247,12 @@ impl ProofContext<'_> {
 }
 
 mod construction;
+mod execution_entry;
 mod execution_joins;
 mod execution_statements;
 mod fact_index;
 mod outcomes_and_focus;
 mod point_steps;
-mod replay_boundary;
 mod resource_steps;
 mod scope;
 mod smart_closures;
