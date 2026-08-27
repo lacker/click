@@ -1406,8 +1406,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.replay.open_scopes += 1;
-        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         let introduced_facts = checked.added_facts.clone();
         let body = Proof {

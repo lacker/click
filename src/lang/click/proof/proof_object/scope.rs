@@ -560,7 +560,6 @@ impl<'a> ProofScope<'a> {
                     .step_error("open resource branch lost its execution frontier")
             })?;
         let mut facts = body.facts().clone();
-        execution.replay.open_scopes = execution.replay.open_scopes.saturating_sub(1);
         if execution.replay.is_at_function_exit() {
             execution.replay.defer_post_execution(
                 context.tactic_index,
@@ -1103,7 +1102,6 @@ impl<'a> ProofScope<'a> {
                     })?;
                 let mut facts = self.body.facts().clone();
                 let mut state = Arc::unwrap_or_clone(self.body.state);
-                execution.replay.open_scopes = execution.replay.open_scopes.saturating_sub(1);
                 if execution.replay.is_at_function_exit() {
                     execution.replay.defer_post_execution(
                         context.tactic_index,

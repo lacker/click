@@ -285,7 +285,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta {
             function_entry_prerequisites: checked.added_certification_facts,
             function_entry_derivations: checked.added_derivations,
@@ -334,7 +333,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -384,7 +382,6 @@ impl<'a> Proof<'a> {
             &execution.replay.unfolded_predicates,
         )?;
         execution.state = checked.state.into();
-        execution.replay.has_resource_surface_history = true;
         execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
