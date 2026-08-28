@@ -1426,7 +1426,8 @@ pub(super) fn solve_nested_have<'a>(
     // additional resource obligation). The linear body above advances only
     // its focused goal, while joining requires the entire nested scope to be
     // complete. Treat that unsupported multi-goal shape as a transactional
-    // miss so the unchanged compatibility interpreter can own it.
+    // miss so the enclosing checked driver can try another law or report the
+    // unsupported shape.
     Ok(selected.filter(ProofScope::is_complete))
 }
 

@@ -35,6 +35,7 @@ pub(super) struct AttemptBudget {
 }
 
 impl AttemptBudget {
+    #[cfg(test)]
     pub(super) fn new(candidates: usize) -> Self {
         Self {
             remaining: candidates,
@@ -79,6 +80,7 @@ pub(super) fn candidate_outcome<T>(result: Result<T, ClickError>) -> Result<Opti
 /// of checked operations, including the candidate's entire continuation. A
 /// miss leaves `root` the unchanged authority; only a candidate whose
 /// complete success condition held is returned.
+#[cfg(test)]
 pub(super) fn attempt<'a>(
     root: &Proof<'a>,
     budget: &mut AttemptBudget,
@@ -127,6 +129,7 @@ pub(super) fn try_steps<'a>(
 ///
 /// The sequence succeeds only if every step is accepted in order; any miss
 /// discards the partial descendant and returns the search to `root`.
+#[cfg(test)]
 pub(super) fn try_sequence<'a>(
     root: &Proof<'a>,
     budget: &mut AttemptBudget,

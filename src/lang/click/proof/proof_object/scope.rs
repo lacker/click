@@ -688,7 +688,7 @@ impl<'a> ProofScope<'a> {
     /// `Proof::try_statement_step`; the search never mutates a second
     /// semantic context or reconstructs steps from its aftermath. A partial
     /// advance is discarded unless the checked descendant reaches function
-    /// exit, so unsupported frontiers continue through the legacy path.
+    /// exit, so unsupported frontiers return a bounded miss to the caller.
     pub(in crate::lang::click::proof) fn try_linear_execute(
         &self,
     ) -> Result<Option<Self>, ClickError> {

@@ -76,10 +76,6 @@ impl<T: Clone> SharedVec<T> {
         Some(&self.0[ancestor.0.len()..])
     }
 
-    pub(super) fn into_vec(self) -> Vec<T> {
-        Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
-    }
-
     #[cfg(test)]
     pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
@@ -266,6 +262,7 @@ impl<T> PersistentSequence<T> {
         Some(suffix)
     }
 
+    #[cfg(test)]
     pub(super) fn shares_tail_with(&self, other: &Self) -> bool {
         match (&self.tail, &other.tail) {
             (Some(left), Some(right)) => Arc::ptr_eq(left, right),
@@ -345,11 +342,6 @@ impl<T: Clone + Ord> PersistentOrderedSet<T> {
     /// `ancestor` is not this set's ancestor.
     pub(super) fn introduced_since(&self, ancestor: &Self) -> Option<Vec<T>> {
         self.ordered.suffix_since(&ancestor.ordered)
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.ordered.clear();
-        self.exact = PersistentSet::default();
     }
 
     pub(super) fn insert(&mut self, value: T) -> bool {
@@ -1342,7 +1334,6 @@ mod proof_fact_store_tests {
             frontier.continuations.push(ProofExecutionContinuation {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 1,
-                kind: ProofExecutionContinuationKind::LoopIteration,
             });
             let ancestor = frontier.clone();
 
@@ -1368,7 +1359,6 @@ mod proof_fact_store_tests {
             frontier.continuations.push(ProofExecutionContinuation {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 2,
-                kind: ProofExecutionContinuationKind::LoopIteration,
             });
             let local_tail = frontier
                 .continuations
@@ -1528,12 +1518,6 @@ pub(super) struct ExecutionFrontier {
 pub(super) struct ProofExecutionContinuation {
     pub(super) remaining: Option<Arc<CStatement>>,
     pub(super) next_statement_index: usize,
-    pub(super) kind: ProofExecutionContinuationKind,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum ProofExecutionContinuationKind {
-    LoopIteration,
 }
 
 #[derive(Clone, Default)]

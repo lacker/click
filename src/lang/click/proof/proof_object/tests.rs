@@ -2906,19 +2906,6 @@ fn nested_have_accepts_trailing_assumption_after_closure() {
         &click_function_environment,
     )
     .expect("the exact premise should lower");
-    let kernel_conclusion = lower_point_proposition_with_assumptions(
-        &conclusion,
-        &PureFactContext::new(),
-        parsed_function.parameters(),
-        &arguments,
-        &state,
-        &state,
-        None,
-        &ProgramPointStates::new(),
-        &predicate_environment,
-        &click_function_environment,
-    )
-    .expect("the theorem conclusion should lower");
     let application = TheoremApplication {
         name: "int32_lt_implies_le".to_string(),
         arguments: vec![

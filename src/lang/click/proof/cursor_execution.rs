@@ -408,7 +408,6 @@ pub(super) fn execute_branch_step_from_execution_point(
     prerequisite_policy: StatementPrerequisitePolicy,
     branch_step_policy: BranchStepPolicy,
     complete_empty_branch: bool,
-    arm_mode: BranchArmMode,
     mut construction: Option<Construction<'_>>,
     context: Option<&PureFactContext>,
 ) -> Result<bool, ClickError> {
@@ -657,91 +656,65 @@ pub(super) fn execute_branch_step_from_execution_point(
     };
     execution.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state;
-    match arm_mode {
-        BranchArmMode::Inline => {
-            // The selected arm is spliced before the `if`'s tail so the
-            // frontier's own statement tree keeps every downstream statement
-            // reachable; the patched source layout carries arm-final control
-            // successors, so no continuation record is needed.
-            if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
-                // The empty arm completes this branch region immediately; the
-                // patched layout supplies its control successor and the
-                // statically completed branch regions.
-                let skip_index = execution.frontier.next_statement_index;
-                for exited in proof_context
-                    .constants
-                    .source_layout
-                    .exited_branch_regions(skip_index)
-                    .to_vec()
-                {
-                    record_statement_program_point_state(
-                        &mut execution.program_point_states,
-                        function_block,
-                        exited,
-                        ProgramPointKind::Exit,
-                        state.clone(),
-                    );
+    // The selected arm is spliced before the `if`'s tail so the frontier's
+    // own statement tree keeps every downstream statement reachable; the
+    // patched source layout carries arm-final control successors, so no
+    // continuation record is needed.
+    if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
+        // The empty arm completes this branch region immediately; the patched
+        // layout supplies its control successor and statically completed
+        // branch regions.
+        let skip_index = execution.frontier.next_statement_index;
+        for exited in proof_context
+            .constants
+            .source_layout
+            .exited_branch_regions(skip_index)
+            .to_vec()
+        {
+            record_statement_program_point_state(
+                &mut execution.program_point_states,
+                function_block,
+                exited,
+                ProgramPointKind::Exit,
+                state.clone(),
+            );
+        }
+        let successor = proof_context
+            .constants
+            .source_layout
+            .statement(skip_index)
+            .map(|region| region.continuation_node);
+        match remaining {
+            Some(tail) => {
+                if let Some(successor) = successor {
+                    execution.frontier.next_statement_index = successor;
                 }
-                let successor = proof_context
-                    .constants
-                    .source_layout
-                    .statement(skip_index)
-                    .map(|region| region.continuation_node);
-                match remaining {
-                    Some(tail) => {
-                        if let Some(successor) = successor {
-                            execution.frontier.next_statement_index = successor;
-                        }
-                        execution.frontier.point = ProofExecutionPoint::StatementEntry {
-                            remaining: tail.into(),
-                        };
-                    }
-                    None => match resume_after_completed_region(&mut execution.frontier) {
-                        Some(tail) => {
-                            execution.frontier.point = ProofExecutionPoint::StatementEntry {
-                                remaining: tail.into(),
-                            };
-                        }
-                        None if finish_exhausted_region(&mut execution.frontier) => {}
-                        None => {
-                            return Err(ClickError::new(format!(
-                                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
-                            )));
-                        }
-                    },
-                }
-            } else {
-                let spliced = match remaining {
-                    Some(tail) => c_seq(selected_branch, tail),
-                    None => selected_branch,
-                };
                 execution.frontier.point = ProofExecutionPoint::StatementEntry {
-                    remaining: spliced.into(),
+                    remaining: tail.into(),
                 };
             }
+            None => match resume_after_completed_region(&mut execution.frontier) {
+                Some(tail) => {
+                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                        remaining: tail.into(),
+                    };
+                }
+                None if finish_exhausted_region(&mut execution.frontier) => {}
+                None => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
+                    )));
+                }
+            },
         }
-        BranchArmMode::Bounded => {
-            // The arm frontier owns exactly the arm's own statement tree:
-            // exhausting it reaches the typed region boundary, and the join
-            // restores the parent frontier. Enclosing continuations belong
-            // to the parent, never to a bounded arm.
-            execution.frontier.continuations = PersistentSequence::default();
-            execution.frontier.region = ExecutionRegionKind::BranchArm;
-            if complete_empty_branch && matches!(selected_branch, CStatement::Skip) {
-                record_statement_program_point_state(
-                    &mut execution.program_point_states,
-                    function_block,
-                    statement_index,
-                    ProgramPointKind::Exit,
-                    state.clone(),
-                );
-                execution.frontier.point = ProofExecutionPoint::RegionBoundary;
-            } else {
-                execution.frontier.point = ProofExecutionPoint::StatementEntry {
-                    remaining: selected_branch.into(),
-                };
-            }
-        }
+    } else {
+        let spliced = match remaining {
+            Some(tail) => c_seq(selected_branch, tail),
+            None => selected_branch,
+        };
+        execution.frontier.point = ProofExecutionPoint::StatementEntry {
+            remaining: spliced.into(),
+        };
     }
     record_current_statement_entry(
         &execution.frontier,
@@ -878,7 +851,6 @@ fn execute_concrete_loop_head_step(
             .push(ProofExecutionContinuation {
                 remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
-                kind: ProofExecutionContinuationKind::LoopIteration,
             });
         execution.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
@@ -1544,7 +1516,6 @@ fn execute_step_from_execution_point_selecting_path(
             prerequisite_policy,
             BranchStepPolicy::RequireProven,
             false,
-            BranchArmMode::Inline,
             construction.as_mut().map(Construction::reborrow),
             context,
         )?;
@@ -2227,18 +2198,6 @@ fn execute_step_from_execution_point_selecting_path(
     Ok(introduced_facts)
 }
 
-/// How a C `if` arm joins the execution frontier.
-#[derive(Clone, Copy)]
-pub(super) enum BranchArmMode {
-    /// The selected arm is spliced inline before the `if`'s continuation and
-    /// execution continues through it as part of the enclosing region: the
-    /// path-following mode used by decided steps and bounded exploration.
-    Inline,
-    /// The arm frontier owns exactly the arm's own statement tree; its join
-    /// consumes the typed region boundary and restores the parent frontier.
-    Bounded,
-}
-
 /// Execution exhausted the frontier's own statement tree with no enclosing
 /// continuation. A bounded region — a loop-preservation body or a branch
 /// arm — reaches its typed boundary; a whole-function region has no boundary
@@ -2382,7 +2341,6 @@ pub(super) fn bounded_execute_from_execution_point(
                     prerequisite_policy,
                     BranchStepPolicy::Explore,
                     false,
-                    BranchArmMode::Inline,
                     construction.as_ref().map(|construction| Construction {
                         environments: construction.environments,
                         sink: branch

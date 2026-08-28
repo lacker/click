@@ -21,18 +21,6 @@ pub(in crate::lang::click) struct ClaimProofResult {
     pub(in crate::lang::click) theorems: Vec<VerifiedCTheorem>,
 }
 
-fn grouped_heap_predicate_contract_supported(function_block: &FunctionBlock) -> bool {
-    let mut saw_predicate = false;
-    let supported = function_block.ensures().iter().all(|clause| {
-        let Ensure::Proposition(ClickProposition::PredicateCall { .. }) = clause.ensure() else {
-            return false;
-        };
-        saw_predicate = true;
-        true
-    });
-    supported && saw_predicate
-}
-
 fn select_checked_post_execution_tactics<'a>(
     proof: &Proof<'_>,
     tactics: impl IntoIterator<Item = &'a DeferredPostExecutionTactic>,
@@ -96,9 +84,6 @@ fn collect_post_execution_if_have_indices<'a>(
 /// nested scopes, quantified contract resources, and counted populations use
 /// the same checked resource entry and close operations as ordinary composite
 /// scopes.
-/// Diagnostic for the migration census: a checked driver erred and the claim
-/// goes to the compatibility interpreter. Printed only under
-/// `CLICK_DBG_FALLBACK=1`.
 /// The terminal diagnostic for a proof no checked driver accepts. The
 /// drivers are the single verification engine; a shape they decline is a
 /// gap to close in a driver, never a reason to run a second engine.
@@ -358,11 +343,8 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         PersistentSequence::default(),
     );
     // The checked drivers are tried in order: the structural driver owns
-    // scopes and branches, the flat driver owns linear proofs. A driver
-    // declines (`None`) or errors; either hands the claim to the
-    // compatibility interpreter, which remains authoritative until every
-    // corpus claim is checked directly (`CLICK_DBG_FALLBACK=1` counts the
-    // remainder).
+    // scopes and branches, and the flat driver owns linear proofs. A decline
+    // tries the next checked driver; an error is terminal.
     let structural = match try_check_structural_function_proof(
         &initial,
         &pure_facts,
@@ -412,7 +394,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     if let Some(proof) = direct_proof {
         match finish_ordered_proof_units(
             expansion_capture.as_deref_mut(),
-            vec![OrderedProofUnit::Checked(proof)],
+            vec![proof],
             source_path,
             function_block,
             parsed_function,
@@ -530,8 +512,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         surface_propositions,
         PersistentSequence::default(),
     );
-    // Same order as the single-claim route: structural, then flat, then the
-    // compatibility interpreter.
+    // Same order as the single-claim route: structural, then flat.
     let structural = match try_check_structural_function_proof(
         &initial,
         &pure_facts,
@@ -581,7 +562,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     if let Some(proof) = direct_proof {
         match finish_ordered_proof_units(
             expansion_capture.as_deref_mut(),
-            vec![OrderedProofUnit::Checked(proof)],
+            vec![proof],
             source_path,
             function_block,
             parsed_function,
@@ -920,13 +901,6 @@ pub(in crate::lang::click) fn clear_independent_execution_cache() {
     INDEPENDENT_EXECUTION_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-/// One completed source-proof unit entering claim finalization. Migrated flat
-/// functions retain their `Proof`; structural compatibility paths still
-/// supply the replay context they currently own.
-pub(super) enum OrderedProofUnit<'a> {
-    Checked(Proof<'a>),
-}
-
 /// Places a path-independent terminal frame on each explicit execution leaf.
 /// The retained Proof provenance records the frame after the joined execution
 /// branch; Surface Click must spell that same checked operation inside each
@@ -1034,7 +1008,7 @@ fn proof_case_fact_conflicts(
 
 pub(super) fn finish_ordered_proof<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
-    unit: OrderedProofUnit<'a>,
+    proof: Proof<'a>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1063,55 +1037,38 @@ pub(super) fn finish_ordered_proof<'a>(
     // frontier frame. This lets source-ordered result/resource operations run
     // before an explicit outcome frame without moving semantic authority back
     // into the drain. A context that is not at a returning function exit
-    // derives no goals and drains through the legacy path unchanged.
+    // derives no outcome substrate and finalizes through the same checked
+    // view unchanged.
     // Derivation is unconditional: every result-aware tactic kind consumes
     // goals now, and the working-set parity invariant below must hold for
-    // every drain before the legacy vector retires.
-    let direct_view = match &unit {
-        OrderedProofUnit::Checked(proof) => Some(proof.finalization_view()?),
-    };
-    let proof_owned = matches!(&unit, OrderedProofUnit::Checked(_));
-    let mut authoritative_outcome_haves = proof_owned
-        .then(|| exact_empty_frame_outcome_segment(certificate_tactics).1)
-        .unwrap_or_default();
-    if let Some(view) = &direct_view {
-        collect_post_execution_if_have_indices(
-            view.execution.post_execution_tactics.iter(),
-            &mut authoritative_outcome_haves,
-        );
-    }
-    let pure_facts = match (&unit, &direct_view) {
-        (OrderedProofUnit::Checked(_), Some(view)) => view.facts.clone(),
-        _ => unreachable!("ordered proof unit and finalization view must agree"),
-    };
+    // every drain before its working vector is finalized.
+    let direct_view = proof.finalization_view()?;
+    let mut authoritative_outcome_haves = exact_empty_frame_outcome_segment(certificate_tactics).1;
+    collect_post_execution_if_have_indices(
+        direct_view.execution.post_execution_tactics.iter(),
+        &mut authoritative_outcome_haves,
+    );
+    let pure_facts = direct_view.facts.clone();
     let requirement_facts =
         Arc::new(pure_facts[..function_block.requires().len().min(pure_facts.len())].to_vec());
-    let outcome_substrate = match &unit {
-        OrderedProofUnit::Checked(proof) => proof.focus_function_outcomes(requirement_facts).ok(),
-    };
-    let (state, frontier, proof_execution, proof_context, branch_path) = match (&unit, &direct_view)
-    {
-        (OrderedProofUnit::Checked(_), Some(view)) => (
-            view.state,
-            view.frontier,
-            view.execution,
-            view.context,
-            view.branch_path,
-        ),
-        _ => unreachable!("ordered proof unit and finalization view must agree"),
-    };
-    let retained_surface = match &unit {
-        OrderedProofUnit::Checked(proof) => {
-            let record = &proof_execution.surface_record;
-            let mut retained = ProofCertificateBuilder {
-                last_step_entry: record.last_step_entry.clone(),
-                path_choices: record.path_choices.clone(),
-                blocker: record.blocker.clone(),
-                ..ProofCertificateBuilder::default()
-            };
-            retained.steps = surface_steps_from_checked_proof(proof)?;
-            retained
-        }
+    let outcome_substrate = proof.focus_function_outcomes(requirement_facts).ok();
+    let (state, frontier, proof_execution, proof_context, branch_path) = (
+        direct_view.state,
+        direct_view.frontier,
+        direct_view.execution,
+        direct_view.context,
+        direct_view.branch_path,
+    );
+    let retained_surface = {
+        let record = &proof_execution.surface_record;
+        let mut retained = ProofCertificateBuilder {
+            last_step_entry: record.last_step_entry.clone(),
+            path_choices: record.path_choices.clone(),
+            blocker: record.blocker.clone(),
+            ..ProofCertificateBuilder::default()
+        };
+        retained.steps = surface_steps_from_checked_proof(&proof)?;
+        retained
     };
     let pre_state = frontier.execution_start_state(state);
     let frontier_function_block = (!proof_execution.frontier_loop_clauses.is_empty()).then(|| {
@@ -1198,9 +1155,7 @@ pub(super) fn finish_ordered_proof<'a>(
         let path_case_facts: Vec<Vec<Proposition>> = (0..execution.paths().len())
             .map(|path_index| {
                 direct_view
-                    .as_ref()
-                    .map(|view| view.path_case_decisions(path_index))
-                    .unwrap_or_default()
+                    .path_case_decisions(path_index)
                     .into_iter()
                     .filter_map(|(condition, value)| {
                         let lowered = super::point_proofs::lower_point_proposition(
@@ -1577,11 +1532,9 @@ pub(super) fn finish_ordered_proof<'a>(
                             pairing.push(None);
                             continue;
                         }
-                        if matches!(&unit, OrderedProofUnit::Checked(_))
-                            && outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
-                                substrate.outcome_goal_for_path(path_index).is_none()
-                            })
-                        {
+                        if outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
+                            substrate.outcome_goal_for_path(path_index).is_none()
+                        }) {
                             // The Proof-owned N-way outcome derivation rejected
                             // this candidate under an exact contradictory path
                             // fact. It owns no semantic goal and needs no whole-
@@ -1806,10 +1759,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 value: result,
                                 state: post_state,
                             } => direct_view
-                                .as_ref()
-                                .and_then(|view| {
-                                    view.surface_branch_path(path_index, &deferred.branch_skeleton)
-                                })
+                                .surface_branch_path(path_index, &deferred.branch_skeleton)
                                 .or_else(|| {
                                     surface_branch_path_for_outcome(
                                         &deferred.branch_skeleton,
@@ -1839,10 +1789,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     } else {
                         Some(Vec::new())
                     };
-                    let mut unfolded_predicates = direct_view
-                        .as_ref()
-                        .map(|view| view.unfolded_predicates.clone())
-                        .unwrap_or_default();
+                    let mut unfolded_predicates = direct_view.unfolded_predicates.clone();
                     path_requirements = crate::instrumentation::measure_operation(
                         function_block.signature().name(),
                         &proof_label,
@@ -2014,60 +1961,18 @@ pub(super) fn finish_ordered_proof<'a>(
                         });
                         match post_tactic {
                             PostExecutionTactic::Fold(resource) => {
-                                let surface_tactics = if proof_owned {
-                                    let Some(evolving) = outcome_proof.take() else {
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `fold` has no Proof goal"
-                                        )));
-                                    };
-                                    let before = evolving.checkpoint();
-                                    let folded = evolving.apply_step(
-                                        SimpleProofStep::FoldResource(resource.clone()),
-                                    )?;
-                                    outcome = folded.focused_outcome_snapshot()?;
-                                    let retained =
-                                        folded.certificate_since(&before)?.to_proof_tactics();
-                                    outcome_proof = Some(folded);
-                                    retained
-                                } else {
-                                    outcome = fold_composite_resources_on_outcome(
-                                        resource_environment,
-                                        std::slice::from_ref(resource),
-                                        &proof_label,
-                                        path_index,
-                                        path.facts(),
-                                        &path_requirements,
-                                        &current_outcome_surface_propositions,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        outcome,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        &unfolded_predicates,
-                                        ResourceBodyClosure::Initialize,
-                                    )?;
-                                    path_requirements = project_outcome_resource_facts(
-                                        resource_environment,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        &outcome,
-                                        &path_requirements,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        &proof_label,
-                                        path_index,
-                                    )?;
-                                    if let Some(evolving) = outcome_proof.take() {
-                                        outcome_proof = Some(
-                                            evolving
-                                                .with_outcome_snapshot(&outcome)?
-                                                .with_checked_outcome_facts(&path_requirements)?,
-                                        );
-                                    }
-                                    vec![ProofTactic::FoldResource(resource.clone())]
+                                let Some(evolving) = outcome_proof.take() else {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `fold` has no Proof goal"
+                                    )));
                                 };
+                                let before = evolving.checkpoint();
+                                let folded = evolving
+                                    .apply_step(SimpleProofStep::FoldResource(resource.clone()))?;
+                                outcome = folded.focused_outcome_snapshot()?;
+                                let surface_tactics =
+                                    folded.certificate_since(&before)?.to_proof_tactics();
+                                outcome_proof = Some(folded);
                                 for tactic in surface_tactics {
                                     record_post_execution_surface_tactic(
                                         deferred.surface_recorded,
@@ -2347,8 +2252,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // Haves in the audited execute/have/empty-frame
                                 // segment are authoritative; other outcome
                                 // shapes retain their compatibility adapter.
-                                let authoritative_have = proof_owned
-                                    && authoritative_outcome_haves.contains(tactic_index);
+                                let authoritative_have =
+                                    authoritative_outcome_haves.contains(tactic_index);
                                 let Some(evolving_root) = outcome_proof.take() else {
                                     // The unconditional substrate makes this
                                     // unreachable; fail loudly rather than
@@ -2473,10 +2378,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         transport_available.push(equation);
                                     }
                                 }
-                                let path_unfolds = direct_view
-                                    .as_ref()
-                                    .map(|view| view.unfolded_predicates.to_vec())
-                                    .unwrap_or_default();
+                                let path_unfolds = direct_view.unfolded_predicates.to_vec();
                                 let candidates = if premises.is_none() {
                                     Some(fact_transport_candidates_at_outcome(
                                         &transport_available,
@@ -3100,240 +3002,54 @@ pub(super) fn finish_ordered_proof<'a>(
                                 );
                             }
                             PostExecutionTactic::FrameUsing { region, premises } => {
-                                if proof_owned {
-                                    let Some(evolving) = outcome_proof.take() else {
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `frame using` has no Proof goal"
-                                        )));
-                                    };
-                                    let before = evolving.checkpoint();
-                                    let framed = evolving.apply_step_at(
-                                        SimpleProofStep::FrameUsing {
-                                            region: region.clone(),
-                                            premises: premises.clone(),
-                                        },
-                                        *tactic_index,
-                                        *source_index,
-                                    )?;
-                                    let authority = framed.checked_outcome_frame_authority()?;
-                                    let mut matched = 0;
-                                    for (claim_index, claim) in claims.iter().enumerate() {
-                                        let FunctionClaimRef::Effect(effect_index, _) = claim
-                                        else {
-                                            continue;
-                                        };
-                                        if !authority.contains(*effect_index) {
-                                            continue;
-                                        }
-                                        closures[claim_index] = ClaimClosure::by_exact_check();
-                                        matched += 1;
-                                    }
-                                    if matched != authority.len() {
-                                        return Err(ClickError::new(format!(
-                                            "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome frame selected {} effect goals but ordered finalization owns {matched}",
-                                            authority.len()
-                                        )));
-                                    }
-                                    outcome = framed.focused_outcome_snapshot()?;
-                                    resource_transition_applied = true;
-                                    let certificate = framed.certificate_since(&before)?;
-                                    for tactic in certificate.to_proof_tactics() {
-                                        record_post_execution_surface_tactic(
-                                            deferred.surface_recorded,
-                                            &mut path_surface_post_tactics,
-                                            &mut path_deferred_capture_tactics,
-                                            proof_execution
-                                                .expansion
-                                                .deferred_tactic_capture
-                                                .as_ref(),
-                                            post_execution_index,
-                                            *tactic_index,
-                                            tactic,
-                                        );
-                                    }
-                                    outcome_proof = Some(framed);
-                                    continue;
-                                }
-                                let CFunctionOutcome::Return {
-                                    value: result,
-                                    state: post_state,
-                                } = &outcome
-                                else {
+                                let Some(evolving) = outcome_proof.take() else {
                                     return Err(ClickError::new(format!(
-                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires a return outcome"
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: typed outcome `frame using` has no Proof goal"
                                     )));
                                 };
-                                // Ordered finalization initially visits every exit
-                                // tactic before any of them changes the certified
-                                // outcome context. Re-lower explicit frame premises
-                                // here, at their actual deferred position, so a fact
-                                // established by a preceding `have` keeps that
-                                // current-outcome meaning instead of the form's
-                                // obsolete pre-`have` lowering.
-                                let facts = crate::instrumentation::measure_operation(
-                                    function_block.signature().name(),
-                                    &proof_label,
-                                    "frame premise lowering and validation",
-                                    || -> Result<Vec<Proposition>, ClickError> {
-                                        let indexed_requirements =
-                                            ExactReplayFactIndex::new(&path_requirements);
-                                        let mut facts = Vec::with_capacity(premises.len());
-                                        for premise in premises {
-                                            let fact = current_outcome_surface_propositions
-                                                .available_kernel_matching(premise, |kernel| {
-                                                    indexed_requirements.contains_exact(kernel)
-                                                })
-                                                .or_else(|| {
-                                                    outcome_surface_propositions
-                                                        .available_kernel_matching(
-                                                            premise,
-                                                            |kernel| {
-                                                                indexed_requirements
-                                                                    .contains_exact(kernel)
-                                                            },
-                                                        )
-                                                })
-                                                .cloned()
-                                                .map(Ok)
-                                                .unwrap_or_else(|| {
-                                                    lower_outcome_proposition_with_program_points(
-                                                        parsed_function.parameters(),
-                                                        arguments,
-                                                        pre_state,
-                                                        post_state,
-                                                        result,
-                                                        &path_requirements,
-                                                        premise,
-                                                        predicate_environment,
-                                                        click_function_environment,
-                                                        &proof_execution.program_point_states,
-                                                    )
-                                                    .or_else(|_| {
-                                                        lower_outcome_proposition_with_memory_resolution(
-                                                            parsed_function.parameters(),
-                                                            arguments,
-                                                            pre_state,
-                                                            post_state,
-                                                            result,
-                                                            &path_requirements,
-                                                            premise,
-                                                            predicate_environment,
-                                                            click_function_environment,
-                                                            &proof_execution.program_point_states,
-                                                        )
-                                                    })
-                                                })
-                                                .map_err(|message| {
-                                                    ClickError::new(format!(
-                                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: could not lower `frame using` premise `{}`: {message}",
-                                                        describe_click_proposition(premise)
-                                                    ))
-                                                })?;
-                                            facts.push(fact);
-                                        }
-                                        for (premise_index, fact) in facts.iter().enumerate() {
-                                            if !indexed_requirements.contains(fact)
-                                                && !exact_fact_is_available(
-                                                    fact,
-                                                    &path_requirements,
-                                                )
-                                                && exactly_available_fact(fact, &path_requirements)
-                                                    .is_none()
-                                            {
-                                                return Err(ClickError::new(format!(
-                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: `frame using` requires an exact premise that has not been established: {}{}",
-                                                    describe_pure_fact(
-                                                        fact,
-                                                        parsed_function.parameters(),
-                                                        arguments,
-                                                    ),
-                                                    premises
-                                                        .get(premise_index)
-                                                        .map(|surface| format!(
-                                                            "\n  surface premise: {}",
-                                                            describe_click_proposition(surface)
-                                                        ))
-                                                        .unwrap_or_default(),
-                                                )));
-                                            }
-                                        }
-                                        Ok(facts)
-                                    },
-                                )?;
-                                let mut closed_effect = false;
-                                for (claim_index, claim) in claims.iter().enumerate() {
-                                    if !matches!(claim, FunctionClaimRef::Effect(_, _)) {
-                                        continue;
-                                    }
-                                    let claim_label = function_claim_label(
-                                        function_block.signature().name(),
-                                        claim,
-                                    );
-                                    crate::instrumentation::measure_operation(
-                                        function_block.signature().name(),
-                                        &proof_label,
-                                        "frame exact effect check",
-                                        || {
-                                            check_effect_claim_exact(
-                                                &claim_label,
-                                                path_index,
-                                                &path.execution_facts(),
-                                                &facts,
-                                                claim,
-                                                parsed_function.parameters(),
-                                                arguments,
-                                                pre_state,
-                                                &outcome,
-                                            )
-                                        },
-                                    )?;
-                                    closures[claim_index] = ClaimClosure::by_exact_check();
-                                    closed_effect = true;
-                                }
-                                if closed_effect
-                                    || (!resource_transition_applied
-                                        && !claims.iter().any(|claim| {
-                                            matches!(claim, FunctionClaimRef::Effect(_, _))
-                                        }))
-                                {
-                                    crate::instrumentation::measure_operation(
-                                        function_block.signature().name(),
-                                        &proof_label,
-                                        "frame resource transition",
-                                        || {
-                                            apply_checked_contract_resource_transition(
-                                                &mut outcome,
-                                                pre_state,
-                                                function,
-                                                arguments,
-                                                &path_requirements,
-                                                &path.execution_facts(),
-                                                &proof_label,
-                                                path_index,
-                                            )
-                                        },
-                                    )?;
-                                    resource_transition_applied = true;
-                                    if let Some(evolving) = outcome_proof.take() {
-                                        outcome_proof = Some(
-                                            evolving
-                                                .with_outcome_snapshot(&outcome)?
-                                                .with_checked_outcome_facts(&path_requirements)?,
-                                        );
-                                    }
-                                }
-                                record_post_execution_surface_tactic(
-                                    deferred.surface_recorded,
-                                    &mut path_surface_post_tactics,
-                                    &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
-                                    post_execution_index,
-                                    *tactic_index,
-                                    ProofTactic::FrameUsing {
+                                let before = evolving.checkpoint();
+                                let framed = evolving.apply_step_at(
+                                    SimpleProofStep::FrameUsing {
                                         region: region.clone(),
                                         premises: premises.clone(),
                                     },
-                                );
+                                    *tactic_index,
+                                    *source_index,
+                                )?;
+                                let authority = framed.checked_outcome_frame_authority()?;
+                                let mut matched = 0;
+                                for (claim_index, claim) in claims.iter().enumerate() {
+                                    let FunctionClaimRef::Effect(effect_index, _) = claim else {
+                                        continue;
+                                    };
+                                    if !authority.contains(*effect_index) {
+                                        continue;
+                                    }
+                                    closures[claim_index] = ClaimClosure::by_exact_check();
+                                    matched += 1;
+                                }
+                                if matched != authority.len() {
+                                    return Err(ClickError::new(format!(
+                                        "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome frame selected {} effect goals but ordered finalization owns {matched}",
+                                        authority.len()
+                                    )));
+                                }
+                                outcome = framed.focused_outcome_snapshot()?;
+                                resource_transition_applied = true;
+                                let certificate = framed.certificate_since(&before)?;
+                                for tactic in certificate.to_proof_tactics() {
+                                    record_post_execution_surface_tactic(
+                                        deferred.surface_recorded,
+                                        &mut path_surface_post_tactics,
+                                        &mut path_deferred_capture_tactics,
+                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        post_execution_index,
+                                        *tactic_index,
+                                        tactic,
+                                    );
+                                }
+                                outcome_proof = Some(framed);
+                                continue;
                             }
                             PostExecutionTactic::CheckedFrameUsing {
                                 authority,

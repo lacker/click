@@ -479,8 +479,8 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     };
     // Candidates below are matched through the permissive candidate lowering
     // (symbolic contract loads allowed), but the emitted certificate is
-    // replayed by the ordinary executor, whose strict lowering carries
-    // loadability obligations. A form that only lowers permissively —
+    // replayed by the ordinary executor, whose strict lowering requires every
+    // load to be justified. A form that only lowers permissively —
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_replayable = |surface: &ClickProposition| {

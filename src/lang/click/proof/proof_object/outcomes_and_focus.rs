@@ -40,6 +40,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Every open goal in this proof, in stable id order.
+    #[cfg(test)]
     pub(in crate::lang::click::proof) fn goals(&self) -> impl Iterator<Item = GoalId> + '_ {
         self.state.goals.open.keys().copied()
     }

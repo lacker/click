@@ -1200,47 +1200,6 @@ pub(in crate::lang::click) fn exactly_available_fact(
         .find_map(|fact| matching_conjunct(fact, required))
 }
 
-/// Cheap membership for explicit replay certificates with many premises.
-///
-/// `frame using` used to rescan and renormalize the full proof context for
-/// every named fact. Large, otherwise-simple certificates therefore became
-/// quadratic. The index covers the overwhelmingly common exact and
-/// materialization-equivalent cases; callers retain their semantic fallbacks
-/// for snapshot bridging and polarity-equivalent forms.
-pub(super) struct ExactReplayFactIndex {
-    exact: std::collections::BTreeSet<Proposition>,
-    materialized: std::sync::OnceLock<std::collections::BTreeSet<Proposition>>,
-}
-
-impl ExactReplayFactIndex {
-    pub(super) fn new(available: &[Proposition]) -> Self {
-        let mut exact = std::collections::BTreeSet::new();
-        for fact in available {
-            let mut conjuncts = Vec::new();
-            atomic_conjuncts(fact, &mut conjuncts);
-            for conjunct in conjuncts {
-                exact.insert(conjunct.clone());
-            }
-        }
-        Self {
-            exact,
-            materialized: std::sync::OnceLock::new(),
-        }
-    }
-
-    pub(super) fn contains(&self, required: &Proposition) -> bool {
-        self.contains_exact(required)
-            || self
-                .materialized
-                .get_or_init(|| self.exact.iter().cloned().collect())
-                .contains(&required.clone())
-    }
-
-    pub(super) fn contains_exact(&self, required: &Proposition) -> bool {
-        self.exact.contains(required)
-    }
-}
-
 pub(super) fn directly_matching_separation_fact(
     required: &Proposition,
     available: &[Proposition],
@@ -1932,43 +1891,6 @@ mod tests {
             quantified_replay_index_key(&written)
         );
         assert!(quantified_binder_equivalent(&left, &renamed));
-    }
-
-    #[test]
-    fn exact_replay_lookup_does_not_build_materialization_index() {
-        let target = Proposition::ConditionIs(ConditionTerm::Constant(true), true);
-        let available = [16, 32, 64, 128]
-            .into_iter()
-            .map(|size| {
-                let mut facts = vec![target.clone()];
-                facts.extend((0..size).map(|index| {
-                    Proposition::ConditionIs(
-                        ConditionTerm::Bitvector32Equal(
-                            Box::new(Bitvector32Term::MemoryLoad(
-                                intern_c_memory(CMemory::new()),
-                                Box::new(Pointer {
-                                    block: "lazy-materialization".into(),
-                                    offset: PointerOffsetTerm::Constant(index),
-                                }),
-                            )),
-                            Box::new(Bitvector32Term::Constant(index as u32)),
-                        ),
-                        true,
-                    )
-                }));
-                let index = ExactReplayFactIndex::new(&facts);
-                let (found, work) =
-                    crate::instrumentation::measure_deterministic_work(|| index.contains(&target));
-                assert!(found);
-                assert!(index.materialized.get().is_none());
-                (size, work)
-            })
-            .collect::<Vec<_>>();
-
-        assert!(
-            available.windows(2).all(|pair| pair[1].1 <= pair[0].1 + 1),
-            "exact replay lookup should not normalize unrelated facts: {available:?}"
-        );
     }
 
     /// The perpetual-service `fold(service(owner))` near-miss: the body's

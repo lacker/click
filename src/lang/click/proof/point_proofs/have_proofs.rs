@@ -1958,7 +1958,7 @@ fn add_have_case_assumptions(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
     mut expansion_capture: Option<&mut ExpansionCapture>,
-    units: Vec<OrderedProofUnit<'a>>,
+    units: Vec<Proof<'a>>,
     source_path: &str,
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1978,17 +1978,13 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
     let mut captured_paths = Vec::new();
     let mut context_count = 0;
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
-    for unit in units {
+    for proof in units {
         context_count += 1;
-        let (cursor, proof_site) = match &unit {
-            OrderedProofUnit::Checked(proof) => {
-                let view = proof.finalization_view()?;
-                (
-                    &view.execution.expansion,
-                    view.context.constants.proof_site.as_ref(),
-                )
-            }
-        };
+        let view = proof.finalization_view()?;
+        let (cursor, proof_site) = (
+            &view.execution.expansion,
+            view.context.constants.proof_site.as_ref(),
+        );
         let path_choices = cursor.deferred_expansion_path_choices.to_vec();
         resume_deferred_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
@@ -2007,7 +2003,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
             || {
                 finish_ordered_proof(
                     expansion_capture.as_deref_mut(),
-                    unit,
+                    proof,
                     source_path,
                     function_block,
                     parsed_function,

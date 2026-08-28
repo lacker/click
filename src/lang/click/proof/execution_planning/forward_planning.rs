@@ -675,10 +675,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
                             .iter()
                             .find(|available| {
                                 **available == unfolded_kernel
-                                    || quantified_binder_equivalent(
-                                        &unfolded_kernel.clone(),
-                                        &available.clone(),
-                                    )
+                                    || quantified_binder_equivalent(&unfolded_kernel, available)
                             })?
                             .clone();
                         Some((unfolded_surface, available_kernel))

@@ -1305,8 +1305,6 @@ pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
             evaluate_postcondition_bitwise_not(value)
         }
         ContractExpression::Index(base, index) => {
-            let surface_base = contract_expression_to_c_fragment(base);
-            let surface_index = contract_expression_to_c_fragment(index);
             if contains_old_expression(base) {
                 return Err("`old(...)` is not available in predicate definitions".to_string());
             }
@@ -1347,20 +1345,10 @@ pub(in crate::lang::click) fn evaluate_predicate_contract_expression(
                 offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
             let value = evaluate_contract_memory_load_from_memory(
                 &array_ref.memory,
-                pointer.clone(),
+                pointer,
                 element_type,
                 assumptions,
             )?;
-            if let (Some(base), Some(index)) = (surface_base, surface_index) {
-                record_surface_loadability_segment(
-                    &array_ref.memory,
-                    &pointer,
-                    element_type,
-                    CExpression::Add(Box::new(base), Box::new(index)),
-                    CExpression::Value(int32(0)),
-                    CExpression::Value(int32(1)),
-                );
-            }
             Ok(value)
         }
         ContractExpression::If {

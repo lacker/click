@@ -2023,6 +2023,7 @@ impl<'a> Proof<'a> {
     /// an ordinary `Assumption` step against the accumulated persistent fact
     /// context. Certificate composition is therefore an audited terminal
     /// operation of `Proof`, not caller-owned syntax assembly.
+    #[cfg(test)]
     pub(super) fn complete_point_obligations(
         &self,
         goals: &[ClickProposition],

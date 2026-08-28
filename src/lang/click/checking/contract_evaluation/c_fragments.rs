@@ -160,7 +160,6 @@ pub(in crate::lang::click) fn evaluate_c_contract_expression(
             evaluate_postcondition_bitwise_not(value)
         }
         CExpression::Load(pointer) => {
-            let surface_pointer = pointer.as_ref().clone();
             let pointer = evaluate_c_contract_expression(
                 parameter_values,
                 state,
@@ -171,23 +170,12 @@ pub(in crate::lang::click) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            let value =
-                evaluate_contract_memory_load(state, pointer.clone(), CType::Int32, assumptions)?;
-            record_surface_loadability_segment(
-                state.memory(),
-                &pointer,
-                CType::Int32,
-                surface_pointer,
-                CExpression::Value(int32(0)),
-                CExpression::Value(int32(1)),
-            );
-            Ok(value)
+            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
         }
         CExpression::TypedLoad {
             pointer,
             value_type,
         } => {
-            let surface_pointer = pointer.as_ref().clone();
             let pointer = evaluate_c_contract_expression(
                 parameter_values,
                 state,
@@ -198,23 +186,9 @@ pub(in crate::lang::click) fn evaluate_c_contract_expression(
             let CValue::Pointer(pointer) = pointer else {
                 return Err("field load base is not a pointer".to_string());
             };
-            let value =
-                evaluate_contract_memory_load(state, pointer.clone(), *value_type, assumptions)?;
-            if value_type.byte_width() == 4 {
-                record_surface_loadability_segment(
-                    state.memory(),
-                    &pointer,
-                    *value_type,
-                    surface_pointer,
-                    CExpression::Value(int32(0)),
-                    CExpression::Value(int32(1)),
-                );
-            }
-            Ok(value)
+            evaluate_contract_memory_load(state, pointer, *value_type, assumptions)
         }
         CExpression::Index(base, index) => {
-            let surface_base = base.as_ref().clone();
-            let surface_index = index.as_ref().clone();
             let base =
                 evaluate_c_contract_expression(parameter_values, state, result, assumptions, base)?;
             let index = evaluate_c_contract_expression(
@@ -225,17 +199,7 @@ pub(in crate::lang::click) fn evaluate_c_contract_expression(
                 index,
             )?;
             let pointer = evaluate_postcondition_pointer_add(base, index)?;
-            let value =
-                evaluate_contract_memory_load(state, pointer.clone(), CType::Int32, assumptions)?;
-            record_surface_loadability_segment(
-                state.memory(),
-                &pointer,
-                CType::Int32,
-                CExpression::Add(Box::new(surface_base), Box::new(surface_index)),
-                CExpression::Value(int32(0)),
-                CExpression::Value(int32(1)),
-            );
-            Ok(value)
+            evaluate_contract_memory_load(state, pointer, CType::Int32, assumptions)
         }
         _ => Err(format!(
             "unsupported postcondition expression `{expression:?}`"
@@ -264,18 +228,9 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         bytes: Bitvector32Term::Constant(value_type.byte_width()),
     };
     if assumptions.should_force_symbolic_external_loads() {
-        if !assumptions.proves(&required) {
-            record_surface_loadability_obligation(&required);
-        }
         return symbolic_contract_memory_load(memory, pointer, value_type);
     }
     let outcome = memory.load(&pointer);
-    if assumptions.should_allow_symbolic_contract_loads()
-        && matches!(outcome, crate::kernel::CExpressionOutcome::Value(_))
-        && !assumptions.proves(&required)
-    {
-        record_surface_loadability_obligation(&required);
-    }
     match outcome {
         crate::kernel::CExpressionOutcome::Value(value)
             if c_value_matches_kernel_type(&value, value_type) =>
@@ -301,9 +256,6 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
         )),
         _outcome => {
             if assumptions.should_allow_symbolic_contract_loads() {
-                if !assumptions.proves(&required) {
-                    record_surface_loadability_obligation(&required);
-                }
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
             if value_type == CType::Int32

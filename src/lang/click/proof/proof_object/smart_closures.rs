@@ -941,6 +941,7 @@ impl<'a> Proof<'a> {
     /// Atomic goals may retain a same-width renaming, but each selected
     /// equality is used at most once; structural goals keep only a closing
     /// rewrite so their recursive connective proof remains visible.
+    #[cfg(test)]
     pub(super) fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
         self.try_indexed_goal_equality_rewrite_closure_excluding(false)
     }

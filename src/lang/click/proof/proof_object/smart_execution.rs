@@ -134,8 +134,8 @@ impl<'a> Proof<'a> {
     /// Tries the bounded source-local form of mid-execution fact transport on
     /// this immutable execution Proof. The smart operation checks the empty
     /// candidate and the source's own explicit form; it never scans the
-    /// ambient fact set. Richer premise discovery remains on the legacy path
-    /// until it has a relevance index rather than an environment-wide scan.
+    /// ambient fact set. Richer premise discovery remains unavailable until
+    /// it has a relevance index rather than an environment-wide scan.
     pub(in crate::lang::click::proof) fn try_execution_fact_transport(
         &self,
         source: &ClickProposition,
