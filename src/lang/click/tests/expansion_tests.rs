@@ -180,6 +180,109 @@ fn returning_malloc_result_expands_to_replayable_statement_steps() {
 }
 
 #[test]
+fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
+    let callee_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                int32* old_data;
+                int32* new_data;
+
+                old_data = owner->data;
+                new_data = malloc(4);
+                if (new_data == 0) {
+                    return 0;
+                }
+                new_data[0] = 7;
+                owner->data = new_data;
+                free(old_data);
+                return 1;
+            }
+        "#;
+    let caller_source = r#"
+            struct cell_owner {
+                int32* data;
+            };
+
+            int32 replace_after_scoped_open(struct cell_owner* owner) {
+                int32 replaced;
+
+                replaced = replace_allocated_cell(owner);
+                return replaced;
+            }
+        "#;
+    let click_source = r#"
+            resource allocated_cell(owner: struct cell_owner*) {
+                owns owner->data;
+                contains allocation(owner->data, 4);
+                owns owner->data[0..1];
+            }
+
+            verifying "replace_allocated_cell.c";
+            verifying "replace_after_scoped_open.c";
+
+            int32 replace_allocated_cell(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+                ensures result == 0 implies owner->data == old(owner->data);
+            } by {
+                unfold(allocated_cell(owner));
+                execute();
+                fold(allocated_cell(owner));
+                frame();
+                simp();
+            }
+
+            int32 replace_after_scoped_open(struct cell_owner* owner) {
+                consumes allocated_cell(owner);
+                mutable owner->data, owner->data[0..1];
+                produces allocated_cell(owner);
+
+                ensures result == 0 or result == 1;
+            } by {
+                open(allocated_cell(owner)) {
+                }
+                execute();
+                frame();
+                simp();
+            }
+        "#;
+    let sources = [
+        ("replace_allocated_cell.c", callee_source),
+        ("replace_after_scoped_open.c", caller_source),
+    ];
+    let caller_execute = click_source
+        .rfind("execute();")
+        .expect("the caller proof should contain its execute tactic");
+    let position = expansion::position_at_offset(click_source, caller_execute);
+    let expanded =
+        expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
+            .expect("the straight-line opaque call should expand");
+    let caller_expansion = expanded
+        .rsplit_once("int32 replace_after_scoped_open")
+        .map(|(_, caller)| caller)
+        .expect("the expanded source should retain the caller proof");
+    assert!(
+        !caller_expansion.contains("execute();"),
+        "{caller_expansion}"
+    );
+    assert!(caller_expansion.contains("step();"), "{caller_expansion}");
+    assert!(
+        !caller_expansion
+            .lines()
+            .any(|line| line.trim_start().starts_with("if ")),
+        "a straight-line opaque call must not expand through a synthetic proof case: {caller_expansion}"
+    );
+    verify_c0_sources(&expanded, &sources)
+        .expect("the expanded single-successor call should replay independently");
+}
+
+#[test]
 fn selected_post_execution_smart_have_uses_its_path_certificate() {
     let c_source = r#"
             int32 identity(int32 x) {
