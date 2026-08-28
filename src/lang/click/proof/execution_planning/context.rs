@@ -396,8 +396,6 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
     pub(in crate::lang::click::proof) pure_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) path_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) theorem: Theorem,
-    pub(in crate::lang::click::proof) prerequisite_derivations: Vec<PropositionDerivation>,
-    pub(in crate::lang::click::proof) planning_exact_premises: Vec<Proposition>,
 }
 
 /// Records the planning evidence for a certified statement transition and
@@ -559,7 +557,6 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     transition: &CertifiedConditionTransition,
-    include_path_fact: bool,
     state: &CState,
     available: &[Proposition],
     function_block: &FunctionBlock,
@@ -567,23 +564,6 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     arguments: &[CExpression],
     mut construction: Option<Construction<'_>>,
 ) {
-    let mut exact_premises = if include_path_fact {
-        theorem_implication_premises(&transition.theorem)
-    } else {
-        Vec::new()
-    };
-    for premise in &transition.planning_exact_premises {
-        if !exact_premises.contains(premise) {
-            exact_premises.push(premise.clone());
-        }
-    }
-    if include_path_fact {
-        for fact in &transition.path_facts {
-            if !exact_premises.contains(fact) {
-                exact_premises.push(fact.clone());
-            }
-        }
-    }
     let Some(construction) = construction.as_mut() else {
         return;
     };

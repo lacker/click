@@ -94,7 +94,6 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
     context: Option<&PureFactContext>,
 ) -> Result<Vec<CertifiedConditionTransition>, ClickError> {
     let transition_pure_facts = pure_facts.to_vec();
-    let planning_assumptions = assumptions_from_propositions(pure_facts);
     let mut assumptions = match prerequisite_policy {
         StatementPrerequisitePolicy::Exact
         | StatementPrerequisitePolicy::Explicit
@@ -154,55 +153,8 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                     }),
                 None => assumptions_from_propositions(&successor_facts),
             };
-            let mut prerequisite_derivations = Vec::new();
-            let mut planning_exact_premises = Vec::new();
-            if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-                for path_fact in path.facts() {
-                    let proposition = path_fact.proposition();
-                    if exact_fact_is_available(proposition, pure_facts) {
-                        if !planning_exact_premises.contains(proposition) {
-                            planning_exact_premises.push(proposition.clone());
-                        }
-                        continue;
-                    }
-                    if matches!(normalize_proposition(proposition), SimpProposition::True) {
-                        continue;
-                    }
-                    if let Some(derivation) =
-                        minimal_proposition_derivation(proposition, pure_facts)?
-                    {
-                        if !prerequisite_derivations
-                            .iter()
-                            .any(|existing: &PropositionDerivation| {
-                                existing.conclusion() == derivation.conclusion()
-                            })
-                        {
-                            prerequisite_derivations.push(derivation);
-                        }
-                        continue;
-                    }
-                    if planning_assumptions.proves(proposition) {
-                        let mut selected = pure_facts.to_vec();
-                        let mut index = 0;
-                        while index < selected.len() {
-                            let mut reduced = selected.clone();
-                            reduced.remove(index);
-                            if assumptions_from_propositions(&reduced).proves(proposition) {
-                                selected = reduced;
-                            } else {
-                                index += 1;
-                            }
-                        }
-                        for premise in selected {
-                            if !planning_exact_premises.contains(&premise) {
-                                planning_exact_premises.push(premise);
-                            }
-                        }
-                    }
-                }
-            }
             for obligation in path.obligations() {
-                let derivation = match prerequisite_policy {
+                match prerequisite_policy {
                     StatementPrerequisitePolicy::Exact => {
                         if exact_fact_is_available(obligation.proposition(), pure_facts)
                             || matches!(
@@ -210,7 +162,6 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                                 SimpProposition::True
                             )
                         {
-                            None
                         } else {
                             return Err(ClickError::new(format!(
                                 "{context_label} is missing condition prerequisite{}: {:?}",
@@ -225,7 +176,6 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                     StatementPrerequisitePolicy::Explicit
                     | StatementPrerequisitePolicy::Contextual => {
                         if prerequisite_assumptions.proves(obligation.proposition()) {
-                            None
                         } else {
                             return Err(ClickError::new(format!(
                                 "{context_label} is missing condition prerequisite{}: {:?}",
@@ -237,7 +187,7 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                             )));
                         }
                     }
-                    StatementPrerequisitePolicy::Planning => Some(
+                    StatementPrerequisitePolicy::Planning => {
                         prerequisite_assumptions
                             .derive_proposition(obligation.proposition())
                             .ok_or_else(|| {
@@ -249,11 +199,8 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                                         .unwrap_or_default(),
                                     obligation.proposition()
                                 ))
-                            })?,
-                    ),
-                };
-                if let Some(derivation) = derivation {
-                    prerequisite_derivations.push(derivation);
+                            })?;
+                    }
                 }
             }
             match implication_body(path.theorem().proposition()) {
@@ -269,8 +216,6 @@ pub(in crate::lang::click::proof) fn certified_condition_transitions(
                         .map(|fact| fact.proposition().clone())
                         .collect(),
                     theorem: path.theorem().clone(),
-                    prerequisite_derivations,
-                    planning_exact_premises,
                 }),
                 Proposition::CConditionEvaluates {
                     outcome: CConditionOutcome::UndefinedBehavior(kind),
@@ -1150,6 +1095,42 @@ fn replace_fact_in_place(facts: &mut Vec<Proposition>, source: &Proposition, tar
         }
     } else if !facts.contains(target) {
         facts.push(target.clone());
+    }
+}
+
+#[cfg(test)]
+mod condition_transition_tests {
+    use super::*;
+    use crate::kernel::{c_load, c_variable};
+
+    #[test]
+    fn planning_condition_transition_still_checks_execution_obligations() {
+        let state = CState::new().with_local(
+            "p",
+            CValue::Pointer(Pointer {
+                block: "havoc:condition-obligation".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            }),
+        );
+        let condition = c_load(c_variable("p"));
+
+        let error = match certified_condition_transitions(
+            &state,
+            &[],
+            &condition,
+            "condition obligation regression",
+            StatementPrerequisitePolicy::Planning,
+            true,
+            None,
+        ) {
+            Ok(_) => panic!("planning accepted an unproved loadability obligation"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.message().contains("missing condition prerequisite"),
+            "{error:?}"
+        );
     }
 }
 
