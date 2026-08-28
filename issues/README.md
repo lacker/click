@@ -18,4 +18,6 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 0
+## Other open issues: 1
+
+- [Name proof-object branches explicitly](proof-object-branch-model.md) — distinguish branches of one proof from separate proof obligations and make the proof-object representation use that vocabulary directly.
