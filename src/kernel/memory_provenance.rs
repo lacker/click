@@ -608,6 +608,7 @@ fn memory_derivations_reach(
             CMemoryDerivation::Store { .. } => "memory derivation edge: store",
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. } => "memory derivation edge: bookkeeping",
             CMemoryDerivation::HeapAllocated { .. } => "memory derivation edge: allocation",
             CMemoryDerivation::HeapFreed { .. } => "memory derivation edge: free",
@@ -624,60 +625,61 @@ fn memory_derivations_reach(
                     context,
                     ..
                 } => {
-                    crate::instrumentation::measure_operation(
-                        "kernel",
-                        "memory derivation store edge",
-                        "store edge: distinct blocks",
-                        || write.blocks_proven_distinct(pointer),
-                    ) || store_frozen_order_crosses(&current, context, write, pointer)
-                        || crate::instrumentation::measure_operation(
+                    write != pointer
+                        && (crate::instrumentation::measure_operation(
                             "kernel",
                             "memory derivation store edge",
-                            "store edge: common-base offsets",
-                            || {
-                                pointer_offsets_with_common_base_proven_distinct(
-                                    write,
-                                    pointer,
-                                    assumptions,
-                                )
-                            },
-                        )
-                        || crate::instrumentation::measure_operation(
-                            "kernel",
-                            "memory derivation store edge",
-                            "store edge: general pointer distinctness",
-                            || {
-                                pointers_proven_distinct_for_memory_resolution(
-                                    write,
-                                    pointer,
-                                    assumptions,
-                                )
-                            },
-                        )
-                        || crate::instrumentation::measure_operation(
-                            "kernel",
-                            "memory derivation store edge",
-                            "store edge: range-separated pointers",
-                            // The same range-membership route the fact-based
-                            // MutatesOnly arm uses: the write inside one
-                            // separated range and the load inside the other.
-                            // Isolated fuel keeps per-edge work bounded: range
-                            // extents may retain raw load terms, and deciding
-                            // orderings against them must come from exact facts,
-                            // never from re-entering alias resolution.
-                            || {
-                                crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
-                                    8_000,
-                                    || {
-                                        crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
+                            "store edge: distinct blocks",
+                            || write.blocks_proven_distinct(pointer),
+                        ) || store_frozen_order_crosses(&current, context, write, pointer)
+                            || crate::instrumentation::measure_operation(
+                                "kernel",
+                                "memory derivation store edge",
+                                "store edge: common-base offsets",
+                                || {
+                                    pointer_offsets_with_common_base_proven_distinct(
                                         write,
                                         pointer,
                                         assumptions,
                                     )
-                                    },
-                                )
-                            },
-                        )
+                                },
+                            )
+                            || crate::instrumentation::measure_operation(
+                                "kernel",
+                                "memory derivation store edge",
+                                "store edge: general pointer distinctness",
+                                || {
+                                    pointers_proven_distinct_for_memory_resolution(
+                                        write,
+                                        pointer,
+                                        assumptions,
+                                    )
+                                },
+                            )
+                            || crate::instrumentation::measure_operation(
+                                "kernel",
+                                "memory derivation store edge",
+                                "store edge: range-separated pointers",
+                                // The same range-membership route the fact-based
+                                // MutatesOnly arm uses: the write inside one
+                                // separated range and the load inside the other.
+                                // Isolated fuel keeps per-edge work bounded: range
+                                // extents may retain raw load terms, and deciding
+                                // orderings against them must come from exact facts,
+                                // never from re-entering alias resolution.
+                                || {
+                                    crate::kernel::reasoning::with_isolated_memory_resolution_fuel(
+                                        8_000,
+                                        || {
+                                            crate::kernel::reasoning::pointers_disjoint_by_range_memoized(
+                                        write,
+                                        pointer,
+                                        assumptions,
+                                    )
+                                        },
+                                    )
+                                },
+                            ))
                 }
                 // Declaring a block or forgetting cached cells writes nothing,
                 // so every load is untouched — but only the extended-bridging
@@ -685,6 +687,7 @@ fn memory_derivations_reach(
                 // the pre-arc absence of an edge.
                 CMemoryDerivation::BlockDeclared { .. }
                 | CMemoryDerivation::HeapAllocationPending { .. }
+                | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
                 | CMemoryDerivation::CellsForgotten { .. } => extended_dag_bridging_active(),
                 CMemoryDerivation::HeapAllocated { block, .. } => {
                     pointer.block != *block && extended_dag_bridging_active()
@@ -879,6 +882,7 @@ impl MemoryDagHopJustification {
                 derivation,
                 CMemoryDerivation::BlockDeclared { .. }
                     | CMemoryDerivation::HeapAllocationPending { .. }
+                    | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
                     | CMemoryDerivation::CellsForgotten { .. }
             ),
             Self::AllocationOfOtherBlock => matches!(
@@ -1637,6 +1641,7 @@ fn memory_dag_cell_source(
             // the pre-arc absence of an edge.
             CMemoryDerivation::BlockDeclared { .. }
             | CMemoryDerivation::HeapAllocationPending { .. }
+            | CMemoryDerivation::ContractAllocationClaimsChanged { .. }
             | CMemoryDerivation::CellsForgotten { .. } => {
                 if !extended_dag_bridging_active() {
                     return MemoryDagCell::Unwritten {

@@ -2022,7 +2022,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     let body_was_already_exposed = composite_body.condition().is_none()
         && unfolded_facts
             .iter()
-            .all(|fact| state.resources().satisfies_fact(fact, &assumptions));
+            .all(|fact| state.resources().contains_exact_representation(fact));
 
     // Validate the projected ownership before assuming facts supplied by the
     // same definition. A body may legitimately state separation that is

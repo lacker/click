@@ -314,12 +314,48 @@ impl CMemory {
             Some(existing) if existing != &bytes => None,
             Some(_) => Some(self),
             None => {
+                let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
                 std::sync::Arc::make_mut(&mut self.heap)
                     .live_allocations
                     .insert(base, bytes);
+                if let Some(prior) = prior {
+                    record_c_memory_derivation(
+                        &self,
+                        CMemoryDerivation::ContractAllocationClaimsChanged { base: prior },
+                    );
+                }
                 Some(self)
             }
         }
+    }
+
+    /// Removes an input allocation claim at an opaque contract boundary.
+    ///
+    /// The consumed ownership occurrence is gone regardless of whether the
+    /// produced occurrence later names the same pointer value. Unlike a C
+    /// `free`, this abstraction does not assert deallocation or erase bytes:
+    /// the contract may describe continuity, replacement, or either. Return
+    /// resources install the sole post-call allocation claim afterwards.
+    pub(in crate::kernel) fn retire_contract_heap_allocation_claim(
+        mut self,
+        base: &Pointer,
+    ) -> Self {
+        let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
+        let removed_live = std::sync::Arc::make_mut(&mut self.heap)
+            .live_allocations
+            .remove(base);
+        let removed_uninitialized = std::sync::Arc::make_mut(&mut self.heap)
+            .uninitialized_allocations
+            .remove(base);
+        if (removed_live.is_some() || removed_uninitialized) && prior.is_some() {
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::ContractAllocationClaimsChanged {
+                    base: prior.expect("checked above"),
+                },
+            );
+        }
+        self
     }
 
     pub(in crate::kernel) fn with_pending_heap_allocation(

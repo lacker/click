@@ -1015,7 +1015,10 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_proven_distinct(
     else {
         return false;
     };
-    assumptions.decide(&condition) == Some(false)
+    match condition {
+        ConditionTerm::Constant(value) => !value,
+        condition => assumptions.decide(&condition) == Some(false),
+    }
 }
 
 /// The exact scalar equality whose falsity proves two same-block pointers
@@ -1031,25 +1034,39 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition
     if left.block != right.block {
         return None;
     }
-    let (
-        PointerOffsetTerm::Add(left_base, left_index),
-        PointerOffsetTerm::Add(right_base, right_index),
-    ) = (&left.offset, &right.offset)
-    else {
-        return None;
-    };
+    let zero = PointerOffsetTerm::Constant(0);
     // Cancel a structurally identical additive base before comparing indices.
     // This also avoids expanding memory-derived bases during alias checks.
-    let index_pair = if left_base == right_base {
-        Some((left_index.as_ref(), right_index.as_ref()))
-    } else if left_base == right_index {
-        Some((left_index.as_ref(), right_base.as_ref()))
-    } else if left_index == right_base {
-        Some((left_base.as_ref(), right_index.as_ref()))
-    } else if left_index == right_index {
-        Some((left_base.as_ref(), right_base.as_ref()))
-    } else {
-        None
+    let index_pair = match (&left.offset, &right.offset) {
+        (
+            PointerOffsetTerm::Add(left_base, left_index),
+            PointerOffsetTerm::Add(right_base, right_index),
+        ) if left_base == right_base => Some((left_index.as_ref(), right_index.as_ref())),
+        (
+            PointerOffsetTerm::Add(left_base, left_index),
+            PointerOffsetTerm::Add(right_base, right_index),
+        ) if left_base == right_index => Some((left_index.as_ref(), right_base.as_ref())),
+        (
+            PointerOffsetTerm::Add(left_base, left_index),
+            PointerOffsetTerm::Add(right_base, right_index),
+        ) if left_index == right_base => Some((left_base.as_ref(), right_index.as_ref())),
+        (
+            PointerOffsetTerm::Add(left_base, left_index),
+            PointerOffsetTerm::Add(right_base, right_index),
+        ) if left_index == right_index => Some((left_base.as_ref(), right_base.as_ref())),
+        (PointerOffsetTerm::Add(base, index), right) if base.as_ref() == right => {
+            Some((index.as_ref(), &zero))
+        }
+        (PointerOffsetTerm::Add(index, base), right) if base.as_ref() == right => {
+            Some((index.as_ref(), &zero))
+        }
+        (left, PointerOffsetTerm::Add(base, index)) if left == base.as_ref() => {
+            Some((&zero, index.as_ref()))
+        }
+        (left, PointerOffsetTerm::Add(index, base)) if left == base.as_ref() => {
+            Some((&zero, index.as_ref()))
+        }
+        _ => None,
     };
     let Some((left_index, right_index)) = index_pair else {
         return None;

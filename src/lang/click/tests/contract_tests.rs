@@ -355,7 +355,7 @@ pub(super) fn result_case_split_sources() -> (&'static str, &'static str, &'stat
 }
 
 #[test]
-fn consumed_statement_partition_does_not_capture_shared_following_if() {
+fn explicit_proof_if_does_not_capture_shared_following_c_if() {
     let (replace_source, caller_source, click_source) = result_case_split_sources();
     let click_source = click_source.replace(
         "                if c(replaced) == 0 {",
@@ -363,7 +363,7 @@ fn consumed_statement_partition_does_not_capture_shared_following_if() {
     );
     assert!(
         click_source.contains("if at(statement(1).exit, owner->data)"),
-        "the regression must insert the empty statement-partition split"
+        "the regression must insert the empty explicit proof split"
     );
     verify_c0_sources(
         &click_source,
@@ -372,11 +372,11 @@ fn consumed_statement_partition_does_not_capture_shared_following_if() {
             ("replace_then_branch.c", caller_source),
         ],
     )
-    .expect("the shared following if must not re-enter the consumed call partition");
+    .expect("the shared following C `if` must perform its own explicit split");
 }
 
 #[test]
-fn result_case_split_collapses_call_successors_at_following_c_if() {
+fn following_c_if_splits_one_symbolic_call_successor() {
     let (replace_source, caller_source, click_source) = result_case_split_sources();
     let sources = &[
         ("replace_allocated_cell.c", replace_source),
@@ -384,20 +384,22 @@ fn result_case_split_collapses_call_successors_at_following_c_if() {
     ];
 
     verify_c0_sources(click_source, sources)
-        .expect("the result split should collapse the two call successors at the next C `if`");
+        .expect("the following C `if` should split the symbolic call successor");
     let expanded = expand_c0_claim_source(
         click_source,
         sources,
         "replace_then_branch",
         CProofClaim::Grouped,
     )
-    .expect("the collapsed result split should retain an expandable proof");
+    .expect("the explicit result split should retain an expandable proof");
     verify_c0_sources(&expanded, sources)
-        .expect("the collapsed result split expansion should replay independently");
+        .expect("the explicit result split expansion should replay independently");
 
-    // Without the callee's bridging postconditions the case split has no
-    // evidence to exclude a lane of the call's partition.
-    let insufficient = click_source
+    // The call has one symbolic successor. Its data-identity postconditions
+    // are irrelevant to the following C `if`, which branches only on the
+    // returned value and therefore must not need evidence to collapse hidden
+    // call-successor lanes.
+    let without_identity_bridge = click_source
         .replace(
             "                ensures result == 0 implies owner->data == old(owner->data);\n",
             "",
@@ -407,17 +409,20 @@ fn result_case_split_collapses_call_successors_at_following_c_if() {
             "",
         );
     assert_ne!(
-        insufficient, click_source,
+        without_identity_bridge, click_source,
         "the bridging postconditions should be present"
     );
-    let error = verify_c0_sources(&insufficient, sources)
-        .expect_err("the adapter must decline when neither arm proves lane exclusion");
-    assert!(
-        error
-            .message()
-            .contains("does not name the preceding statement's certified partition"),
-        "{error:?}"
-    );
+    verify_c0_sources(&without_identity_bridge, sources)
+        .expect("the C `if` must not depend on unrelated call identity facts");
+    let expanded_without_bridge = expand_c0_claim_source(
+        &without_identity_bridge,
+        sources,
+        "replace_then_branch",
+        CProofClaim::Grouped,
+    )
+    .expect("the single-successor proof should remain expandable");
+    verify_c0_sources(&expanded_without_bridge, sources)
+        .expect("the expanded single-successor proof should replay independently");
 }
 
 #[test]
@@ -2322,7 +2327,7 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::Step))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step))
             .count(),
         2,
         "the grouped store and return should each be retained exactly once: {expanded:#?}"
@@ -2401,7 +2406,7 @@ fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
     assert_eq!(
         expanded
             .iter()
-            .filter(|tactic| matches!(tactic, ProofTactic::Step | ProofTactic::Step))
+            .filter(|tactic| matches!(tactic, ProofTactic::Step))
             .count(),
         3,
         "both stores and the return should be retained exactly once: {expanded:#?}"

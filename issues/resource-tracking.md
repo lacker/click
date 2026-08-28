@@ -132,16 +132,12 @@ eight projections at every size. The ordinary heap regressions still reject an
 explicit persistent view at `free` and preserve a proved-separate view.
 
 The focused scoped-open regression now passes. Opaque allocation lifetime
-effects lower provisional ensures first, split only when returned and consumed
-allocation identities remain undecided, and retain one checked successor per
-identity case. The checked `Proof` statement operation can retain that binary
-partition. The legacy grouped-replay adapter that rejected the same ordinary `step()`
-for having more than one successor is gone with the parallel replay engine
-(retired 2026-08-27); re-run this witness against the checked `Proof`
-statement operation before adding any resource operation or surface tactic
-for it. The generated identity condition is snapshot-qualified, and
-whole-function replay lowers it separately for each concrete outcome instead
-of reusing one branch's fresh kernel variables.
+effects lower provisional ensures first and retain one symbolic checked
+successor when returned and consumed allocation identities remain undecided.
+The allocation transition conservatively retires the consumed input
+occurrence and rejects any preserved caller resource that may still refer to
+it; the returned occurrence is then installed without inventing a proof-state
+branch. Explicit proof `if`s and C `if`s remain the only source of case splits.
 
 The returned dynamic-range association is now reduced and covered separately.
 Opaque lifetime checking first classifies returned allocation continuity by
@@ -176,13 +172,12 @@ selected C branch-entry step. The following folded `vector_grow` call advances
 past the old stale-view failure without any new resource operation or contract
 change.
 
-That call exposes its existing allocation-identity successor partition before
-the proof's result split. An empty explicit identity `if` followed by a shared
-second `if` found a bounded proof-object bug: focusing the first partition left
-its immediate-step marker on both arms, so the continuation tried to consume
-the old partition again. The marker is now cleared when the partition is
-entered, with a focused regression using empty arms and a shared following
-`if`.
+The call no longer exposes an allocation-identity successor partition before
+the proof's result split. Focused regressions now pin the simpler rule: an
+opaque call retains one symbolic successor, an empty explicit proof `if` joins
+before a shared following C `if`, and that C `if` does not require unrelated
+callee identity postconditions to exclude hidden lanes. Expansion and
+independent replay preserve the same shape.
 
 The complete owned-vector continuation is not yet a green checkpoint. After
 making its `grown == 1` proof explicit by logical cases, verification originally
@@ -191,10 +186,23 @@ reinstalling each cached composite expansion as unrelated individual facts and
 rechecking the expansion's already-certified internal pairs. Installing it as
 one certified group now checks only pairs crossing into the preserved caller
 frame. Deterministic regressions cover both the skipped internal checks and a
-rejected cross-boundary overlap. The exact two-split prototype now reaches the
-next prompt proof-driver decline in roughly four seconds; it no longer times
-out. The prototype remains out of the green checkpoint until that ordinary
+rejected cross-boundary overlap. The single-successor prototype now reaches
+the next prompt proof-driver decline without the old allocation-identity
+split. The prototype remains out of the green checkpoint until that ordinary
 proof repair is complete.
+
+The next prompt decline was only a proof repair: two impossible implications
+already had their consequents in the outcome context, so `intro()` completed
+them and their following `transport`/`contradiction` steps were redundant.
+After removing those suffixes, the proof reaches a separate control-budget
+failure while lowering the direct post-call fact
+`owner->data[old(owner->len)] == value`. The callee supplied the corresponding
+fact at its own entry snapshot; reconstructing the enclosing-function `old`
+form currently walks the call-havoc memory history instead of reusing an exact
+snapshot-anchored lowering. This is not a resource-transition semantic gap.
+Do not reshape the C or raise the budget: the next implementation decision is
+whether to retain an exact indexed call-fact transport or introduce an
+explicit snapshot-anchored proof representation.
 
 ## Remaining roadmap
 
@@ -211,12 +219,24 @@ proof repair is complete.
    composite expansions install as certified groups, checking only their
    boundary against the preserved frame. The allocation-identity and `grown`
    two-split reproduction now fails promptly at the next ordinary proof shape.
-3. Land the scoped `open(allocated_vector(owner))` proof repair, finish the
-   unchanged owned-vector proof, remove its quarantine, and run the full gate.
+3. Resolve the bounded post-call snapshot-lowering bottleneck described above,
+   then land the scoped `open(allocated_vector(owner))` proof repair, finish
+   the unchanged owned-vector proof, remove its quarantine, and run the full
+   gate.
 4. Close this issue only after the focused lifetime regressions, resource and
    ensure-lowering scaling regressions, scoped population regression, and
    owned-vector end-to-end case are all green. File a new issue only if that
    completed path exposes another independent invariant.
+
+Validation snapshot (2026-08-28): the focused resource/projection,
+common-base alias, explicit-proof-`if`, and single-symbolic-call-successor
+regressions pass. Outcome goals retain the ordinary indexed point-lowering
+semantics, including derived range loadability, and the existing quantified
+replay behavior remains unchanged; both were necessary to keep unrelated
+proof-step behavior out of the statement-successor migration. The full
+`scripts/check.sh` gate is green. `owned-vector` itself remains quarantined and
+still stops at the bounded post-call snapshot-lowering failure described
+above; its unfinished proof prototype is not part of this checkpoint.
 
 ## Intended regressions
 

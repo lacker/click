@@ -286,6 +286,7 @@ fn memories_equal_by_matching_derivations(
             CMemoryDerivation::BlockDeclared { base, block } if block.starts_with("local:") => {
                 Some(base)
             }
+            CMemoryDerivation::ContractAllocationClaimsChanged { base } => Some(base),
             CMemoryDerivation::CellsForgotten { base } => Some(base),
             _ => None,
         }

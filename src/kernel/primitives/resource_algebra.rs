@@ -199,11 +199,10 @@ impl ResourceContext {
 
     /// Whether this snapshot contains the exact named representation.
     ///
-    /// This deliberately does not use proof-aware resource entailment. A
-    /// structural Proof join may retain an owned interface without
-    /// normalization only when the interface already names an entry in the
-    /// common persistent snapshot.
-    #[cfg(test)]
+    /// This deliberately does not use proof-aware resource entailment.
+    /// Representation-sensitive operations such as structural joins and
+    /// scoped composite opening need to know whether the entry itself is
+    /// present, rather than whether a cached projection entails it.
     pub(crate) fn contains_exact_representation(&self, fact: &CResourceFact) -> bool {
         self.storage.index.exact.contains_key(fact)
     }
@@ -880,6 +879,30 @@ impl ResourceContext {
             .expansions_by_support
             .get(support)
             .map(|expansion| expansion.as_slice())
+    }
+
+    /// Finds an owned support whose certified expansion contains `target`.
+    ///
+    /// The exact core projection is the forward index into the support
+    /// relation. This avoids comparing every same-shaped resource through
+    /// snapshot equality merely to rediscover a folded resource's already
+    /// certified body.
+    pub(crate) fn cached_support_exposing_fact(
+        &self,
+        target: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<&CResourceFact> {
+        let core = target.core_with_assumptions(assumptions)?;
+        let entries = self.storage.index.exact.get(&core)?;
+        entries
+            .iter()
+            .filter_map(|entry| self.storage.supported_by.get(entry))
+            .find(|support| {
+                self.storage
+                    .expansions_by_support
+                    .get(*support)
+                    .is_some_and(|expansion| expansion.iter().any(|fact| fact == target))
+            })
     }
 
     pub fn try_compose_with_fact(

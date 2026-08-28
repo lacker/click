@@ -323,7 +323,21 @@ impl<'a> Proof<'a> {
                         point: Arc::new(OutcomePointData {
                             result: Arc::new(result),
                             state: state.into(),
-                            surface_propositions: frontier_surface.clone(),
+                            surface_propositions: execution
+                                .outcome_surface_propositions
+                                .get(path_index)
+                                .cloned()
+                                .unwrap_or_else(|| frontier_surface.clone()),
+                            program_point_states: execution
+                                .outcome_program_point_states
+                                .get(path_index)
+                                .cloned()
+                                .or_else(|| {
+                                    frontier_snapshot
+                                        .as_ref()
+                                        .map(|execution| execution.program_point_states.clone())
+                                })
+                                .unwrap_or_default(),
                             effect_facts: Arc::new(execution_facts),
                             execution_pure_facts: Arc::new(path.facts().to_vec()),
                             premise_anchor: frontier_anchor.clone(),

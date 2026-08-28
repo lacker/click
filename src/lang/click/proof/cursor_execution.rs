@@ -1453,25 +1453,15 @@ pub(super) struct ExecutionPointStepSuccessor {
     pub(super) execution: ExecutionProofState,
     pub(super) pure_facts: Vec<Proposition>,
     pub(super) introduced_facts: Vec<Proposition>,
-    pub(super) path: Option<(ConditionTerm, bool)>,
 }
 
-fn statement_supports_retained_successor_partition(statement: &CStatement) -> bool {
-    matches!(
-        statement,
-        CStatement::CallAssign { .. } | CStatement::Call { .. }
-    )
-}
-
-/// Executes one source statement into every safe kernel-certified successor.
+/// Executes one source statement into one checked proof successor.
 ///
-/// Most statements have one successor and retain the ordinary fast path. An
-/// opaque verified call may instead expose an exhaustive identity partition
-/// needed to decide allocation lifetime. In that case each polarity is
-/// replayed independently from the same entry snapshot; callers retain the
-/// resulting sibling frontiers rather than choosing one operational path.
+/// Execution uncertainty stays inside the symbolic kernel state. Only an
+/// explicit proof `if`, C `branch`, or loop construct may change the number of
+/// proof goals; a linear statement step never publishes hidden siblings.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn execute_step_successors_from_execution_point(
+pub(super) fn execute_step_successor_from_execution_point(
     execution: &ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &[Proposition],
@@ -1480,102 +1470,28 @@ pub(super) fn execute_step_successors_from_execution_point(
     fact_transport_policy: StatementFactTransportPolicy,
     loop_step_policy: LoopStepPolicy,
     context: Option<&PureFactContext>,
-) -> Result<Vec<ExecutionPointStepSuccessor>, ClickError> {
-    let function = proof_context.function;
-    let arguments = proof_context.arguments;
-    let function_environment = proof_context.function_environment;
-    let claim_label = proof_context.claim_label;
-    let tactic_index = proof_context.tactic_index;
-
-    let state: &CState = &execution.state;
-    let (_, current_state, statement, _) = next_top_level_statement_from_execution_point(
-        ExecutionView::new(
-            &execution.frontier,
-            &execution.effect_facts,
-            &execution.program_point_states,
-            &execution.surface_propositions,
-            proof_context.constants.function_entry_state.as_ref(),
-        ),
-        state,
-        function,
-        arguments,
-        claim_label,
-        tactic_index,
+) -> Result<ExecutionPointStepSuccessor, ClickError> {
+    let mut successor = execution.clone();
+    let mut successor_facts = available_pure_facts.to_vec();
+    let assumptions = assumptions_from_propositions(&successor_facts);
+    let introduced_facts = execute_step_from_execution_point_selecting_path(
+        &mut successor,
+        proof_context,
+        &mut successor_facts,
+        &assumptions,
         tactic_name,
+        prerequisite_policy,
+        fact_transport_policy,
+        loop_step_policy,
+        None,
+        None,
+        context,
     )?;
-    // Only an opaque verified call may expose the allocation-identity sibling
-    // frontiers represented by this adapter. In particular, previewing a
-    // source loop executes its whole lowered `while` and returns eventual body
-    // paths; those are not immediate successors of the loop-head step, whose
-    // dedicated cursor rule below advances exactly one concrete transition.
-    // The proof surface currently represents one binary partition, so require
-    // exactly one checked transition per polarity here.
-    let safe_partition = if statement_supports_retained_successor_partition(&statement) {
-        let mut preview_next_opaque_call = execution.next_opaque_call;
-        let mut preview_next_kernel_variable = execution.next_kernel_variable;
-        let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
-        let preview = certified_statement_transitions(
-            &current_state,
-            available_pure_facts,
-            &statement,
-            function_environment,
-            CExecutionSemantics::APPLY_VERIFIED_RULES,
-            &transition_label,
-            &mut preview_next_opaque_call,
-            &mut preview_next_kernel_variable,
-            prerequisite_policy,
-            fact_transport_policy,
-            context,
-        )?
-        .0;
-        (preview.len() == 2
-            && preview.iter().all(|transition| {
-                matches!(
-                    transition.outcome,
-                    CStatementOutcome::Normal(_) | CStatementOutcome::Return { .. }
-                )
-            }))
-        .then(|| certified_transition_condition_partition(&preview))
-        .flatten()
-    } else {
-        None
-    };
-
-    let selected_paths = safe_partition.map_or_else(
-        || vec![(None, None)],
-        |(condition, paths)| {
-            paths
-                .into_iter()
-                .map(|(fact, value)| (Some(fact), Some((condition.clone(), value))))
-                .collect()
-        },
-    );
-    let mut successors = Vec::with_capacity(selected_paths.len());
-    for (selected, path) in selected_paths {
-        let mut successor = execution.clone();
-        let mut successor_facts = available_pure_facts.to_vec();
-        let assumptions = assumptions_from_propositions(&successor_facts);
-        let introduced_facts = execute_step_from_execution_point_selecting_path(
-            &mut successor,
-            proof_context,
-            &mut successor_facts,
-            &assumptions,
-            tactic_name,
-            prerequisite_policy,
-            fact_transport_policy,
-            loop_step_policy,
-            None,
-            selected.as_ref(),
-            context,
-        )?;
-        successors.push(ExecutionPointStepSuccessor {
-            execution: successor,
-            pure_facts: successor_facts,
-            introduced_facts,
-            path,
-        });
-    }
-    Ok(successors)
+    Ok(ExecutionPointStepSuccessor {
+        execution: successor,
+        pure_facts: successor_facts,
+        introduced_facts,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2469,45 +2385,6 @@ fn certified_transition_condition_partition(
         }
     }
     None
-}
-
-#[cfg(test)]
-mod statement_successor_partition_tests {
-    use super::*;
-
-    #[test]
-    fn retained_successor_partitions_are_call_only() {
-        let call = CStatement::Call {
-            function_name: "opaque".to_string(),
-            arguments: Vec::new(),
-        };
-        let call_assign = CStatement::CallAssign {
-            target: "result".to_string(),
-            function_name: "opaque".to_string(),
-            arguments: Vec::new(),
-        };
-        let loop_statement = CStatement::While {
-            condition: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
-            invariant: Vec::new(),
-            invariant_checks: Vec::new(),
-            effect_checks: Vec::new(),
-            body: Box::new(CStatement::Skip),
-        };
-        let branch = CStatement::If {
-            condition: CExpression::Value(CValue::Int32(Bitvector32Term::Constant(1))),
-            then_branch: Box::new(CStatement::Skip),
-            else_branch: Box::new(CStatement::Skip),
-        };
-
-        assert!(statement_supports_retained_successor_partition(&call));
-        assert!(statement_supports_retained_successor_partition(
-            &call_assign
-        ));
-        assert!(!statement_supports_retained_successor_partition(
-            &loop_statement
-        ));
-        assert!(!statement_supports_retained_successor_partition(&branch));
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -1060,6 +1060,8 @@ impl<'a> Proof<'a> {
         let mut paths = Vec::new();
         let mut path_branch_decisions: Vec<PersistentSequence<ExecutionBranchDecision>> =
             Vec::new();
+        let mut path_surface_propositions = Vec::new();
+        let mut path_program_point_states = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
@@ -1098,6 +1100,20 @@ impl<'a> Proof<'a> {
                         });
                     }
                     path_branch_decisions.push(decisions);
+                    path_surface_propositions.push(
+                        arm.execution
+                            .outcome_surface_propositions
+                            .get(arm_path_index)
+                            .cloned()
+                            .unwrap_or_else(|| arm.execution.surface_propositions.clone()),
+                    );
+                    path_program_point_states.push(
+                        arm.execution
+                            .outcome_program_point_states
+                            .get(arm_path_index)
+                            .cloned()
+                            .unwrap_or_else(|| arm.execution.program_point_states.clone()),
+                    );
                 }
             }
         }
@@ -1126,6 +1142,8 @@ impl<'a> Proof<'a> {
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
         execution.outcome_branch_decisions = Arc::new(path_branch_decisions);
+        execution.outcome_surface_propositions = Arc::new(path_surface_propositions);
+        execution.outcome_program_point_states = Arc::new(path_program_point_states);
         execution.has_structured_branch_history = true;
         execution.next_opaque_call = arms[0]
             .execution
@@ -1928,20 +1946,9 @@ impl<'a> Proof<'a> {
         let arm_index = usize::from(!take_then);
         let mut focused = self.focus(record.ids[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        let mut goals = focused.state.goals.clone();
-        // A statement partition is immediate-step provenance, not path
-        // state. Entering either recorded case consumes that marker even
-        // when the source arm is empty; otherwise a shared following `if`
-        // tries to enter the already-consumed statement partition again.
-        if let Some(mut execution) = focused.execution().cloned()
-            && execution.last_step_delta.statement_partition.is_some()
-        {
-            execution.last_step_delta.statement_partition = None;
-            goals = goals.replace_frontier_at(focused.focused, focused.facts().clone(), execution);
-        }
         focused.state = Arc::new(ProofState {
             locals: focused.state.locals.clone(),
-            goals,
+            goals: focused.state.goals.clone(),
             added_facts: Arc::new(path_facts.clone()),
             checked_facts: Arc::new(path_facts),
         });
@@ -2272,41 +2279,10 @@ impl<'a> Proof<'a> {
 
     pub(super) fn apply_planned_execution_if(
         &self,
-        condition: &ClickProposition,
+        _condition: &ClickProposition,
         then_steps: &[SimpleProofStep],
         else_steps: &[SimpleProofStep],
     ) -> Result<Self, ClickError> {
-        let arm_premises = [then_steps, else_steps].map(|steps| match steps.first() {
-            Some(SimpleProofStep::Step) => Some(Vec::new()),
-            _ => None,
-        });
-        if let [Some(then_premises), Some(else_premises)] = arm_premises {
-            let tactic_index = match self.context.as_ref() {
-                ProofContext::Execution(context) => context.tactic_index,
-                _ => 0,
-            };
-            let collapsed = self.try_collapse_statement_successor_if(
-                condition,
-                [(tactic_index, then_premises), (tactic_index, else_premises)],
-            )?;
-            if let Some((split, record)) = collapsed {
-                let advanced = split
-                    .focus_execution_if_arm(&record, true)?
-                    .apply_planned_execution_steps_inner(&then_steps[1..])?
-                    .focus_execution_if_arm(&record, false)?
-                    .apply_planned_execution_steps_inner(&else_steps[1..])?;
-                return advanced.join_focused_execution_if_terminal(&record);
-            }
-        }
-        if let Some((split, record)) = self.enter_statement_successor_if(condition)? {
-            let advanced = split
-                .focus_execution_if_arm(&record, true)?
-                .apply_planned_execution_steps_inner(then_steps)?
-                .focus_execution_if_arm(&record, false)?
-                .apply_planned_execution_steps_inner(else_steps)?;
-            return advanced.join_focused_execution_if_terminal(&record);
-        }
-
         let (split, record) = self.split_focused_execution_branch()?;
         let mut advanced = split;
         for (take_then, steps) in [(true, then_steps), (false, else_steps)] {

@@ -292,35 +292,6 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         record_c_memory_derivation(&memory, CMemoryDerivation::CellsForgotten { base });
     }
 
-    if let Some(value) = memory.known_value(&pointer) {
-        if let Some(value) = canonicalized_pointer_value_from_int_cell(
-            &pointer,
-            &value,
-            value_type,
-            next_kernel_variable,
-            &mut facts,
-            assumptions,
-        ) {
-            return vec![CExpressionPath {
-                outcome: CExpressionOutcome::Value(value),
-                facts,
-                obligations,
-            }];
-        }
-        if !value_type.accepts(&value) {
-            return vec![CExpressionPath {
-                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
-                facts,
-                obligations,
-            }];
-        }
-        return vec![CExpressionPath {
-            outcome: CExpressionOutcome::Value(value),
-            facts,
-            obligations,
-        }];
-    }
-
     if pointer.has_symbolic_block() && has_external_read_resource {
         let Some(value) = canonicalized_symbolic_load_value(
             &memory,

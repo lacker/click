@@ -1208,24 +1208,14 @@ fn try_check_structural_function_proof_inner<'a>(
                             proof_site.as_ref(),
                             owning_source_index,
                         );
-                        exact
-                    } else {
-                        proof.try_collapse_statement_successor_if(
-                            condition,
-                            [
-                                (arm_steps[0].0, arm_steps[0].2.clone()),
-                                (arm_steps[1].0, arm_steps[1].2.clone()),
-                            ],
-                        )?
                     }
+                    exact
                 } else {
                     None
                 };
                 let consumed_leading_steps = product.is_some();
-                let (split, record) = if let Some(collapsed) = product {
-                    collapsed
-                } else if let Some(existing) = proof.enter_statement_successor_if(condition)? {
-                    existing
+                let (split, record) = if let Some(split) = product {
+                    split
                 } else {
                     proof.split_focused_execution_if(condition.clone())?
                 };
@@ -1815,10 +1805,21 @@ fn advance_focused_execution_arm<'a>(
             next
         } else if let ProofTactic::Have(have) = &indexed.tactic {
             let nested = proof.begin_have(have.proposition.clone())?;
-            let Some(nested) = solve_nested_have(nested, have, false)? else {
-                return decline();
-            };
-            nested.join()?
+            if let Some(nested) = solve_nested_have(nested, have, true)? {
+                nested.join()?
+            } else {
+                // A structural proof arm has the same mid-execution `have`
+                // surface as the flat continuation. The nested Proof scope
+                // deliberately handles only its linear subset; route a
+                // supported richer script through the shared checked law
+                // instead of declining the entire explicit case split.
+                proof.apply_mid_execution_have(
+                    expansion_capture.as_deref_mut(),
+                    have,
+                    indexed.index,
+                    indexed.source_index,
+                )?
+            }
         } else if let ProofTactic::Loop(clause) = &indexed.tactic {
             // A frontier-local loop inside a case is one checked operation,
             // exactly as in the linear continuation.
@@ -2173,10 +2174,8 @@ fn advance_focused_execution_region<'a>(
                 None
             };
             let consumed_leading_steps = product.is_some();
-            let (split, record) = if let Some(collapsed) = product {
-                collapsed
-            } else if let Some(existing) = proof.enter_statement_successor_if(condition)? {
-                existing
+            let (split, record) = if let Some(split) = product {
+                split
             } else {
                 proof.split_focused_execution_if(condition.clone())?
             };

@@ -78,11 +78,13 @@ impl<'a> Proof<'a> {
             }
             ProofContext::Point(context) => {
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
-                if let Some(recorded) = context
-                    .surface_propositions
-                    .available_kernel(&surface, context.lowering_context.as_ref())
-                {
-                    return Ok(recorded.clone());
+                if !proposition_contains_old_expression(&surface) {
+                    if let Some(recorded) = context
+                        .surface_propositions
+                        .available_kernel(&surface, context.lowering_context.as_ref())
+                    {
+                        return Ok(recorded.clone());
+                    }
                 }
                 lower_point_proposition_with_assumptions(
                     &surface,
@@ -108,11 +110,13 @@ impl<'a> Proof<'a> {
                     .outcome_point_view()
                     .expect("a focused outcome judgment resolves its point view");
                 let surface = self.substitute_point_locals_in_proposition(surface)?;
-                if let Some(recorded) = view
-                    .surface_propositions
-                    .available_kernel_matching(&surface, |kernel| self.facts().contains(kernel))
-                {
-                    return Ok(recorded.clone());
+                if !proposition_contains_old_expression(&surface) {
+                    if let Some(recorded) = view
+                        .surface_propositions
+                        .available_kernel_matching(&surface, |kernel| self.facts().contains(kernel))
+                    {
+                        return Ok(recorded.clone());
+                    }
                 }
                 lower_point_proposition_with_assumptions(
                     &surface,

@@ -22,177 +22,44 @@ impl<'a> Proof<'a> {
         let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
             unreachable!("the frontier requirement was checked above");
         };
-        let parent_execution = Arc::new(execution.clone());
-        let execution_start_state = execution
-            .frontier
-            .execution_start_state(&execution.state)
-            .clone();
-        let make_goal = |mut checked: CheckedStatementStep| {
-            // A fact the statement introduces (a callee's `ensures`, a
-            // store's value) is recorded under its readable spelling at the
-            // successor state, so a later premise can name it without
-            // re-lowering it against another memory. Output-sized work: one
-            // synthesis per introduced fact.
-            for fact in &checked.added_facts {
-                if let Some(surface) = synthesize_surface_proposition(
-                    fact,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    &checked.execution.state,
-                ) {
-                    let _ = checked
-                        .execution
-                        .surface_propositions
-                        .record_lowering(&surface, fact);
+        let mut checked = checked;
+        // A fact the statement introduces (a callee's `ensures`, a store's
+        // value) is recorded under its readable spelling at the successor
+        // state, so a later premise can name it without re-lowering it against
+        // another memory. Output-sized work: one synthesis per introduced
+        // fact.
+        for fact in &checked.added_facts {
+            if let Some(surface) = synthesize_surface_proposition(
+                fact,
+                context.parsed_function.parameters(),
+                context.arguments,
+                &checked.execution.state,
+            ) {
+                // At a call successor, a synthesized `old(...)` names the
+                // callee's entry snapshot, while the same surface syntax in
+                // the caller names the caller's function entry. Do not cache
+                // that ambiguous spelling as caller provenance. Explicit
+                // program points (including proof marks) retain the exact
+                // call-frontier identity needed to name such a fact later.
+                if proposition_contains_old_expression(&surface) {
+                    continue;
                 }
+                let _ = checked
+                    .execution
+                    .surface_propositions
+                    .record_lowering(&surface, fact);
             }
-            let successor_execution = checked.execution;
-            (
-                Goal::Frontier(FrontierGoal {
-                    selection: frontier.selection,
-                    context: GoalContext {
-                        facts: checked.facts,
-                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
-                        execution: Some(Arc::new(successor_execution)),
-                    },
-                }),
-                checked.added_facts,
-                checked.path,
-            )
-        };
-
-        let (goals, focused, added_facts) = match checked.len() {
-            1 => {
-                let (goal, added, path) = make_goal(
-                    checked
-                        .into_iter()
-                        .next()
-                        .expect("one checked successor was required"),
-                );
-                debug_assert!(path.is_none());
-                (
-                    self.state.goals.replace_at(self.focused, goal),
-                    self.focused,
-                    added,
-                )
-            }
-            2 => {
-                let mut by_polarity = [None, None];
-                let mut condition = None;
-                let mut common_added: Option<Vec<Proposition>> = None;
-                for successor in checked {
-                    let CheckedStatementStep {
-                        execution: successor_execution,
-                        facts,
-                        added_facts: added,
-                        path,
-                    } = successor;
-                    let Some((path_condition, value)) = path else {
-                        return Err(self
-                            .step_error("statement successors omitted their certified partition"));
-                    };
-                    if let Some(condition) = &condition {
-                        if condition != &path_condition {
-                            return Err(self.step_error(
-                                "statement successors used different partition conditions",
-                            ));
-                        }
-                    } else {
-                        condition = Some(path_condition.clone());
-                    }
-                    let slot = usize::from(!value);
-                    let path_fact = Proposition::ConditionIs(path_condition, value);
-                    if by_polarity[slot]
-                        .replace((
-                            facts,
-                            Arc::new(successor_execution),
-                            vec![path_fact],
-                            added.clone(),
-                        ))
-                        .is_some()
-                    {
-                        return Err(
-                            self.step_error("statement successors repeated one partition polarity")
-                        );
-                    }
-                    if let Some(common) = &mut common_added {
-                        common.retain(|fact| added.contains(fact));
-                    } else {
-                        common_added = Some(added);
-                    }
-                }
-                let [Some(then_arm), Some(else_arm)] = by_polarity else {
-                    return Err(self.step_error(
-                        "statement successors did not cover both partition polarities",
-                    ));
-                };
-                let condition = condition.expect("two successors recorded a condition");
-                let common_added = common_added.unwrap_or_default();
-                // Both call successors descend from the pre-call facts, but
-                // their statement batches are siblings even when those
-                // batches contain some equal propositions. Keep the actual
-                // shared ancestor here; the terminal merge computes common
-                // post-call facts output-sensitively from the two arm deltas.
-                let common_facts = self.facts().clone();
-                let split = SplitId(self.state.goals.next_id);
-                let ids = [
-                    GoalId(self.state.goals.next_id + 1),
-                    GoalId(self.state.goals.next_id + 2),
-                ];
-                let partition = Arc::new(StatementSuccessorPartition {
-                    split,
-                    ids,
-                    condition,
-                    base_facts: [then_arm.0.clone(), else_arm.0.clone()],
-                    base_executions: [then_arm.1.clone(), else_arm.1.clone()],
-                    path_facts: [then_arm.2, else_arm.2],
-                    introduced_facts: [then_arm.3, else_arm.3],
-                    common_facts,
-                    parent_unfolds: frontier.context.unfolded_predicates.clone(),
-                    parent_execution: parent_execution.clone(),
-                    execution_start_state: execution_start_state.clone(),
-                });
-                let goals = self.state.goals.split_at(
-                    self.focused,
-                    [
-                        Goal::Frontier(FrontierGoal {
-                            selection: frontier.selection,
-                            context: GoalContext {
-                                facts: then_arm.0,
-                                unfolded_predicates: frontier.context.unfolded_predicates.clone(),
-                                execution: Some(Arc::new({
-                                    let mut execution = (*then_arm.1).clone();
-                                    execution.last_step_delta.statement_partition =
-                                        Some(partition.clone());
-                                    execution
-                                })),
-                            },
-                        }),
-                        Goal::Frontier(FrontierGoal {
-                            selection: frontier.selection,
-                            context: GoalContext {
-                                facts: else_arm.0,
-                                unfolded_predicates: frontier.context.unfolded_predicates.clone(),
-                                execution: Some(Arc::new({
-                                    let mut execution = (*else_arm.1).clone();
-                                    execution.last_step_delta.statement_partition = Some(partition);
-                                    execution
-                                })),
-                            },
-                        }),
-                    ],
-                );
-                debug_assert_eq!(goals.0, split);
-                debug_assert_eq!(goals.1, ids);
-                let goals = goals.2;
-                (goals, ids[0], common_added)
-            }
-            count => {
-                return Err(self.step_error(format!(
-                    "statement execution produced {count} certified successors; expected one successor or one binary partition"
-                )));
-            }
-        };
+        }
+        let added_facts = checked.added_facts;
+        let goal = Goal::Frontier(FrontierGoal {
+            selection: frontier.selection,
+            context: GoalContext {
+                facts: checked.facts,
+                unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                execution: Some(Arc::new(checked.execution)),
+            },
+        });
+        let goals = self.state.goals.replace_at(self.focused, goal);
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -207,7 +74,7 @@ impl<'a> Proof<'a> {
                 focused: self.focused,
                 depth: self.node.depth + 1,
             }),
-            focused,
+            focused: self.focused,
         })
     }
 

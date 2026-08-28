@@ -990,6 +990,11 @@ pub enum CMemoryDerivation {
         allocation_base: Pointer,
         bytes: Bitvector32Term,
     },
+    /// `base` with only the allocation claims imported from contracts
+    /// changed. Consuming an input claim and installing an output claim do
+    /// not write bytes, allocate storage, or free storage, so every load is
+    /// preserved across this edge.
+    ContractAllocationClaimsChanged { base: SharedCMemory },
     /// `base` with one complete heap allocation lifetime ended.
     ///
     /// `allocation_base` is kept rather than only its broad pointer block:
@@ -1041,6 +1046,7 @@ impl CMemoryDerivation {
             | Self::BlockDeclared { base, .. }
             | Self::HeapAllocated { base, .. }
             | Self::HeapAllocationPending { base, .. }
+            | Self::ContractAllocationClaimsChanged { base }
             | Self::HeapFreed { base, .. }
             | Self::CellsForgotten { base }
             | Self::LoopHavoc { base, .. }

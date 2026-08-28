@@ -3204,9 +3204,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             assert!(
                 matches!(
                     steps.as_slice(),
-                    [SimpleProofStep::Step]
-                        | [SimpleProofStep::Step]
-                        | [SimpleProofStep::Step, SimpleProofStep::Step]
+                    [SimpleProofStep::Step] | [SimpleProofStep::Step, SimpleProofStep::Step]
                 ),
                 "{steps:#?}"
             );

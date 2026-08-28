@@ -464,6 +464,12 @@ impl<'a> Proof<'a> {
         };
         self.proposition_goal("`instantiate` requires a proposition goal")?;
 
+        let surface_quantified =
+            self.substitute_goal_surface_bindings_in_proposition(surface_quantified)?;
+        let surface_premises = surface_premises
+            .iter()
+            .map(|surface| self.substitute_goal_surface_bindings_in_proposition(surface))
+            .collect::<Result<Vec<_>, _>>()?;
         let explicit_premises = surface_premises
             .iter()
             .map(|surface| self.lower_surface_proposition(surface, "`instantiate using` premise"))
@@ -477,7 +483,7 @@ impl<'a> Proof<'a> {
         }
 
         let lowered_quantified =
-            self.lower_surface_proposition(surface_quantified, "`instantiate` quantified fact")?;
+            self.lower_surface_proposition(&surface_quantified, "`instantiate` quantified fact")?;
         let quantified = if self.facts().contains(&lowered_quantified) {
             lowered_quantified
         } else if let Some(available) = self
@@ -488,7 +494,7 @@ impl<'a> Proof<'a> {
         } else {
             return Err(self.step_error(format!(
                 "`instantiate` quantified fact is not exactly available: {}",
-                describe_click_proposition(surface_quantified)
+                describe_click_proposition(&surface_quantified)
             )));
         };
 
@@ -757,7 +763,7 @@ impl<'a> Proof<'a> {
             effect_facts: &execution.effect_facts,
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: execution.frontier.execution_start_state(&execution.state),
+            pre_state: context.old_reference_state(&execution.frontier, &execution.state),
             state: &execution.state,
             result: None,
             program_point_states: &execution.program_point_states,
@@ -867,6 +873,8 @@ impl<'a> Proof<'a> {
             .clone();
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
         let mut decisions_by_path = Vec::with_capacity(checked.paths().len() * 2);
+        let mut surfaces_by_path = Vec::with_capacity(checked.paths().len() * 2);
+        let mut program_points_by_path = Vec::with_capacity(checked.paths().len() * 2);
         for (path_index, path) in checked.paths().iter().enumerate() {
             check_verification_deadline()?;
             let decisions = execution
@@ -874,23 +882,48 @@ impl<'a> Proof<'a> {
                 .get(path_index)
                 .cloned()
                 .unwrap_or_else(|| execution.branch_decisions.clone());
-            let keep = |paths: &mut Vec<_>, decisions_by_path: &mut Vec<_>| {
+            let path_surface = execution
+                .outcome_surface_propositions
+                .get(path_index)
+                .cloned()
+                .unwrap_or_else(|| execution.surface_propositions.clone());
+            let path_program_points = execution
+                .outcome_program_point_states
+                .get(path_index)
+                .cloned()
+                .unwrap_or_else(|| execution.program_point_states.clone());
+            let keep = |paths: &mut Vec<_>,
+                        decisions_by_path: &mut Vec<_>,
+                        surfaces_by_path: &mut Vec<_>,
+                        program_points_by_path: &mut Vec<_>| {
                 paths.push((
                     path.outcome().clone(),
                     path.execution_facts(),
                     path.obligations().to_vec(),
                 ));
                 decisions_by_path.push(decisions.clone());
+                surfaces_by_path.push(path_surface.clone());
+                program_points_by_path.push(path_program_points.clone());
             };
             if decisions
                 .iter()
                 .any(|decision| &decision.condition == condition)
             {
-                keep(&mut paths, &mut decisions_by_path);
+                keep(
+                    &mut paths,
+                    &mut decisions_by_path,
+                    &mut surfaces_by_path,
+                    &mut program_points_by_path,
+                );
                 continue;
             }
             let CFunctionOutcome::Return { value, state } = path.outcome() else {
-                keep(&mut paths, &mut decisions_by_path);
+                keep(
+                    &mut paths,
+                    &mut decisions_by_path,
+                    &mut surfaces_by_path,
+                    &mut program_points_by_path,
+                );
                 continue;
             };
             let path_facts = path
@@ -908,7 +941,7 @@ impl<'a> Proof<'a> {
                 condition,
                 context.predicate_environment,
                 context.click_function_environment,
-                &execution.program_point_states,
+                &path_program_points,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -916,8 +949,9 @@ impl<'a> Proof<'a> {
                 ))
             })?;
             let positive = crate::kernel::canonical_condition_fact(&lowered);
-            let negative =
-                crate::kernel::canonical_condition_fact(&Proposition::Not(Box::new(lowered)));
+            let negative = crate::kernel::canonical_condition_fact(&Proposition::Not(Box::new(
+                lowered.clone(),
+            )));
             let assumptions = path_facts
                 .iter()
                 .fold(self.facts().assumptions().clone(), |assumptions, fact| {
@@ -943,6 +977,10 @@ impl<'a> Proof<'a> {
                     proof_case: true,
                 });
                 decisions_by_path.push(decisions);
+                let mut surface = path_surface.clone();
+                surface.record_lowering(condition, &lowered)?;
+                surfaces_by_path.push(surface);
+                program_points_by_path.push(path_program_points.clone());
             }
         }
         let candidates = crate::kernel::c_function_execution_candidates_from_outcomes(
@@ -955,6 +993,8 @@ impl<'a> Proof<'a> {
             execution: candidates,
         };
         execution.outcome_branch_decisions = Arc::new(decisions_by_path);
+        execution.outcome_surface_propositions = Arc::new(surfaces_by_path);
+        execution.outcome_program_point_states = Arc::new(program_points_by_path);
         let mut state = (*self.state).clone();
         state.goals =
             state
@@ -1031,10 +1071,10 @@ impl<'a> Proof<'a> {
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: execution.frontier.execution_start_state(&execution.state),
+            pre_state: context.old_reference_state(&execution.frontier, &execution.state),
             state: &point.state,
             result: Some(point.result.as_ref()),
-            program_point_states: &execution.program_point_states,
+            program_point_states: &point.program_point_states,
             surface_propositions: &point.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
@@ -1064,6 +1104,17 @@ impl<'a> Proof<'a> {
                 let view = self
                     .outcome_point_view()
                     .expect("a focused outcome judgment resolves its point view");
+                self.apply_point_transport_using(source, target, premises, &view)
+            }
+            // A nested `have` at an execution frontier is a proposition
+            // judgment borrowing that frontier's point environment. Keep
+            // goal-local binder substitutions (`intro` variables) on the
+            // point operation instead of routing through the outer execution
+            // transport, which has no proposition-goal bindings.
+            ProofContext::Execution(_) if self.goal().is_some() => {
+                let view = self.execution_proposition_point_view().ok_or_else(|| {
+                    self.step_error("`transport using` requires a point proposition proof")
+                })?;
                 self.apply_point_transport_using(source, target, premises, &view)
             }
             ProofContext::Execution(context) => {

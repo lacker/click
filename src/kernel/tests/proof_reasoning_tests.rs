@@ -2549,6 +2549,53 @@ fn quantified_int32_fact_certifies_an_instantiated_load() {
 }
 
 #[test]
+fn quantified_loadability_fact_certifies_an_instantiated_load() {
+    let memory = CMemory::new().with_block("data", 16);
+    let data = Pointer {
+        block: "data".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let fact_index = Variable(2_100_020);
+    let target_index = Variable(2_100_021);
+    let length = Bitvector32Term::Variable(Variable(2_100_022));
+    let guard_for = |index| {
+        Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(index),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(Bitvector32Term::Variable(index), length.clone()),
+                true,
+            )),
+        )
+    };
+    let guarded_fact = forall_int32(
+        fact_index,
+        Proposition::Implies(
+            Box::new(guard_for(fact_index)),
+            Box::new(Proposition::CMemoryLoadable {
+                memory: memory.clone(),
+                base: data.offset_by_int32_elements(Bitvector32Term::Variable(fact_index)),
+                bytes: Bitvector32Term::Constant(4),
+            }),
+        ),
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(guarded_fact)
+        .assume_proposition(guard_for(target_index));
+
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory,
+        base: data.offset_by_int32_elements(Bitvector32Term::Variable(target_index)),
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
 fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
     let memory = CMemory::new();
     let data = Pointer {
@@ -3995,6 +4042,30 @@ fn repeated_resolution_queries_do_not_repay_their_search() {
         second_work, 0,
         "repeated top-level distinctness should share the resolution memo"
     );
+}
+
+#[test]
+fn common_base_offset_distinctness_handles_the_unoffset_base() {
+    let base = Pointer {
+        block: "common-base".into(),
+        offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(93_105)), 4),
+    };
+    let field = Pointer {
+        block: base.block.clone(),
+        offset: PointerOffsetTerm::add(base.offset.clone(), PointerOffsetTerm::Constant(4)),
+    };
+    let assumptions = PureFactContext::new();
+
+    assert!(pointer_offsets_with_common_base_proven_distinct(
+        &base,
+        &field,
+        &assumptions,
+    ));
+    assert!(pointer_offsets_with_common_base_proven_distinct(
+        &field,
+        &base,
+        &assumptions,
+    ));
 }
 
 #[test]

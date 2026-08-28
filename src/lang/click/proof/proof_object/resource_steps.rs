@@ -216,7 +216,6 @@ impl<'a> Proof<'a> {
             function_entry_prerequisites: checked.added_function_entry_prerequisites,
             function_entry_derivations: checked.added_function_entry_derivations,
             unfolded_predicates: checked.added_unfolded_predicates,
-            statement_partition: None,
         };
         let goal_context = GoalContext {
             facts: checked.facts,
@@ -279,7 +278,6 @@ impl<'a> Proof<'a> {
             function_entry_prerequisites: checked.added_certification_facts,
             function_entry_derivations: checked.added_derivations,
             unfolded_predicates: Vec::new(),
-            statement_partition: None,
         };
         Ok(ProofState {
             locals: self.state.locals.clone(),

@@ -7,21 +7,8 @@ struct CFunctionResourceTransfer {
 }
 
 #[derive(Clone, Debug)]
-struct VerifiedCallAllocationDeltaPath {
-    facts: Vec<ExecutionPureFact>,
-    result: Result<(CMemory, Vec<ExecutionPureFact>), VerifiedAllocationDeltaError>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingVerifiedCallAllocationDeltaPath {
-    facts: Vec<ExecutionPureFact>,
-    provisional_facts: Vec<ExecutionPureFact>,
-}
-
-#[derive(Clone, Debug)]
 enum VerifiedAllocationDeltaError {
     Runtime(CRuntimeError),
-    UndecidedAllocationContinuity(ConditionTerm),
     InconsistentReturnedAllocation,
 }
 
@@ -35,27 +22,6 @@ enum AllocationContinuity {
 
 fn canonical_memory_range(range: CMemoryRange, assumptions: &PureFactContext) -> CMemoryRange {
     assumptions.canonical_memory_range(&range)
-}
-
-fn add_certified_outcome_path_fact(
-    facts: &mut Vec<ExecutionPureFact>,
-    assumptions: &PureFactContext,
-    proposition: Proposition,
-) -> Option<()> {
-    let previous_len = facts.len();
-    add_path_fact(facts, assumptions, proposition.clone())?;
-    if facts.len() > previous_len {
-        let fact = facts
-            .last_mut()
-            .expect("a newly added outcome fact should be present");
-        *fact = fact.clone().into_certified();
-    } else if let Some(fact) = facts
-        .iter_mut()
-        .find(|fact| fact.proposition() == &proposition)
-    {
-        *fact = fact.clone().into_certified();
-    }
-    Some(())
 }
 
 fn function_needs_outcome_resource_transfer(function: &CFunction) -> bool {
@@ -951,12 +917,10 @@ fn execute_verified_function_rule(
         let return_resources =
             activate_population_body_resources(return_resources, &population_transition);
 
-        // The allocation delta sometimes depends on a certified outcome case.
-        // For example, a failed reallocation returns the input ownership with
-        // its old allocation, while success returns ownership of a new one.
-        // Lower the ensures against the pre-delta post-state only to decide
-        // that change. Public postconditions are lowered again below against
-        // each final memory so their snapshots remain exact.
+        // Lower the ensures before reconciling allocation ownership so the
+        // transition can prove exact continuity when the contract states it.
+        // An undecided continuity relation remains symbolic in this one call
+        // successor; it is not an execution-path split.
         post_state.resources = return_resources.clone();
         let provisional_post_contract_state =
             with_contract_argument_views(&post_state, function, &arguments_path.values);
@@ -982,121 +946,62 @@ fn execute_verified_function_rule(
             "verified function rule application",
             "verified call heap allocation delta",
         );
-        let mut pending_allocation_delta_paths =
-            VecDeque::from([PendingVerifiedCallAllocationDeltaPath {
-                facts,
-                provisional_facts,
-            }]);
-        let mut allocation_delta_paths = Vec::new();
-        while let Some(pending) = pending_allocation_delta_paths.pop_front() {
-            let branch_assumptions = assumptions_with_path_context(
-                &effective_assumptions,
-                &pending.provisional_facts,
-                &obligations,
-            );
-            match apply_verified_heap_allocation_delta(
-                post_state.memory.clone(),
-                &transfer.callee_resources,
-                &caller_resources_after_requirements,
-                &return_resources,
-                function,
-                &branch_assumptions,
-            ) {
-                Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(condition)) => {
-                    for value in [true, false] {
-                        let proposition = Proposition::ConditionIs(condition.clone(), value);
-                        let mut provisional_facts = pending.provisional_facts.clone();
-                        if add_certified_outcome_path_fact(
-                            &mut provisional_facts,
-                            &branch_assumptions,
-                            proposition.clone(),
-                        )
-                        .is_none()
-                        {
-                            continue;
-                        }
-                        let mut facts = pending.facts.clone();
-                        let public_branch_assumptions = assumptions_with_path_context(
-                            &effective_assumptions,
-                            &facts,
-                            &obligations,
-                        );
-                        add_certified_outcome_path_fact(
-                            &mut facts,
-                            &public_branch_assumptions,
-                            proposition,
-                        )
-                        .expect("a consistent allocation case must remain consistent publicly");
-                        pending_allocation_delta_paths.push_back(
-                            PendingVerifiedCallAllocationDeltaPath {
-                                facts,
-                                provisional_facts,
-                            },
-                        );
-                    }
-                }
-                Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => {}
-                result => allocation_delta_paths.push(VerifiedCallAllocationDeltaPath {
-                    facts: pending.facts,
-                    result,
-                }),
-            }
-        }
+        let allocation_assumptions =
+            assumptions_with_path_context(&effective_assumptions, &provisional_facts, &obligations);
+        let allocation_delta = apply_verified_heap_allocation_delta(
+            post_state.memory.clone(),
+            &transfer.callee_resources,
+            &caller_resources_after_requirements,
+            &return_resources,
+            function,
+            &allocation_assumptions,
+        );
         drop(allocation_delta_timing);
-        for allocation_delta_path in allocation_delta_paths {
-            let mut facts = allocation_delta_path.facts;
-            let (memory, allocation_effects) = match allocation_delta_path.result {
-                Ok(result) => result,
-                Err(VerifiedAllocationDeltaError::Runtime(error)) => {
-                    paths.push(CFunctionPath {
-                        outcome: CFunctionOutcome::RuntimeError(error),
-                        facts,
-                        obligations: obligations.clone(),
-                    });
-                    continue;
-                }
-                Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(_)) => {
-                    unreachable!("undecided allocation continuity is split above")
-                }
-                Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => {
-                    unreachable!("inconsistent returned allocations are discarded above")
-                }
-            };
-            facts.extend(allocation_effects);
-            let mut branch_post_state = post_state.clone();
-            branch_post_state.memory = memory;
-            let post_contract_state =
-                with_contract_argument_views(&branch_post_state, function, &arguments_path.values);
+        let (memory, allocation_effects) = match allocation_delta {
+            Ok(result) => result,
+            Err(VerifiedAllocationDeltaError::Runtime(error)) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+            Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation) => continue,
+        };
+        facts.extend(allocation_effects);
+        post_state.memory = memory;
+        let post_contract_state =
+            with_contract_argument_views(&post_state, function, &arguments_path.values);
 
-            let ensure_timing = crate::instrumentation::OperationTiming::new(
-                function.name(),
-                "verified function rule application",
-                "verified call ensure lowering",
-            );
-            add_verified_function_ensure_facts(
-                &mut facts,
-                &obligations,
-                &post_contract_state,
-                &entry_contract_state,
-                function,
-                &effective_assumptions,
-                budget,
-            )?;
-            drop(ensure_timing);
+        let ensure_timing = crate::instrumentation::OperationTiming::new(
+            function.name(),
+            "verified function rule application",
+            "verified call ensure lowering",
+        );
+        add_verified_function_ensure_facts(
+            &mut facts,
+            &obligations,
+            &post_contract_state,
+            &entry_contract_state,
+            function,
+            &effective_assumptions,
+            budget,
+        )?;
+        drop(ensure_timing);
 
-            let mut return_state = caller_state.clone();
-            return_state.memory = branch_post_state.memory;
-            return_state.resources = return_resources.clone();
-            return_state.counted_populations = branch_post_state.counted_populations;
-            paths.push(CFunctionPath {
-                outcome: CFunctionOutcome::Return {
-                    value: result.clone(),
-                    state: return_state,
-                },
-                facts,
-                obligations: obligations.clone(),
-            });
-        }
+        let mut return_state = caller_state.clone();
+        return_state.memory = post_state.memory;
+        return_state.resources = return_resources;
+        return_state.counted_populations = post_state.counted_populations;
+        paths.push(CFunctionPath {
+            outcome: CFunctionOutcome::Return {
+                value: result,
+                state: return_state,
+            },
+            facts,
+            obligations,
+        });
     }
     budget.consume_paths(paths.len())?;
     Ok(paths)
@@ -1339,19 +1244,23 @@ fn apply_verified_heap_allocation_delta(
             .map(|(base, bytes)| (fact, base.clone(), bytes.clone()))
     }) {
         let (fact, base, bytes) = allocation;
-        if expose_composite_resource_fact(
-            &output,
-            fact,
-            function.composite_resource_definitions(),
-            &memory,
-            &allocation_assumptions,
-        )
-        .is_some()
+        if output
+            .cached_support_exposing_fact(fact, &allocation_assumptions)
+            .is_some()
+            || expose_composite_resource_fact(
+                &output,
+                fact,
+                function.composite_resource_definitions(),
+                &memory,
+                &allocation_assumptions,
+            )
+            .is_some()
         {
             continue;
         }
         if let Some(output_allocations) = output_allocations_by_block.get(&base.block) {
             let mut retained = false;
+            let mut continuity_is_undecided = false;
             for (output_base, output_bytes) in output_allocations {
                 match allocation_continuity(
                     &base,
@@ -1362,11 +1271,7 @@ fn apply_verified_heap_allocation_delta(
                 ) {
                     AllocationContinuity::Same => retained = true,
                     AllocationContinuity::Distinct => {}
-                    AllocationContinuity::Undecided(condition) => {
-                        return Err(VerifiedAllocationDeltaError::UndecidedAllocationContinuity(
-                            condition,
-                        ));
-                    }
+                    AllocationContinuity::Undecided(_) => continuity_is_undecided = true,
                     AllocationContinuity::Inconsistent => {
                         return Err(VerifiedAllocationDeltaError::InconsistentReturnedAllocation);
                     }
@@ -1375,10 +1280,36 @@ fn apply_verified_heap_allocation_delta(
             if retained {
                 continue;
             }
+            // A contract that does not decide allocation continuity admits a
+            // deallocating implementation. Therefore no independent caller
+            // resource may still refer to the input allocation. Retire the
+            // consumed allocation occurrence without asserting a C `free`;
+            // the output occurrence is installed below even when it later
+            // proves to have the same pointer value.
+            if continuity_is_undecided {
+                for resource in preserved.facts() {
+                    if !resource.may_refer_to_memory_block(&base.block)
+                        || resource.is_proven_separate_from_allocation(
+                            &base,
+                            &bytes,
+                            &allocation_assumptions,
+                        )
+                    {
+                        continue;
+                    }
+                    return Err(VerifiedAllocationDeltaError::Runtime(
+                        CRuntimeError::StaleResourceAfterFree {
+                            resource: resource.clone(),
+                        },
+                    ));
+                }
+                memory = memory.retire_contract_heap_allocation_claim(&base);
+                continue;
+            }
         }
         // Only the untransferred caller frame survives independently across
-        // the call. Any such resource that can still refer to the freed
-        // allocation makes this successor unsafe.
+        // the call. Any such resource that can still refer to an allocation
+        // the contract definitely retires makes this transition unsafe.
         for resource in preserved.facts() {
             if !resource.may_refer_to_memory_block(&base.block)
                 || resource.is_proven_separate_from_allocation(
@@ -1936,7 +1867,14 @@ fn evaluate_function_return_resources(
                     let projected = expansion
                         .iter()
                         .filter_map(|fact| fact.core_with_assumptions(assumptions))
-                        .filter(|core| !return_resources.satisfies_fact(core, assumptions))
+                        // These duplicable cores are certified projections of
+                        // `support`; publishing them needs no proof-aware
+                        // search through the caller's existing resources.
+                        // Exact duplicates are the only entries worth
+                        // suppressing here. Equivalent alternate spellings
+                        // remain supported by this occurrence and disappear
+                        // with it.
+                        .filter(|core| !return_resources.contains_exact_representation(core))
                         .collect::<BTreeSet<_>>()
                         .into_iter()
                         .collect::<Vec<_>>();
@@ -4063,14 +4001,17 @@ fn unreturned_allocation_obligation(
         .iter()
         .filter(|fact| fact.allocation().is_some())
         .find(|allocation| {
-            expose_composite_resource_fact(
-                &returned_resources,
-                allocation,
-                function.composite_resource_definitions(),
-                actual_state.memory(),
-                assumptions,
-            )
-            .is_none()
+            returned_resources
+                .cached_support_exposing_fact(allocation, assumptions)
+                .is_none()
+                && expose_composite_resource_fact(
+                    &returned_resources,
+                    allocation,
+                    function.composite_resource_definitions(),
+                    actual_state.memory(),
+                    assumptions,
+                )
+                .is_none()
         })
         .cloned())
 }

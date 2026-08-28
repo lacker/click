@@ -105,6 +105,32 @@ fn normalization_preserves_projection_support() {
 }
 
 #[test]
+fn cached_projection_finds_the_owned_resource_that_packages_a_fact() {
+    let authority = CResourceFact::own_composite("authority".to_string(), Vec::new());
+    let allocation = CResourceFact::own_token(
+        CResourceFact::ALLOCATION_RESOURCE_NAME.to_string(),
+        vec![
+            CValue::Pointer(Pointer {
+                block: "allocation".into(),
+                offset: PointerOffsetTerm::Constant(0),
+            }),
+            int32(16),
+        ],
+    );
+    let allocation_view = allocation.core().expect("owned allocation has a view core");
+    let context = ResourceContext::new()
+        .unchecked_with_fact(authority.clone())
+        .unchecked_with_supported_facts(&authority, [allocation_view])
+        .with_cached_supported_expansion(&authority, vec![allocation.clone()]);
+
+    assert_eq!(
+        context.cached_support_exposing_fact(&allocation, &PureFactContext::new()),
+        Some(&authority),
+        "the exact core projection should index its certified owned expansion",
+    );
+}
+
+#[test]
 fn support_removal_visits_only_the_supported_projections() {
     const PROJECTION_COUNT: usize = 8;
     for size in [16_usize, 64, 256, 1024, 4096] {

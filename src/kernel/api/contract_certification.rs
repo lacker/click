@@ -453,6 +453,7 @@ fn load_fact_certifies_loadable(assumptions: &PureFactContext, goal: &Propositio
 /// already present in `assumptions`.
 pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
     assumptions: &PureFactContext,
+    memory: &CMemory,
     base: &Pointer,
 ) -> bool {
     if crate::instrumentation::deadline_exceeded() {
@@ -595,7 +596,29 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                             && matches!(premise, Proposition::ConditionIs(_, _))
                             && certification_proves_proposition(assumptions, premise)
                     });
-                    premises_hold && condition_fact_mentions_load_of(conclusion, base, assumptions)
+                    premises_hold
+                        && match conclusion {
+                            Proposition::CMemoryLoadable {
+                                memory: fact_memory,
+                                base: fact_base,
+                                bytes,
+                            } => {
+                                bytes.as_const() == Some(4)
+                                    && crate::kernel::reasoning::memory_range_still_available(
+                                        fact_memory,
+                                        memory,
+                                        fact_base,
+                                    )
+                                    && (canonicalize_pointer_loads(fact_base, 0)
+                                        == canonicalize_pointer_loads(base, 0)
+                                        || pointers_proven_equal_for_memory_resolution(
+                                            fact_base,
+                                            base,
+                                            assumptions,
+                                        ))
+                            }
+                            _ => condition_fact_mentions_load_of(conclusion, base, assumptions),
+                        }
                 })
         })
 }

@@ -1220,6 +1220,17 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// is output-sized Proof provenance, never semantic state in a cursor.
     pub(in crate::lang::click::proof) outcome_branch_decisions:
         Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
+    /// Path-local Surface lowerings aligned with terminal execution
+    /// candidates. A structural split may give the same Surface expression
+    /// different kernel spellings in its arms; retaining the persistent map
+    /// root per outcome lets finalization use that spelling without copying
+    /// the ambient fact context or reconstructing it from execution history.
+    pub(in crate::lang::click::proof) outcome_surface_propositions: Arc<Vec<SurfacePropositionMap>>,
+    /// Path-local program-point snapshots aligned with terminal execution
+    /// candidates. The shared execution retains only points common to every
+    /// arm; an outcome proof additionally needs the snapshots from its one
+    /// explicit branch lineage.
+    pub(in crate::lang::click::proof) outcome_program_point_states: Arc<Vec<ProgramPointStates>>,
     pub(in crate::lang::click::proof) last_step_delta: ExecutionProofStepDelta,
     pub(in crate::lang::click::proof) has_empty_execution_branch_leaf: bool,
     /// Whether a structured execution join (a `branch`, a case split, or a
@@ -1286,6 +1297,8 @@ impl ExecutionProofState {
             branch_surface_facts: PersistentOrderedSet::default(),
             branch_decisions: PersistentSequence::default(),
             outcome_branch_decisions: Arc::new(Vec::new()),
+            outcome_surface_propositions: Arc::new(Vec::new()),
+            outcome_program_point_states: Arc::new(Vec::new()),
             last_step_delta: ExecutionProofStepDelta::default(),
             has_empty_execution_branch_leaf: false,
             has_structured_branch_history: false,
@@ -1371,29 +1384,6 @@ struct ExecutionProofStepDelta {
     function_entry_prerequisites: Vec<Proposition>,
     function_entry_derivations: Vec<Theorem>,
     unfolded_predicates: Vec<String>,
-    statement_partition: Option<Arc<StatementSuccessorPartition>>,
-}
-
-/// Partition metadata attached only to the immediate successor of a checked
-/// statement step. It is proof bookkeeping, not semantic authority: both arm
-/// states and their polarity facts were already returned by the kernel-owned
-/// transition checker.
-#[derive(Clone)]
-struct StatementSuccessorPartition {
-    split: SplitId,
-    ids: [GoalId; 2],
-    condition: ConditionTerm,
-    base_facts: [ProofFacts; 2],
-    base_executions: [Arc<ExecutionProofState>; 2],
-    path_facts: [Vec<Proposition>; 2],
-    /// The facts the partitioning statement introduced on each lane (a
-    /// callee's instantiated `ensures`): the bounded evidence a later
-    /// proof-level case split uses to exclude a lane.
-    introduced_facts: [Vec<Proposition>; 2],
-    common_facts: ProofFacts,
-    parent_unfolds: PersistentOrderedSet<String>,
-    parent_execution: Arc<ExecutionProofState>,
-    execution_start_state: CState,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -1498,6 +1488,7 @@ struct OutcomePointData {
     result: Arc<CValue>,
     state: SharedValue<CState>,
     surface_propositions: SurfacePropositionMap,
+    program_point_states: ProgramPointStates,
     effect_facts: Arc<Vec<ExecutionPureFact>>,
     /// The path's non-effect execution facts, matching the resource-fold law's
     /// historical input exactly.

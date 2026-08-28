@@ -4,7 +4,6 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
     pub(in crate::lang::click::proof) execution: ExecutionProofState,
     pub(in crate::lang::click::proof) facts: ProofFacts,
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
-    pub(in crate::lang::click::proof) path: Option<(ConditionTerm, bool)>,
 }
 
 /// Checks one explicit statement transition from exactly the named surface
@@ -21,7 +20,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     proof_context: &ExecutionProofContext<'_>,
     requirement_pure_facts: &ProofFacts,
     context: Option<&PureFactContext>,
-) -> Result<Vec<CheckedStatementStep>, ClickError> {
+) -> Result<CheckedStatementStep, ClickError> {
     let function_block = proof_context.function_block;
     let function = proof_context.function;
     let parsed_function = proof_context.parsed_function;
@@ -114,7 +113,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
             explicit_premises.push(resource_fact);
         }
     }
-    let successors = execute_step_successors_from_execution_point(
+    let successor = execute_step_successor_from_execution_point(
         execution,
         proof_context,
         &explicit_premises,
@@ -127,13 +126,9 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         loop_step_policy,
         context,
     )?;
-    Ok(successors
-        .into_iter()
-        .map(|successor| CheckedStatementStep {
-            execution: successor.execution,
-            facts: requirement_pure_facts.with_statement_facts(successor.pure_facts),
-            added_facts: successor.introduced_facts,
-            path: successor.path,
-        })
-        .collect())
+    Ok(CheckedStatementStep {
+        execution: successor.execution,
+        facts: requirement_pure_facts.with_statement_facts(successor.pure_facts),
+        added_facts: successor.introduced_facts,
+    })
 }

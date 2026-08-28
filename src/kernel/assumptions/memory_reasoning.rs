@@ -203,7 +203,9 @@ impl PureFactContext {
         ranges.into_iter().any(|(_, range_base, range_bytes)| {
             self.proves_loadable_region_from_range(range_base, range_bytes, base, bytes)
         }) || bytes.as_const() == Some(4)
-            && crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_cell(self, base)
+            && crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_cell(
+                self, memory, base,
+            )
     }
 
     /// A loadable prefix followed immediately by another loadable region
@@ -355,6 +357,13 @@ impl PureFactContext {
         if bytes
             .as_const()
             .is_some_and(|bytes| memory.access_in_bounds(base, bytes))
+        {
+            return true;
+        }
+        if bytes.as_const() == Some(4)
+            && crate::kernel::api::contract_certification::quantified_int32_fact_certifies_loadable_cell(
+                self, memory, base,
+            )
         {
             return true;
         }
@@ -2096,18 +2105,10 @@ impl PureFactContext {
             return true;
         }
 
-        let pointer_range = CMemoryRange::new(
-            pointer.clone(),
-            Bitvector32Term::Constant(0),
-            Bitvector32Term::Constant(1),
-        );
-        if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
-            range,
-            &pointer_range,
-        ) {
-            return true;
-        }
-
+        // Direct address arithmetic is both stronger for the common
+        // same-allocation case and bounded independently of the number of
+        // available separation certificates. Keep the recursive certificate
+        // prover below as the fallback for genuinely indirect aliases.
         if let PointerOffsetTerm::Add(left, right) = &range.base.offset {
             let forward_offset = if self.decide(&ConditionTerm::pointer_offset_equal(
                 pointer.offset.clone(),
@@ -2160,6 +2161,18 @@ impl PureFactContext {
             {
                 return true;
             }
+        }
+
+        let pointer_range = CMemoryRange::new(
+            pointer.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(1),
+        );
+        if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+            range,
+            &pointer_range,
+        ) {
+            return true;
         }
 
         self.prop_facts.iter().any(|proposition| {
