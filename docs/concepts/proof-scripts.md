@@ -53,8 +53,8 @@ frame() using {
 ```
 
 An empty `using {}` block is valid. It means the simple rule needs no pure
-premises. `step()` takes no `using` block: it is simple, and executes the
-next statement with the whole proof context visible to the kernel.
+premises. `step()` is simple and executes the next statement with the whole
+proof context visible to the kernel.
 `execute()` and `execute_until(statement(N))` are its repetitions; expansion
 replaces them with the corresponding sequence of `step();` tactics.
 

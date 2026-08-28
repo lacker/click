@@ -1665,42 +1665,6 @@ fn execute_step_from_execution_point_selecting_path(
             && let Some(construction) = construction.as_mut()
         {
             let environments = construction.environments;
-            let mut prerequisite_derivations = Vec::new();
-            let mut exact_premises = Vec::new();
-            for transition in &transitions {
-                for derivation in &transition.prerequisite_derivations {
-                    if !prerequisite_derivations.contains(derivation) {
-                        prerequisite_derivations.push(derivation.clone());
-                    }
-                }
-                for fact in &transition.planning_premises {
-                    if !exact_premises.contains(fact) {
-                        exact_premises.push(fact.clone());
-                    }
-                }
-                for transport in &transition.fact_transports {
-                    if !transport.statement_local
-                        && exact_fact_is_available(&transport.source, available_pure_facts)
-                        && !exact_premises.contains(&transport.source)
-                    {
-                        exact_premises.push(transport.source.clone());
-                    }
-                    for premise in &transport.frame_premises {
-                        if exact_fact_is_available(premise, available_pure_facts)
-                            && !exact_premises.contains(premise)
-                        {
-                            exact_premises.push(premise.clone());
-                        }
-                    }
-                }
-                for obligation in &transition.obligations {
-                    if exact_fact_is_available(obligation.proposition(), available_pure_facts)
-                        && !exact_premises.contains(obligation.proposition())
-                    {
-                        exact_premises.push(obligation.proposition().clone());
-                    }
-                }
-            }
             let restore = apply_construction_point_view(
                 &mut execution.program_point_states,
                 &construction_point_overrides,
@@ -1715,8 +1679,6 @@ fn execute_step_from_execution_point_selecting_path(
                 arguments,
                 environments,
                 &ConstructionEvidence::CertifiedStatementStep {
-                    prerequisite_derivations,
-                    exact_premises,
                     planned_transition: None,
                 },
             );

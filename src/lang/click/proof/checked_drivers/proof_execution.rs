@@ -1185,8 +1185,8 @@ fn try_check_structural_function_proof_inner<'a>(
                     execution_region_leading_tactic(else_branch),
                 ) {
                     (Some(then_tactic), Some(else_tactic)) => match (
-                        source_successor_if_arm_step(then_tactic, condition, true),
-                        source_successor_if_arm_step(else_tactic, condition, false),
+                        source_successor_if_arm_step(then_tactic),
+                        source_successor_if_arm_step(else_tactic),
                     ) {
                         (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
                         _ => None,
@@ -1197,8 +1197,8 @@ fn try_check_structural_function_proof_inner<'a>(
                     let exact = proof.try_split_source_successor_if(
                         condition,
                         [
-                            (arm_steps[0].0, arm_steps[0].1, arm_steps[0].2.clone()),
-                            (arm_steps[1].0, arm_steps[1].1, arm_steps[1].2.clone()),
+                            (arm_steps[0].0, arm_steps[0].1),
+                            (arm_steps[1].0, arm_steps[1].1),
                         ],
                     )?;
                     if exact.is_some() {
@@ -1437,7 +1437,7 @@ pub(super) fn solve_nested_have<'a>(
 pub(in crate::lang::click::proof) fn preservation_smart_step<'a>(
     proof: Proof<'a>,
 ) -> Result<Proof<'a>, ClickError> {
-    let advanced = if let Some(stepped) = proof.try_smart_step()? {
+    let advanced = if let Some(stepped) = proof.try_statement_step()? {
         stepped
     } else {
         proof.apply_planned_smart_step(0)?
@@ -1867,28 +1867,15 @@ fn execution_region_leading_tactic(region: &InternalProofNode) -> Option<&Indexe
     tactics.first()
 }
 
-fn source_successor_if_arm_step(
-    indexed: &IndexedTactic,
-    condition: &ClickProposition,
-    take_then: bool,
-) -> Option<(usize, usize, Vec<ClickProposition>, bool)> {
+fn source_successor_if_arm_step(indexed: &IndexedTactic) -> Option<(usize, usize, bool)> {
     match &indexed.tactic {
-        ProofTactic::Step => Some((
-            indexed.index,
-            indexed.source_index,
-            vec![if take_then {
-                condition.clone()
-            } else {
-                negate_click_proposition(condition)
-            }],
-            true,
-        )),
+        ProofTactic::Step => Some((indexed.index, indexed.source_index, true)),
         _ => None,
     }
 }
 
 fn record_source_successor_smart_expansions(
-    arm_steps: &[(usize, usize, Vec<ClickProposition>, bool); 2],
+    arm_steps: &[(usize, usize, bool); 2],
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: Option<&ProofSite>,
     owning_source_index: usize,
@@ -1896,7 +1883,7 @@ fn record_source_successor_smart_expansions(
     let Some(site) = proof_site else {
         return;
     };
-    for (_, source_index, _, smart) in arm_steps {
+    for (_, source_index, smart) in arm_steps {
         if *smart
             && *source_index != owning_source_index
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
@@ -2145,8 +2132,8 @@ fn advance_focused_execution_region<'a>(
                 execution_region_leading_tactic(else_branch),
             ) {
                 (Some(then_tactic), Some(else_tactic)) => match (
-                    source_successor_if_arm_step(then_tactic, condition, true),
-                    source_successor_if_arm_step(else_tactic, condition, false),
+                    source_successor_if_arm_step(then_tactic),
+                    source_successor_if_arm_step(else_tactic),
                 ) {
                     (Some(then_step), Some(else_step)) => Some([then_step, else_step]),
                     _ => None,
@@ -2157,8 +2144,8 @@ fn advance_focused_execution_region<'a>(
                 let product = proof.try_split_source_successor_if(
                     condition,
                     [
-                        (arm_steps[0].0, arm_steps[0].1, arm_steps[0].2.clone()),
-                        (arm_steps[1].0, arm_steps[1].1, arm_steps[1].2.clone()),
+                        (arm_steps[0].0, arm_steps[0].1),
+                        (arm_steps[1].0, arm_steps[1].1),
                     ],
                 )?;
                 if product.is_some() {

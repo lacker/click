@@ -839,11 +839,6 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
         vec![&kernel]
     );
     assert_eq!(
-        spellings.current_c_variable_surface(&kernel, "x"),
-        Some(&current),
-        "an anchored spelling must not replace the current-local dependency spelling"
-    );
-    assert_eq!(
         spellings
             .checked_surface(&kernel, |surface| {
                 Ok(if surface == &current {

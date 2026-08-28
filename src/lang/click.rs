@@ -1077,18 +1077,6 @@ impl SurfacePropositionMap {
             .flat_map(PersistentSet::iter)
     }
 
-    pub(crate) fn current_c_variable_surface<'a>(
-        &'a self,
-        kernel: &Proposition,
-        name: &str,
-    ) -> Option<&'a ClickProposition> {
-        self.surfaces(kernel).find(|surface| {
-            let mut names = BTreeSet::new();
-            collect_current_proposition_variables(surface, &mut names);
-            names.contains(name)
-        })
-    }
-
     #[cfg(test)]
     pub(crate) fn current_c_variable_lookup_comparisons(&self, name: &str) -> usize {
         self.storage

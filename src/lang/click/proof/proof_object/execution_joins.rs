@@ -1953,7 +1953,7 @@ impl<'a> Proof<'a> {
             if proof.is_at_function_exit() {
                 return Ok(Some(proof));
             }
-            if let Some(next) = proof.try_indexed_execute_step()? {
+            if let Some(next) = proof.try_statement_step()? {
                 proof = next;
                 continue;
             }
@@ -1987,7 +1987,7 @@ impl<'a> Proof<'a> {
     /// Validates and applies one already-expanded logical execution arm.
     ///
     /// Terminal and decided branches render one structural branch-entry
-    /// `step using` (two for an empty C arm). The split already performed
+    /// `step()` (two for an empty C arm). The split already performed
     /// those transitions, so this checks the exact Surface operations against
     /// the C branch and applies only the remaining body steps to the focused
     /// sibling. No certificate is constructed or interpreted.
@@ -2337,7 +2337,7 @@ impl<'a> Proof<'a> {
     /// execute-to-exit operation at the arm's typed boundary continues
     /// privately into the parent's continuation, exactly as the container
     /// form allowed, using only the split record's checked continuation
-    /// data. Checked `step using` transitions stay refused at the boundary,
+    /// data. Checked statement transitions stay refused at the boundary,
     /// so only terminal execution can pass it.
     pub(in crate::lang::click::proof) fn continue_arm_into_parent_frontier(
         &self,
@@ -2557,8 +2557,7 @@ impl<'a> Proof<'a> {
     }
 }
 
-/// Whether an arm's leading steps are its checked branch-entry steps. A bare
-/// `step()` is the entry step that lists no premise.
+/// Whether an arm's leading steps are its checked branch-entry steps.
 fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]) -> bool {
     steps.len() >= expected.len()
         && steps

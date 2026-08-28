@@ -103,8 +103,6 @@ pub(super) use timing::{SourceTacticClass, source_tactic_class};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click::proof) enum ConstructionEvidence {
     CertifiedStatementStep {
-        prerequisite_derivations: Vec<PropositionDerivation>,
-        exact_premises: Vec<Proposition>,
         planned_transition: Option<usize>,
     },
     CertifiedLoopSummaryStep {
@@ -1075,30 +1073,6 @@ mod certificate_tests {
             .expect("the late program point should remain a candidate");
 
         assert!(position > 8, "late valid candidates must not be truncated");
-    }
-
-    #[test]
-    fn fresh_heap_separation_is_not_written_as_an_ambient_step_premise() {
-        let range = |block| {
-            CResource::Memory(CMemoryRange::new(
-                Pointer {
-                    block,
-                    offset: PointerOffsetTerm::Constant(0),
-                },
-                Bitvector32Term::Constant(0),
-                Bitvector32Term::Constant(1),
-            ))
-        };
-        let separation = Proposition::CResourceSeparate {
-            left: range(PointerBlock::ExternalArgument),
-            right: range(PointerBlock::Heap(7)),
-        };
-
-        assert!(PureFactContext::new().proves(&separation));
-        assert!(
-            !statement_step_permission_needs_surface_premise(&separation, &[]),
-            "fresh heap provenance is replayable without a potentially stale surface form"
-        );
     }
 
     fn linear_tactic_coordinates(node: &InternalProofNode) -> Vec<(usize, usize)> {

@@ -6,14 +6,12 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
 }
 
-/// Checks one explicit statement transition from exactly the named surface
-/// premises and atomically advances the caller-selected execution successor.
+/// Checks one statement transition in the complete proof context and
+/// atomically advances the caller-selected execution successor.
 ///
 /// This is the audited semantic operation shared by explicit source replay
-/// and the checked proof-object frontier. It performs no premise search: the
-/// selected surface premises are lowered, checked, and used as the only facts
-/// transported across the statement boundary before ambient facts are
-/// restored at their original snapshots.
+/// and the checked proof-object frontier. It performs no premise selection;
+/// the proof's facts and resources are the transition context.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn check_statement_step(
     execution: &mut ExecutionProofState,
@@ -42,10 +40,8 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         StatementPrerequisitePolicy::Explicit
     };
     let loop_step_policy = LoopStepPolicy::EnterBody;
-    // Resuming from a completed branch region reaches this
-    // statement without recording its entry snapshot; a premise
-    // written `at(statement(N).entry, ...)` for the statement this
-    // step crosses must still lower.
+    // Resuming from a completed branch region reaches this statement without
+    // recording its entry snapshot. Later facts may still name this boundary.
     record_current_statement_entry(
         &execution.frontier,
         &mut execution.program_point_states,
@@ -60,7 +56,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     let pre_state = proof_context
         .old_reference_state(&execution.frontier, state)
         .clone();
-    let mut explicit_premises = Vec::new();
+    let mut step_facts = Vec::new();
     for case in &execution.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
@@ -96,27 +92,27 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         };
         if requirement_pure_facts
             .replay_available_across_effects(&branch_fact, &execution.effect_facts)
-            && !explicit_premises.contains(&branch_fact)
+            && !step_facts.contains(&branch_fact)
         {
-            explicit_premises.push(branch_fact);
+            step_facts.push(branch_fact);
         }
     }
-    let explicit_assumptions = match context {
+    let step_assumptions = match context {
         Some(context) => context.clone(),
-        None => assumptions_from_propositions(&explicit_premises),
+        None => assumptions_from_propositions(&step_facts),
     };
     for resource_fact in state
         .resources()
-        .observable_facts_assuming_valid(&explicit_assumptions)
+        .observable_facts_assuming_valid(&step_assumptions)
     {
-        if !explicit_premises.contains(&resource_fact) {
-            explicit_premises.push(resource_fact);
+        if !step_facts.contains(&resource_fact) {
+            step_facts.push(resource_fact);
         }
     }
     let successor = execute_step_successor_from_execution_point(
         execution,
         proof_context,
-        &explicit_premises,
+        &step_facts,
         tactic_name,
         prerequisite_policy,
         // A step transports nothing: the kernel keeps the names of cells it

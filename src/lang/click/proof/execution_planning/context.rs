@@ -419,46 +419,41 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     arguments: &[CExpression],
     mut construction: Option<Construction<'_>>,
 ) -> Vec<ConstructionEvidence> {
-    let mut exact_premises = transition.planning_premises.clone();
-    for transport in &transition.fact_transports {
-        if !transport.statement_local && !exact_premises.contains(&transport.source) {
-            exact_premises.push(transport.source.clone());
-        }
-        for premise in &transport.frame_premises {
-            if !exact_premises.contains(premise) {
-                exact_premises.push(premise.clone());
-            }
-        }
-    }
-    for obligation in &transition.obligations {
-        if !exact_premises.contains(obligation.proposition()) {
-            exact_premises.push(obligation.proposition().clone());
-        }
-    }
-    // A definedness fact can select the safe evaluator path directly, so it
-    // appears as a path fact rather than an outstanding obligation. When the
-    // certificate already held that exact fact, record it as a consumed
-    // premise instead of treating the evaluator's identical output as newly
-    // discovered information.
-    for fact in &transition.path_facts {
-        if execution.surface_record.certificate_facts.contains(fact)
-            && !exact_premises.contains(fact)
-        {
-            exact_premises.push(fact.clone());
-        }
-    }
     let planned_transition = execution.planned_statement_transitions.len();
     let statement_operation = match loop_step_policy {
         LoopStepPolicy::EnterBody => ConstructionEvidence::CertifiedStatementStep {
-            prerequisite_derivations: transition.prerequisite_derivations.clone(),
-            exact_premises,
             planned_transition: Some(planned_transition),
         },
-        LoopStepPolicy::ApplyVerifiedRule => ConstructionEvidence::CertifiedLoopSummaryStep {
-            prerequisite_derivations: transition.prerequisite_derivations.clone(),
-            exact_premises,
-            planned_transition: Some(planned_transition),
-        },
+        LoopStepPolicy::ApplyVerifiedRule => {
+            let mut exact_premises = transition.planning_premises.clone();
+            for transport in &transition.fact_transports {
+                if !transport.statement_local && !exact_premises.contains(&transport.source) {
+                    exact_premises.push(transport.source.clone());
+                }
+                for premise in &transport.frame_premises {
+                    if !exact_premises.contains(premise) {
+                        exact_premises.push(premise.clone());
+                    }
+                }
+            }
+            for obligation in &transition.obligations {
+                if !exact_premises.contains(obligation.proposition()) {
+                    exact_premises.push(obligation.proposition().clone());
+                }
+            }
+            for fact in &transition.path_facts {
+                if execution.surface_record.certificate_facts.contains(fact)
+                    && !exact_premises.contains(fact)
+                {
+                    exact_premises.push(fact.clone());
+                }
+            }
+            ConstructionEvidence::CertifiedLoopSummaryStep {
+                prerequisite_derivations: transition.prerequisite_derivations.clone(),
+                exact_premises,
+                planned_transition: Some(planned_transition),
+            }
+        }
     };
     execution
         .planned_statement_transitions
@@ -603,8 +598,6 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         arguments,
         environments,
         &ConstructionEvidence::CertifiedStatementStep {
-            prerequisite_derivations: transition.prerequisite_derivations.clone(),
-            exact_premises,
             planned_transition: None,
         },
     );

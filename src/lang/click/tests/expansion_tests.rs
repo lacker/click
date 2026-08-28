@@ -11689,7 +11689,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
-            .expect("the fact selected by `step() using` should reach the current snapshot");
+            .expect("the fact retained by `step()` should reach the current snapshot");
     let expanded_have = &expanded[expanded
         .find("have p[0] == 7")
         .expect("expanded proof should retain the selected have")
@@ -12486,15 +12486,14 @@ fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
     });
 }
 
-/// A `step() using` certificate lists every fact its frame check consumed.
+/// A statement transition sees the complete proof context while checking its
+/// frame.
 /// `borrowed_slice_buffer_pipeline` carries `data[start] == replacement`
 /// across the `return` call's `object(owner)` effect: the frame check locates
 /// `data + start` inside the composite buffer's owned range through the
-/// contract bounds, so the emitted step has to list those bounds — without
-/// them, replay leaves the fact at its pre-call name and the next step's
-/// exact premise is unavailable.
+/// contract bounds without encoding them in the emitted statement step.
 #[test]
-fn expanded_step_lists_the_bounds_its_frame_check_consumed() {
+fn expanded_step_uses_the_whole_context_for_frame_evidence() {
     let click_source = include_str!("../../../../examples/borrowed-slice/borrowed_slice.click");
     let c_sources = [
         (

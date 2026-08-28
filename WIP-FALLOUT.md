@@ -211,7 +211,7 @@ variables, separation have).
 
 ## Load-variable chain closure (3 -> 1)
 
-Exact-premise checks in three consumers (step-using replay availability,
+Exact-premise checks in three consumers (statement-step replay availability,
 restricted-simp premise vetting in have proofs and its certification-side
 twin, and `rewrite`'s exact-equality check) now close over pointer-offset
 equalities chained through load variables
@@ -224,7 +224,7 @@ transport step — its stale assertion was updated (a legitimate
 certificate-spelling simplification, per the fallout-audit criterion).
 
 Hard-won debugging note: adding ordinary locals to
-`check_step_using_facts` overflowed the stack in
+`check_statement_step` overflowed the stack in
 selected_pure_case_split_simp_expands_by_removal — that function sits in
 a deep expansion-replay recursion, and in debug builds every added
 frame byte counts. The closure call lives behind an #[inline(never)]
@@ -303,14 +303,14 @@ certified connection. Grounded findings:
   so the current-point load variable is never connected.
 - A transport hook in `transport_framed_atomic_bitvector`'s Variable arm
   (transport the registered load, re-canonicalize at the post snapshot)
-  did NOT fix the example and DID break box_pipeline's step()-using
+  did NOT fix the example and DID break box_pipeline's statement-step
   premise — wrong site; reverted. The respelling that matters happens
   where step introductions/postcondition facts are carried across the
-  statement boundary (check_step_using_facts' introduced-facts path or
+  statement boundary (check_statement_step' introduced-facts path or
   the kernel drain's cross-statement fact transport), not in that
   helper.
 
-Next session: find where a `step() using`'s introduced facts and call
+Next session: find where a `step()`'s introduced facts and call
 postconditions get re-spelled to the post-statement snapshot at base
 (search for the old load-respelling on the introduction path, e.g.
 `replay_available_across_effects` / drain transported facts), and add
@@ -882,7 +882,7 @@ What proof 24 actually needs is the recorded store equation transported
 to the query's snapshot: `value == load(m_fact, p)` is available and the
 query is `value == load(m_query, p)`, with both true because the store
 wrote `value` there. That is fact transport across effects — the
-machinery `step() using` has through
+machinery `step()` has through
 `ProofFacts::replay_available_across_effects` — and `rewrite`'s
 availability check receives only a `&[Proposition]`, with no effect
 facts and no ProofFacts, so it cannot reach it. Closing owned-string

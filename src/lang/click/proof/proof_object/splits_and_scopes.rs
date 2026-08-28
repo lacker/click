@@ -136,7 +136,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn try_split_source_successor_if(
         &self,
         condition: &ClickProposition,
-        arm_steps: [(usize, usize, Vec<ClickProposition>); 2],
+        arm_steps: [(usize, usize); 2],
     ) -> Result<Option<(Self, ExecutionProofCaseSplit<'a>)>, ClickError> {
         let Some(execution) = self.execution() else {
             return Ok(None);
@@ -178,10 +178,10 @@ impl<'a> Proof<'a> {
         )?;
         let mut advanced = split;
         for (arm_index, take_then) in [(0usize, true), (1usize, false)] {
-            let (tactic_index, source_index, _premises) = &arm_steps[arm_index];
+            let (tactic_index, source_index) = arm_steps[arm_index];
             advanced = advanced
                 .focus_execution_if_arm(&record, take_then)?
-                .apply_step_at(SimpleProofStep::Step, *tactic_index, *source_index)?;
+                .apply_step_at(SimpleProofStep::Step, tactic_index, source_index)?;
         }
         Ok(Some((advanced, record)))
     }

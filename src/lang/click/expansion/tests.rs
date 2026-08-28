@@ -652,7 +652,6 @@ int32 caller(int32 x) {
     // Both statements run in the whole context; the call's precondition is
     // proved from it and the expansion names no premise.
     assert_eq!(expanded.matches("step();").count(), 3, "{expanded}");
-    assert!(!expanded.contains("step() using"), "{expanded}");
     verify_c0_sources(&expanded, &sources).expect("the call steps should replay");
 }
 
@@ -697,7 +696,6 @@ int32 caller(struct box* p, int32 x) {
     // Both statements run in the whole context; the call's memory-reading
     // precondition is proved from it and the expansion names no premise.
     assert_eq!(expanded.matches("step();").count(), 3, "{expanded}");
-    assert!(!expanded.contains("step() using"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
         .expect("the condition and its ambient view should verify normally");
 }
@@ -1029,7 +1027,6 @@ int32 inspect(struct box* owner) {
     // predicate facts are visible to it without being spelled as premises,
     // and the expansion keeps the step as written.
     assert!(expanded.contains("step();"), "{expanded}");
-    assert!(!expanded.contains("step() using"), "{expanded}");
     verify_c0_sources(&expanded, &[("inspect.c", c_source)])
         .expect("the expansion with unfolded facts in context should verify");
 }

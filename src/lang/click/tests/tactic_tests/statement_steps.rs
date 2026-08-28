@@ -335,7 +335,7 @@ fn simple_statement_transition_does_not_transport_facts_automatically() {
 }
 
 #[test]
-fn step_using_limits_execution_to_explicit_pure_premises() {
+fn step_executes_with_the_whole_proof_context() {
     let c_source = r#"
             int32 increment(int32 x) {
                 return x + 1;
@@ -354,7 +354,7 @@ fn step_using_limits_execution_to_explicit_pure_premises() {
         "#;
 
     verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect("an explicit premise should justify one contextual execution transition");
+        .expect("the whole proof context should justify one execution transition");
 }
 
 #[test]

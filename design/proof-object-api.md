@@ -2,6 +2,11 @@
 
 > MIGRATION COMPLETE (2026-08-20). This file is the architectural design and
 > migration history; it is no longer an open issue.
+>
+> Statement execution has since consolidated on the premise-free
+> `SimpleProofStep::Step`. Historical progress notes use that current name;
+> any description of statement-premise selection is superseded by the
+> whole-context rule in the completion audit.
 
 ## Completion audit
 
@@ -345,7 +350,7 @@ instance: the prover returns a conclusion and premises but discards the rule
 steps it used, so certificate construction searches again. The quarantined
 owned-vector smart `step()` is another: planning constructs and executes a
 transition, then expansion validation times out while executing the generated
-`step() using` a second time even though that explicit simple step is fast
+`step()` a second time even though that explicit simple step is fast
 when used directly.
 
 ## Canonical vocabulary
@@ -553,7 +558,7 @@ Current smart tactics fit this model:
 - `simp` searches among explicit normalization, extraction, rewrite, logical,
   and theorem-application steps;
 - `step()` searches for prerequisites and explicit transports, then applies
-  `StepUsing`;
+  `Step`;
 - `execute()` and `execute_until()` repeatedly search for and apply statement
   steps across open execution goals;
 - `frame()` searches for a region and premises, then applies `FrameUsing`;
@@ -687,79 +692,12 @@ Explicit `contradiction(fact)` is also checked by `Proof`: the named fact and
 its exact negation or opposite condition polarity must both be present in the
 persistent fact index before the goal closes.
 
-The explicit `StepUsing` implementation is now one named
-`check_step_using` operation rather than an inline tactic-dispatch branch. It
-owns premise lowering, exact/effect availability checks, selected fact
-transport, statement execution, and the resulting frontier/fact update. This
-is the shared audited transition the execution-goal `Proof` slice will call;
-explicit source replay already delegates to it.
-
-Bare explicit `step()` now enters that same execution-frontier `Proof` and
-submits the source-distinct `SimpleProofStep::Step`, whose checked transition
-delegates to the same empty-premise statement judgment as `StepUsing([])`.
-It no longer advances `ProofReplayContext` through a separate mutable
-dispatcher path; the empty premise set preserves bare `step()`'s
-exact-prerequisite and no-automatic-transport semantics, while the checked
-successor owns the state, fact delta, and exact retained source step. The
-multi-size statement regression now pins that exact certificate as well as
-the existing logarithmic allocation and ancestor-isolation properties.
-
-Linear smart `step()` plans that select exactly one `StepUsing` now move the
-outer execution context into an execution-frontier `Proof`, apply the shared
-checker through the ordinary immutable successor API, move the checked
-successor back out, and append its retained step. They no longer use
-`complete_smart_tactic` or ordinary per-tactic replay. Multi-step and
-branching plans remain on the legacy path pending structured proof goals.
-
-Linear smart `step()` now searches on `Proof` directly when its complete
-premise set is knowable before execution: the statement expression's exact
-definedness requirements. The query uses the persistent atomic-reasoning and
-surface-spelling indexes to select the requirements' explicit context
-premises, then submits one `StepUsing` to the same `Proof`; the C transition
-runs only in `apply_step`, and the successor retains that operation as both
-semantic state and certificate. The path admits fact-free assignments and
-returns, plus signed-overflow cases such as `return x + 1`, but only when those
-selected premises are the complete ambient proof-fact set and there are no
-effect or resource facts to preserve. Branch and loop frontiers remain on
-their structural paths. A rejected candidate leaves the root intact and falls
-through to the richer transport planner; deadline failure is not swallowed as
-rejection.
-
-Local assignment is the first dependency-indexed exception to the complete-
-ambient-set restriction. `SurfacePropositionMap` incrementally indexes kernel
-facts by each unanchored current C local in their checked Click spellings. A
-smart assignment probes only the assigned name, adds those exact facts to its
-`StepUsing`, and leaves every unrelated fact shared in the ancestor. Explicit
-`old(...)` and `at(...)` spellings are excluded from the current-local bucket;
-if a kernel fact has both current and anchored spellings, selection retains
-the current one. The index is persistent, so recording one lowering or
-forking a proof copies only logarithmic paths. All three surface indexes live
-behind one shared storage pointer, keeping `SurfacePropositionMap` smaller than
-its former two-inline-map representation; the deep pure case-split canary
-caught the stack regression from initially placing the new map inline.
-
-Focused counter regressions require zero mutable planning transitions for
-the empty assignment/return path and the overflow-premise return, and
-expansion independently verifies both retained forms. The existing
-16-through-4096 unrelated-fact curve requires a generic ineligible query to
-reject without allocating persistent fact nodes, and a separate assignment
-curve requires successful selection/update to stay logarithmic while sharing
-the complete unrelated fact context. A 16-through-4096-name curve also bounds
-the local-dependency lookup itself by persistent-index height. Memory writes,
-calls, and other statements with unrelated facts still retain automatic
-transport planning because a current or later postcondition may depend on
-facts that smart `step()` must carry forward. This is the first
-execution search path where smart selection operates on proof objects, not
-merely where planner output is checked by one afterward.
-
-Linear `execute()` and `execute_all_paths()` plans composed entirely of one or
-more `StepUsing` operations now use the same checked execution `Proof` path.
-The proof owns the whole accepted sequence and exports its retained
-certificate once; mixed and structured plans still fall back.
-
-Linear `execute_until(...)` plans composed entirely of `StepUsing` operations
-also use the execution `Proof`, with the same retained-certificate and
-legacy-fallback rules.
+Statement execution now has one checked operation, `check_statement_step`.
+`SimpleProofStep::Step` carries no premise payload: it executes the next C
+statement in the complete Proof context and retains the resulting frontier and
+output-sized fact delta. Smart `step()`, `execute()`, and `execute_until()` all
+advance only through this operation; rejected candidates leave their root
+unchanged.
 
 Execution-frontier `Proof` now also checks `TransportUsing`, updating the
 owned exact fact set and surface lowerings without advancing C. Linear smart
@@ -917,32 +855,11 @@ fork/join by logarithmic persistent-node growth and executes the retained
 continuation afterward; the selected-source regression also forbids ordinary
 surface-certificate replay.
 
-Statement certification now exposes the exact facts emitted by the checked
-transition as an output-sized semantic delta. Snapshot transports rewrite
-that delta while they are already being certified; `step using` therefore
-does not rediscover additions by diffing its complete successor against the
-ambient context it restores. Execution-frontier `Proof` retains that delta as
-`added_facts`, and a 16-through-4096 unrelated-fact regression confirms the
-reported statement output is identical at every context size. This is the
-arm-local fact input required by the next nonempty execution-branch join; the
-statement transition now updates that `ProofFacts` successor persistently as
-described below.
-
-`StepUsing` now has a `ProofFacts`-native checked operation. Explicit premise
-lowering reuses the persistent kernel assumption context; exact,
-materialization-equivalent, condition-polarity, and cross-snapshot
-availability use bounded persistent index probes instead of scanning the
-ambient context. Snapshot-blind buckets only select same-shape candidates,
-which are still decided by the kernel snapshot bridge. The selected successor
-facts are inserted by output delta, and persistent prefix batches preserve the
-existing semantic order in which transported successor spellings precede
-ambient old-snapshot facts. Explicit source `step() using`, smart execution,
-and structured execution arms now all enter that operation only through
-`Proof::apply_step`; the obsolete vector adapter has been deleted. A
-deterministic 16-through-4096 regression checks a fixed explicit statement and
-retained certificate under unrelated facts with the original logarithmic
-allocation bounds; the complete library expansion suite pins polarity,
-snapshot, compound-fact, and successor-order behavior.
+Statement certification exposes the exact facts emitted by the checked transition as
+an output-sized semantic delta. `ProofFacts` applies that delta persistently,
+and the statement successor remains forkable without cloning unrelated facts
+or semantic state. Statement steps carry no selected-premise representation;
+all facts and resources already owned by the Proof form their checking context.
 
 `TransportUsing` now uses the same persistent boundary. `ProofFacts` retains
 incrementally built restricted contexts for implicit frame facts and direct
@@ -964,7 +881,7 @@ backtracking. A multi-size regression retains the transport ancestor and
 checks that unrelated C state, certificate history, and effect history remain
 shared.
 
-`StepUsing` has now crossed that same boundary. `CState` is a shallow value
+`Step` has now crossed that same boundary. `CState` is a shallow value
 whose local, memory, resource, and counted-population storage is internally
 shared, so cloning the execution wrapper does not clone complete semantic
 state. The checked statement mutates only its successor, the ancestor remains
@@ -1080,7 +997,7 @@ than becoming proof authority. A 16-through-4096 regression holds the step
 fixed while growing unrelated facts and records no persistent fact updates.
 
 The execution branch container now accepts linear arm bodies made of
-`StepUsing`, `TransportUsing`, `UnfoldPredicate`, and `ApplyTheoremUsing`, and
+`Step`, `TransportUsing`, `UnfoldPredicate`, and `ApplyTheoremUsing`, and
 can run smart `step()` directly against an arm's owned `Proof`. Each arm
 advances through the ordinary checked operation and accumulates only its fact
 and execution-effect deltas. Predicate unfold also returns its exact persistent-fact,
@@ -1752,10 +1669,10 @@ empty C branch inside `open`, observes no ordinary construction replay, pins
 the nested certificate shape, and independently verifies expansion. The
 checked join now feeds its returned scope body back into the same structural
 driver, so a following supported continuation remains on `Proof`; scoped
-smart `step()` selects its concrete `StepUsing` on that child and retains the
+smart `step()` selects its concrete `Step` on that child and retains the
 accepted descendant directly. The regression keeps the return step inside
-the scope and pins the resulting `Branch; StepUsing` child certificate.
-Scoped branches now also retain a one-feasible `If; StepUsing` child: smart
+the scope and pins the resulting `Branch; Step` child certificate.
+Scoped branches now also retain a one-feasible `If; Step` child: smart
 arm steps use the contextual indexed selector, the scope accepts the decided
 Proof as one direct successor, and ordinary verification plus independent
 expansion avoid construction replay. Assertions and structural arm bodies
@@ -1763,7 +1680,7 @@ still take the legacy path.
 
 Straight-line smart `execute()` inside an open resource scope now searches on
 the scope's checked child `Proof` itself. The indexed statement query selects
-one explicit `StepUsing`, submits it immediately through `apply_step`, and the
+one explicit `Step`, submits it immediately through `apply_step`, and the
 executor repeats only over the returned descendant; it never advances a
 planning clone or reconstructs steps from semantic aftermath. The scope path
 is selected only when at least one checked statement reaches function exit,
@@ -1860,7 +1777,7 @@ resource transition for each of the two outcomes.
 
 Scoped smart `execute()` now drives a terminal C `if` through the existing
 `ExecutionProofBranches` container when both arms are straight-line statement
-frontiers. Each arm repeatedly selects and applies `StepUsing`, the terminal
+frontiers. Each arm repeatedly selects and applies `Step`, the terminal
 join retains the checked arm certificates, and a following common frame
 continues on the joined Proof. `execute` has a distinct indexed selection
 policy that carries unrelated facts, memory resources, prior effect facts,
@@ -1931,8 +1848,8 @@ existing `ready_bundle` regression can consume different path tokens, fold
 the same composite in both arms, and retain its `Branch` directly. Structural
 preflight is separate from the completed-arm ownership check, so an exported
 resource may be established inside the arms. Contextual arm `step()` selects
-its explicit `StepUsing` against the owned Proof even when unrelated resources
-remain present; the retained arms are exactly `StepUsing; FoldResource`, with
+its explicit `Step` against the owned Proof even when unrelated resources
+remain present; the retained arms are exactly `Step; FoldResource`, with
 no reconstructed intermediate `have`. A path-sensitive regression counts the
 checked source join itself, ordinary verification observes no
 surface-certificate replay, and expansion independently re-verifies the
@@ -2081,19 +1998,19 @@ result-aware point Proof.
 
 Straight-line `execute_until(...)` now stays on that common successor as well.
 The bounded search is a Proof operation shared with resource scopes: it
-resolves the named frontier read-only, selects each concrete `StepUsing`, and
+resolves the named frontier read-only, selects each concrete `Step`, and
 advances only through the returned checked descendant. The scope adapter
 receives the same operation's output-sized fact delta rather than maintaining
 a second search loop. A source regression joins a real two-arm selected value,
 retains a common nested theorem proof, executes a meaningful checked increment
 up to the named return statement, and independently verifies the resulting
-`Branch; Have; StepUsing` expansion. Unsupported or branched prefixes still
+`Branch; Have; Step` expansion. Unsupported or branched prefixes still
 discard the candidate and resume through compatibility search from the
 unchanged root.
 
 Linear `execute()` and `execute_all_paths()` now use the same Proof-owned
 search on a common branch successor. The former scope-only loop is one shared
-operation: each straight-line statement applies its selected `StepUsing`, and
+operation: each straight-line statement applies its selected `Step`, and
 an encountered terminal C branch composes through the audited execution-branch
 container. Search publishes a descendant only at function exit; scope callers
 also receive its output-sized introduced-fact delta. A source regression joins
@@ -2113,7 +2030,7 @@ reproduction.
    replay.
 3. Add typed goal splitting, scopes, and persistent structured certificates;
    migrate logical smart `simp` paths that create subgoals.
-4. Migrate smart `step()` so it chooses a concrete `StepUsing` before the
+4. Migrate smart `step()` so it chooses a concrete `Step` before the
    semantic transition. Remove planning-only statement advancement and
    after-the-fact `ConstructionEvidence` lowering for that path.
 5. Migrate `execute`, `execute_until`, `frame`, loops, and `auto` onto the
@@ -2157,7 +2074,7 @@ Each migrated vertical slice needs all of these checks:
    provenance except through the public proof-object operations.
 
 For smart `step()`, retain the owned-vector isolation: the exact generated
-`step() using` is a fast simple step, and migrated ordinary verification must
+`step()` is a fast simple step, and migrated ordinary verification must
 perform that successful semantic transition once. A separate explicit
 expansion check must still reject a corrupted printed certificate.
 
@@ -2238,13 +2155,13 @@ transactionality, and the shared 16-through-4096 curve are pinned.
 
 Top-level `execute()` and `execute_all_paths()` now first try the immutable
 execution-frontier `Proof` for the already-audited exact-context subset. Each
-candidate statement advances only through `Proof::apply_step(StepUsing(...))`;
+candidate statement advances only through `Proof::apply_step(Step(...))`;
 a structural C `if` opens the audited execution branch container, checks both
 terminal arms, and joins their exact retained certificates. A successful
 sequence exports its already-checked descendant and retained structured
 certificate. The obsolete straight-line-only production query has been
 deleted. Terminal joins now put the exact positive or negative C path
-condition in each arm's entry `StepUsing`, matching decided branches instead
+condition in each arm's entry `Step`, matching decided branches instead
 of relying on an enclosing logical `if` as execution authority.
 
 A pending `malloc` success/failure choice is a separate execution split that
@@ -2260,7 +2177,7 @@ restored the pointer-sharing root for the compatibility planner. Standalone
 `step()` now also uses the broader checked selector when
 the root has unrelated scalar facts: those facts remain structurally shared,
 while only exact definedness and current-local dependencies enter the retained
-`StepUsing`. Resource contexts still decline this path because their
+`Step`. Resource contexts still decline this path because their
 planner-selected evidence is not represented here. Focused regressions require
 zero mutable planning transitions and no ordinary certificate replay for both
 the fact-free linear and branched `execute` cases and a scalar-root-fact
@@ -2512,7 +2429,7 @@ proof per outcome until typed outcome proposition goals migrate into `Proof`.
 ### Progress (2026-08-18: resource-scoped smart statement steps)
 
 A bare `step()` inside a checked composite-resource scope now selects and
-applies its concrete `StepUsing` on that scope's owned `Proof`. Definedness
+applies its concrete `Step` on that scope's owned `Proof`. Definedness
 that follows directly from the resource context no longer needs a fabricated
 standalone Surface proposition: the selector probes the explicit empty
 candidate through `apply_step`, and a rejection leaves the scope root
@@ -2521,7 +2438,7 @@ its exact premise list, so ordinary verification neither runs a mutable
 planning transition for that source `step()` nor enters compatibility replay.
 
 The existing 16-through-4096 open-scope curve now exercises this smart
-selection with unrelated ambient facts and pins the retained `StepUsing`
+selection with unrelated ambient facts and pins the retained `Step`
 inside the scope certificate. The snapshot-transport source regression also
 attributes planning transitions by claim and tactic, independently verifies
 the expansion, and rejects any compatibility replay for its resource-scoped
@@ -2541,7 +2458,7 @@ by `Proof`; it is not approximated by harvesting ambient resource facts.
 An individual effect proof whose flat script executes to function exit and
 ends in `frame()` now searches the complete script on one immutable `Proof`
 before publishing any descendant. Every selected statement is retained as
-its checked `StepUsing`; the terminal smart frame selects its contextual
+its checked `Step`; the terminal smart frame selects its contextual
 `Have` and `FrameUsing` certificate and applies those steps to the same
 lineage. If execution, continuation, or frame search misses, the complete
 candidate is discarded and the unchanged root remains available for the
@@ -2561,7 +2478,7 @@ The motivating `execute(); frame();` mutable-effect regression now requires
 zero mutable planning transitions and no smart-tactic compatibility replay
 during ordinary verification. Its retained simple certificate is still
 independently checked by the whole-claim gate and by source expansion, but
-that check performs no search: it consumes the already-selected `StepUsing`,
+that check performs no search: it consumes the already-selected `Step`,
 theorem-backed `Have`, and exact `FrameUsing` operations.
 
 The same transaction now covers grouped effect scripts. Contextual frame

@@ -32,15 +32,7 @@ impl<'a> Proof<'a> {
                 Some(current) if current < target => {}
                 Some(_) | None => return Ok(None),
             }
-            // The first statement must be independent of unrelated facts in
-            // the inherited root context. After it advances, the descendant
-            // owns an explicit output-sized `added_facts` delta; the checked
-            // execute selector carries only that delta through later steps.
-            let next = if advanced {
-                proof.try_indexed_execute_step()?
-            } else {
-                proof.try_indexed_statement_step()?
-            };
+            let next = proof.try_statement_step()?;
             let Some(next) = next else {
                 return Ok(None);
             };
@@ -77,7 +69,7 @@ impl<'a> Proof<'a> {
         let mut introduced_facts = Vec::new();
         let mut advanced = false;
         while !proof.is_at_function_exit() {
-            let next = if let Some(next) = proof.try_indexed_execute_step()? {
+            let next = if let Some(next) = proof.try_statement_step()? {
                 next
             } else {
                 if !proof.is_at_execution_branch()? {

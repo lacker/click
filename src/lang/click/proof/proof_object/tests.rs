@@ -7778,7 +7778,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
 }
 
 #[test]
-fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
+fn statement_assignment_step_ignores_unrelated_proof_facts() {
     let click_file = crate::lang::click::parse(
         r#"
             int32 set_one(int32 x) {
@@ -7802,7 +7802,7 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
 
     for size in [16_u32, 64, 256, 1024, 4096] {
         let root = Proof::for_execution_frontier(
-            "indexed local assignment",
+            "contextual local assignment",
             0,
             ExecutionProofState::at_entry(
                 CState::new(),
@@ -7828,9 +7828,9 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
         );
         let retained_root = root.clone();
         let before = fact_node_allocations();
-        let selected = root
-            .try_indexed_statement_step()
-            .expect("indexed assignment selection should remain available")
+        let stepped = root
+            .try_statement_step()
+            .expect("the assignment step should remain available")
             .expect("unrelated facts should not force mutable planning");
         let allocations = fact_node_allocations() - before;
         samples.push((
@@ -7842,12 +7842,12 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert!(matches!(
-            selected.certificate().steps(),
+            stepped.certificate().steps(),
             [SimpleProofStep::Step]
         ));
-        assert_eq!(selected.facts().to_vec(), root.facts().to_vec());
+        assert_eq!(stepped.facts().to_vec(), root.facts().to_vec());
         assert!(
-            !selected
+            !stepped
                 .execution()
                 .expect("assignment successor retains execution")
                 .frontier
@@ -7860,13 +7860,13 @@ fn smart_local_assignment_selection_ignores_unrelated_proof_facts() {
         let logarithmic_bound = base_allocations + 8 * (height - base_height);
         assert!(
             allocations <= logarithmic_bound,
-            "size {size} assignment selection allocated {allocations} persistent nodes (bound {logarithmic_bound})"
+            "size {size} assignment step allocated {allocations} persistent nodes (bound {logarithmic_bound})"
         );
     }
 }
 
 #[test]
-fn smart_store_selection_uses_only_statement_name_indexes() {
+fn contextual_store_step_scales_with_unrelated_named_facts() {
     let click_file = crate::lang::click::parse(
         r#"
             int32 write_in_bounds(int32 p[], int32 i, int32 n) {
@@ -7899,7 +7899,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
         &resource_environment,
         &predicate_environment,
         &click_function_environment,
-        "indexed store selection",
+        "contextual store step",
     )
     .expect("the resource-backed claim context should initialize");
     let mut samples = Vec::new();
@@ -7922,7 +7922,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
             pure_facts.push(fact);
         }
         let root = Proof::for_execution_frontier(
-            "indexed store selection",
+            "contextual store step",
             0,
             ExecutionProofState::at_entry(
                 state.clone(),
@@ -7948,9 +7948,9 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
         );
         let retained_root = root.clone();
         let before = fact_node_allocations();
-        let selected = root
-            .try_indexed_execute_step()
-            .expect("indexed store selection should remain available")
+        let stepped = root
+            .try_statement_step()
+            .expect("the contextual store step should remain available")
             .expect("the statement-local bounds and resource should prove the store");
         let allocations = fact_node_allocations() - before;
         samples.push((
@@ -7961,7 +7961,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
 
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
-        let certificate = selected.certificate();
+        let certificate = stepped.certificate();
         // A bare `step()` names no premise: the statement runs in the
         // whole context and selection cannot leak an unrelated fact.
         let [SimpleProofStep::Step] = certificate.steps() else {
@@ -7977,7 +7977,7 @@ fn smart_store_selection_uses_only_statement_name_indexes() {
         let logarithmic_bound = base_allocations + 24 * (height - base_height);
         assert!(
             allocations <= logarithmic_bound,
-            "size {size} indexed store selection allocated {allocations} persistent nodes (bound {logarithmic_bound})"
+            "size {size} contextual store step allocated {allocations} persistent nodes (bound {logarithmic_bound})"
         );
     }
 }
@@ -8035,7 +8035,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
         // A bare step runs in the whole context: unrelated ambient facts
         // neither block it nor enter its certificate.
         let stepped = root
-            .try_indexed_statement_step()
+            .try_statement_step()
             .expect("the bare statement step should remain available")
             .expect("unrelated ambient facts must not block the bare step");
         assert!(matches!(
@@ -9603,7 +9603,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         let advanced = split
             .focus_split_arm(&record, true)
             .expect("the sole sibling is open")
-            .try_indexed_execute_step()
+            .try_statement_step()
             .expect("smart selection should remain bounded")
             .expect("the assignment should produce a checked simple successor");
         let before = fact_node_allocations();
@@ -9642,7 +9642,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             "the decided node delta must not copy unrelated ambient facts"
         );
         let completed = decided
-            .try_indexed_execute_step()
+            .try_statement_step()
             .expect("contextual return selection should remain bounded")
             .expect("the continuation return should check with retained branch facts");
         assert!(
@@ -9669,7 +9669,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let advanced = split
         .focus_split_arm(&record, false)
         .expect("the sole else sibling is open")
-        .try_indexed_execute_step()
+        .try_statement_step()
         .expect("else-arm smart selection should remain bounded")
         .expect("the else assignment should produce a checked successor");
     let decided = advanced
@@ -9705,7 +9705,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     assert!(record.ids[0].is_some() && record.ids[1].is_none());
     assert_eq!(split_proof.goals().count(), 1);
     let advanced = split_proof
-        .try_indexed_execute_step()
+        .try_statement_step()
         .expect("sole-sibling selection should remain bounded")
         .expect("the assignment should produce a checked simple successor");
     let decided = advanced
@@ -9734,7 +9734,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         0
     );
     let completed = decided
-        .try_indexed_execute_step()
+        .try_statement_step()
         .expect("contextual return selection should remain bounded")
         .expect("the continuation return should check with retained branch facts");
     assert!(
@@ -9754,7 +9754,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         .split_focused_execution_branch()
         .expect("the selecting fact should split to the sole then sibling");
     let advanced = split_proof
-        .try_indexed_execute_step()
+        .try_statement_step()
         .expect("sole-sibling selection should remain bounded")
         .expect("the assignment should produce a checked simple successor");
     let decided = advanced

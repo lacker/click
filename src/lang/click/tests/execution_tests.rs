@@ -644,7 +644,7 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
 }
 
 #[test]
-fn expanded_read_step_keeps_named_range_separation_premises() {
+fn expanded_read_step_uses_contextual_range_separation() {
     let c_source = r#"
         struct owned_string {
             int32 len;

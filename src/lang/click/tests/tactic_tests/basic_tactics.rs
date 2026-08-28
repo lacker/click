@@ -527,10 +527,6 @@ fn rejects_redundant_exact_premise_forms_with_migrations() {
     "#;
     let error = parse(old_fact_prefix).expect_err("using fact prefix should be rejected");
     assert!(error.message().contains("redundant"), "{}", error.message());
-
-    let old_step = FILL3_CLICK.replace("by auto;", "by { step using {} }");
-    let error = parse(&old_step).expect_err("unparenthesized exact step should be rejected");
-    assert!(error.message().contains("step();"), "{}", error.message());
 }
 
 #[test]

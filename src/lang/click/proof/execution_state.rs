@@ -464,17 +464,16 @@ impl ProofFactStore {
 /// back; a proof-level case split records its choice here.
 #[derive(Clone, Default)]
 pub(super) struct SurfaceRecord {
-    /// The statement entry the most recent step recorded, which premises
-    /// written `at(statement(N).entry, ...)` resolve against.
+    /// The statement entry the most recent step recorded, which later
+    /// snapshot-qualified facts resolve against.
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
     pub(super) blocker: Option<String>,
     /// The facts the constructed certificate's own replay will have at the
     /// current point. Planning executes with automatically transported facts,
     /// but certificate replay carries only path facts, statement-local
-    /// rewrites, and explicit surface transports across each step. Premises
-    /// are written against this replay-visible set so every generated
-    /// `using` list names a fact its replay can actually check.
+    /// rewrites, and explicit surface transports across each step. Generated
+    /// evidence is written against this replay-visible set.
     pub(super) certificate_facts: ProofFactStore,
 }
 
