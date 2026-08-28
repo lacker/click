@@ -2848,19 +2848,6 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
                 .function_entry_execution_prerequisites
                 .contains(&kernel_conclusion)
         );
-        assert_eq!(
-            applied_execution
-                .last_step_delta
-                .function_entry_prerequisites,
-            vec![kernel_conclusion.clone()]
-        );
-        assert_eq!(
-            applied_execution
-                .last_step_delta
-                .function_entry_derivations
-                .len(),
-            1
-        );
         let alternative = root
             .apply_step(step)
             .expect("the retained ancestor should support another checked descendant");
@@ -9902,6 +9889,17 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             .expect("terminal join should retain outcomes")
             .paths();
         assert_eq!(outcome_paths.len(), 2);
+        assert_eq!(
+            execution.outcome_provenance.len(),
+            outcome_paths.len(),
+            "every terminal outcome must retain one atomic provenance record"
+        );
+        assert!(
+            execution
+                .outcome_provenance
+                .iter()
+                .all(|provenance| !provenance.branch_decisions.is_empty())
+        );
         let outcome_fact_sizes = outcome_paths
             .iter()
             .map(|path| path.execution_facts().len())

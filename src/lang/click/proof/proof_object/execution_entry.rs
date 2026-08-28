@@ -142,8 +142,6 @@ impl<'a> Proof<'a> {
             closed: false,
         });
         execution.surface_record = SurfaceRecord::default();
-        execution.last_step_delta = ExecutionProofStepDelta::default();
-
         Ok(Proof {
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
@@ -185,23 +183,18 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Starts one source tactic on a threaded execution Proof: the step delta
-    /// of the previous checked transition is cleared. This is the one rule
-    /// shared by every source driver, so a source tactic's certificate step
-    /// depends on the proof state and not on which tactic textually preceded
-    /// it. The delta remains meaningful inside one smart search, where
-    /// consecutive statement transitions legitimately feed each other.
+    /// Starts one source tactic on a threaded execution Proof by clearing the
+    /// checked and newly added facts reported for the preceding step.
     pub(in crate::lang::click::proof) fn start_source_tactic(self) -> Result<Self, ClickError> {
-        let (proof, ()) = self.edit_frontier_in_place(|state, execution, _| {
-            Self::clear_step_delta(state, execution);
+        let (proof, ()) = self.edit_frontier_in_place(|state, _, _| {
+            Self::clear_step_facts(state);
         })?;
         Ok(proof)
     }
 
-    fn clear_step_delta(state: &mut ProofState, execution: &mut ExecutionProofState) {
+    fn clear_step_facts(state: &mut ProofState) {
         state.added_facts = Arc::new(Vec::new());
         state.checked_facts = Arc::new(Vec::new());
-        execution.last_step_delta = ExecutionProofStepDelta::default();
     }
 
     /// Edits the focused frontier's execution snapshot in place and returns
@@ -292,7 +285,7 @@ impl<'a> Proof<'a> {
             context,
             unfolded_predicates: &execution.unfolded_predicates,
             branch_path: &execution.branch_path,
-            outcome_branch_decisions: execution.outcome_branch_decisions.as_ref(),
+            outcome_provenance: execution.outcome_provenance.as_ref(),
         })
     }
 

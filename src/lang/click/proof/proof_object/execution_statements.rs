@@ -15,7 +15,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
         let checked = check_statement_step(&mut execution, context, &self.facts(), fact_context)?;
@@ -97,7 +96,6 @@ impl<'a> Proof<'a> {
         execution
             .program_point_states
             .insert(point, (*execution.state).clone());
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -131,7 +129,6 @@ impl<'a> Proof<'a> {
             );
         }
         execution.region_invariants_closed = true;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -235,7 +232,6 @@ impl<'a> Proof<'a> {
         let mut arms: [Option<(Goal, Vec<Proposition>)>; 2] = [None, None];
         for value in [true, false] {
             let mut arm_execution = base_execution.clone();
-            arm_execution.last_step_delta = ExecutionProofStepDelta::default();
             let mut arm_facts = self.facts().to_vec();
             let base_facts = arm_facts.len();
             let feasible = introduce_proof_case_assumption(
@@ -782,7 +778,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
         let capture_this_tactic = begin_tactic_expansion_capture(
@@ -915,7 +910,6 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("a region `simp` is only available in a loop-region proof"));
         }
         execution.region_simp = Some((tactic_index, source_index));
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -956,7 +950,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut facts = self.facts().to_vec();
         let base_facts = facts.len();
         let capture_this_tactic = begin_tactic_expansion_capture(

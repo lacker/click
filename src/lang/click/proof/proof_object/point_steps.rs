@@ -20,10 +20,10 @@ impl<'a> Proof<'a> {
             ),
             // A focused function-outcome goal applies theorems through the
             // point checker, reading its data from the goal; the effect
-            // context is the replay-level set the legacy drain consumed.
+            // context is the frontier-wide set required by theorem checking.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
-                    .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
+                    .outcome_point_view_with_effects(OutcomeEffectContext::Frontier)
                     .expect("a focused outcome judgment resolves its point view");
                 self.apply_point_theorem_using(&view, application, surface_premises)
             }
@@ -149,7 +149,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let pre_state = context
             .old_reference_state(&execution.frontier, &execution.state)
             .clone();
@@ -184,20 +183,12 @@ impl<'a> Proof<'a> {
                 .contains(&prerequisite)
         {
             execution
-                .last_step_delta
-                .function_entry_prerequisites
-                .push(prerequisite.clone());
-            execution
                 .function_entry_execution_prerequisites
                 .insert(prerequisite);
         }
         if let Some(derivation) = checked.function_entry_derivation
             && !execution.function_entry_derivations.contains(&derivation)
         {
-            execution
-                .last_step_delta
-                .function_entry_derivations
-                .push(derivation.clone());
             execution.function_entry_derivations.insert(derivation);
         }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
@@ -872,58 +863,28 @@ impl<'a> Proof<'a> {
             .execution_start_state(&execution.state)
             .clone();
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
-        let mut decisions_by_path = Vec::with_capacity(checked.paths().len() * 2);
-        let mut surfaces_by_path = Vec::with_capacity(checked.paths().len() * 2);
-        let mut program_points_by_path = Vec::with_capacity(checked.paths().len() * 2);
+        let mut outcome_provenance = Vec::with_capacity(checked.paths().len() * 2);
         for (path_index, path) in checked.paths().iter().enumerate() {
             check_verification_deadline()?;
-            let decisions = execution
-                .outcome_branch_decisions
-                .get(path_index)
-                .cloned()
-                .unwrap_or_else(|| execution.branch_decisions.clone());
-            let path_surface = execution
-                .outcome_surface_propositions
-                .get(path_index)
-                .cloned()
-                .unwrap_or_else(|| execution.surface_propositions.clone());
-            let path_program_points = execution
-                .outcome_program_point_states
-                .get(path_index)
-                .cloned()
-                .unwrap_or_else(|| execution.program_point_states.clone());
-            let keep = |paths: &mut Vec<_>,
-                        decisions_by_path: &mut Vec<_>,
-                        surfaces_by_path: &mut Vec<_>,
-                        program_points_by_path: &mut Vec<_>| {
+            let provenance = execution.provenance_for_outcome(path_index);
+            let keep = |paths: &mut Vec<_>, outcome_provenance: &mut Vec<_>| {
                 paths.push((
                     path.outcome().clone(),
                     path.execution_facts(),
                     path.obligations().to_vec(),
                 ));
-                decisions_by_path.push(decisions.clone());
-                surfaces_by_path.push(path_surface.clone());
-                program_points_by_path.push(path_program_points.clone());
+                outcome_provenance.push(provenance.clone());
             };
-            if decisions
+            if provenance
+                .branch_decisions
                 .iter()
                 .any(|decision| &decision.condition == condition)
             {
-                keep(
-                    &mut paths,
-                    &mut decisions_by_path,
-                    &mut surfaces_by_path,
-                    &mut program_points_by_path,
-                );
+                keep(&mut paths, &mut outcome_provenance);
                 continue;
             }
             let CFunctionOutcome::Return { value, state } = path.outcome() else {
-                keep(
-                    &mut paths,
-                    &mut decisions_by_path,
-                    &mut surfaces_by_path,
-                    &mut program_points_by_path,
-                );
+                keep(&mut paths, &mut outcome_provenance);
                 continue;
             };
             let path_facts = path
@@ -941,7 +902,7 @@ impl<'a> Proof<'a> {
                 condition,
                 context.predicate_environment,
                 context.click_function_environment,
-                &path_program_points,
+                &provenance.program_point_states,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -970,17 +931,18 @@ impl<'a> Proof<'a> {
                     facts.push(ExecutionPureFact::new(case_fact));
                 }
                 paths.push((path.outcome().clone(), facts, path.obligations().to_vec()));
-                let mut decisions = decisions.clone();
-                decisions.push(ExecutionBranchDecision {
-                    condition: condition.clone(),
-                    value,
-                    proof_case: true,
-                });
-                decisions_by_path.push(decisions);
-                let mut surface = path_surface.clone();
-                surface.record_lowering(condition, &lowered)?;
-                surfaces_by_path.push(surface);
-                program_points_by_path.push(path_program_points.clone());
+                let mut case_provenance = provenance.clone();
+                case_provenance
+                    .branch_decisions
+                    .push(ExecutionBranchDecision {
+                        condition: condition.clone(),
+                        value,
+                        proof_case: true,
+                    });
+                case_provenance
+                    .surface_propositions
+                    .record_lowering(condition, &lowered)?;
+                outcome_provenance.push(case_provenance);
             }
         }
         let candidates = crate::kernel::c_function_execution_candidates_from_outcomes(
@@ -992,9 +954,7 @@ impl<'a> Proof<'a> {
         execution.frontier.point = ProofExecutionPoint::FunctionExit {
             execution: candidates,
         };
-        execution.outcome_branch_decisions = Arc::new(decisions_by_path);
-        execution.outcome_surface_propositions = Arc::new(surfaces_by_path);
-        execution.outcome_program_point_states = Arc::new(program_points_by_path);
+        execution.outcome_provenance = Arc::new(outcome_provenance);
         let mut state = (*self.state).clone();
         state.goals =
             state
@@ -1025,12 +985,9 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("post-execution `if` has no checked execution paths"))?;
         for path_index in 0..checked.paths().len() {
             check_verification_deadline()?;
-            let decisions = execution
-                .outcome_branch_decisions
-                .get(path_index)
-                .unwrap_or(&execution.branch_decisions);
+            let provenance = execution.provenance_for_outcome(path_index);
             let mut recorded = None;
-            for decision in decisions.iter() {
+            for decision in provenance.branch_decisions.iter() {
                 if &decision.condition != condition {
                     continue;
                 }
@@ -1050,8 +1007,7 @@ impl<'a> Proof<'a> {
 
     /// Resolves the view with the caller's effect-availability context: the
     /// transport checker consumes the path's own execution facts, while the
-    /// theorem checker consumes the replay-level effect set, matching the
-    /// legacy drain inputs exactly.
+    /// theorem checker consumes the frontier-wide effect set.
     pub(super) fn outcome_point_view_with_effects(
         &self,
         effects: OutcomeEffectContext,
@@ -1067,7 +1023,7 @@ impl<'a> Proof<'a> {
             tactic_index: context.tactic_index,
             effect_facts: match effects {
                 OutcomeEffectContext::Path => point.effect_facts.as_ref(),
-                OutcomeEffectContext::Replay => &execution.effect_facts,
+                OutcomeEffectContext::Frontier => &execution.effect_facts,
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
@@ -1225,7 +1181,6 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let pre_state = context
             .old_reference_state(&execution.frontier, &execution.state)
             .clone();

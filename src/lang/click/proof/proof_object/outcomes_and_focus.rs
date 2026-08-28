@@ -39,14 +39,6 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.frontier.is_at_region_boundary())
     }
 
-    /// Whether checked execution retained an infeasible sibling as an empty
-    /// logical branch. Direct drivers use this Proof-owned structural fact to
-    /// keep unsupported empty-leaf shapes on their compatibility routes.
-    pub(in crate::lang::click::proof) fn has_empty_execution_branch_leaf(&self) -> bool {
-        self.execution()
-            .is_some_and(|execution| execution.has_empty_execution_branch_leaf)
-    }
-
     /// Every open goal in this proof, in stable id order.
     pub(in crate::lang::click::proof) fn goals(&self) -> impl Iterator<Item = GoalId> + '_ {
         self.state.goals.open.keys().copied()
@@ -254,10 +246,6 @@ impl<'a> Proof<'a> {
         })?;
         let frontier_snapshot = frontier.context.execution.clone();
         let frontier_unfolds = frontier.context.unfolded_predicates.clone();
-        let frontier_surface = frontier_snapshot
-            .as_ref()
-            .map(|execution| execution.surface_propositions.clone())
-            .unwrap_or_default();
         let frontier_anchor = frontier_snapshot
             .as_ref()
             .and_then(|execution| frontier_premise_anchor(execution));
@@ -312,6 +300,7 @@ impl<'a> Proof<'a> {
                 facts = facts.with_fact(fact.proposition().clone());
             }
             let execution_facts = path.execution_facts();
+            let provenance = execution.provenance_for_outcome(path_index);
             let id = GoalId(goals.next_id);
             goals = ProofGoals {
                 open: goals.open.with_inserted(
@@ -323,31 +312,14 @@ impl<'a> Proof<'a> {
                         point: Arc::new(OutcomePointData {
                             result: Arc::new(result),
                             state: state.into(),
-                            surface_propositions: execution
-                                .outcome_surface_propositions
-                                .get(path_index)
-                                .cloned()
-                                .unwrap_or_else(|| frontier_surface.clone()),
-                            program_point_states: execution
-                                .outcome_program_point_states
-                                .get(path_index)
-                                .cloned()
-                                .or_else(|| {
-                                    frontier_snapshot
-                                        .as_ref()
-                                        .map(|execution| execution.program_point_states.clone())
-                                })
-                                .unwrap_or_default(),
+                            surface_propositions: provenance.surface_propositions,
+                            program_point_states: provenance.program_point_states,
                             effect_facts: Arc::new(execution_facts),
                             execution_pure_facts: Arc::new(path.facts().to_vec()),
                             premise_anchor: frontier_anchor.clone(),
                             requirement_facts: requirement_facts.clone(),
                             requirement_surfaces: requirement_surfaces.clone(),
-                            branch_decisions: execution
-                                .outcome_branch_decisions
-                                .get(path_index)
-                                .cloned()
-                                .unwrap_or_else(|| execution.branch_decisions.clone()),
+                            branch_decisions: provenance.branch_decisions,
                         }),
                         context: GoalContext {
                             facts,

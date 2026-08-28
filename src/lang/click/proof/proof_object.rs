@@ -168,10 +168,8 @@ pub(super) struct ExecutionSplit<'a> {
     execution_start_state: CState,
 }
 
-/// Bookkeeping for an exhaustive proof-level case split over execution
-/// frontiers. The arms may be created from one shared frontier or may focus
-/// the exhaustive successor partition already certified by the preceding
-/// statement; either way, the `if` itself is logical rather than a C branch.
+/// Bookkeeping for an exhaustive proof-level case split over one execution
+/// frontier. The `if` is logical rather than a C branch.
 pub(super) struct ExecutionProofCaseSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
@@ -306,7 +304,6 @@ struct PreparedExecutionArm {
     facts: ProofFacts,
     execution: ExecutionProofState,
     path_facts: Vec<Proposition>,
-    introduced_facts: PersistentOrderedSet<Proposition>,
     condition_theorem: Theorem,
 }
 
@@ -1215,23 +1212,13 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) branch_surface_facts: PersistentOrderedSet<Proposition>,
     /// Decisions on the currently focused execution lineage. Forks append
     /// one entry in constant time.
-    pub(in crate::lang::click::proof) branch_decisions: PersistentSequence<ExecutionBranchDecision>,
-    /// Path-local lineages aligned with terminal execution candidates. This
-    /// is output-sized Proof provenance, never semantic state in a cursor.
-    pub(in crate::lang::click::proof) outcome_branch_decisions:
-        Arc<Vec<PersistentSequence<ExecutionBranchDecision>>>,
-    /// Path-local Surface lowerings aligned with terminal execution
-    /// candidates. A structural split may give the same Surface expression
-    /// different kernel spellings in its arms; retaining the persistent map
-    /// root per outcome lets finalization use that spelling without copying
-    /// the ambient fact context or reconstructing it from execution history.
-    pub(in crate::lang::click::proof) outcome_surface_propositions: Arc<Vec<SurfacePropositionMap>>,
-    /// Path-local program-point snapshots aligned with terminal execution
-    /// candidates. The shared execution retains only points common to every
-    /// arm; an outcome proof additionally needs the snapshots from its one
-    /// explicit branch lineage.
-    pub(in crate::lang::click::proof) outcome_program_point_states: Arc<Vec<ProgramPointStates>>,
-    pub(in crate::lang::click::proof) last_step_delta: ExecutionProofStepDelta,
+    branch_decisions: PersistentSequence<ExecutionBranchDecision>,
+    /// Path-local provenance aligned with terminal execution candidates.
+    /// Keeping each outcome's lineage, Surface lowerings, and program-point
+    /// snapshots in one record makes their correspondence structural rather
+    /// than an invariant across parallel vectors. The record is output-sized
+    /// Proof provenance; its persistent roots do not copy semantic state.
+    outcome_provenance: Arc<Vec<OutcomeProvenance>>,
     pub(in crate::lang::click::proof) has_empty_execution_branch_leaf: bool,
     /// Whether a structured execution join (a `branch`, a case split, or a
     /// decided path) produced this state: a converging join leaves one path
@@ -1246,6 +1233,17 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
 }
 
 impl ExecutionProofState {
+    fn provenance_for_outcome(&self, path_index: usize) -> OutcomeProvenance {
+        self.outcome_provenance
+            .get(path_index)
+            .cloned()
+            .unwrap_or_else(|| OutcomeProvenance {
+                branch_decisions: self.branch_decisions.clone(),
+                surface_propositions: self.surface_propositions.clone(),
+                program_point_states: self.program_point_states.clone(),
+            })
+    }
+
     /// The read-only execution data lowering and point proofs consult.
     pub(in crate::lang::click::proof) fn view<'s>(
         &'s self,
@@ -1261,7 +1259,7 @@ impl ExecutionProofState {
     }
 
     /// The execution state at a proof's entry: the frontier's C state and
-    /// replay bag with no branch provenance yet.
+    /// effect facts with no branch provenance yet.
     pub(in crate::lang::click::proof) fn at_entry(
         state: CState,
         frontier: ExecutionFrontier,
@@ -1296,10 +1294,7 @@ impl ExecutionProofState {
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
             branch_decisions: PersistentSequence::default(),
-            outcome_branch_decisions: Arc::new(Vec::new()),
-            outcome_surface_propositions: Arc::new(Vec::new()),
-            outcome_program_point_states: Arc::new(Vec::new()),
-            last_step_delta: ExecutionProofStepDelta::default(),
+            outcome_provenance: Arc::new(Vec::new()),
             has_empty_execution_branch_leaf: false,
             has_structured_branch_history: false,
             unfolded_predicates: SharedVec::default(),
@@ -1329,17 +1324,18 @@ pub(super) struct ProofFinalizationView<'p> {
     pub(super) context: &'p ExecutionProofContext<'p>,
     pub(super) unfolded_predicates: &'p SharedVec<String>,
     pub(super) branch_path: &'p PersistentSequence<String>,
-    outcome_branch_decisions: &'p [PersistentSequence<ExecutionBranchDecision>],
+    outcome_provenance: &'p [OutcomeProvenance],
 }
 
 impl ProofFinalizationView<'_> {
     /// The proof-level case decisions recorded on one outcome path, in
     /// decision order: each is a surface condition and the arm taken.
     pub(super) fn path_case_decisions(&self, path_index: usize) -> Vec<(ClickProposition, bool)> {
-        self.outcome_branch_decisions
+        self.outcome_provenance
             .get(path_index)
-            .map(|decisions| {
-                decisions
+            .map(|provenance| {
+                provenance
+                    .branch_decisions
                     .iter()
                     .filter(|decision| decision.proof_case)
                     .map(|decision| (decision.condition.clone(), decision.value))
@@ -1356,7 +1352,12 @@ impl ProofFinalizationView<'_> {
         path_index: usize,
         tactics: &[ProofTactic],
     ) -> Option<Vec<bool>> {
-        let mut decisions = self.outcome_branch_decisions.get(path_index)?.iter().rev();
+        let mut decisions = self
+            .outcome_provenance
+            .get(path_index)?
+            .branch_decisions
+            .iter()
+            .rev();
         let mut path = Vec::new();
         let mut current = tactics;
         loop {
@@ -1379,11 +1380,11 @@ impl ProofFinalizationView<'_> {
     }
 }
 
-#[derive(Clone, Default)]
-struct ExecutionProofStepDelta {
-    function_entry_prerequisites: Vec<Proposition>,
-    function_entry_derivations: Vec<Theorem>,
-    unfolded_predicates: Vec<String>,
+#[derive(Clone)]
+struct OutcomeProvenance {
+    branch_decisions: PersistentSequence<ExecutionBranchDecision>,
+    surface_propositions: SurfacePropositionMap,
+    program_point_states: ProgramPointStates,
 }
 
 /// One unresolved judgment owned by a `Proof`.
@@ -1406,7 +1407,7 @@ enum Goal {
 #[derive(Clone, Copy)]
 enum OutcomeEffectContext {
     Path,
-    Replay,
+    Frontier,
 }
 
 #[derive(Clone, Copy)]

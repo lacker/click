@@ -657,7 +657,6 @@ impl<'a> Proof<'a> {
                     paths,
                 ),
             };
-            execution.last_step_delta = ExecutionProofStepDelta::default();
             execution
                 .surface_propositions
                 .record_lowering(&polarity_surfaces[arm_index], &polarity_facts[arm_index])?;
@@ -823,7 +822,6 @@ impl<'a> Proof<'a> {
                 surface_tactics: None,
             },
         );
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let parent_goal = record.marker.node.focused;
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join outcome `if`: the split marker lost its root")
@@ -1076,7 +1074,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let introduced_facts = checked.added_facts.clone();
         let body = Proof {
             context: self.context.clone(),

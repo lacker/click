@@ -357,7 +357,7 @@ impl<'a> Proof<'a> {
             // context: selection reads the goal-aware view directly.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
-                    .outcome_point_view_with_effects(OutcomeEffectContext::Replay)
+                    .outcome_point_view_with_effects(OutcomeEffectContext::Frontier)
                     .expect("a focused outcome judgment resolves its point view");
                 self.select_theorem_application_step_at_point(
                     application,

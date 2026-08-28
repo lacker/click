@@ -212,11 +212,6 @@ impl<'a> Proof<'a> {
             }
             _ => None,
         };
-        execution.last_step_delta = ExecutionProofStepDelta {
-            function_entry_prerequisites: checked.added_function_entry_prerequisites,
-            function_entry_derivations: checked.added_function_entry_derivations,
-            unfolded_predicates: checked.added_unfolded_predicates,
-        };
         let goal_context = GoalContext {
             facts: checked.facts,
             unfolded_predicates,
@@ -274,11 +269,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.last_step_delta = ExecutionProofStepDelta {
-            function_entry_prerequisites: checked.added_certification_facts,
-            function_entry_derivations: checked.added_derivations,
-            unfolded_predicates: Vec::new(),
-        };
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -321,7 +311,6 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.state = checked.state.into();
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -369,7 +358,6 @@ impl<'a> Proof<'a> {
             &execution.unfolded_predicates,
         )?;
         execution.state = checked.state.into();
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 

@@ -5,8 +5,6 @@ use crate::lang::click::proof::proof_object::ExecutionProofState;
 pub(in crate::lang::click::proof) struct CheckedPredicateUnfold {
     pub(in crate::lang::click::proof) facts: ProofFacts,
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
-    pub(in crate::lang::click::proof) added_function_entry_prerequisites: Vec<Proposition>,
-    pub(in crate::lang::click::proof) added_function_entry_derivations: Vec<Theorem>,
     pub(in crate::lang::click::proof) added_unfolded_predicates: Vec<String>,
 }
 
@@ -122,8 +120,6 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             Some((kernel.clone(), surface, unfolded))
         })
         .collect::<Vec<_>>();
-    let mut added_function_entry_prerequisites = Vec::new();
-    let mut added_function_entry_derivations = Vec::new();
     for (predicate, surface, kernel) in surface_unfoldings {
         execution
             .surface_propositions
@@ -145,25 +141,15 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             })
             .flatten();
         if let Some(derivation) = contract_unfolding {
-            if execution
+            execution
                 .function_entry_execution_prerequisites
-                .insert(kernel.clone())
-            {
-                added_function_entry_prerequisites.push(kernel);
-            }
-            if execution
-                .function_entry_derivations
-                .insert(derivation.clone())
-            {
-                added_function_entry_derivations.push(derivation);
-            }
+                .insert(kernel);
+            execution.function_entry_derivations.insert(derivation);
         }
     }
     Ok(CheckedPredicateUnfold {
         facts: checked_facts.facts,
         added_facts: checked_facts.added_facts,
-        added_function_entry_prerequisites,
-        added_function_entry_derivations,
         added_unfolded_predicates,
     })
 }

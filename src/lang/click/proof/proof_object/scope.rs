@@ -591,7 +591,6 @@ impl<'a> ProofScope<'a> {
             facts = checked.facts;
             execution.state = checked.state.into();
         }
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         let mut state = Arc::unwrap_or_clone(body.state.clone());
         state.goals = state
             .goals
@@ -1120,7 +1119,6 @@ impl<'a> ProofScope<'a> {
                     facts = checked.facts;
                     execution.state = checked.state.into();
                 }
-                execution.last_step_delta = ExecutionProofStepDelta::default();
                 state.goals = state
                     .goals
                     .replace_frontier_at(self.body.focused, facts, execution);

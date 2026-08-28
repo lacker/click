@@ -506,7 +506,6 @@ impl<'a> Proof<'a> {
                     origin.source_index,
                     PostExecutionTactic::FrameRegion(region.clone()),
                 );
-                execution.last_step_delta = ExecutionProofStepDelta::default();
                 return Ok(ProofState {
                     locals: self.state.locals.clone(),
 
@@ -560,7 +559,6 @@ impl<'a> Proof<'a> {
                 surface_tactics: None,
             },
         );
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 

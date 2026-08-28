@@ -248,15 +248,10 @@ impl<'a> Proof<'a> {
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
             ));
-            let mut introduced_facts = PersistentOrderedSet::default();
-            for fact in &transition.path_facts {
-                introduced_facts.insert(fact.clone());
-            }
             arms[usize::from(!take_then)] = Some(PreparedExecutionArm {
                 facts: transition.pure_facts,
                 execution: arm_execution,
                 path_facts: transition.path_facts,
-                introduced_facts,
                 condition_theorem: transition.theorem,
             });
         }
@@ -788,7 +783,6 @@ impl<'a> Proof<'a> {
             execution.function_entry_derivations.insert(theorem.clone());
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
@@ -1058,10 +1052,7 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
-        let mut path_branch_decisions: Vec<PersistentSequence<ExecutionBranchDecision>> =
-            Vec::new();
-        let mut path_surface_propositions = Vec::new();
-        let mut path_program_point_states = Vec::new();
+        let mut outcome_provenance = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
@@ -1086,34 +1077,15 @@ impl<'a> Proof<'a> {
                     })
                 {
                     paths.push((path.outcome().clone(), path_facts, obligations));
-                    let mut decisions = arm
-                        .execution
-                        .outcome_branch_decisions
-                        .get(arm_path_index)
-                        .cloned()
-                        .unwrap_or_else(|| arm.execution.branch_decisions.clone());
+                    let mut provenance = arm.execution.provenance_for_outcome(arm_path_index);
                     if proof_case_split {
-                        decisions.push(ExecutionBranchDecision {
+                        provenance.branch_decisions.push(ExecutionBranchDecision {
                             condition: surface_condition.clone(),
                             value: arm_index == 0,
                             proof_case: true,
                         });
                     }
-                    path_branch_decisions.push(decisions);
-                    path_surface_propositions.push(
-                        arm.execution
-                            .outcome_surface_propositions
-                            .get(arm_path_index)
-                            .cloned()
-                            .unwrap_or_else(|| arm.execution.surface_propositions.clone()),
-                    );
-                    path_program_point_states.push(
-                        arm.execution
-                            .outcome_program_point_states
-                            .get(arm_path_index)
-                            .cloned()
-                            .unwrap_or_else(|| arm.execution.program_point_states.clone()),
-                    );
+                    outcome_provenance.push(provenance);
                 }
             }
         }
@@ -1141,9 +1113,7 @@ impl<'a> Proof<'a> {
             execution: outcomes,
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
-        execution.outcome_branch_decisions = Arc::new(path_branch_decisions);
-        execution.outcome_surface_propositions = Arc::new(path_surface_propositions);
-        execution.outcome_program_point_states = Arc::new(path_program_point_states);
+        execution.outcome_provenance = Arc::new(outcome_provenance);
         execution.has_structured_branch_history = true;
         execution.next_opaque_call = arms[0]
             .execution
@@ -1189,7 +1159,6 @@ impl<'a> Proof<'a> {
             }
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path = parent_execution.branch_path.clone();
         execution.case_assumptions = parent_execution.case_assumptions.clone();
 
@@ -1451,7 +1420,6 @@ impl<'a> Proof<'a> {
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.last_step_delta = ExecutionProofStepDelta::default();
         execution.branch_path.clear();
         execution.case_assumptions.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1582,10 +1550,9 @@ impl<'a> Proof<'a> {
         self.resume_parent_after_sibling_join(record, ids, selection, parts)
     }
 
-    /// Joins the two terminal arms of a proof-level execution `if`. For a
-    /// preceding multi-successor call, the call remains the parent provenance
-    /// node; for a fresh logical split, both arms retain the same checked C
-    /// root. In either case this adds only the proof `if` and its arm bodies.
+    /// Joins the two terminal arms of a proof-level execution `if`. Both arms
+    /// retain the same checked C root; the join adds only the proof `if` and
+    /// its arm bodies.
     pub(in crate::lang::click::proof) fn join_focused_execution_if_terminal(
         &self,
         record: &ExecutionProofCaseSplit<'a>,
@@ -2127,28 +2094,6 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("cannot advance an infeasible expanded execution arm"));
         };
         proof.apply_execution_steps_in_arm(record, &steps[entry_steps..], true)
-    }
-
-    pub(super) fn apply_expanded_execution_steps_inner(
-        &self,
-        steps: &[SimpleProofStep],
-    ) -> Result<Self, ClickError> {
-        let mut proof = self.clone();
-        for step in steps {
-            proof = match step {
-                SimpleProofStep::If {
-                    condition,
-                    then_proof,
-                    else_proof,
-                } => proof.apply_expanded_execution_if(
-                    condition,
-                    then_proof.steps(),
-                    else_proof.steps(),
-                )?,
-                _ => proof.apply_step(step.clone())?,
-            };
-        }
-        Ok(proof)
     }
 
     pub(super) fn planned_execution_step_is_supported(step: &SimpleProofStep) -> bool {

@@ -546,8 +546,6 @@ pub(super) struct CheckedResourceObservation {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,
     pub(super) added_facts: Vec<Proposition>,
-    pub(super) added_derivations: Vec<Theorem>,
-    pub(super) added_certification_facts: Vec<Proposition>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -567,8 +565,6 @@ pub(super) fn observe_composite_resource_for_proof(
     tactic_index: usize,
 ) -> Result<CheckedResourceObservation, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
-    let mut added_derivations = Vec::new();
-    let mut added_certification_facts = Vec::new();
     let state = observe_composite_resource_with_facts(
         resource_environment,
         resource,
@@ -579,8 +575,6 @@ pub(super) fn observe_composite_resource_for_proof(
         surface_propositions,
         count_derivations,
         count_certification_facts,
-        &mut added_derivations,
-        &mut added_certification_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -590,8 +584,6 @@ pub(super) fn observe_composite_resource_for_proof(
         state,
         facts: facts.facts,
         added_facts: facts.added,
-        added_derivations,
-        added_certification_facts,
     })
 }
 
@@ -606,8 +598,6 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
     count_certification_facts: &mut PersistentOrderedSet<Proposition>,
-    added_derivations: &mut Vec<Theorem>,
-    added_certification_facts: &mut Vec<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -685,12 +675,10 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
                 ))
             })?;
             if !count_derivations.contains(&derivation) {
-                count_derivations.insert(derivation.clone());
-                added_derivations.push(derivation);
+                count_derivations.insert(derivation);
             }
             if !count_certification_facts.contains(&count_kernel) {
                 count_certification_facts.insert(count_kernel.clone());
-                added_certification_facts.push(count_kernel.clone());
             }
             surface_propositions.record_lowering(&count_witness, &count_kernel)?;
             available_pure_facts.insert(count_kernel);
@@ -735,12 +723,10 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             ))
         })?;
         if !count_derivations.contains(&nonnegative_derivation) {
-            count_derivations.insert(nonnegative_derivation.clone());
-            added_derivations.push(nonnegative_derivation);
+            count_derivations.insert(nonnegative_derivation);
         }
         if !count_certification_facts.contains(&nonnegative_kernel) {
             count_certification_facts.insert(nonnegative_kernel.clone());
-            added_certification_facts.push(nonnegative_kernel.clone());
         }
         surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
         available_pure_facts.insert(nonnegative_kernel);
