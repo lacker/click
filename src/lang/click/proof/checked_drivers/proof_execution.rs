@@ -2862,22 +2862,6 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     let click_function_environment = proof_context.click_function_environment;
     let claim_label = proof_context.claim_label;
 
-    if proof_case_is_statement_identity_condition(condition) {
-        // An opaque call's allocation-identity split owns several certified
-        // statement successors. Lowering this snapshot-qualified condition
-        // against one representative successor would bake that successor's
-        // fresh kernel variables into both proof arms. Retain the surface
-        // condition so final path routing lowers it independently for each
-        // concrete outcome.
-        execution.case_assumptions.push(CaseAssumption {
-            tactic_index,
-            condition: condition.clone(),
-            value,
-            fact: None,
-            at_function_entry: false,
-        });
-        return Ok(true);
-    }
     if execution.loop_effect_goal.is_some() {
         // A structural-effect replay path may already own the exact C-branch
         // fact under this Surface spelling. Prefer that unambiguous indexed
@@ -3038,31 +3022,6 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         at_function_entry,
     });
     Ok(true)
-}
-
-fn proof_case_is_statement_identity_condition(condition: &ClickProposition) -> bool {
-    let ClickProposition::Comparison {
-        left,
-        operator: ComparisonOperator::Equal,
-        right,
-    } = condition
-    else {
-        return false;
-    };
-    let is_statement_exit = |expression: &ContractExpression| {
-        matches!(
-            expression,
-            ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(ProgramPointRef {
-                    region: CodeRegionRef::Statement(_),
-                    kind: ProgramPointKind::Exit,
-                }),
-                ..
-            }
-        )
-    };
-    let is_old = |expression: &ContractExpression| matches!(expression, ContractExpression::Old(_));
-    (is_statement_exit(left) && is_old(right)) || (is_old(left) && is_statement_exit(right))
 }
 
 fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) -> bool {
