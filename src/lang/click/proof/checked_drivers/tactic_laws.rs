@@ -2,7 +2,7 @@ use super::*;
 use crate::kernel::prove_pure_proposition_from_context;
 use crate::lang::click::proof::proof_object::ExecutionProofState;
 
-/// The one mid-execution `have` law: checked point proof first, generated
+/// The one mid-execution `have` law: checked fixed-state proof first, generated
 /// smart plan second, direct derivation last, with the entry-prerequisite,
 /// surface-lowering, and certificate-fact recording every caller shares.
 #[allow(clippy::too_many_arguments)]
@@ -53,7 +53,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         ExecutionView::new(
             &execution.frontier,
             &execution.effect_facts,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             &execution.surface_propositions,
             proof_context.constants.function_entry_state.as_ref(),
         ),
@@ -68,14 +68,14 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let smart_unfolds = smart_simp_unfold_prefix(&have.proof);
     // Search may materialize a Surface-expressible operation
     // plan, but the goal is proved only when those operations
-    // advance the checked point Proof below.
+    // advance the checked fixed-state Proof below.
     let smart_result = match (&checked_proof_result, &smart_unfolds) {
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
             ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
@@ -110,7 +110,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         ExecutionView::new(
         &execution.frontier,
         &execution.effect_facts,
-        &execution.program_point_states,
+        &execution.recorded_snapshots,
         &execution.surface_propositions,
         proof_context.constants.function_entry_state.as_ref(),
     ),
@@ -130,7 +130,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             (checked.0, checked.1)
         }
         (None, None) => {
-            let fact = prove_have_at_current_point(
+            let fact = prove_have_in_current_state(
                 have,
                 theorem_environment,
                 claim_label,
@@ -141,7 +141,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 arguments,
                 proof_context.old_reference_state(&execution.frontier, state),
                 &state,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 predicate_environment,
                 click_function_environment,
@@ -152,7 +152,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     };
     let retained_certificate = surface_certificate;
     // Carry any kernel-issued standard-theorem authority selected
-    // inside the point Proof back to the enclosing entry proof.
+    // inside the fixed-state Proof back to the enclosing entry proof.
     if execution
         .frontier
         .execution_start_state
@@ -164,14 +164,14 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             let ProofTactic::ApplyTheoremUsing { application, .. } = have_tactic else {
                 continue;
             };
-            if let Some(derivation) = kernel_standard_theorem_derivation_at_current_point(
+            if let Some(derivation) = kernel_standard_theorem_derivation_in_current_state(
                 theorem_environment,
                 application,
                 parsed_function.parameters(),
                 arguments,
                 proof_context.old_reference_state(&execution.frontier, state),
                 &state,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
                 &have_facts,
@@ -285,7 +285,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
                 ))
             })?;
         execution.frontier.execution_start_state = Some(initial_state.clone());
-        execution.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.position = FrontierPosition::StatementEntry {
             remaining: annotated.body().clone().into(),
         };
         *state = entry_state;
@@ -359,7 +359,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             state: state.clone(),
             pure_facts: loop_pure_facts,
             surface_propositions: execution.surface_propositions.clone(),
-            program_point_states: execution.program_point_states.clone(),
+            recorded_snapshots: execution.recorded_snapshots.clone(),
             case_path,
             next_opaque_call: execution.next_opaque_call,
             next_kernel_variable: execution.next_kernel_variable,
@@ -417,7 +417,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             .chain(std::iter::once(loop_rule.clone())),
     );
 
-    if let ProofExecutionPoint::StatementEntry { remaining } = &execution.frontier.point {
+    if let FrontierPosition::StatementEntry { remaining } = &execution.frontier.position {
         let (_, tail) = split_next_source_operation(remaining).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not isolate the current source loop: {message}"
@@ -428,7 +428,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         if let Some(tail) = tail {
             flatten_top_level_sequence(&tail, &mut statements).map_err(ClickError::new)?;
         }
-        execution.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.position = FrontierPosition::StatementEntry {
             remaining: sequence_from_statements(&statements)
                 .expect("the current loop always contributes one statement")
                 .into(),
@@ -441,7 +441,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         &local_function_environment,
     );
     let assumptions = assumptions_from_propositions(available_pure_facts);
-    execute_step_from_execution_point(
+    execute_step_from_frontier_position(
         execution,
         &loop_context,
         available_pure_facts,
@@ -458,7 +458,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Exit,
         };
-        let lowered_exit_condition = lower_point_proposition(
+        let lowered_exit_condition = lower_fixed_state_proposition(
             &exit_condition,
             available_pure_facts,
             parsed_function.parameters(),
@@ -466,7 +466,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             &initial_state,
             state,
             None,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -476,7 +476,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             ))
         })?;
         if available_pure_facts.contains(&lowered_exit_condition) {
-            let exit_surface = surface_with_source_site(&exit_condition, &exit_point)?;
+            let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
             execution
                 .surface_propositions
                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
@@ -537,7 +537,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
                 SourceProof::Script(tactics) => Plan::Script(tactics),
                 SourceProof::Tactic(SmartTactic::Frame) => return Ok(None),
             };
-            let goal = lower_point_proposition(
+            let goal = lower_fixed_state_proposition(
                 &have.proposition,
                 &facts_for_simple_goal_lowering(available),
                 parameters,
@@ -545,7 +545,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
                 pre_state,
                 state,
                 result,
-                &view.program_point_states,
+                &view.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -557,7 +557,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             (goal, plan)
         }
     };
-    let proof = Proof::for_point_surface_goal_with_requirements(
+    let proof = Proof::for_fixed_state_surface_goal_with_requirements(
         claim_label,
         tactic_index,
         available,
@@ -569,7 +569,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         state,
         result,
         premise_anchor,
-        &view.program_point_states,
+        &view.recorded_snapshots,
         surface_propositions,
         predicate_environment,
         click_function_environment,

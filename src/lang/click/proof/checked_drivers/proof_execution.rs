@@ -1734,7 +1734,7 @@ fn advance_focused_execution_arm<'a>(
             proof.apply_step(step)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
-                // Exit applications need one point proof per concrete
+                // Exit applications need one fixed-state proof per concrete
                 // outcome so that `result` lowers correctly; ordered
                 // finalization owns that distinct operation.
                 return decline();
@@ -2847,7 +2847,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         // manufacture its contradictory sibling at function exit. Conditions
         // involving `result` or the post-state retain the deferred per-outcome
         // handling below.
-        if let Ok(proposition) = lower_point_proposition(
+        if let Ok(proposition) = lower_fixed_state_proposition(
             condition,
             pure_facts,
             parameters,
@@ -2855,7 +2855,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             proof_context.old_reference_state(&execution.frontier, &execution.state),
             &execution.state,
             None,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         ) {
@@ -2906,7 +2906,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         return Ok(true);
     }
     let at_function_entry = execution.frontier.is_at_function_entry();
-    let proposition = lower_point_proposition(
+    let proposition = lower_fixed_state_proposition(
         condition,
         pure_facts,
         parameters,
@@ -2914,7 +2914,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         proof_context.old_reference_state(&execution.frontier, &execution.state),
         &execution.state,
         None,
-        &execution.program_point_states,
+        &execution.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -2963,10 +2963,7 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
     let expression_is_stable = |expression: &ContractExpression| {
         matches!(
             expression,
-            ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(_),
-                ..
-            } | ContractExpression::Old(_)
+            ContractExpression::At { .. } | ContractExpression::Old(_)
         )
     };
     fn stable(
@@ -2978,10 +2975,7 @@ fn proof_case_is_stable_program_point_condition(proposition: &ClickProposition) 
                 expression_is_stable(left) && expression_is_stable(right)
             }
             ClickProposition::Defined { expression } => expression_is_stable(expression),
-            ClickProposition::At {
-                selector: VisitSelector::ProgramPoint(_),
-                ..
-            } => true,
+            ClickProposition::At { .. } => true,
             ClickProposition::And(left, right)
             | ClickProposition::Or(left, right)
             | ClickProposition::Implies(left, right) => {

@@ -195,9 +195,9 @@ resource facts
 execution frontier
 ```
 
-The execution frontier contains the point where symbolic execution is paused
+The execution frontier contains the program point where symbolic execution is paused
 and the continuation stack for enclosing branch regions. The current
-implementation has these frontier points:
+implementation has these frontier positions:
 
 - function entry, before C execution has started,
 - statement entry after `step()`, explicit entry into a selected `if`
@@ -252,8 +252,8 @@ reached back edge. These proofs feed the abstract-exit constructor directly;
 the kernel does not prove either supplied premise again. An omitted phase uses
 automatic verification for that premise.
 
-`apply(...)` and `have ... by { ... }` perform pure proofs at the current
-program point. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
+`apply(...)` and `have ... by { ... }` perform fixed-state proofs at the
+current state. `observe(...)`, resource `unfold(...)`, and `fold(...)` perform
 resource reasoning there. None advances execution. This lets deterministic
 tactics prepare facts and resources before the next C statement. At function exit, operations
 whose meaning depends on `result` or the post-state are checked separately for

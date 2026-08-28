@@ -2019,6 +2019,10 @@ id = "glossary.snapshot"
 path = "reference/glossary.md#snapshot"
 
 [[item]]
+id = "glossary.snapshot-selector"
+path = "reference/glossary.md#snapshot-selector"
+
+[[item]]
 id = "glossary.soundness"
 path = "reference/glossary.md#soundness"
 
@@ -2057,6 +2061,10 @@ path = "reference/glossary.md#undefined-behavior"
 [[item]]
 id = "glossary.view"
 path = "reference/glossary.md#view"
+
+[[item]]
+id = "glossary.visit"
+path = "reference/glossary.md#visit"
 
 [[item]]
 id = "glossary.witness"
@@ -2187,8 +2195,8 @@ id = "glossary.path-condition"
 path = "reference/glossary.md#path-condition"
 
 [[item]]
-id = "glossary.point-proof"
-path = "reference/glossary.md#point-proof"
+id = "glossary.fixed-state-proof"
+path = "reference/glossary.md#fixed-state-proof"
 
 [[item]]
 id = "glossary.predicate"

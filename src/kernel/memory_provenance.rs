@@ -257,7 +257,7 @@ fn pointers_match_for_resource_check(
 
 /// Assumption-free canonical form of a whole memory: every cell key and
 /// value canonicalizes its embedded loads. Forms of the same memory
-/// produced at different execution points compare equal when their
+/// produced from different memory snapshots compare equal when their
 /// difference is representational.
 pub(crate) fn canonical_c_memory_deep(memory: &CMemory) -> CMemory {
     // Assumption-free and deterministic; keyed by interned snapshot identity.
@@ -2626,7 +2626,7 @@ const LOAD_CANONICALIZATION_DEPTH_LIMIT: usize = 24;
 /// Deep, assumption-free canonical form for a term: every load resolves its
 /// cached cell or canonicalizes its snapshot and pointer, at every depth,
 /// including inside conditionals, folds, and pointer offsets. Two forms
-/// of the same value produced at different execution points canonicalize
+/// of the same value produced from different memory snapshots canonicalize
 /// identically whenever the difference is representational.
 pub(super) fn canonicalize_atomic_loads_with_depth(
     term: &Bitvector32Term,

@@ -906,7 +906,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_then(
 }
 
 /// The single explicit-certificate search shared by every smart-simplification
-/// construction path. Both the point-proof `simp() using` chain and the
+/// construction path. Both the fixed-state proof `simp() using` chain and the
 /// post-execution outcome planner must call through here (directly or via
 /// [`plan_explicit_equality_rewrites_then`]), so a named simple rule available
 /// to one is available to the other. `is_available` is the caller's judgment

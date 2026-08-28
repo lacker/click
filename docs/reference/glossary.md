@@ -20,13 +20,14 @@ that state and its transition history. Expansion can serialize part of that
 history as an explicit proof, sometimes called a **certificate**. **Kernel
 derivations** are the trusted evidence underlying checked transitions.
 
-For execution, a **program point** is a location in the C function. An
-**execution frontier** combines one current program point with its symbolic
-state and pending continuations. A branch's **arms** may create several
-path-local frontiers, one for each feasible **execution path**; continuing arms
-join at a shared **continuation**. A **snapshot** records state for later
-reference; an **outcome** is a completed path with its final state, while a
-**result** is only the value returned by that path.
+For execution, a **program point** is a static location in the C function, and
+a **visit** is one path's arrival there. An **execution frontier** combines one
+current program point with its symbolic state and pending continuations. A
+branch's **arms** may create several path-local frontiers, one for each feasible
+**execution path**; continuing arms join at a shared **continuation**. A
+**snapshot** is immutable symbolic state retained from a selected visit; an
+**outcome** is a completed path with its final state, while a **result** is only
+the value returned by that path.
 
 ## A
 
@@ -148,7 +149,7 @@ equality fact.
 
 ### Cell epoch
 
-The most recent memory-derivation point that might have written one cell. Loads
+The most recent memory-derivation node that might have written one cell. Loads
 from snapshots connected without a possible write share the same cell epoch and
 therefore the same load variable.
 
@@ -304,8 +305,8 @@ One symbolic route through C control flow, paired with its path conditions
 ### Execution proof
 
 A proof that advances an execution frontier and establishes a relationship
-between the entry and exit of a C region. Contrast with a [pure
-proof](#pure-proof), which reasons at one program point.
+between the entry and exit of a C region. Contrast with a [fixed-state
+proof](#fixed-state-proof), which can reason about C state without advancing it.
 
 ### Expansion
 
@@ -419,8 +420,8 @@ A proposition or resource condition that holds initially and is preserved by
 
 ### Join
 
-The point where multiple symbolic paths are reconciled into a state suitable
-  for following common control flow.
+The operation that reconciles multiple symbolic paths into a state suitable
+for following common control flow.
 
 ## K
 
@@ -523,9 +524,11 @@ kernel `CMemoryRange`.
 
 ### Memory snapshot
 
-An immutable, interned `CMemory` value representing memory at one point in
-symbolic execution. A program-point snapshot contains a complete symbolic C
-state; its memory component is a memory snapshot.
+An immutable, interned `CMemory` value representing memory in one symbolic
+state. A program-point snapshot contains a complete symbolic C
+state; its memory component is a memory snapshot. Kernel memory-valued terms
+and memory-load terms can carry this value, but the snapshot itself is a
+semantic value rather than a source expression.
 
 ### Modus ponens
 
@@ -597,12 +600,14 @@ Memory-access authority granted by a viewed or owned memory resource fact. A
 viewed fact permits reads; an owned fact permits reads and writes. Permission
 is the meaning of those memory resources, not a separate proof-state store.
 
-### Point proof
+### Fixed-state proof
 
-An internal proof operation at a fixed program point. It can refine
-propositions or logical resources but does not advance C execution. Pure proofs
-and result-aware outcome proofs are point-proof contexts with different
-available data.
+An internal C-aware proof that reasons against one fixed symbolic C state. It
+can refine propositions or logical resources but does not advance C execution.
+Mid-execution `have` proofs and result-aware outcome proofs are fixed-state
+proofs with different available data. Contrast with a pure theorem proof,
+which has no symbolic C state, and an execution proof, which advances a
+frontier.
 
 ### Population
 
@@ -636,9 +641,10 @@ Attribution of verifier work and elapsed time to proof sites. See
 
 ### Program point
 
-A selectable location in C execution, such as function entry, statement entry
-or exit, and function exit. `at(...)`, `mark`, and `execute_until` refer to
-program points; an execution frontier also carries state and continuations.
+A static selectable location in C, such as function entry, statement entry or
+exit, and function exit. `at(...)` and `execute_until` can name program points;
+an execution frontier also carries state and continuations. `mark` instead
+creates a proof-local name for a snapshot and does not create a C location.
 
 ### Proof
 
@@ -658,8 +664,9 @@ narrower internal index over the proposition facts in that context.
 
 ### Proof mark
 
-A named point in proof execution, created by `mark`, that later tactics can
-  select or compare.
+A proof-local name bound by `mark` to the current snapshot. Later `at(...)`
+expressions can select it. A proof mark is neither a C program point nor a
+location in Click source.
 
 ### Proof object
 
@@ -711,9 +718,9 @@ pure facts.
 
 ### Pure proof
 
-A proof that derives a proposition at one program point without advancing C or
-transforming logical resources. Theorem proofs and the nested body of `have`
-are pure proofs.
+A proof that derives a proposition without a symbolic C state. Pure theorem
+proofs use this context. Contrast with a [fixed-state proof](#fixed-state-proof),
+which reasons against a fixed symbolic C state.
 
 ## Q
 
@@ -804,9 +811,21 @@ only with a completed checked state.
 
 ### Snapshot
 
-An immutable reference to state at a selected program point, used by `old`,
-`at`, marks, and memory comparisons. A program-point snapshot records a
-complete symbolic C state; a load term embeds only its memory snapshot.
+Immutable symbolic state retained from a selected visit, used by `old`, `at`,
+marks, and memory comparisons. A state snapshot is logically a complete
+symbolic `CState`, but its implementation is a small collection of persistent,
+shared roots rather than a deep copy. A load term carries only the state's
+interned memory snapshot.
+
+A snapshot is a semantic value, not Surface Click syntax and not inherently a
+kernel term. Kernel terms can nevertheless contain `CState` or `CMemory`
+values, and a memory-load term embeds an interned memory snapshot.
+
+### Snapshot selector
+
+Surface syntax that names a recorded snapshot for `at(...)`. A selector is
+either a C program point such as `statement(2).entry` or a proof-local mark.
+The selector identifies the snapshot; it is not itself the recorded state.
 
 ### Sort
 
@@ -845,7 +864,7 @@ representation and *spelling* only for literal token choices.
 
 Producing a Surface Click form for a kernel proposition or term so an expanded
 proof can cite it. It is a checked partial reverse of lowering: the synthesized
-form must lower back to the same kernel meaning at the point where the expanded
+form must lower back to the same kernel meaning in the state where the expanded
 proof uses it.
 
 ### Symbolic execution
@@ -861,9 +880,9 @@ connected by the memory derivation DAG.
 
 ### Symbolic state
 
-The modeled C state on one execution path: local values, parameters, memory,
-and any path-specific execution data. `CState` is the kernel representation;
-logical proof facts and resources live alongside it rather than inside it.
+The modeled C state on one execution path: local values, memory, resource
+facts, and counted resource populations. `CState` is the kernel representation;
+logical proposition facts and execution-control data live alongside it.
 
 ### Symbolic value
 
@@ -935,6 +954,13 @@ such as an overflow, memory-safety, or contract condition. Click must prove it
 from available evidence; it cannot continue by treating the condition as a
 path assumption.
 
+### Visit
+
+One execution path's arrival at a static program point. A loop can visit one
+program point repeatedly, and different paths can reach the same point with
+different state. Click currently exposes selected unique or abstract visits as
+recorded snapshots rather than providing general visit-index syntax.
+
 ### View
 
 A logical interpretation of underlying state, usually represented by a viewed
@@ -951,5 +977,5 @@ A concrete term supplied to prove an existential proposition. The `witness`
 
 ### `at`
 
-A proposition or expression form interpreted at a selected snapshot or proof
-  point rather than at the current state.
+A proposition or expression form interpreted at a snapshot selected by a
+program point or proof mark rather than at the current state.

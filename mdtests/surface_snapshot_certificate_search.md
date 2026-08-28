@@ -3,7 +3,7 @@
 Surface reconstruction should find a quantified fact at its recorded snapshot
 even after many other program points have accumulated. It must index the
 memory nested under the quantifier instead of constructing `old(...)` and
-`at(...)` combinations over every recorded point.
+`at(...)` combinations over every recorded snapshot.
 
 ```c filename=peek_first.c
 int32 peek_first(int32 data[]) {

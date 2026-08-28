@@ -809,7 +809,7 @@ selected state.
 
 The selected snapshot is a complete recorded C state, not only a memory
 snapshot. Inside `at(...)`, reassigned parameters and declared scalar, pointer,
-and array locals resolve to their values at that point. Outside `at(...)`,
+and array locals resolve to their values in that snapshot. Outside `at(...)`,
 function parameter names retain their ordinary contract meaning.
 
 `at(loop_label.entry, expression)` is currently supported inside invariants for
@@ -821,7 +821,7 @@ proved.
 
 The expression and proposition forms of `at(statement(N).entry, ...)` and
 `at(statement(N).exit, ...)` are currently supported in explicit proof-script
-claims after deterministic execution records that statement point.
+claims after deterministic execution records that statement snapshot.
 `step()`, `execute_until(...)`, and `execute()` all record every
 deterministic statement boundary they cross. Executing an annotated loop uses
 its verified abstract rule and records both `at(loop_label.entry, expression)`

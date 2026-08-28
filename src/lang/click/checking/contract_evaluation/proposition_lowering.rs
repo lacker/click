@@ -1,7 +1,7 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click) fn evaluate_contract_expression_with_program_points(
+pub(in crate::lang::click) fn evaluate_contract_expression_with_recorded_snapshots(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -11,7 +11,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_program_points(
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
 ) -> Result<CValue, String> {
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
@@ -28,7 +28,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_program_points(
         expression,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
 }
@@ -45,8 +45,8 @@ pub(in crate::lang::click) fn lower_outcome_proposition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let program_point_states = ProgramPointStates::new();
-    lower_outcome_proposition_with_program_points(
+    let recorded_snapshots = RecordedSnapshots::new();
+    lower_outcome_proposition_with_recorded_snapshots(
         parameters,
         arguments,
         pre_state,
@@ -56,7 +56,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition(
         proposition,
         predicate_environment,
         click_function_environment,
-        &program_point_states,
+        &recorded_snapshots,
     )
 }
 
@@ -91,13 +91,13 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_assumptions(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        &ProgramPointStates::new(),
+        &RecordedSnapshots::new(),
         &mut active_functions,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
+pub(in crate::lang::click) fn lower_outcome_proposition_with_recorded_snapshots(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -107,7 +107,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
     proposition: &ClickProposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
@@ -125,7 +125,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
 }
@@ -137,7 +137,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_program_points(
 /// `at(mark, field == 11)`: reducing the marked load to `11 == 11` proves the
 /// source but erases the memory identity needed to frame it to a later state.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click) fn lower_outcome_proposition_symbolically_with_program_points(
+pub(in crate::lang::click) fn lower_outcome_proposition_symbolically_with_recorded_snapshots(
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
@@ -147,7 +147,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_symbolically_with_progra
     proposition: &ClickProposition,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
@@ -167,7 +167,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_symbolically_with_progra
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
 }
@@ -183,7 +183,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
     next_variable: &mut u64,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<Proposition, String> {
     match proposition {
@@ -202,7 +202,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -215,7 +215,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             comparison_proposition(left, *operator, right).map_err(|error| error.message)
@@ -231,7 +231,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_resource_subject_with_environment(
@@ -244,7 +244,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             Ok(Proposition::CResourceSeparate { left, right })
@@ -260,7 +260,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 parent,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let child = evaluate_resource_subject_with_environment(
@@ -273,7 +273,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 child,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             Ok(Proposition::CResourceContains { parent, child })
@@ -289,7 +289,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 segment,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let element_width =
@@ -320,8 +320,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
             selector,
             proposition,
         } => {
-            let snapshot_state =
-                concrete_program_point_state(selector, pre_state, program_point_states)?;
+            let snapshot_state = selected_snapshot_state(selector, pre_state, recorded_snapshots)?;
             let (mut snapshot_values, snapshot_array_refs) =
                 contract_environment_at_state(values, array_refs, snapshot_state);
             lower_outcome_proposition_with_environment(
@@ -335,7 +334,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )
         }
@@ -351,7 +350,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
@@ -365,7 +364,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?),
         )),
@@ -381,7 +380,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?),
             Box::new(lower_outcome_proposition_with_environment(
@@ -395,7 +394,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?),
         )),
@@ -411,7 +410,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?,
         )),
@@ -427,11 +426,11 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             // At a concrete outcome, a result guard can already be false.
-            // Its consequent is unreachable in this point judgment, so do
+            // Its consequent is unreachable in this fixed-state judgment, so do
             // not lower memory expressions that the implication cannot use.
             // Retaining the implication shape lets an explicit
             // `intro(); contradiction(...)` certificate validation normally.
@@ -457,7 +456,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             Ok(Proposition::Implies(Box::new(left), Box::new(right)))
@@ -483,7 +482,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             match previous {
@@ -521,7 +520,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             match previous {
@@ -556,7 +555,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                     start,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "range `all` start bound",
@@ -572,7 +571,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                     end,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "range `all` end bound",
@@ -602,7 +601,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                 next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             ) {
                 Ok(body) => body,
@@ -631,7 +630,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                     start,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "range `any` start bound",
@@ -647,7 +646,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                     end,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "range `any` end bound",
@@ -676,7 +675,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                             next_variable,
                             predicate_environment,
                             click_function_environment,
-                            program_point_states,
+                            recorded_snapshots,
                             active_functions,
                         ) {
                             Ok(body) => body,
@@ -715,7 +714,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                         next_variable,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                         active_functions,
                     ) {
                         Ok(body) => body,
@@ -749,7 +748,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                     assumptions,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?
             } else {
@@ -768,7 +767,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
                                 argument,
                                 predicate_environment,
                                 click_function_environment,
-                                program_point_states,
+                                recorded_snapshots,
                                 active_functions,
                             )
                             .map(Term::CValue)
@@ -795,7 +794,7 @@ fn evaluate_contract_segment_with_environment(
     segment: &ContractSegment,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<EvaluatedContractSegment, String> {
     let evaluation_post_state = match segment.state {
@@ -812,7 +811,7 @@ fn evaluate_contract_segment_with_environment(
         &ContractExpression::CFragment(segment.base.clone()),
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         active_functions,
     )?;
     let CValue::Pointer(base) = base else {
@@ -828,7 +827,7 @@ fn evaluate_contract_segment_with_environment(
         &ContractExpression::CFragment(segment.start.clone()),
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         active_functions,
     )?;
     let CValue::Int32(start) = start else {
@@ -844,7 +843,7 @@ fn evaluate_contract_segment_with_environment(
         &ContractExpression::CFragment(segment.end.clone()),
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         active_functions,
     )?;
     let CValue::Int32(end) = end else {
@@ -869,7 +868,7 @@ fn evaluate_resource_subject_with_environment(
     resource: &ResourceSubject,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CResource, String> {
     match resource {
@@ -884,7 +883,7 @@ fn evaluate_resource_subject_with_environment(
                 segment,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             Ok(CResource::Memory(CMemoryRange::new(
@@ -918,7 +917,7 @@ fn evaluate_resource_subject_with_environment(
                     argument,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?;
                 if !c_value_matches_click_type(&value, *parameter_type) {

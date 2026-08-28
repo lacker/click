@@ -71,7 +71,7 @@ impl<'a> Proof<'a> {
             ProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
             ProofStep::UnfoldResource(resource) => self.apply_execution_resource_unfold(resource),
             ProofStep::FoldResource(resource) => {
-                if self.focused_outcome_point().is_some() {
+                if self.focused_outcome_data().is_some() {
                     self.apply_outcome_resource_fold(resource)
                 } else {
                     self.apply_execution_resource_fold(resource)
@@ -80,13 +80,13 @@ impl<'a> Proof<'a> {
             ProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }
-            ProofStep::Choose(choice) => self.apply_point_choose(choice),
-            ProofStep::Witness(witness) => self.apply_point_witness(witness),
+            ProofStep::Choose(choice) => self.apply_fixed_state_choose(choice),
+            ProofStep::Witness(witness) => self.apply_fixed_state_witness(witness),
             ProofStep::InstantiateUsing {
                 quantified,
                 argument,
                 premises,
-            } => self.apply_point_instantiate_using(quantified, argument, premises),
+            } => self.apply_fixed_state_instantiate_using(quantified, argument, premises),
             ProofStep::Extract(proposition) => self.apply_extract(proposition),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
             ProofStep::Assumption => self.apply_assumption(),
@@ -99,7 +99,7 @@ impl<'a> Proof<'a> {
             ProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             ProofStep::CloseInvariants => self.apply_close_invariants(),
             ProofStep::FrameUsing { region, premises } => {
-                if self.focused_outcome_point().is_some() {
+                if self.focused_outcome_data().is_some() {
                     self.apply_outcome_frame_using(region.as_ref(), premises)
                 } else {
                     self.apply_execution_frame_using(
@@ -242,10 +242,10 @@ impl<'a> Proof<'a> {
             })?;
         let pre_state = execution.frontier.execution_start_state(&execution.state);
 
-        let mut point = (*goal.point).clone();
+        let mut data = (*goal.data).clone();
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
-            let fact = point
+            let fact = data
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
@@ -273,27 +273,28 @@ impl<'a> Proof<'a> {
                         .derive_atomic_proposition(fact)
                         .is_some())
             };
-            // An unanchored premise reads at the outcome; a fact observed at
-            // an earlier recorded point (a resource's body fact at a call's
-            // exit) is the same surface read there. Try each recorded point
-            // before rejecting; this is bounded by the recorded points.
+            // An unanchored premise reads at the outcome; a fact observed in
+            // an earlier recorded snapshot (a resource's body fact at a
+            // call's exit) is the same surface read there. Try each recorded
+            // snapshot before rejecting; this is bounded by the recorded
+            // snapshots.
             let fact = if available(&fact) {
                 fact
             } else {
                 execution
-                    .program_point_states
+                    .recorded_snapshots
                     .keys()
-                    .filter_map(|point| execution.program_point_states.get(point))
-                    .filter_map(|point_state| {
-                        lower_point_proposition_with_assumptions(
+                    .filter_map(|selector| execution.recorded_snapshots.get(selector))
+                    .filter_map(|snapshot_state| {
+                        lower_fixed_state_proposition_with_assumptions(
                             surface,
                             self.facts().assumptions(),
                             context.parsed_function.parameters(),
                             context.arguments,
                             pre_state,
-                            point_state,
+                            snapshot_state,
                             None,
-                            &execution.program_point_states,
+                            &execution.recorded_snapshots,
                             context.predicate_environment,
                             context.click_function_environment,
                         )
@@ -307,15 +308,15 @@ impl<'a> Proof<'a> {
                     "outcome `frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
                 )));
             }
-            point.surface_propositions.record_lowering(surface, &fact)?;
+            data.surface_propositions.record_lowering(surface, &fact)?;
             if !frame_facts.contains(&fact) {
                 frame_facts.push(fact);
             }
         }
 
         let mut outcome = CFunctionOutcome::Return {
-            value: (*point.result).clone(),
-            state: (*point.state).clone(),
+            value: (*data.result).clone(),
+            state: (*data.state).clone(),
         };
         for effect_index in &effect_indices {
             let claim = FunctionClaimRef::Effect(
@@ -327,7 +328,7 @@ impl<'a> Proof<'a> {
             check_effect_claim_exact(
                 &claim_label,
                 goal.path_index,
-                &point.effect_facts,
+                &data.effect_facts,
                 &frame_facts,
                 &claim,
                 context.parsed_function.parameters(),
@@ -338,7 +339,7 @@ impl<'a> Proof<'a> {
         }
 
         let mut assumptions = self.facts().assumptions().clone();
-        for fact in point.effect_facts.iter() {
+        for fact in data.effect_facts.iter() {
             assumptions = assumptions.assume_proposition(fact.proposition().clone());
         }
         let (transitioned, _obligations) =
@@ -360,12 +361,12 @@ impl<'a> Proof<'a> {
                 "checked contract resource effect did not preserve the return outcome",
             ));
         };
-        point.result = Arc::new(value);
-        point.state = state.into();
+        data.result = Arc::new(value);
+        data.state = state.into();
         let mut updated = goal.clone();
         updated.selection = EffectGoalSelection::None;
         updated.checked_effects = Arc::new(effect_indices);
-        updated.point = Arc::new(point);
+        updated.data = Arc::new(data);
         Ok(ProofState {
             locals: self.state.locals.clone(),
             open_branches: self
@@ -744,7 +745,7 @@ impl<'a> Proof<'a> {
                 let mut path_facts = available.clone();
                 path_facts.extend(path.facts().iter().map(|fact| fact.proposition().clone()));
                 for surface in &surface_forms {
-                    let kernel = lower_outcome_proposition_with_program_points(
+                    let kernel = lower_outcome_proposition_with_recorded_snapshots(
                         context.parsed_function.parameters(),
                         context.arguments,
                         pre_state,
@@ -754,7 +755,7 @@ impl<'a> Proof<'a> {
                         surface,
                         context.predicate_environment,
                         context.click_function_environment,
-                        &execution_state.program_point_states,
+                        &execution_state.recorded_snapshots,
                     )
                     .map_err(|message| {
                         self.step_error(format!(
@@ -769,7 +770,7 @@ impl<'a> Proof<'a> {
             &mut construction_surface,
             &execution_state.frontier,
             &execution_state.effect_facts,
-            &execution_state.program_point_states,
+            &execution_state.recorded_snapshots,
             context,
             &execution_state.state,
             &available,
@@ -1033,11 +1034,11 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
-        let candidates = super::smart_closures::synthesize_surface_at_recorded_points(
+        let candidates = super::smart_closures::synthesize_surface_at_recorded_snapshots(
             kernel,
             context.parsed_function.parameters(),
             context.arguments,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             &anchor,
         );
         candidates.into_iter().find(|surface| matches(surface))
@@ -1050,28 +1051,28 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
         let available = match self.context.as_ref() {
-            ProofContext::Point(_) => {
+            ProofContext::FixedState(_) => {
                 self.facts().pure_assumption_available(goal) || normalizes_context_free(goal)
             }
             // A judgment stated at a function outcome closes with the same
-            // point-level check availability its legacy point root used.
+            // fixed-state check availability its legacy fixed-state root used.
             // A judgment stated at a function outcome closes on a fact
             // available across the path's recorded effects: a fact about a
             // cell that ownership proves untouched by a later call keeps its
             // meaning although the outcome reads the cell under a new epoch
             // name. This is the frame's availability rule.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
-                let point = self
-                    .focused_outcome_point()
-                    .expect("the guard resolved the outcome point");
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
+                let data = self
+                    .focused_outcome_data()
+                    .expect("the guard resolved the outcome data");
                 self.facts().pure_assumption_available(goal)
                     || self
                         .facts()
-                        .available_across_effects(goal, &point.effect_facts)
+                        .available_across_effects(goal, &data.effect_facts)
                     || normalizes_context_free(goal)
             }
             // A nested proposition judgment stated at an execution frontier
-            // is the point proof of its `have`: it closes on an exact
+            // is the fixed-state proof of its `have`: it closes on an exact
             // materialized fact or a context-free tautology, never by
             // search.
             ProofContext::Execution(_)

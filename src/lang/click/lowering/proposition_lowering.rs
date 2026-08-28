@@ -271,7 +271,7 @@ impl KernelPropositionLowerer {
                     .resource_state
                     .clone()
                     .unwrap_or_else(|| CState::new().with_memory(self.memory.clone()));
-                let program_point_states = ProgramPointStates::new();
+                let recorded_snapshots = RecordedSnapshots::new();
                 let lowered_arguments = lower_predicate_call_arguments_with_environment(
                     definition,
                     arguments,
@@ -283,7 +283,7 @@ impl KernelPropositionLowerer {
                     &PureFactContext::new(),
                     &self.predicate_environment,
                     &self.click_function_environment,
-                    &program_point_states,
+                    &recorded_snapshots,
                     &mut self.active_functions,
                 )
                 .map_err(ClickError::new)?;
@@ -580,7 +580,7 @@ impl KernelPropositionLowerer {
             }
             ContractExpression::Call { name, arguments } => {
                 let state = CState::new().with_memory(self.memory.clone());
-                let program_point_states = ProgramPointStates::new();
+                let recorded_snapshots = RecordedSnapshots::new();
                 evaluate_click_function_call(
                     &self.click_function_environment.clone(),
                     name,
@@ -592,7 +592,7 @@ impl KernelPropositionLowerer {
                     None,
                     &PureFactContext::new(),
                     &self.predicate_environment.clone(),
-                    &program_point_states,
+                    &recorded_snapshots,
                     &mut self.active_functions,
                 )
                 .map_err(ClickError::new)

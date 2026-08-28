@@ -303,7 +303,7 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
             (
                 fact.clone(),
                 ClickError::new(
-                    "comparison fact has no checkable surface form at this proof point",
+                    "comparison fact has no checkable surface form at this proof state",
                 ),
             )
         })

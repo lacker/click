@@ -15,7 +15,7 @@ pub(in crate::lang::click::proof) struct CheckedPredicateFactUnfold {
 
 /// Applies one named predicate definition to only the indexed facts that
 /// mention it. This is the proposition-level semantic core shared by pure,
-/// point, and execution-frontier proof objects.
+/// fixed-state, and execution-frontier proof objects.
 pub(in crate::lang::click::proof) fn check_unfold_predicate_in_facts(
     available: &ProofFacts,
     name: &String,

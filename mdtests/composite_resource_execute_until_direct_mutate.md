@@ -1,6 +1,6 @@
 # composite resource execute until direct mutate
 
-This checks the first execution-point slice. The proof reads through the folded
+This checks the first execution prefix. The proof reads through the folded
 buffer view, pauses before the mutation, unfolds the owned buffer to expose the
 field write, executes the rest, and folds the buffer back.
 

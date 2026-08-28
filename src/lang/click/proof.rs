@@ -10,7 +10,7 @@ pub(in crate::lang::click) use claim_proofs::count_flat_proof_units;
 mod cursor_execution;
 mod execution_planning;
 pub(in crate::lang::click) mod fact_reasoning;
-mod point_proofs;
+mod fixed_state_proofs;
 mod proof_object;
 
 #[cfg(test)]
@@ -61,7 +61,7 @@ pub(super) use fact_reasoning::{
     SnapshotBlindPropositionKey, condition_polarity_equivalent, exactly_available_fact,
     search_condition_derivation, snapshot_blind_proposition_key,
 };
-use point_proofs::*;
+use fixed_state_proofs::*;
 #[cfg(test)]
 pub(in crate::lang::click) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;
@@ -397,7 +397,7 @@ fn equal_by_premise_chain(
         // frame facts justify load unification. Keep the raw edge as well as its
         // canonical form: canonicalizing a store equation can reduce its written
         // load to the stored value and erase the edge needed to reach a later
-        // snapshot term.
+        // memory-load term.
         for premise in premises.iter().chain(available) {
             if let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
                 premise
@@ -917,7 +917,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn source_site_annotation_rejects_deep_logic_without_using_the_native_stack() {
+    fn snapshot_annotation_rejects_deep_logic_without_using_the_native_stack() {
         let mut surface = ClickProposition::Comparison {
             left: ContractExpression::CBinding("value".to_string()),
             operator: ComparisonOperator::Equal,
@@ -925,7 +925,7 @@ mod certificate_tests {
                 Bitvector32Term::Constant(0),
             ))),
         };
-        for _ in 0..=SOURCE_SITE_ANNOTATION_DEPTH_LIMIT {
+        for _ in 0..=SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
             surface = ClickProposition::Not(Box::new(surface));
         }
         let point = ProgramPointRef {
@@ -933,8 +933,8 @@ mod certificate_tests {
             kind: ProgramPointKind::Entry,
         };
 
-        let error = surface_with_source_site(&surface, &point)
-            .expect_err("deep source-site reconstruction must stop structurally");
+        let error = surface_at_snapshot(&surface, &point)
+            .expect_err("deep snapshot annotation must stop structurally");
         assert!(
             error.message().contains("structural depth bound"),
             "{error:?}"
@@ -942,7 +942,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn snapshot_index_finds_a_late_exact_point_inside_a_quantifier() {
+    fn snapshot_index_finds_a_late_exact_selector_inside_a_quantifier() {
         let early_memory = CMemory::new().with_block("early", 4);
         let target_memory = CMemory::new().with_block("target", 4);
         let pointer = Pointer {
@@ -971,14 +971,17 @@ mod certificate_tests {
             region: CodeRegionRef::Statement(99),
             kind: ProgramPointKind::Entry,
         };
-        let mut states = ProgramPointStates::new();
+        let mut states = RecordedSnapshots::new();
         states.insert(early, CState::new().with_memory(early_memory));
         states.insert(late.clone(), CState::new().with_memory(target_memory));
 
-        let (exact, compatible) = snapshot_indexed_program_points(&kernel, &states);
+        let (exact, compatible) = snapshot_indexed_selectors(&kernel, &states);
         assert_eq!(
-            exact.iter().map(|(point, _)| *point).collect::<Vec<_>>(),
-            vec![&late]
+            exact
+                .iter()
+                .map(|(selector, _)| *selector)
+                .collect::<Vec<_>>(),
+            vec![&SnapshotSelector::ProgramPoint(late)]
         );
         assert!(compatible.is_empty());
     }
@@ -1002,11 +1005,11 @@ mod certificate_tests {
         );
         let state = CState::new().with_memory(CMemory::new().with_block("current", 4));
 
-        let error = checked_surface_comparison_fact_at_point(
+        let error = checked_surface_comparison_fact_in_state(
             ExecutionView::new(
                 &ExecutionFrontier::default(),
                 &[],
-                &ProgramPointStates::new(),
+                &RecordedSnapshots::new(),
                 &SurfacePropositionMap::default(),
                 None,
             ),
@@ -1039,13 +1042,15 @@ mod certificate_tests {
                 Bitvector32Term::Constant(0),
             ))),
         };
-        let points = (0..20)
-            .map(|index| ProgramPointRef {
-                region: CodeRegionRef::Statement(index),
-                kind: ProgramPointKind::Entry,
+        let selectors = (0..20)
+            .map(|index| {
+                SnapshotSelector::ProgramPoint(ProgramPointRef {
+                    region: CodeRegionRef::Statement(index),
+                    kind: ProgramPointKind::Entry,
+                })
             })
             .collect::<Vec<_>>();
-        let variants = comparison_program_point_variants(&base, &points)
+        let variants = comparison_snapshot_variants(&base, &selectors)
             .expect("comparison should have snapshot variants");
         let position = variants
             .iter()
@@ -1054,7 +1059,7 @@ mod certificate_tests {
                     candidate,
                     ClickProposition::Comparison {
                         left: ContractExpression::At {
-                            selector: VisitSelector::ProgramPoint(ProgramPointRef {
+                            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
                                 region: CodeRegionRef::Statement(2),
                                 kind: ProgramPointKind::Entry,
                             }),
@@ -1126,7 +1131,7 @@ mod certificate_tests {
         let mut execution = ExecutionProofState::at_entry(
             CState::new(),
             ExecutionFrontier::default(),
-            ProgramPointStates::new(),
+            RecordedSnapshots::new(),
             SurfacePropositionMap::default(),
             PersistentSequence::default(),
         );
@@ -1526,7 +1531,7 @@ enum ProofCaseAssumptionKind {
     },
 }
 
-// Pure proofs and point-local `have` proofs use flat logical cases. Execution
+// Pure proofs and fixed-state `have` proofs use flat logical cases. Execution
 // proofs use `InternalProofNode` for frontier-local control flow.
 fn expand_proof_if_cases(tactics: &[ProofTactic]) -> Result<Vec<ExpandedProofCase>, ClickError> {
     expand_structured_proof_cases(tactics)

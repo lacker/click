@@ -64,12 +64,14 @@ tactics are `assumption()`, `normalize()`, `rewrite(...)`, `intro()`,
 `split()`, `left()`, `right()`, and `contradiction(...)`. A successful
 expansion contains only those explicit rules and named theorem applications.
 
-## Pure and execution proofs
+## Pure, fixed-state, and execution proofs
 
-A pure proof reasons at one program point. Pure theorems and nested
-`have P by { ... }` proofs cannot execute C or transform resources. They can
-use simplification, theorem application, exact derivation, logical tactics,
-and proof-level `if`.
+A pure proof reasons without a symbolic C state. A fixed-state proof reasons
+against one fixed symbolic C state but does not advance execution. Pure
+theorems use pure proofs; nested `have P by { ... }` proofs use fixed-state
+proofs. Both can use simplification, theorem application, exact derivation,
+logical tactics, and proof-level `if`; fixed-state proofs can additionally
+transform logical resources.
 
 An execution proof carries a C frontier. The execution vocabulary is:
 

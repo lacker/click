@@ -151,7 +151,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         };
         let statement_index = execution.frontier.next_statement_index;
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             execution.view(context),
             &execution.state,
             context.function,
@@ -175,7 +175,7 @@ impl<'a> Proof<'a> {
         }
 
         let (split, mut record) = self.split_focused_execution_if(condition.clone())?;
-        record.surface_condition = surface_with_source_site(
+        record.surface_condition = surface_at_snapshot(
             &c_surface,
             &ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -664,7 +664,7 @@ impl<'a> Proof<'a> {
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
             let paths = std::mem::take(&mut partition_paths[arm_index]);
-            execution.frontier.point = ProofExecutionPoint::FunctionExit {
+            execution.frontier.position = FrontierPosition::FunctionExit {
                 execution: c_function_execution_candidates_from_outcomes(
                     execution_state.clone(),
                     function.clone(),
@@ -896,7 +896,7 @@ impl<'a> Proof<'a> {
     /// provenance root but shares the persistent semantic fact index and
     /// immutable checking context with its enclosing proof.
     ///
-    /// A point proof may open `have` either while refining a proposition or
+    /// A fixed-state proof may open `have` either while refining a proposition or
     /// from its initial result frontier. The latter is the audited way for
     /// grouped contract finalization to prove one obligation, publish it as a
     /// checked fact, and then prove a dependent obligation without rebuilding
@@ -912,10 +912,12 @@ impl<'a> Proof<'a> {
             (Some(Obligation::Proposition(_) | Obligation::FunctionOutcome(_)), _) => {}
             (
                 Some(Obligation::Frontier(_)),
-                ProofContext::Point(_) | ProofContext::Execution(_),
+                ProofContext::FixedState(_) | ProofContext::Execution(_),
             ) => {}
             _ => {
-                return Err(self.step_error("`have` requires a proposition or point context"));
+                return Err(
+                    self.step_error("`have` requires a proposition or fixed-state proof context")
+                );
             }
         }
         let kernel = self.lower_surface_goal(&proposition, "`have` proposition")?;
@@ -931,7 +933,7 @@ impl<'a> Proof<'a> {
         {
             let predicate_environment = match self.context.as_ref() {
                 ProofContext::Pure(context) => context.predicate_environment,
-                ProofContext::Point(context) => context.predicate_environment,
+                ProofContext::FixedState(context) => context.predicate_environment,
                 ProofContext::Execution(context) => context.predicate_environment,
             };
             let active_unfolds = self.focused_branch_unfolds().to_vec();
@@ -953,7 +955,7 @@ impl<'a> Proof<'a> {
         };
         // A `have` stated at an execution frontier proves its goal from the
         // frontier's facts alone; the selected-separation materialization
-        // below serves outcome and point judgments, whose separation goals
+        // below serves outcome and fixed-state judgments, whose separation goals
         // are read from retained resources rather than derived in the body.
         let at_frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let mut body_facts = if at_frontier {
@@ -992,13 +994,13 @@ impl<'a> Proof<'a> {
                     .kernels_written_by_predicate(name)
                     .cloned()
                     .collect::<Vec<_>>(),
-                ProofContext::Point(context) => context
+                ProofContext::FixedState(context) => context
                     .surface_propositions
                     .kernels_written_by_predicate(name)
                     .cloned()
                     .collect::<Vec<_>>(),
                 ProofContext::Execution(_) => self
-                    .outcome_point_view()
+                    .outcome_fixed_state_view()
                     .into_iter()
                     .flat_map(|view| view.surface_propositions.kernels_written_by_predicate(name))
                     .cloned()
@@ -1020,13 +1022,13 @@ impl<'a> Proof<'a> {
         // An execution `have` borrows the current immutable frontier solely
         // as its proposition-lowering/theorem context, shared by identity on
         // the nested goal; a `have` stated at a function outcome borrows that
-        // outcome's result-aware point data the same way. The nested goal
+        // outcome's result-aware outcome proof data the same way. The nested goal
         // cannot publish a changed frontier or outcome: `join` restores the
         // exact root state and exposes only the stated proposition.
-        let mut body_goal = match self.focused_outcome_point() {
-            Some(point) => OpenBranch::surface_proposition_at_outcome(
+        let mut body_goal = match self.focused_outcome_data() {
+            Some(outcome_data) => OpenBranch::surface_proposition_at_outcome(
                 body_context,
-                point.clone(),
+                outcome_data.clone(),
                 body_kernel.clone(),
                 structural_proposition,
             ),

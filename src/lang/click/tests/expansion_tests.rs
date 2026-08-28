@@ -2517,7 +2517,7 @@ fn post_execution_simp_expands_successor_strict_increase() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment.c", c_source)])
     });
-    verified.expect("the typed strict-increment rule should verify through the point Proof");
+    verified.expect("the typed strict-increment rule should verify through the fixed-state Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2574,7 +2574,8 @@ fn post_execution_simp_expands_increment_definedness() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment.c", c_source)])
     });
-    verified.expect("the typed increment-definedness rule should verify through the point Proof");
+    verified
+        .expect("the typed increment-definedness rule should verify through the fixed-state Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2625,7 +2626,8 @@ fn post_execution_simp_expands_increment_lower_bound() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment_nonnegative.c", c_source)])
     });
-    verified.expect("the typed increment-lower-bound rule should verify through the point Proof");
+    verified
+        .expect("the typed increment-lower-bound rule should verify through the fixed-state Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2780,7 +2782,7 @@ fn post_execution_simp_expands_increment_upper_bound() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment_below.c", c_source)])
     });
-    verified.expect("the typed increment bound should verify through the point Proof");
+    verified.expect("the typed increment bound should verify through the fixed-state Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2930,7 +2932,9 @@ fn post_execution_simp_expands_greater_equal_increment_bound() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment_ge.c", c_source)])
     });
-    verified.expect("the typed greater-equal increment rule should verify through the point Proof");
+    verified.expect(
+        "the typed greater-equal increment rule should verify through the fixed-state Proof",
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2988,8 +2992,9 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("increment_gt.c", c_source)])
     });
-    verified
-        .expect("the typed strict-greater increment rule should verify through the point Proof");
+    verified.expect(
+        "the typed strict-greater increment rule should verify through the fixed-state Proof",
+    );
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -4450,7 +4455,7 @@ fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("validate_chain.c", c_source)])
     });
-    verified.expect("the outcome order path should verify through the point Proof");
+    verified.expect("the outcome order path should verify through the fixed-state Proof");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -5148,7 +5153,7 @@ fn source_expander_lowers_smart_apply_inside_have() {
 }
 
 #[test]
-fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
+fn fixed_state_have_bare_apply_retains_and_checks_its_exact_premise() {
     let c_source = r#"
             int32 choose_second(int32 first, int32 second) {
                 return second;
@@ -5178,14 +5183,15 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("choose.c", c_source)])
     });
-    verified.expect("checked point apply should verify without ordinary certificate validation");
+    verified
+        .expect("checked fixed-state apply should verify without ordinary certificate validation");
     assert!(
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "choose_second.contract" && name == "generated certificate validation"
         )),
-        "the migrated smart point proof must not pass through the ordinary construction/check gateway: {events:#?}"
+        "the migrated smart fixed-state proof must not pass through the ordinary construction/check gateway: {events:#?}"
     );
     let have_offset = click_source
         .find("have second == first")
@@ -5204,7 +5210,7 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("choose.c", c_source)], line, column)
-            .expect("checked point apply should expand");
+            .expect("checked fixed-state apply should expand");
     let apply_offset = expanded
         .find("apply(equality_symmetric(first, second)) using {")
         .expect("expansion should retain the selected explicit step");
@@ -5213,7 +5219,7 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
         .expect("explicit step should retain the theorem premise");
     let premise_offset = apply_offset + premise_relative;
     verify_c0_sources(&expanded, &[("choose.c", c_source)])
-        .expect("the retained point proof should independently check");
+        .expect("the retained fixed-state proof should independently check");
 
     let mut corrupted = expanded.clone();
     corrupted.replace_range(
@@ -5231,7 +5237,7 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
 }
 
 #[test]
-fn point_have_mixed_linear_smart_script_continues_on_checked_successors() {
+fn fixed_state_have_mixed_linear_smart_script_continues_on_checked_successors() {
     let c_source = r#"
             int32 choose_second(int32 first, int32 second) {
                 return second;
@@ -9582,7 +9588,7 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
 }
 
 #[test]
-fn point_smart_have_retains_a_checked_simple_closer() {
+fn fixed_state_smart_have_retains_a_checked_simple_closer() {
     let c_source = r#"
             int32 identity(int32 value) {
                 return value;
@@ -9603,7 +9609,7 @@ fn point_smart_have_retains_a_checked_simple_closer() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("identity.c", c_source)])
     });
-    verified.expect("checked point smart have should verify");
+    verified.expect("checked fixed-state smart have should verify");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -9615,7 +9621,7 @@ fn point_smart_have_retains_a_checked_simple_closer() {
 }
 
 #[test]
-fn point_smart_have_retains_a_checked_theorem_application() {
+fn fixed_state_smart_have_retains_a_checked_theorem_application() {
     let c_source = r#"
             int32 first(int32 x, int32 y, int32 z) {
                 return x;
@@ -9637,7 +9643,7 @@ fn point_smart_have_retains_a_checked_theorem_application() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("first.c", c_source)])
     });
-    verified.expect("checked point smart have should apply signed-order transitivity");
+    verified.expect("checked fixed-state smart have should apply signed-order transitivity");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -9662,7 +9668,7 @@ fn point_smart_have_retains_a_checked_theorem_application() {
 }
 
 #[test]
-fn explicit_linear_point_have_uses_the_checked_proof_path() {
+fn explicit_linear_fixed_state_have_uses_the_checked_proof_path() {
     let c_source = r#"
             int32 identity(int32 value) {
                 return value;
@@ -9686,10 +9692,10 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
     let (verified, certificate_checks) = proof::count_source_certificate_checks(|| {
         verify_c0_sources(click_source, &[("identity.c", c_source)])
     });
-    verified.expect("explicit point have should advance through its checked proof step");
+    verified.expect("explicit fixed-state have should advance through its checked proof step");
     assert_eq!(
         certificate_checks, 0,
-        "the admitted explicit point have should apply directly to Proof"
+        "the admitted explicit fixed-state have should apply directly to Proof"
     );
     let expanded = expand_c0_claim_source(
         click_source,
@@ -9697,11 +9703,11 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
         "identity",
         CProofClaim::Grouped,
     )
-    .expect("explicit checked point have should remain expandable");
+    .expect("explicit checked fixed-state have should remain expandable");
     assert!(expanded.contains("have value >= 0 by {"));
     assert!(expanded.matches("assumption();").count() >= 2);
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded explicit point have should independently check");
+        .expect("expanded explicit fixed-state have should independently check");
 }
 
 #[test]
@@ -11245,7 +11251,7 @@ fn source_expander_extracts_unfolded_conjuncts_inside_have() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded point-proof conjunction extraction should check");
+        .expect("expanded fixed-state proof conjunction extraction should check");
 }
 
 #[test]
@@ -11657,9 +11663,9 @@ fn source_expander_derives_separation_from_call_postconditions() {
 
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("call postconditions should expand into an explicit separation derivation");
-    // The call postconditions are written at the point they were read:
+    // The call postconditions are written against the snapshots where they were read:
     // anchored rewrites, not unanchored equalities that would re-read the
-    // fields at the proof's current point.
+    // fields in the proof's current state.
     assert!(
         expanded.contains(
             "rewrite(at(statement(2).entry, left->len) == at(statement(2).entry, length));"

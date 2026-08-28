@@ -533,8 +533,8 @@ fn synthesize_surface_resource_subject(
     }))
 }
 
-/// Spells one certified equality whose operands were read at different
-/// execution points, such as a callee postcondition relating a cell after
+/// Spells one certified equality whose operands were read from different
+/// snapshots, such as a callee postcondition relating a cell after
 /// the call to its value before it. Each operand is anchored at the first
 /// listed point where it denotes a source expression; the caller lists the
 /// recorded statement entries nearest first and must re-lower the result to
@@ -554,7 +554,7 @@ pub(in crate::lang::click) fn synthesize_surface_equality_across_points(
         points.iter().find_map(|(point, state)| {
             let expression = synthesize(state)?;
             Some(ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(point.clone()),
+                selector: SnapshotSelector::ProgramPoint(point.clone()),
                 expression: Box::new(expression),
             })
         })
@@ -971,7 +971,7 @@ fn synthesize_surface_bitvector(
             }
         }
         // A load variable names one cell of one memory epoch. It denotes
-        // the source load of that cell at any execution point whose memory
+        // the source load of that cell from any snapshot whose memory
         // lies in the same epoch; the kernel's own naming law decides that,
         // so the spelling lowers back to exactly this variable there.
         Bitvector32Term::Variable(variable) => {

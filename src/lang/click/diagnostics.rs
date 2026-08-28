@@ -982,7 +982,7 @@ pub(super) fn describe_contract_expression(expression: &ContractExpression) -> S
             expression,
         } => format!(
             "at({}, {})",
-            describe_visit_selector(selector),
+            describe_snapshot_selector(selector),
             describe_contract_expression(expression)
         ),
         ContractExpression::Add(left, right) => {
@@ -1109,7 +1109,7 @@ pub(super) fn describe_click_proposition(proposition: &ClickProposition) -> Stri
             proposition,
         } => format!(
             "at({}, {})",
-            describe_visit_selector(selector),
+            describe_snapshot_selector(selector),
             describe_click_proposition(proposition)
         ),
         ClickProposition::And(left, right) => describe_binary_click_proposition(left, "&&", right),
@@ -1175,16 +1175,14 @@ pub(super) fn describe_binary_click_proposition(
     )
 }
 
-pub(super) fn describe_visit_selector(selector: &VisitSelector) -> String {
+pub(super) fn describe_snapshot_selector(selector: &SnapshotSelector) -> String {
     match selector {
-        VisitSelector::ProgramPoint(point) => describe_program_point_ref(point),
+        SnapshotSelector::ProgramPoint(point) => describe_program_point_ref(point),
+        SnapshotSelector::Mark(name) => name.clone(),
     }
 }
 
 pub(super) fn describe_program_point_ref(point: &ProgramPointRef) -> String {
-    if let CodeRegionRef::Mark(name) = &point.region {
-        return name.clone();
-    }
     let kind = match point.kind {
         ProgramPointKind::Entry => "entry",
         ProgramPointKind::Exit => "exit",
@@ -1198,7 +1196,6 @@ pub(super) fn describe_code_region_ref(region: &CodeRegionRef) -> String {
         CodeRegionRef::Loop(index) => format!("loop({index})"),
         CodeRegionRef::Statement(index) => format!("statement({index})"),
         CodeRegionRef::Label(name) => name.clone(),
-        CodeRegionRef::Mark(name) => name.clone(),
     }
 }
 

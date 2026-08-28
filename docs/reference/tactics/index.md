@@ -57,7 +57,7 @@ the one execution transition that fails.
 The boundaries are intentional: `step` is one concrete transition, `branch`
 and `loop` unpack the corresponding C control flow at the current frontier,
 `loop` constructs and applies one verified abstract loop transition,
-`execute_until` repeats transitions to a point, and `execute` runs to function
+`execute_until` repeats transitions to a program point, and `execute` runs to function
 exit. A branch continuation executes once after its arm states have joined.
 
 Marks are local to one proof and their names cannot be rebound. They remember

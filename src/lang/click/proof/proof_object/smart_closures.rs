@@ -42,7 +42,7 @@ impl<'a> Proof<'a> {
     /// Searches the currently migrated `simp` vocabulary against this proof.
     ///
     /// Direct logical closers remain the cheap first choice. For a pure or
-    /// point signed-order/equality derivation, the kernel-selected edge path
+    /// fixed-state signed-order/equality derivation, the kernel-selected edge path
     /// is translated into a candidate made only of checked theorem
     /// applications, rewrites, and nested `have` scopes. The candidate
     /// advances this same `Proof`; no semantic result is produced before
@@ -71,13 +71,13 @@ impl<'a> Proof<'a> {
             return Ok(Some(proof));
         }
         let atomic = (|| {
-            let (goal, derivation, premise_pairs, point_application_closes_goal) =
+            let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) =
                 self.selected_simp_derivation(exclude_exact_goal)?;
             self.check_typed_atomic_simp_candidate(
                 &goal,
                 &derivation,
                 &premise_pairs,
-                point_application_closes_goal,
+                fixed_state_application_closes_goal,
             )
             .or_else(|| self.try_selected_equality_rewrite_chain(&premise_pairs))
             .or_else(|| self.try_selected_predecessor_upper_bound(&goal, &premise_pairs))
@@ -138,8 +138,8 @@ impl<'a> Proof<'a> {
         &self,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        let point = self.focused_outcome_point()?;
-        let anchor = point.premise_anchor.as_ref()?;
+        let data = self.focused_outcome_data()?;
+        let anchor = data.premise_anchor.as_ref()?;
         let predecessor = match anchor.region {
             CodeRegionRef::Statement(index) if index > 0 => Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(index - 1),
@@ -155,7 +155,7 @@ impl<'a> Proof<'a> {
             let ordered = premise_pairs
                 .iter()
                 .filter_map(|(_, surface)| {
-                    let anchored = surface_with_source_site(surface, anchor).ok()?;
+                    let anchored = surface_at_snapshot(surface, anchor).ok()?;
                     let parts = surface_nonstrict_parts(&anchored)?;
                     Some((anchored, parts))
                 })
@@ -198,8 +198,8 @@ impl<'a> Proof<'a> {
         &self,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        let point = self.focused_outcome_point()?;
-        let anchor = point.premise_anchor.as_ref()?;
+        let data = self.focused_outcome_data()?;
+        let anchor = data.premise_anchor.as_ref()?;
         let predecessor = match anchor.region {
             CodeRegionRef::Statement(index) if index > 0 => Some(ProgramPointRef {
                 region: CodeRegionRef::Statement(index - 1),
@@ -219,7 +219,7 @@ impl<'a> Proof<'a> {
             let mut lower_bounds = Vec::new();
             let mut upper_bounds = Vec::new();
             for (_, surface) in premise_pairs {
-                let anchored = surface_with_source_site(surface, anchor).ok()?;
+                let anchored = surface_at_snapshot(surface, anchor).ok()?;
                 if let Some(parts) = surface_nonstrict_parts(&anchored) {
                     lower_bounds.push((anchored.clone(), parts));
                 }
@@ -280,17 +280,18 @@ impl<'a> Proof<'a> {
 
     /// Tries the focused branch outcome goal itself as one explicit fact transport
     /// from a recorded program point. The candidate space is the execution's
-    /// program-point index, not the ambient fact set; every accepted source
+    /// recorded-snapshot index, not the ambient fact set; every accepted source
     /// and target is checked by `TransportUsing` on this immutable Proof.
     pub(super) fn try_outcome_snapshot_transport_closure(
         &self,
         surface_goal: &ClickProposition,
     ) -> Result<Option<Self>, ClickError> {
-        let Some(view) = self.outcome_point_view() else {
+        let Some(view) = self.outcome_fixed_state_view() else {
             return Ok(None);
         };
         if let Some(source) = old_reflexive_transport_source(surface_goal) {
-            match self.search_point_fact_transport(&source, surface_goal, std::iter::empty()) {
+            match self.search_fixed_state_fact_transport(&source, surface_goal, std::iter::empty())
+            {
                 Ok(proof) if proof.is_complete() => return Ok(Some(proof)),
                 Ok(_) => {}
                 Err(_) => {
@@ -302,18 +303,18 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         };
-        let selectors =
-            std::iter::once(entry).chain(view.program_point_states.keys().rev().cloned());
+        let selectors = std::iter::once(SnapshotSelector::ProgramPoint(entry))
+            .chain(view.recorded_snapshots.keys().rev().cloned());
         let mut tried = BTreeSet::new();
-        for point in selectors {
-            if !tried.insert(point.clone()) {
+        for selector in selectors {
+            if !tried.insert(selector.clone()) {
                 continue;
             }
             let source = ClickProposition::At {
-                selector: VisitSelector::ProgramPoint(point),
+                selector,
                 proposition: Box::new(surface_goal.clone()),
             };
-            match self.search_point_fact_transport(
+            match self.search_fixed_state_fact_transport(
                 &source,
                 surface_goal,
                 std::iter::once(source.clone()),
@@ -383,7 +384,7 @@ impl<'a> Proof<'a> {
                     && let Some(surface_goal) = introduced.surface_goal()
                     && let Some(source) = old_reflexive_transport_source(surface_goal)
                 {
-                    match introduced.search_point_fact_transport(
+                    match introduced.search_fixed_state_fact_transport(
                         &source,
                         surface_goal,
                         conjuncts.iter().cloned(),
@@ -566,13 +567,13 @@ impl<'a> Proof<'a> {
                 .surfaces(&opposite)
                 .cloned()
                 .collect::<Vec<_>>(),
-            ProofContext::Point(context) => context
+            ProofContext::FixedState(context) => context
                 .surface_propositions
                 .surfaces(&opposite)
                 .cloned()
                 .collect::<Vec<_>>(),
             ProofContext::Execution(_) => self
-                .outcome_point_view()
+                .outcome_fixed_state_view()
                 .into_iter()
                 .flat_map(|view| view.surface_propositions.surfaces(&opposite))
                 .cloned()
@@ -608,7 +609,7 @@ impl<'a> Proof<'a> {
                 ProofContext::Pure(context) => {
                     (&context.theorem_context.surface_requirements, true, None)
                 }
-                ProofContext::Point(context) => (
+                ProofContext::FixedState(context) => (
                     context.surface_propositions,
                     true,
                     context.premise_anchor.as_ref(),
@@ -616,21 +617,21 @@ impl<'a> Proof<'a> {
                 // A judgment stated at a function outcome supplies the
                 // outcome's recorded lowerings and statement-entry anchor.
                 ProofContext::Execution(_) => {
-                    if let Some(point) = self.focused_outcome_point() {
+                    if let Some(data) = self.focused_outcome_data() {
                         (
-                            &point.surface_propositions,
+                            &data.surface_propositions,
                             // Entry-anchored premises can add a check-equivalent
                             // outcome fact without discharging the exact goal
                             // form. Keep the ordinary trailing assumption so
                             // the checked successor decides whether it is needed.
                             false,
-                            point.premise_anchor.as_ref(),
+                            data.premise_anchor.as_ref(),
                         )
                     } else {
                         // A judgment stated mid-execution (a `have` before
                         // function exit) supplies the frontier's recorded
                         // lowerings and the entry of the last executed
-                        // statement, exactly as an outcome point does.
+                        // statement, exactly as an outcome data does.
                         let execution = self.execution()?;
                         frontier_anchor = frontier_premise_anchor(execution);
                         (
@@ -673,11 +674,14 @@ impl<'a> Proof<'a> {
         // later common statement can move it past the point where the
         // selected premises were established. If the initially resolved
         // subset already carries one common explicit `at(...)` form,
-        // retry this same finite premise list at that point. No ambient fact
+        // retry this same finite premise list at that successor. No ambient fact
         // or program-point scan participates.
         let anchors = premise_pairs
             .iter()
-            .filter_map(|(_, surface)| surface_source_site(surface))
+            .filter_map(|(_, surface)| match surface_snapshot_selector(surface) {
+                Some(SnapshotSelector::ProgramPoint(point)) => Some(point),
+                Some(SnapshotSelector::Mark(_)) | None => None,
+            })
             .collect::<BTreeSet<_>>();
         if anchors.len() == 1 {
             let inferred = anchors.first().expect("one inferred anchor");
@@ -701,12 +705,12 @@ impl<'a> Proof<'a> {
     /// back to that same kernel proposition when the selected proof step is
     /// checked. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
-    /// The point data a premise lookup spells against: the focused branch outcome
-    /// point, or the frontier's own point view for a judgment stated
-    /// mid-execution.
-    fn premise_point_view(&self) -> Option<PointOperationView<'_>> {
-        self.outcome_point_view()
-            .or_else(|| self.execution_proposition_point_view())
+    /// The fixed-state view against which a premise lookup is spelled: the
+    /// focused branch's outcome data, or the frontier's current state for a
+    /// judgment stated mid-execution.
+    fn premise_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
+        self.outcome_fixed_state_view()
+            .or_else(|| self.execution_proposition_fixed_state_view())
     }
 
     pub(super) fn available_surface_fact(
@@ -716,7 +720,7 @@ impl<'a> Proof<'a> {
         kernel: &Proposition,
     ) -> Option<ClickProposition> {
         let matches_kernel = |candidate: &ClickProposition| {
-            if self.focused_outcome_point().is_some()
+            if self.focused_outcome_data().is_some()
                 && surface_facts
                     .available_kernel_matching(candidate, |fact| self.facts().contains(fact))
                     .is_some_and(|lowered| {
@@ -739,56 +743,57 @@ impl<'a> Proof<'a> {
         }
         // Function requirements retain their original unanchored Surface
         // form while their kernel fact is entry-relative. Probe that one
-        // canonical source site before the moving statement-entry anchor;
+        // canonical source form before the moving statement-entry anchor;
         // the direct lowering check below rejects non-entry facts, and the
         // lookup visits only forms indexed under this selected premise.
         let function_entry = ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         };
-        let requirement_surface = if let Some(point) = self.focused_outcome_point() {
-            point.requirement_surfaces.get(kernel).cloned()
+        let requirement_surface = if let Some(data) = self.focused_outcome_data() {
+            data.requirement_surfaces.get(kernel).cloned()
         } else {
             // A judgment stated mid-execution selects its requirement
             // spellings from the frontier's own contract, as an outcome
-            // point does from its recorded ones.
-            self.execution_proposition_point_view().and_then(|view| {
-                view.requirement_facts
-                    .iter()
-                    .zip(view.original_requirements)
-                    .find(|(fact, _)| *fact == kernel)
-                    .and_then(|(_, requirement)| requirement.proposition().cloned())
-            })
+            // outcome does from its recorded ones.
+            self.execution_proposition_fixed_state_view()
+                .and_then(|view| {
+                    view.requirement_facts
+                        .iter()
+                        .zip(view.original_requirements)
+                        .find(|(fact, _)| *fact == kernel)
+                        .and_then(|(_, requirement)| requirement.proposition().cloned())
+                })
         };
         if let Some(surface) = requirement_surface {
             let anchored = ClickProposition::At {
-                selector: VisitSelector::ProgramPoint(function_entry.clone()),
+                selector: SnapshotSelector::ProgramPoint(function_entry.clone()),
                 proposition: Box::new(surface.clone()),
             };
             if matches_kernel(&anchored).is_some() {
                 return Some(anchored);
             }
-            if let Ok(anchored) = surface_with_source_site(&surface, &function_entry)
+            if let Ok(anchored) = surface_at_snapshot(&surface, &function_entry)
                 && matches_kernel(&anchored).is_some()
             {
                 return Some(anchored);
             }
         }
-        if self.premise_point_view().is_some() {
+        if self.premise_fixed_state_view().is_some() {
             if let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
-                let anchored = surface_with_source_site(surface, &function_entry).ok()?;
+                let anchored = surface_at_snapshot(surface, &function_entry).ok()?;
                 matches_kernel(&anchored).map(|()| anchored)
             }) {
                 return Some(anchored);
             }
-            if let Some(view) = self.premise_point_view()
+            if let Some(view) = self.premise_fixed_state_view()
                 && let Some(surface) = synthesize_surface_proposition(
                     kernel,
                     view.parameters,
                     view.arguments,
                     view.pre_state,
                 )
-                && let Ok(anchored) = surface_with_source_site(&surface, &function_entry)
+                && let Ok(anchored) = surface_at_snapshot(&surface, &function_entry)
                 && matches_kernel(&anchored).is_some()
             {
                 return Some(anchored);
@@ -796,7 +801,7 @@ impl<'a> Proof<'a> {
         }
         if let Some(anchor) = premise_anchor
             && let Some(anchored) = surface_facts.surfaces(kernel).find_map(|surface| {
-                let anchored = surface_with_source_site(surface, anchor).ok()?;
+                let anchored = surface_at_snapshot(surface, anchor).ok()?;
                 matches_kernel(&anchored).map(|()| anchored)
             })
         {
@@ -804,24 +809,24 @@ impl<'a> Proof<'a> {
         }
         // Before accepting an unanchored recorded form, which may have been
         // stated at an earlier value of a variable that later changed,
-        // spell the fact at the recorded point where it was read.
+        // spell the fact against the recorded snapshot where it was read.
         if let Some(anchor) = premise_anchor
-            && let Some((parameters, arguments, program_points)) = match self.context.as_ref() {
+            && let Some((parameters, arguments, recorded_snapshots)) = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
-                ProofContext::Point(context) => Some((
+                ProofContext::FixedState(context) => Some((
                     context.parameters,
                     context.arguments,
-                    context.program_point_states,
+                    context.recorded_snapshots,
                 )),
                 ProofContext::Execution(_) => self
-                    .premise_point_view()
-                    .map(|view| (view.parameters, view.arguments, view.program_point_states)),
+                    .premise_fixed_state_view()
+                    .map(|view| (view.parameters, view.arguments, view.recorded_snapshots)),
             }
-            && let Some(anchored) = synthesize_surface_at_recorded_points(
+            && let Some(anchored) = synthesize_surface_at_recorded_snapshots(
                 kernel,
                 parameters,
                 arguments,
-                program_points,
+                recorded_snapshots,
                 anchor,
             )
             .into_iter()
@@ -837,20 +842,20 @@ impl<'a> Proof<'a> {
         if let Some(anchor) = premise_anchor {
             let synthesis_context = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
-                ProofContext::Point(context) => Some((
+                ProofContext::FixedState(context) => Some((
                     context.parameters,
                     context.arguments,
-                    context.program_point_states,
+                    context.recorded_snapshots,
                 )),
                 ProofContext::Execution(_) => self
-                    .premise_point_view()
-                    .map(|view| (view.parameters, view.arguments, view.program_point_states)),
+                    .premise_fixed_state_view()
+                    .map(|view| (view.parameters, view.arguments, view.recorded_snapshots)),
             };
-            if let Some((parameters, arguments, program_points)) = synthesis_context
-                && let Some(state) = program_points.get(anchor)
+            if let Some((parameters, arguments, recorded_snapshots)) = synthesis_context
+                && let Some(state) = recorded_snapshots.get(anchor)
                 && let Some(surface) =
                     synthesize_surface_proposition(kernel, parameters, arguments, state)
-                && let Ok(anchored) = surface_with_source_site(&surface, anchor)
+                && let Ok(anchored) = surface_at_snapshot(&surface, anchor)
                 && matches_kernel(&anchored).is_some()
             {
                 return Some(anchored);
@@ -864,8 +869,8 @@ impl<'a> Proof<'a> {
             return Some(surface);
         }
         // Quantified execution facts may be retained in the canonical memory
-        // form used by the kernel while their recorded Surface form
-        // lowers to a check-equivalent snapshot term. Probe only the
+        // form used by the kernel while their recorded Surface form lowers to
+        // a term carrying a check-equivalent memory snapshot. Probe only the
         // persistent alpha/canonical-form bucket for this selected premise;
         // `InstantiateUsing` validates the same equivalence on check.
         if matches!(kernel, Proposition::ForAll { .. }) {
@@ -888,27 +893,27 @@ impl<'a> Proof<'a> {
         // Branch-condition facts are checked execution outputs, but their
         // arm-local Surface map entry need not survive at the shared outcome.
         // Reconstruct only this derivation-selected premise at the current
-        // semantic point and accept it only when ordinary lowering recovers
+        // symbolic state and accept it only when ordinary lowering recovers
         // the exact kernel fact. This is constant work per typed proof edge,
         // not an ambient form search.
         let synthesis_context = match self.context.as_ref() {
             ProofContext::Pure(_) => None,
-            ProofContext::Point(context) => Some((
+            ProofContext::FixedState(context) => Some((
                 context.parameters,
                 context.arguments,
                 context.state,
-                context.program_point_states,
+                context.recorded_snapshots,
             )),
-            ProofContext::Execution(_) => self.outcome_point_view().map(|view| {
+            ProofContext::Execution(_) => self.outcome_fixed_state_view().map(|view| {
                 (
                     view.parameters,
                     view.arguments,
                     view.state,
-                    view.program_point_states,
+                    view.recorded_snapshots,
                 )
             }),
         };
-        let (parameters, arguments, state, program_points) = synthesis_context?;
+        let (parameters, arguments, state, recorded_snapshots) = synthesis_context?;
         if let Some(surface) = synthesize_surface_proposition(kernel, parameters, arguments, state)
             && matches_kernel(&surface).is_some()
         {
@@ -916,15 +921,15 @@ impl<'a> Proof<'a> {
         }
         // A certified statement fact may relate two execution snapshots (a
         // callee postcondition names a cell after the call and its value
-        // before it), so no single point denotes both operands. Spell each
+        // before it), so no single snapshot denotes both operands. Spell each
         // operand at the nearest recorded statement entry that denotes it,
         // walking back from the selected premise anchor; the candidate is
         // accepted only when ordinary lowering recovers this exact fact.
-        synthesize_surface_at_recorded_points(
+        synthesize_surface_at_recorded_snapshots(
             kernel,
             parameters,
             arguments,
-            program_points,
+            recorded_snapshots,
             premise_anchor?,
         )
         .into_iter()
@@ -955,7 +960,7 @@ impl<'a> Proof<'a> {
         // `open` scope, before the outcome) reads its spellings from the
         // execution's surface map, anchored at the current statement entry.
         let frontier_anchor = match self.context.as_ref() {
-            ProofContext::Execution(_) if self.focused_outcome_point().is_none() => {
+            ProofContext::Execution(_) if self.focused_outcome_data().is_none() => {
                 self.execution().map(|execution| ProgramPointRef {
                     region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
                     kind: ProgramPointKind::Entry,
@@ -965,12 +970,12 @@ impl<'a> Proof<'a> {
         };
         let (surface_facts, premise_anchor) = match self.context.as_ref() {
             ProofContext::Pure(context) => (&context.theorem_context.surface_requirements, None),
-            ProofContext::Point(context) => (
+            ProofContext::FixedState(context) => (
                 context.surface_propositions,
                 context.premise_anchor.as_ref(),
             ),
-            ProofContext::Execution(_) => match self.focused_outcome_point() {
-                Some(point) => (&point.surface_propositions, point.premise_anchor.as_ref()),
+            ProofContext::Execution(_) => match self.focused_outcome_data() {
+                Some(data) => (&data.surface_propositions, data.premise_anchor.as_ref()),
                 None => (
                     &self.execution()?.surface_propositions,
                     frontier_anchor.as_ref(),
@@ -1213,7 +1218,7 @@ impl<'a> Proof<'a> {
         goal: &Proposition,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        if !matches!(self.context.as_ref(), ProofContext::Point(_)) {
+        if !matches!(self.context.as_ref(), ProofContext::FixedState(_)) {
             return None;
         }
         let Proposition::ConditionIs(
@@ -1427,7 +1432,7 @@ impl<'a> Proof<'a> {
     pub(super) fn try_indexed_forall_instantiation(&self) -> Option<Self> {
         let goal = self.goal()?;
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
-            .then(|| self.outcome_point_view())
+            .then(|| self.outcome_fixed_state_view())
             .flatten();
         let bound_variable_names = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => goal
@@ -1450,7 +1455,7 @@ impl<'a> Proof<'a> {
                     .surfaces(fact)
                     .next()
                     .cloned(),
-                ProofContext::Point(context) => {
+                ProofContext::FixedState(context) => {
                     context.surface_propositions.surfaces(fact).next().cloned()
                 }
                 ProofContext::Execution(_) => outcome_view
@@ -1462,7 +1467,7 @@ impl<'a> Proof<'a> {
             };
             let synthesized = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
-                ProofContext::Point(context) => {
+                ProofContext::FixedState(context) => {
                     synthesize_surface_proposition_with_bound_variable_names(
                         fact,
                         context.parameters,
@@ -1505,7 +1510,7 @@ impl<'a> Proof<'a> {
                     .surfaces(quantified)
                     .cloned()
                     .collect::<Vec<_>>(),
-                ProofContext::Point(context) => context
+                ProofContext::FixedState(context) => context
                     .surface_propositions
                     .surfaces(quantified)
                     .cloned()
@@ -1518,7 +1523,7 @@ impl<'a> Proof<'a> {
             };
             let predicate_environment = match self.context.as_ref() {
                 ProofContext::Pure(context) => context.predicate_environment,
-                ProofContext::Point(context) => context.predicate_environment,
+                ProofContext::FixedState(context) => context.predicate_environment,
                 ProofContext::Execution(context) => context.predicate_environment,
             };
             let mut surfaces = Vec::new();
@@ -1540,7 +1545,7 @@ impl<'a> Proof<'a> {
             }
             let synthesized = match self.context.as_ref() {
                 ProofContext::Pure(_) => None,
-                ProofContext::Point(context) => synthesize_surface_proposition(
+                ProofContext::FixedState(context) => synthesize_surface_proposition(
                     quantified,
                     context.parameters,
                     context.arguments,
@@ -1568,7 +1573,7 @@ impl<'a> Proof<'a> {
             if surfaces.is_empty() {
                 let click_function_environment = match self.context.as_ref() {
                     ProofContext::Pure(context) => context.click_function_environment,
-                    ProofContext::Point(context) => context.click_function_environment,
+                    ProofContext::FixedState(context) => context.click_function_environment,
                     ProofContext::Execution(context) => context.click_function_environment,
                 };
                 for name in self.focused_branch_unfolds().iter() {
@@ -1580,7 +1585,7 @@ impl<'a> Proof<'a> {
                                 .surfaces(opaque)
                                 .cloned()
                                 .collect::<Vec<_>>(),
-                            ProofContext::Point(context) => context
+                            ProofContext::FixedState(context) => context
                                 .surface_propositions
                                 .surfaces(opaque)
                                 .cloned()
@@ -1808,7 +1813,7 @@ impl<'a> Proof<'a> {
         self.try_planned_explicit_steps(&tactics)
     }
 
-    /// Retains the point-wise unchanged-load certificate for a guarded
+    /// Retains the pointwise unchanged-load certificate for a guarded
     /// universal outcome. The kernel derivation has already selected the
     /// finite context premises relevant to this goal; after introducing the
     /// binder and guard, transport searches only those forms plus the
@@ -1818,7 +1823,7 @@ impl<'a> Proof<'a> {
         surface_goal: &ClickProposition,
         premise_pairs: &[(Proposition, ClickProposition)],
     ) -> Option<Self> {
-        if self.focused_outcome_point().is_none() {
+        if self.focused_outcome_data().is_none() {
             return None;
         }
         let mut cursor = surface_goal;
@@ -1853,15 +1858,15 @@ impl<'a> Proof<'a> {
                     .derive_atomic_proposition(&kernel)
             })
             .map(|derivation| {
-                let point = proof.focused_outcome_point()?;
+                let data = proof.focused_outcome_data()?;
                 let pairs = derivation
                     .context_premises()
                     .into_iter()
                     .filter_map(|premise| {
                         proof
                             .available_surface_fact(
-                                &point.surface_propositions,
-                                point.premise_anchor.as_ref(),
+                                &data.surface_propositions,
+                                data.premise_anchor.as_ref(),
                                 &premise,
                             )
                             .map(|surface| (premise, surface))
@@ -1871,10 +1876,10 @@ impl<'a> Proof<'a> {
             })
             .flatten()
             .unwrap_or_default();
-        let point = proof.focused_outcome_point()?;
-        let anchor = point.premise_anchor.as_ref()?;
-        let view = proof.outcome_point_view()?;
-        let anchor_state = view.program_point_states.get(anchor)?;
+        let data = proof.focused_outcome_data()?;
+        let anchor = data.premise_anchor.as_ref()?;
+        let view = proof.outcome_fixed_state_view()?;
+        let anchor_state = view.recorded_snapshots.get(anchor)?;
         let mut anchored_candidates = Vec::new();
         for (kernel, _) in premise_pairs.iter().chain(&source_pairs) {
             let Some(surface) = synthesize_surface_proposition(
@@ -1885,7 +1890,7 @@ impl<'a> Proof<'a> {
             ) else {
                 continue;
             };
-            let Ok(surface) = surface_with_source_site(&surface, anchor) else {
+            let Ok(surface) = surface_at_snapshot(&surface, anchor) else {
                 continue;
             };
             let Some((left, right)) = surface_nonstrict_parts(&surface) else {
@@ -1918,13 +1923,14 @@ impl<'a> Proof<'a> {
             return None;
         };
         let candidates = std::iter::once(anchored_candidate.clone()).chain(guard_surfaces);
-        let transported = match proof.search_point_fact_transport(&source, &target, candidates) {
-            Ok(transported) => transported,
-            Err(error) => {
-                let _ = error;
-                return None;
-            }
-        };
+        let transported =
+            match proof.search_fixed_state_fact_transport(&source, &target, candidates) {
+                Ok(transported) => transported,
+                Err(error) => {
+                    let _ = error;
+                    return None;
+                }
+            };
         if transported.is_complete() {
             return Some(transported);
         }
@@ -1932,13 +1938,13 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn try_typed_atomic_simp_closure(&self) -> Option<Self> {
-        let (goal, derivation, premise_pairs, point_application_closes_goal) =
+        let (goal, derivation, premise_pairs, fixed_state_application_closes_goal) =
             self.selected_simp_derivation(false)?;
         self.check_typed_atomic_simp_candidate(
             &goal,
             &derivation,
             &premise_pairs,
-            point_application_closes_goal,
+            fixed_state_application_closes_goal,
         )
     }
 
@@ -2017,14 +2023,14 @@ impl<'a> Proof<'a> {
         goal: &Proposition,
         derivation: &PropositionDerivation,
         premise_pairs: &[(Proposition, ClickProposition)],
-        point_application_closes_goal: bool,
+        fixed_state_application_closes_goal: bool,
     ) -> Option<Self> {
         let tactics = recorded_signed_order_pairs(derivation, &premise_pairs)
             .and_then(|ordered| {
                 plan_recorded_signed_order_path_for_context(
                     goal,
                     &ordered,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| plan_recorded_bitvector_equality_path(goal, derivation, &premise_pairs))
@@ -2042,7 +2048,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_upper_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2053,7 +2059,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_constant_upper_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2062,7 +2068,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_strictly_increases_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2071,7 +2077,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_one_plus_strictly_increases_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2082,7 +2088,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_below_max_is_defined_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2091,7 +2097,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_one_plus_below_max_is_defined_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2100,7 +2106,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_nonnegative_add_within_max_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2111,7 +2117,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_nonnegative_subtract_within_value_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2120,7 +2126,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_lower_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2131,7 +2137,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_greater_equal_lower_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2142,7 +2148,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2153,7 +2159,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2162,7 +2168,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_increment_preserves_order_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2173,7 +2179,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2184,7 +2190,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2195,7 +2201,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2218,7 +2224,7 @@ impl<'a> Proof<'a> {
                     goal,
                     derivation,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2235,7 +2241,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_one_le_predecessor_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2246,7 +2252,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2257,7 +2263,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2266,7 +2272,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_positive_is_nonnegative_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2277,7 +2283,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2286,7 +2292,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_successor_le_implies_lt_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2297,7 +2303,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_constant_lower_bound_weakening_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2308,7 +2314,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_negated_strict_successor_bound_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })
             .or_else(|| {
@@ -2317,7 +2323,7 @@ impl<'a> Proof<'a> {
                 plan_recorded_int32_le_and_neq_implies_strict_for_context(
                     goal,
                     &recorded,
-                    point_application_closes_goal,
+                    fixed_state_application_closes_goal,
                 )
             })?;
         // The planner selects only Surface-expressible explicit operations.
@@ -2570,7 +2576,7 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("execution-frontier proof lost its semantic state"));
         };
         // Structural frontiers belong to the branch and loop operations.
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             execution.view(context),
             &execution.state,
             context.function,
@@ -2600,17 +2606,17 @@ impl<'a> Proof<'a> {
     }
 }
 
-/// Candidate spellings of one kernel fact from the recorded execution points,
-/// nearest first: the fact synthesized at a point where its cells are
+/// Candidate spellings of one kernel fact from recorded program-point
+/// snapshots, nearest first: the fact synthesized from a snapshot where its cells are
 /// readable and re-read there (`at(statement(n).entry, ...)`), then, for an
-/// equality whose operands were read at different points, one anchor per
+/// equality whose operands were read from different snapshots, one anchor per
 /// operand. Callers must re-lower each candidate and accept it only when it
 /// denotes exactly `kernel`.
-pub(super) fn synthesize_surface_at_recorded_points(
+pub(super) fn synthesize_surface_at_recorded_snapshots(
     kernel: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
-    program_points: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     anchor: &ProgramPointRef,
 ) -> Vec<ClickProposition> {
     let anchor_index = match &anchor.region {
@@ -2620,11 +2626,14 @@ pub(super) fn synthesize_surface_at_recorded_points(
     // Recorded statement entries: those at or before the anchor, nearest
     // first, then any recorded later (a loop body's statements lie beyond
     // the loop's own index).
-    let mut indices = program_points
+    let mut indices = recorded_snapshots
         .keys()
-        .filter_map(|point| match (&point.region, point.kind) {
-            (CodeRegionRef::Statement(index), ProgramPointKind::Entry) => Some(*index),
-            _ => None,
+        .filter_map(|selector| match selector {
+            SnapshotSelector::ProgramPoint(ProgramPointRef {
+                region: CodeRegionRef::Statement(index),
+                kind: ProgramPointKind::Entry,
+            }) => Some(*index),
+            SnapshotSelector::ProgramPoint(_) | SnapshotSelector::Mark(_) => None,
         })
         .collect::<Vec<_>>();
     indices.sort_unstable();
@@ -2641,7 +2650,7 @@ pub(super) fn synthesize_surface_at_recorded_points(
                 region: CodeRegionRef::Statement(index),
                 kind: ProgramPointKind::Entry,
             };
-            let state = program_points.get(&point)?;
+            let state = recorded_snapshots.get(&point)?;
             Some((point, state))
         })
         .collect::<Vec<_>>();
@@ -2649,7 +2658,7 @@ pub(super) fn synthesize_surface_at_recorded_points(
         .iter()
         .filter_map(|(point, state)| {
             let surface = synthesize_surface_proposition(kernel, parameters, arguments, state)?;
-            surface_with_source_site(&surface, point).ok()
+            surface_at_snapshot(&surface, point).ok()
         })
         .collect::<Vec<_>>();
     candidates.extend(synthesize_surface_equality_across_points(

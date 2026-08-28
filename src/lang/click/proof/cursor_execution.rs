@@ -32,7 +32,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     for assertion in assertions {
         match assertion {
             ProofAssertion::Fact(surface_fact) => {
-                let fact = lower_point_proposition_with_assumptions(
+                let fact = lower_fixed_state_proposition_with_assumptions(
                         surface_fact,
                         concrete_facts.assumptions(),
                         parameters,
@@ -40,7 +40,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         proof_context.old_reference_state(&execution.frontier, state),
                         state,
                         None,
-                        &execution.program_point_states,
+                        &execution.recorded_snapshots,
                         predicate_environment,
                         click_function_environment,
                     )
@@ -121,10 +121,10 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     // an explicit proof mark is a deliberate historical dependency. Preserve
     // marks that were common to every continuing arm.
     execution
-        .program_point_states
-        .retain(|point, _| matches!(point.region, CodeRegionRef::Mark(_)));
+        .recorded_snapshots
+        .retain(|selector, _| matches!(selector, SnapshotSelector::Mark(_)));
     execution
-        .program_point_states
+        .recorded_snapshots
         .insert(target.clone(), abstract_state.clone());
     execution.case_assumptions.clear();
     execution.execution_abstraction = true;
@@ -226,12 +226,12 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     }
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());
     execution
-        .program_point_states
+        .recorded_snapshots
         .insert(target.clone(), abstract_state.clone());
 
     for assertion in assertions {
         if let ProofAssertion::Fact(surface_fact) = assertion {
-            let fact = lower_point_proposition(
+            let fact = lower_fixed_state_proposition(
                     surface_fact,
                     &exported_pure_facts,
                     parameters,
@@ -239,7 +239,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     &entry_state,
                     &abstract_state,
                     None,
-                    &execution.program_point_states,
+                    &execution.recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -267,7 +267,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
             })?;
     abstract_state = abstract_state.with_resource_context(exported_resources);
     execution
-        .program_point_states
+        .recorded_snapshots
         .insert(target.clone(), abstract_state.clone());
     *state = abstract_state;
     *available_pure_facts = ProofFacts::from_ordered(&exported_pure_facts);
@@ -399,7 +399,7 @@ fn resource_is_direct_observed_core(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn execute_branch_step_from_execution_point(
+pub(super) fn execute_branch_step_from_frontier_position(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -427,11 +427,11 @@ pub(super) fn execute_branch_step_from_execution_point(
         ))
     })?;
     let (execution_start_state, mut current_state, statement, remaining) =
-        next_top_level_statement_from_execution_point(
+        next_top_level_statement_from_frontier_position(
             ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
@@ -462,22 +462,22 @@ pub(super) fn execute_branch_step_from_execution_point(
         )));
     };
 
-    let construction_point_overrides = construction.is_some().then(|| {
-        construction_point_overrides(
-            &execution.program_point_states,
+    let construction_snapshot_overrides = construction.is_some().then(|| {
+        construction_snapshot_overrides(
+            &execution.recorded_snapshots,
             function_block,
             &[CodeRegion::Statement(statement_index)],
             ProgramPointKind::Entry,
         )
     });
-    record_statement_program_point_state(
-        &mut execution.program_point_states,
+    record_statement_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
+    let construction_snapshot_overrides = construction_snapshot_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let condition_transitions = certified_condition_transitions(
@@ -548,7 +548,7 @@ pub(super) fn execute_branch_step_from_execution_point(
     {
         let occurrence = execution.next_path_choice;
         execution.next_path_choice += 1;
-        let statement_condition = surface_with_source_site(
+        let statement_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -573,7 +573,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     };
                     let surface =
                         synthesize_surface_proposition(fact, parameters, arguments, entry_state)?;
-                    let surface = surface_with_source_site(
+                    let surface = surface_at_snapshot(
                         &surface,
                         &ProgramPointRef {
                             region: CodeRegionRef::Function,
@@ -591,9 +591,9 @@ pub(super) fn execute_branch_step_from_execution_point(
             .unwrap_or(statement_condition);
         if let Some(construction) = construction.as_mut() {
             let environments = construction.environments;
-            let restore = apply_construction_point_view(
-                &mut execution.program_point_states,
-                &construction_point_overrides,
+            let restore = apply_construction_snapshot_view(
+                &mut execution.recorded_snapshots,
+                &construction_snapshot_overrides,
             );
             construct_proof_step_for_planned_operation(
                 execution,
@@ -612,7 +612,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                     theorem: condition_transition.theorem.clone(),
                 },
             );
-            restore_construction_point_view(&mut execution.program_point_states, restore);
+            restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
             let certificate_facts = &mut execution.surface_record.certificate_facts;
             for fact in &condition_transition.path_facts {
                 certificate_facts.insert(fact.clone());
@@ -620,9 +620,9 @@ pub(super) fn execute_branch_step_from_execution_point(
         }
     }
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(
-            &mut execution.program_point_states,
-            &construction_point_overrides,
+        let restore = apply_construction_snapshot_view(
+            &mut execution.recorded_snapshots,
+            &construction_snapshot_overrides,
         );
         append_condition_transition_certificate(
             execution,
@@ -635,7 +635,7 @@ pub(super) fn execute_branch_step_from_execution_point(
             arguments,
             construction.as_mut().map(Construction::reborrow),
         );
-        restore_construction_point_view(&mut execution.program_point_states, restore);
+        restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
     let state: &mut CState = &mut execution.state;
     *available_pure_facts = condition_transition.pure_facts;
@@ -670,8 +670,8 @@ pub(super) fn execute_branch_step_from_execution_point(
             .exited_branch_regions(skip_index)
             .to_vec()
         {
-            record_statement_program_point_state(
-                &mut execution.program_point_states,
+            record_statement_program_snapshot_state(
+                &mut execution.recorded_snapshots,
                 function_block,
                 exited,
                 ProgramPointKind::Exit,
@@ -688,13 +688,13 @@ pub(super) fn execute_branch_step_from_execution_point(
                 if let Some(successor) = successor {
                     execution.frontier.next_statement_index = successor;
                 }
-                execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                execution.frontier.position = FrontierPosition::StatementEntry {
                     remaining: tail.into(),
                 };
             }
             None => match resume_after_completed_region(&mut execution.frontier) {
                 Some(tail) => {
-                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.position = FrontierPosition::StatementEntry {
                         remaining: tail.into(),
                     };
                 }
@@ -711,13 +711,13 @@ pub(super) fn execute_branch_step_from_execution_point(
             Some(tail) => c_seq(selected_branch, tail),
             None => selected_branch,
         };
-        execution.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.position = FrontierPosition::StatementEntry {
             remaining: spliced.into(),
         };
     }
     record_current_statement_entry(
         &execution.frontier,
-        &mut execution.program_point_states,
+        &mut execution.recorded_snapshots,
         state,
         function_block,
         function,
@@ -759,9 +759,9 @@ fn execute_concrete_loop_head_step(
         unreachable!("concrete loop stepping requires a while statement");
     };
 
-    let construction_point_overrides = construction.is_some().then(|| {
-        construction_point_overrides(
-            &execution.program_point_states,
+    let construction_snapshot_overrides = construction.is_some().then(|| {
+        construction_snapshot_overrides(
+            &execution.recorded_snapshots,
             function_block,
             &[
                 CodeRegion::Statement(statement_index),
@@ -770,21 +770,21 @@ fn execute_concrete_loop_head_step(
             ProgramPointKind::Entry,
         )
     });
-    record_statement_program_point_state(
-        &mut execution.program_point_states,
+    record_statement_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    record_loop_program_point_state(
-        &mut execution.program_point_states,
+    record_loop_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         loop_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
-    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
+    let construction_snapshot_overrides = construction_snapshot_overrides.unwrap_or_default();
 
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
@@ -816,9 +816,9 @@ fn execute_concrete_loop_head_step(
         .next()
         .expect("one condition transition was required");
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(
-            &mut execution.program_point_states,
-            &construction_point_overrides,
+        let restore = apply_construction_snapshot_view(
+            &mut execution.recorded_snapshots,
+            &construction_snapshot_overrides,
         );
         append_condition_transition_certificate(
             execution,
@@ -831,7 +831,7 @@ fn execute_concrete_loop_head_step(
             arguments,
             construction.as_mut().map(Construction::reborrow),
         );
-        restore_construction_point_view(&mut execution.program_point_states, restore);
+        restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
     let state: &mut CState = &mut execution.state;
     *available_pure_facts = condition_transition.pure_facts;
@@ -857,11 +857,11 @@ fn execute_concrete_loop_head_step(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
                 ))
             })?;
-        execution.frontier.point = ProofExecutionPoint::StatementEntry {
+        execution.frontier.position = FrontierPosition::StatementEntry {
             remaining: (*body).into(),
         };
-        record_statement_program_point_state(
-            &mut execution.program_point_states,
+        record_statement_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             function_block,
             execution.frontier.next_statement_index,
             ProgramPointKind::Entry,
@@ -870,15 +870,15 @@ fn execute_concrete_loop_head_step(
         return Ok(());
     }
 
-    record_statement_program_point_state(
-        &mut execution.program_point_states,
+    record_statement_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         statement_index,
         ProgramPointKind::Exit,
         current_state.clone(),
     );
-    record_loop_program_point_state(
-        &mut execution.program_point_states,
+    record_loop_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         loop_index,
         ProgramPointKind::Exit,
@@ -892,8 +892,8 @@ fn execute_concrete_loop_head_step(
         .exited_branch_regions(statement_index)
         .to_vec()
     {
-        record_statement_program_point_state(
-            &mut execution.program_point_states,
+        record_statement_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             function_block,
             exited,
             ProgramPointKind::Exit,
@@ -914,11 +914,11 @@ fn execute_concrete_loop_head_step(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
     };
-    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+    execution.frontier.position = FrontierPosition::StatementEntry {
         remaining: remaining.into(),
     };
-    record_statement_program_point_state(
-        &mut execution.program_point_states,
+    record_statement_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         execution.frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -928,7 +928,7 @@ fn execute_concrete_loop_head_step(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn next_top_level_statement_from_execution_point(
+pub(super) fn next_top_level_statement_from_frontier_position(
     view: ExecutionView<'_>,
     state: &CState,
     function: &CFunction,
@@ -937,8 +937,8 @@ pub(super) fn next_top_level_statement_from_execution_point(
     tactic_index: usize,
     tactic_name: &str,
 ) -> Result<NextTopLevelStatement, ClickError> {
-    match &view.frontier.point {
-        ProofExecutionPoint::FunctionEntry => {
+    match &view.frontier.position {
+        FrontierPosition::FunctionEntry => {
             let execution_start_state = state.clone();
             let current_state = c_function_entry_state(&execution_start_state, function, arguments)
                 .ok_or_else(|| {
@@ -954,7 +954,7 @@ pub(super) fn next_top_level_statement_from_execution_point(
                 })?;
             Ok((execution_start_state, current_state, statement, remaining))
         }
-        ProofExecutionPoint::StatementEntry { remaining } => {
+        FrontierPosition::StatementEntry { remaining } => {
             let execution_start_state = view
                 .frontier
                 .execution_start_state
@@ -972,10 +972,10 @@ pub(super) fn next_top_level_statement_from_execution_point(
                 })?;
             Ok((execution_start_state, state.clone(), statement, remaining))
         }
-        ProofExecutionPoint::FunctionExit { .. } => Err(ClickError::new(format!(
+        FrontierPosition::FunctionExit { .. } => Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` cannot run after execution already reached function exit"
         ))),
-        ProofExecutionPoint::RegionBoundary => Err(ClickError::new(match view.frontier.region {
+        FrontierPosition::RegionBoundary => Err(ClickError::new(match view.frontier.region {
             ExecutionRegionKind::BranchArm => format!(
                 "`{claim_label}` tactic {tactic_index}: `{tactic_name}` ran past the end of its branch body; an arm of `branch` must stop at the shared continuation"
             ),
@@ -986,15 +986,15 @@ pub(super) fn next_top_level_statement_from_execution_point(
     }
 }
 
-pub(super) fn record_loop_program_point_state(
-    program_point_states: &mut ProgramPointStates,
+pub(super) fn record_loop_program_snapshot_state(
+    recorded_snapshots: &mut RecordedSnapshots,
     function_block: &FunctionBlock,
     loop_index: usize,
     kind: ProgramPointKind,
     state: CState,
 ) {
-    record_code_region_program_point_state(
-        program_point_states,
+    record_code_region_program_snapshot_state(
+        recorded_snapshots,
         function_block,
         CodeRegion::Loop(loop_index),
         kind,
@@ -1005,8 +1005,8 @@ pub(super) fn record_loop_program_point_state(
 /// Swaps the listed program points to their pre-recording values (or removes
 /// points the recording introduced) so a surface step can be written against
 /// the view its own check will have; returns what must be put back.
-fn construction_point_overrides(
-    program_point_states: &ProgramPointStates,
+fn construction_snapshot_overrides(
+    recorded_snapshots: &RecordedSnapshots,
     function_block: &FunctionBlock,
     regions: &[CodeRegion],
     kind: ProgramPointKind,
@@ -1037,56 +1037,56 @@ fn construction_point_overrides(
     points
         .into_iter()
         .map(|point| {
-            let prior = program_point_states.get(&point).cloned();
+            let prior = recorded_snapshots.get(&point).cloned();
             (point, prior)
         })
         .collect()
 }
 
-fn apply_construction_point_view(
-    program_point_states: &mut ProgramPointStates,
+fn apply_construction_snapshot_view(
+    recorded_snapshots: &mut RecordedSnapshots,
     overrides: &[(ProgramPointRef, Option<CState>)],
 ) -> Vec<(ProgramPointRef, Option<CState>)> {
     let mut restore = Vec::with_capacity(overrides.len());
     for (point, prior) in overrides {
-        restore.push((point.clone(), program_point_states.get(point).cloned()));
+        restore.push((point.clone(), recorded_snapshots.get(point).cloned()));
         match prior {
             Some(state) => {
-                program_point_states.insert(point.clone(), state.clone());
+                recorded_snapshots.insert(point.clone(), state.clone());
             }
             None => {
-                program_point_states.remove(point);
+                recorded_snapshots.remove(point);
             }
         }
     }
     restore
 }
 
-fn restore_construction_point_view(
-    program_point_states: &mut ProgramPointStates,
+fn restore_construction_snapshot_view(
+    recorded_snapshots: &mut RecordedSnapshots,
     restore: Vec<(ProgramPointRef, Option<CState>)>,
 ) {
     for (point, value) in restore {
         match value {
             Some(state) => {
-                program_point_states.insert(point, state);
+                recorded_snapshots.insert(point, state);
             }
             None => {
-                program_point_states.remove(&point);
+                recorded_snapshots.remove(&point);
             }
         }
     }
 }
 
-pub(super) fn record_statement_program_point_state(
-    program_point_states: &mut ProgramPointStates,
+pub(super) fn record_statement_program_snapshot_state(
+    recorded_snapshots: &mut RecordedSnapshots,
     function_block: &FunctionBlock,
     statement_index: usize,
     kind: ProgramPointKind,
     state: CState,
 ) {
-    record_code_region_program_point_state(
-        program_point_states,
+    record_code_region_program_snapshot_state(
+        recorded_snapshots,
         function_block,
         CodeRegion::Statement(statement_index),
         kind,
@@ -1094,8 +1094,8 @@ pub(super) fn record_statement_program_point_state(
     );
 }
 
-pub(super) fn record_code_region_program_point_state(
-    program_point_states: &mut ProgramPointStates,
+pub(super) fn record_code_region_program_snapshot_state(
+    recorded_snapshots: &mut RecordedSnapshots,
     function_block: &FunctionBlock,
     region: CodeRegion,
     kind: ProgramPointKind,
@@ -1106,7 +1106,7 @@ pub(super) fn record_code_region_program_point_state(
         CodeRegion::Loop(index) => CodeRegionRef::Loop(index),
         CodeRegion::Statement(index) => CodeRegionRef::Statement(index),
     };
-    program_point_states.insert(
+    recorded_snapshots.insert(
         ProgramPointRef {
             region: point_region,
             kind,
@@ -1119,7 +1119,7 @@ pub(super) fn record_code_region_program_point_state(
         .filter(|clause| clause.region() == &region)
         .filter_map(StructuralClause::label)
     {
-        program_point_states.insert(
+        recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Label(label.to_string()),
                 kind,
@@ -1129,27 +1129,28 @@ pub(super) fn record_code_region_program_point_state(
     }
 }
 
-pub(super) const SOURCE_SITE_ANNOTATION_DEPTH_LIMIT: usize = 32;
+pub(super) const SNAPSHOT_ANNOTATION_DEPTH_LIMIT: usize = 32;
 
-pub(super) fn surface_with_source_site(
+pub(super) fn surface_at_snapshot<K: RecordedSnapshotKey + ?Sized>(
     surface: &ClickProposition,
-    point: &ProgramPointRef,
+    key: &K,
 ) -> Result<ClickProposition, ClickError> {
-    surface_at_source_site(surface, point, SourceSiteAnnotation::Reread)
+    let selector = key.to_selector();
+    annotate_surface_at_snapshot(surface, &selector, SnapshotAnnotation::Reread)
 }
 
 #[derive(Clone, Copy)]
-enum SourceSiteAnnotation {
-    /// Re-read every operand at the point, replacing an existing `at`
+enum SnapshotAnnotation {
+    /// Re-read every operand in the selected snapshot, replacing an existing `at`
     /// selector: fact transport across a statement re-reads the source
     /// form at the statement's exit, having proved the cells unchanged.
     Reread,
 }
 
-fn surface_at_source_site(
+fn annotate_surface_at_snapshot(
     surface: &ClickProposition,
-    point: &ProgramPointRef,
-    annotation: SourceSiteAnnotation,
+    selector: &SnapshotSelector,
+    annotation: SnapshotAnnotation,
 ) -> Result<ClickProposition, ClickError> {
     if matches!(
         surface,
@@ -1158,32 +1159,32 @@ fn surface_at_source_site(
             | ClickProposition::Contains { .. }
     ) {
         return Ok(ClickProposition::At {
-            selector: VisitSelector::ProgramPoint(point.clone()),
+            selector: selector.clone(),
             proposition: Box::new(surface.clone()),
         });
     }
-    let expression_at_source = |expression: &ContractExpression| match (annotation, expression) {
+    let expression_at_snapshot = |expression: &ContractExpression| match (annotation, expression) {
         (_, ContractExpression::Old(_)) => expression.clone(),
-        (SourceSiteAnnotation::Reread, ContractExpression::At { expression, .. }) => {
+        (SnapshotAnnotation::Reread, ContractExpression::At { expression, .. }) => {
             ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(point.clone()),
+                selector: selector.clone(),
                 expression: expression.clone(),
             }
         }
         (_, expression) => ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(point.clone()),
+            selector: selector.clone(),
             expression: Box::new(expression.clone()),
         },
     };
     fn annotate(
         proposition: &ClickProposition,
-        expression_at_source: &impl Fn(&ContractExpression) -> ContractExpression,
-        point: &ProgramPointRef,
+        expression_at_snapshot: &impl Fn(&ContractExpression) -> ContractExpression,
+        selector: &SnapshotSelector,
         depth: usize,
     ) -> Result<ClickProposition, ClickError> {
-        if depth >= SOURCE_SITE_ANNOTATION_DEPTH_LIMIT {
+        if depth >= SNAPSHOT_ANNOTATION_DEPTH_LIMIT {
             return Err(ClickError::new(
-                "Surface Click source-site annotation exceeded its structural depth bound",
+                "Surface Click snapshot annotation exceeded its structural depth bound",
             ));
         }
         Ok(match proposition {
@@ -1192,42 +1193,57 @@ fn surface_at_source_site(
                 operator,
                 right,
             } => ClickProposition::Comparison {
-                left: expression_at_source(left),
+                left: expression_at_snapshot(left),
                 operator: *operator,
-                right: expression_at_source(right),
+                right: expression_at_snapshot(right),
             },
             ClickProposition::Defined { .. } => ClickProposition::At {
-                selector: VisitSelector::ProgramPoint(point.clone()),
+                selector: selector.clone(),
                 proposition: Box::new(proposition.clone()),
             },
             ClickProposition::At { .. } => proposition.clone(),
             ClickProposition::And(left, right) => ClickProposition::And(
-                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
+                Box::new(annotate(
+                    right,
+                    expression_at_snapshot,
+                    selector,
+                    depth + 1,
+                )?),
             ),
             ClickProposition::Or(left, right) => ClickProposition::Or(
-                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
+                Box::new(annotate(
+                    right,
+                    expression_at_snapshot,
+                    selector,
+                    depth + 1,
+                )?),
             ),
             ClickProposition::Not(body) => ClickProposition::Not(Box::new(annotate(
                 body,
-                expression_at_source,
-                point,
+                expression_at_snapshot,
+                selector,
                 depth + 1,
             )?)),
             ClickProposition::Implies(left, right) => ClickProposition::Implies(
-                Box::new(annotate(left, expression_at_source, point, depth + 1)?),
-                Box::new(annotate(right, expression_at_source, point, depth + 1)?),
+                Box::new(annotate(left, expression_at_snapshot, selector, depth + 1)?),
+                Box::new(annotate(
+                    right,
+                    expression_at_snapshot,
+                    selector,
+                    depth + 1,
+                )?),
             ),
             ClickProposition::ForAll { c_type, name, body } => ClickProposition::ForAll {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
             },
             ClickProposition::Exists { c_type, name, body } => ClickProposition::Exists {
                 c_type: *c_type,
                 name: name.clone(),
-                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
             },
             ClickProposition::RangeAll {
                 start,
@@ -1235,10 +1251,10 @@ fn surface_at_source_site(
                 item,
                 body,
             } => ClickProposition::RangeAll {
-                start: expression_at_source(start),
-                end: expression_at_source(end),
+                start: expression_at_snapshot(start),
+                end: expression_at_snapshot(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
             },
             ClickProposition::RangeAny {
                 start,
@@ -1246,15 +1262,15 @@ fn surface_at_source_site(
                 item,
                 body,
             } => ClickProposition::RangeAny {
-                start: expression_at_source(start),
-                end: expression_at_source(end),
+                start: expression_at_snapshot(start),
+                end: expression_at_snapshot(end),
                 item: item.clone(),
-                body: Box::new(annotate(body, expression_at_source, point, depth + 1)?),
+                body: Box::new(annotate(body, expression_at_snapshot, selector, depth + 1)?),
             },
             ClickProposition::PredicateCall { name, arguments } => {
                 ClickProposition::PredicateCall {
                     name: name.clone(),
-                    arguments: arguments.iter().map(expression_at_source).collect(),
+                    arguments: arguments.iter().map(expression_at_snapshot).collect(),
                 }
             }
             ClickProposition::Separate { .. }
@@ -1262,53 +1278,45 @@ fn surface_at_source_site(
             | ClickProposition::Loadable { .. } => proposition.clone(),
         })
     }
-    annotate(surface, &expression_at_source, point, 0)
+    annotate(surface, &expression_at_snapshot, selector, 0)
 }
 
-pub(super) fn predicate_call_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
+pub(super) fn predicate_call_snapshot_selector(
+    surface: &ClickProposition,
+) -> Option<SnapshotSelector> {
     let ClickProposition::PredicateCall { arguments, .. } = surface else {
         return None;
     };
     arguments.iter().find_map(|argument| {
-        let ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(point),
-            ..
-        } = argument
-        else {
+        let ContractExpression::At { selector, .. } = argument else {
             return None;
         };
-        Some(point.clone())
+        Some(selector.clone())
     })
 }
 
-/// Returns a program point explicitly carried by a proposition produced by
-/// [`surface_with_source_site`]. This is a selector only: callers must still
+/// Returns a snapshot selector explicitly carried by a proposition produced
+/// by [`surface_at_snapshot`]. Callers must still
 /// re-lower any newly anchored form and check that it denotes the exact
 /// retained kernel fact.
-pub(super) fn surface_source_site(surface: &ClickProposition) -> Option<ProgramPointRef> {
+pub(super) fn surface_snapshot_selector(surface: &ClickProposition) -> Option<SnapshotSelector> {
     let expression_site = |expression: &ContractExpression| match expression {
-        ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(point),
-            ..
-        } => Some(point.clone()),
+        ContractExpression::At { selector, .. } => Some(selector.clone()),
         _ => None,
     };
     match surface {
         ClickProposition::Comparison { left, right, .. } => {
             expression_site(left).or_else(|| expression_site(right))
         }
-        ClickProposition::At {
-            selector: VisitSelector::ProgramPoint(point),
-            ..
-        } => Some(point.clone()),
+        ClickProposition::At { selector, .. } => Some(selector.clone()),
         ClickProposition::And(left, right)
         | ClickProposition::Or(left, right)
         | ClickProposition::Implies(left, right) => {
-            surface_source_site(left).or_else(|| surface_source_site(right))
+            surface_snapshot_selector(left).or_else(|| surface_snapshot_selector(right))
         }
         ClickProposition::Not(body)
         | ClickProposition::ForAll { body, .. }
-        | ClickProposition::Exists { body, .. } => surface_source_site(body),
+        | ClickProposition::Exists { body, .. } => surface_snapshot_selector(body),
         ClickProposition::RangeAll {
             start, end, body, ..
         }
@@ -1316,7 +1324,7 @@ pub(super) fn surface_source_site(surface: &ClickProposition) -> Option<ProgramP
             start, end, body, ..
         } => expression_site(start)
             .or_else(|| expression_site(end))
-            .or_else(|| surface_source_site(body)),
+            .or_else(|| surface_snapshot_selector(body)),
         ClickProposition::PredicateCall { arguments, .. } => {
             arguments.iter().find_map(expression_site)
         }
@@ -1393,7 +1401,7 @@ pub(super) fn collect_planning_statement_transitions<R>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn execute_step_from_execution_point(
+pub(super) fn execute_step_from_frontier_position(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -1404,7 +1412,7 @@ pub(super) fn execute_step_from_execution_point(
     loop_step_policy: LoopStepPolicy,
     mut construction: Option<Construction<'_>>,
 ) -> Result<Vec<Proposition>, ClickError> {
-    execute_step_from_execution_point_selecting_path(
+    execute_step_from_frontier_position_selecting_path(
         execution,
         proof_context,
         available_pure_facts,
@@ -1431,7 +1439,7 @@ pub(super) struct ExecutionPointStepSuccessor {
 /// explicit proof `if`, C `branch`, or loop construct may change the number of
 /// proof goals; a linear statement step never publishes hidden siblings.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn execute_step_successor_from_execution_point(
+pub(super) fn execute_step_successor_from_frontier_position(
     execution: &ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &[Proposition],
@@ -1444,7 +1452,7 @@ pub(super) fn execute_step_successor_from_execution_point(
     let mut successor = execution.clone();
     let mut successor_facts = available_pure_facts.to_vec();
     let assumptions = assumptions_from_propositions(&successor_facts);
-    let introduced_facts = execute_step_from_execution_point_selecting_path(
+    let introduced_facts = execute_step_from_frontier_position_selecting_path(
         &mut successor,
         proof_context,
         &mut successor_facts,
@@ -1465,7 +1473,7 @@ pub(super) fn execute_step_successor_from_execution_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn execute_step_from_execution_point_selecting_path(
+fn execute_step_from_frontier_position_selecting_path(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -1505,7 +1513,7 @@ fn execute_step_from_execution_point_selecting_path(
         ))
     })?;
     if matches!(source_region.kind, SourceStatementKind::If { .. }) {
-        let entered = execute_branch_step_from_execution_point(
+        let entered = execute_branch_step_from_frontier_position(
             execution,
             proof_context,
             available_pure_facts,
@@ -1525,11 +1533,11 @@ fn execute_step_from_execution_point_selecting_path(
         SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
     };
     let (execution_start_state, current_state, source_statement, remaining) =
-        next_top_level_statement_from_execution_point(
+        next_top_level_statement_from_frontier_position(
             ExecutionView::new(
                 &execution.frontier,
                 &execution.effect_facts,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
@@ -1567,7 +1575,7 @@ fn execute_step_from_execution_point_selecting_path(
     }
     let step_statement = source_statement;
 
-    // The surface step for this statement is written from the proof point
+    // The surface step for this statement is written from the proof state
     // *before* the statement runs. Its own check establishes this
     // statement's entry snapshots only while re-executing it, so construction
     // must see the program points exactly as they were before these entry
@@ -1577,31 +1585,31 @@ fn execute_step_from_execution_point_selecting_path(
     if let Some(loop_index) = loop_index {
         construction_regions.push(CodeRegion::Loop(loop_index));
     }
-    let construction_point_overrides = construction.is_some().then(|| {
-        construction_point_overrides(
-            &execution.program_point_states,
+    let construction_snapshot_overrides = construction.is_some().then(|| {
+        construction_snapshot_overrides(
+            &execution.recorded_snapshots,
             function_block,
             &construction_regions,
             ProgramPointKind::Entry,
         )
     });
-    record_statement_program_point_state(
-        &mut execution.program_point_states,
+    record_statement_program_snapshot_state(
+        &mut execution.recorded_snapshots,
         function_block,
         statement_index,
         ProgramPointKind::Entry,
         current_state.clone(),
     );
     if let Some(loop_index) = loop_index {
-        record_loop_program_point_state(
-            &mut execution.program_point_states,
+        record_loop_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             function_block,
             loop_index,
             ProgramPointKind::Entry,
             current_state.clone(),
         );
     }
-    let construction_point_overrides = construction_point_overrides.unwrap_or_default();
+    let construction_snapshot_overrides = construction_snapshot_overrides.unwrap_or_default();
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
     let mut transitions = certified_statement_transitions(
@@ -1634,9 +1642,9 @@ fn execute_step_from_execution_point_selecting_path(
             && let Some(construction) = construction.as_mut()
         {
             let environments = construction.environments;
-            let restore = apply_construction_point_view(
-                &mut execution.program_point_states,
-                &construction_point_overrides,
+            let restore = apply_construction_snapshot_view(
+                &mut execution.recorded_snapshots,
+                &construction_snapshot_overrides,
             );
             construct_proof_step_for_planned_operation(
                 execution,
@@ -1651,7 +1659,7 @@ fn execute_step_from_execution_point_selecting_path(
                     planned_transition: None,
                 },
             );
-            restore_construction_point_view(&mut execution.program_point_states, restore);
+            restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
         }
 
         let mut common_pure_facts = transitions[0].pure_facts.clone();
@@ -1864,7 +1872,7 @@ fn execute_step_from_execution_point_selecting_path(
                 region: CodeRegionRef::Loop(loop_index),
                 kind: ProgramPointKind::Exit,
             };
-            let exit_surface = surface_with_source_site(surface, &exit_point)?;
+            let exit_surface = surface_at_snapshot(surface, &exit_point)?;
             execution
                 .surface_propositions
                 .record_lowering(&exit_surface, target)?;
@@ -1872,9 +1880,9 @@ fn execute_step_from_execution_point_selecting_path(
     }
     let mut deferred_transport_operations = Vec::new();
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
-        let restore = apply_construction_point_view(
-            &mut execution.program_point_states,
-            &construction_point_overrides,
+        let restore = apply_construction_snapshot_view(
+            &mut execution.recorded_snapshots,
+            &construction_snapshot_overrides,
         );
         deferred_transport_operations = append_statement_transition_certificate(
             execution,
@@ -1891,7 +1899,7 @@ fn execute_step_from_execution_point_selecting_path(
             arguments,
             construction.as_mut().map(Construction::reborrow),
         );
-        restore_construction_point_view(&mut execution.program_point_states, restore);
+        restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
     let state: &mut CState = &mut execution.state;
     // A direct memory-snapshot transport needs no surface `transport`
@@ -1914,7 +1922,7 @@ fn execute_step_from_execution_point_selecting_path(
             .cloned()
             .collect::<Vec<_>>();
         for surface in surfaces {
-            let exit_surface = surface_with_source_site(&surface, &exit_point)?;
+            let exit_surface = surface_at_snapshot(&surface, &exit_point)?;
             execution
                 .surface_propositions
                 .record_lowering(&exit_surface, &transport.target)?;
@@ -1942,7 +1950,7 @@ fn execute_step_from_execution_point_selecting_path(
             };
             let at =
                 |point: &ProgramPointRef, expression: ContractExpression| ContractExpression::At {
-                    selector: VisitSelector::ProgramPoint(point.clone()),
+                    selector: SnapshotSelector::ProgramPoint(point.clone()),
                     expression: Box::new(expression),
                 };
             // The neutral pointer addition makes the Index use the outer
@@ -1981,16 +1989,16 @@ fn execute_step_from_execution_point_selecting_path(
         CStatementOutcome::UndefinedBehavior(_) | CStatementOutcome::RuntimeError(_) => None,
         CStatementOutcome::VerificationDiverges => None,
     } {
-        record_statement_program_point_state(
-            &mut execution.program_point_states,
+        record_statement_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             function_block,
             statement_index,
             ProgramPointKind::Exit,
             statement_exit_state,
         );
         if let Some(loop_index) = loop_index {
-            record_loop_program_point_state(
-                &mut execution.program_point_states,
+            record_loop_program_snapshot_state(
+                &mut execution.recorded_snapshots,
                 function_block,
                 loop_index,
                 ProgramPointKind::Exit,
@@ -2016,8 +2024,8 @@ fn execute_step_from_execution_point_selecting_path(
                 .exited_branch_regions(statement_index)
                 .to_vec()
             {
-                record_statement_program_point_state(
-                    &mut execution.program_point_states,
+                record_statement_program_snapshot_state(
+                    &mut execution.recorded_snapshots,
                     function_block,
                     exited,
                     ProgramPointKind::Exit,
@@ -2035,11 +2043,11 @@ fn execute_step_from_execution_point_selecting_path(
             *state = next_state.clone();
             match remaining {
                 Some(remaining) => {
-                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
-                    record_statement_program_point_state(
-                        &mut execution.program_point_states,
+                    record_statement_program_snapshot_state(
+                        &mut execution.recorded_snapshots,
                         function_block,
                         execution.frontier.next_statement_index,
                         ProgramPointKind::Entry,
@@ -2050,8 +2058,8 @@ fn execute_step_from_execution_point_selecting_path(
                     // The region's boundary state is also the entry state of
                     // its statically known continuation, exactly as the arm
                     // recorded it when continuations were popped at runtime.
-                    record_statement_program_point_state(
-                        &mut execution.program_point_states,
+                    record_statement_program_snapshot_state(
+                        &mut execution.recorded_snapshots,
                         function_block,
                         source_region.continuation_node,
                         ProgramPointKind::Entry,
@@ -2204,7 +2212,7 @@ pub(super) fn finish_exhausted_region(frontier: &mut ExecutionFrontier) -> bool 
     match frontier.region {
         ExecutionRegionKind::LoopBody | ExecutionRegionKind::BranchArm => {
             debug_assert!(frontier.continuations.is_empty());
-            frontier.point = ProofExecutionPoint::RegionBoundary;
+            frontier.position = FrontierPosition::RegionBoundary;
             true
         }
         ExecutionRegionKind::Function => false,
@@ -2230,7 +2238,7 @@ fn record_completed_continuation_exits(frontier: &mut ExecutionFrontier) {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_current_statement_entry(
     frontier: &ExecutionFrontier,
-    program_point_states: &mut ProgramPointStates,
+    recorded_snapshots: &mut RecordedSnapshots,
     state: &CState,
     function_block: &FunctionBlock,
     function: &CFunction,
@@ -2239,20 +2247,20 @@ pub(super) fn record_current_statement_entry(
     tactic_index: usize,
     tactic_name: &str,
 ) -> Result<(), ClickError> {
-    let current_state = match &frontier.point {
-        ProofExecutionPoint::FunctionEntry => c_function_entry_state(state, function, arguments)
+    let current_state = match &frontier.position {
+        FrontierPosition::FunctionEntry => c_function_entry_state(state, function, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not bind function arguments"
                 ))
             })?,
-        ProofExecutionPoint::StatementEntry { .. } => state.clone(),
-        ProofExecutionPoint::FunctionExit { .. } | ProofExecutionPoint::RegionBoundary => {
+        FrontierPosition::StatementEntry { .. } => state.clone(),
+        FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => {
             return Ok(())
         }
     };
-    record_statement_program_point_state(
-        program_point_states,
+    record_statement_program_snapshot_state(
+        recorded_snapshots,
         function_block,
         frontier.next_statement_index,
         ProgramPointKind::Entry,
@@ -2272,7 +2280,7 @@ pub(super) struct BoundedProofFrontier {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn bounded_execute_from_execution_point(
+pub(super) fn bounded_execute_from_frontier_position(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -2330,7 +2338,7 @@ pub(super) fn bounded_execute_from_execution_point(
         if matches!(source_region.kind, SourceStatementKind::If { .. }) {
             for take_then in [false, true] {
                 let mut branch = frontier.clone();
-                let entered = execute_branch_step_from_execution_point(
+                let entered = execute_branch_step_from_frontier_position(
                     &mut branch.execution,
                     proof_context,
                     &mut branch.pure_facts,
@@ -2356,7 +2364,7 @@ pub(super) fn bounded_execute_from_execution_point(
         }
 
         let assumptions = assumptions_from_propositions(&frontier.pure_facts);
-        execute_step_from_execution_point(
+        execute_step_from_frontier_position(
             &mut frontier.execution,
             proof_context,
             &mut frontier.pure_facts,
@@ -2445,12 +2453,11 @@ pub(super) fn merge_bounded_execution_frontiers(
             .skip(1)
             .all(|frontier| frontier.pure_facts.contains(fact))
     });
-    let mut common_program_points = completed[0].execution.program_point_states.clone();
-    common_program_points.retain(|point, point_state| {
-        completed
-            .iter()
-            .skip(1)
-            .all(|frontier| frontier.execution.program_point_states.get(point) == Some(point_state))
+    let mut common_snapshots = completed[0].execution.recorded_snapshots.clone();
+    common_snapshots.retain(|selector, snapshot_state| {
+        completed.iter().skip(1).all(|frontier| {
+            frontier.execution.recorded_snapshots.get(selector) == Some(snapshot_state)
+        })
     });
 
     let mut paths = Vec::new();
@@ -2479,8 +2486,8 @@ pub(super) fn merge_bounded_execution_frontiers(
     );
 
     let mut merged = completed.remove(0);
-    merged.execution.program_point_states = common_program_points;
-    merged.execution.frontier.point = ProofExecutionPoint::FunctionExit {
+    merged.execution.recorded_snapshots = common_snapshots;
+    merged.execution.frontier.position = FrontierPosition::FunctionExit {
         execution: function_execution,
     };
     merged.execution.state = execution_start_state.into();
@@ -2491,7 +2498,7 @@ pub(super) fn merge_bounded_execution_frontiers(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn execute_rest_from_execution_point(
+pub(super) fn execute_rest_from_frontier_position(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     available_pure_facts: &mut Vec<Proposition>,
@@ -2500,14 +2507,12 @@ pub(super) fn execute_rest_from_execution_point(
     let function = proof_context.function;
 
     loop {
-        let can_execute_one_step = match &execution.frontier.point {
-            ProofExecutionPoint::FunctionEntry => {
-                split_next_execution_step(function.body()).is_ok()
-            }
-            ProofExecutionPoint::StatementEntry { remaining } => {
+        let can_execute_one_step = match &execution.frontier.position {
+            FrontierPosition::FunctionEntry => split_next_execution_step(function.body()).is_ok(),
+            FrontierPosition::StatementEntry { remaining } => {
                 split_next_execution_step(remaining).is_ok()
             }
-            ProofExecutionPoint::FunctionExit { .. } | ProofExecutionPoint::RegionBoundary => {
+            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => {
                 return Ok(());
             }
         };
@@ -2516,7 +2521,7 @@ pub(super) fn execute_rest_from_execution_point(
         }
 
         let assumptions = assumptions_from_propositions(available_pure_facts);
-        execute_step_from_execution_point(
+        execute_step_from_frontier_position(
             execution,
             proof_context,
             available_pure_facts,
@@ -2530,7 +2535,7 @@ pub(super) fn execute_rest_from_execution_point(
     }
 
     if !execution.frontier.is_at_function_exit() {
-        bounded_execute_from_execution_point(
+        bounded_execute_from_frontier_position(
             execution,
             proof_context,
             available_pure_facts,
@@ -2580,7 +2585,7 @@ pub(super) fn execute_until_statement(
     while execution.frontier.next_statement_index != statement_index {
         let region_start = execution.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
-        execute_step_from_execution_point(
+        execute_step_from_frontier_position(
             execution,
             proof_context,
             available_pure_facts,
@@ -2665,6 +2670,6 @@ fn set_function_exit_execution(
         )));
     }
     frontier.execution_start_state = Some(execution_start_state);
-    frontier.point = ProofExecutionPoint::FunctionExit { execution };
+    frontier.position = FrontierPosition::FunctionExit { execution };
     Ok(())
 }

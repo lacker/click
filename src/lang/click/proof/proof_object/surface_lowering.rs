@@ -78,8 +78,8 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            ProofContext::Point(context) => {
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
+            ProofContext::FixedState(context) => {
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                 if !proposition_contains_old_expression(&surface) {
                     if let Some(recorded) = context
                         .surface_propositions
@@ -88,7 +88,7 @@ impl<'a> Proof<'a> {
                         return Ok(recorded.clone());
                     }
                 }
-                lower_point_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -96,7 +96,7 @@ impl<'a> Proof<'a> {
                     context.pre_state,
                     context.state,
                     context.result,
-                    context.program_point_states,
+                    context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -104,14 +104,14 @@ impl<'a> Proof<'a> {
                     self.step_error(format!("could not lower {description}: {message}"))
                 })
             }
-            // A judgment carrying outcome point data lowers result-aware:
+            // A judgment carrying outcome proof data lowers result-aware:
             // `result` and outcome-anchored forms resolve against the
             // outcome's own state, recorded lowerings, and return value.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view()
-                    .expect("a focused outcome judgment resolves its point view");
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                 if !proposition_contains_old_expression(&surface) {
                     if let Some(recorded) = view
                         .surface_propositions
@@ -120,7 +120,7 @@ impl<'a> Proof<'a> {
                         return Ok(recorded.clone());
                     }
                 }
-                lower_point_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     view.parameters,
@@ -128,7 +128,7 @@ impl<'a> Proof<'a> {
                     view.pre_state,
                     view.state,
                     view.result,
-                    view.program_point_states,
+                    view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
                 )
@@ -140,9 +140,9 @@ impl<'a> Proof<'a> {
                 let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                 let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
-                lower_point_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
@@ -150,7 +150,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.state,
                     None,
-                    &execution.program_point_states,
+                    &execution.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -161,7 +161,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Lowers a surface proposition at this Proof's actual semantic point,
+    /// Lowers a surface proposition against this Proof's actual symbolic state,
     /// without accepting a historical Surface-to-kernel index entry as a
     /// substitute for an in-scope form.
     ///
@@ -189,9 +189,9 @@ impl<'a> Proof<'a> {
             .map_err(|message| {
                 self.step_error(format!("could not lower {description}: {message}"))
             }),
-            ProofContext::Point(context) => {
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
-                lower_point_proposition_with_assumptions(
+            ProofContext::FixedState(context) => {
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -199,7 +199,7 @@ impl<'a> Proof<'a> {
                     context.pre_state,
                     context.state,
                     context.result,
-                    context.program_point_states,
+                    context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -211,9 +211,9 @@ impl<'a> Proof<'a> {
                 let execution = self.execution().ok_or_else(|| {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                 let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
-                lower_point_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.state,
                     None,
-                    &execution.program_point_states,
+                    &execution.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -232,7 +232,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// Lowers a newly stated proof goal at the current semantic point.
+    /// Lowers a newly stated proof goal against the current symbolic state.
     ///
     /// Fact references may deliberately resolve through a recorded surface
     /// form, but a new goal may not: the same form can name facts
@@ -246,9 +246,9 @@ impl<'a> Proof<'a> {
     ) -> Result<Proposition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.lower_surface_proposition(surface, description),
-            ProofContext::Point(context) => {
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
-                lower_point_proposition_with_assumptions(
+            ProofContext::FixedState(context) => {
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parameters,
@@ -256,7 +256,7 @@ impl<'a> Proof<'a> {
                     context.pre_state,
                     context.state,
                     context.result,
-                    context.program_point_states,
+                    context.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -265,15 +265,15 @@ impl<'a> Proof<'a> {
                 })
             }
             // A judgment stated at a function outcome lowers strictly at
-            // that outcome: like the point arm above, this deliberately
+            // that outcome: like the fixed-state arm above, this deliberately
             // skips the recorded-lowering shortcut so a newly stated goal
             // cannot borrow a same-written fact's older snapshot anchoring.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view()
-                    .expect("a focused outcome judgment resolves its point view");
-                let surface = self.substitute_point_locals_in_proposition(surface)?;
-                lower_point_proposition_with_assumptions(
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     view.parameters,
@@ -281,7 +281,7 @@ impl<'a> Proof<'a> {
                     view.pre_state,
                     view.state,
                     view.result,
-                    view.program_point_states,
+                    view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
                 )
@@ -297,7 +297,7 @@ impl<'a> Proof<'a> {
     /// surface input. Work is proportional to the input expression and each
     /// selected name is an indexed persistent-map lookup; unrelated choices
     /// are neither scanned nor cloned.
-    pub(super) fn point_local_substitutions(
+    pub(super) fn fixed_state_local_substitutions(
         &self,
         names: impl IntoIterator<Item = String>,
     ) -> BTreeMap<String, ContractExpression> {
@@ -317,13 +317,13 @@ impl<'a> Proof<'a> {
             .collect()
     }
 
-    pub(super) fn substitute_point_locals_in_proposition(
+    pub(super) fn substitute_fixed_state_locals_in_proposition(
         &self,
         proposition: &ClickProposition,
     ) -> Result<ClickProposition, ClickError> {
         let mut names = BTreeSet::new();
         collect_click_proposition_referenced_names(proposition, &mut names);
-        let substitutions = self.point_local_substitutions(names);
+        let substitutions = self.fixed_state_local_substitutions(names);
         if substitutions.is_empty() {
             return Ok(proposition.clone());
         }
@@ -365,12 +365,12 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn substitute_point_locals_in_expression(
+    pub(super) fn substitute_fixed_state_locals_in_expression(
         &self,
         expression: &ContractExpression,
     ) -> Result<ContractExpression, ClickError> {
         let names = contract_expression_referenced_names(expression);
-        let substitutions = self.point_local_substitutions(names);
+        let substitutions = self.fixed_state_local_substitutions(names);
         if substitutions.is_empty() {
             return Ok(expression.clone());
         }

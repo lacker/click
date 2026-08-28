@@ -202,7 +202,7 @@ equality.
 Opaque summaries support comparison, logical, quantified, predicate-call,
 `separate(...)`, `contains(...)`, and `loadable(...)` propositions, including
 `old(...)` and `at(function.entry, ...)`. A contract containing a snapshot of
-an internal statement or loop point can still be verified directly, but that
+an internal statement or loop program point can still be verified directly, but that
 snapshot is not visible at an opaque call site. Calling such a function reports
 that its contract cannot be exposed opaquely rather than reporting a dependency
 ordering error.

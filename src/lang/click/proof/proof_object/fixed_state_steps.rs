@@ -1,4 +1,4 @@
-//! Point-goal theorem application, witness/instantiate, rewrite, and
+//! Fixed-state theorem application, witness/instantiate, rewrite, and
 //! transport steps.
 
 use super::*;
@@ -13,19 +13,19 @@ impl<'a> Proof<'a> {
             ProofContext::Pure(context) => {
                 self.apply_pure_theorem_using(context, application, surface_premises)
             }
-            ProofContext::Point(context) => self.apply_point_theorem_using(
-                &PointOperationView::from_point(context),
+            ProofContext::FixedState(context) => self.apply_fixed_state_theorem_using(
+                &FixedStateOperationView::from_fixed_state(context),
                 application,
                 surface_premises,
             ),
             // A focused branch function-outcome goal applies theorems through the
-            // point checker, reading its data from the goal; the effect
+            // fixed-state checker, reading its data from the goal; the effect
             // context is the frontier-wide set required by theorem checking.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view_with_effects(OutcomeEffectContext::Frontier)
-                    .expect("a focused outcome judgment resolves its point view");
-                self.apply_point_theorem_using(&view, application, surface_premises)
+                    .outcome_fixed_state_view_with_effects(OutcomeEffectContext::Frontier)
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                self.apply_fixed_state_theorem_using(&view, application, surface_premises)
             }
             ProofContext::Execution(context) => {
                 self.apply_execution_theorem_using(context, application, surface_premises)
@@ -56,14 +56,14 @@ impl<'a> Proof<'a> {
         // context. Its work is therefore independent of unrelated facts, and
         // it cannot silently search for an omitted theorem requirement.
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
-        let program_point_states = ProgramPointStates::new();
+        let recorded_snapshots = RecordedSnapshots::new();
         let application_context = TheoremApplicationContext {
             values: &context.theorem_context.values,
             array_refs: &context.theorem_context.array_refs,
             pre_state: &state,
             post_state: &state,
             result: None,
-            program_point_states: &program_point_states,
+            recorded_snapshots: &recorded_snapshots,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let applied = apply_theorem_applications_to_available(
@@ -100,14 +100,14 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_point_theorem_using(
+    pub(super) fn apply_fixed_state_theorem_using(
         &self,
-        view: &PointOperationView<'_>,
+        view: &FixedStateOperationView<'_>,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
-        let checked = check_point_theorem_application_using_facts(
+        let checked = check_fixed_state_theorem_application_using_facts(
             view.theorem_environment,
             application,
             surface_premises,
@@ -119,7 +119,7 @@ impl<'a> Proof<'a> {
             view.pre_state,
             view.state,
             view.result,
-            view.program_point_states,
+            view.recorded_snapshots,
             view.surface_propositions,
             &unfolded_predicates,
             view.effect_facts,
@@ -159,7 +159,7 @@ impl<'a> Proof<'a> {
             .execution_start_state
             .as_ref()
             .is_none_or(|start| start == &*execution.state);
-        let checked = check_point_theorem_application_using_facts(
+        let checked = check_fixed_state_theorem_application_using_facts(
             context.theorem_environment,
             application,
             surface_premises,
@@ -171,7 +171,7 @@ impl<'a> Proof<'a> {
             &pre_state,
             &execution.state,
             None,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             &execution.surface_propositions,
             &execution.unfolded_predicates,
             &execution.effect_facts,
@@ -208,21 +208,23 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_point_choose(
+    pub(super) fn apply_fixed_state_choose(
         &self,
         choice: &ProofChoice,
     ) -> Result<ProofState, ClickError> {
         let view = match self.context.as_ref() {
-            ProofContext::Point(context) => PointOperationView::from_point(context),
+            ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A choice on a judgment stated at a function outcome selects
             // its requirement source through the outcome view.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
-                .outcome_point_view()
-                .expect("a focused outcome judgment resolves its point view"),
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
+                .outcome_fixed_state_view()
+                .expect("a focused outcome judgment resolves its fixed-state view"),
             ProofContext::Execution(_) => self
-                .execution_proposition_point_view()
-                .ok_or_else(|| self.step_error("`choose` requires a point proposition proof"))?,
-            _ => return Err(self.step_error("`choose` requires a point proposition proof")),
+                .execution_proposition_fixed_state_view()
+                .ok_or_else(|| {
+                    self.step_error("`choose` requires a fixed-state proposition proof")
+                })?,
+            _ => return Err(self.step_error("`choose` requires a fixed-state proposition proof")),
         };
         self.proposition_goal("`choose` requires a proposition goal")?;
         if choice.name == "result"
@@ -300,21 +302,23 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_point_witness(
+    pub(super) fn apply_fixed_state_witness(
         &self,
         witness: &ProofWitness,
     ) -> Result<ProofState, ClickError> {
         let view = match self.context.as_ref() {
-            ProofContext::Point(context) => PointOperationView::from_point(context),
+            ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A witness refinement on a judgment stated at a function
             // outcome reads the outcome's result-aware data.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
-                .outcome_point_view()
-                .expect("a focused outcome judgment resolves its point view"),
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
+                .outcome_fixed_state_view()
+                .expect("a focused outcome judgment resolves its fixed-state view"),
             ProofContext::Execution(_) => self
-                .execution_proposition_point_view()
-                .ok_or_else(|| self.step_error("`witness` requires a point proposition proof"))?,
-            _ => return Err(self.step_error("`witness` requires a point proposition proof")),
+                .execution_proposition_fixed_state_view()
+                .ok_or_else(|| {
+                    self.step_error("`witness` requires a fixed-state proposition proof")
+                })?,
+            _ => return Err(self.step_error("`witness` requires a fixed-state proposition proof")),
         };
         let goal = self
             .proposition_goal("`witness` requires a proposition goal")?
@@ -334,7 +338,7 @@ impl<'a> Proof<'a> {
         let (values, array_refs) = contract_environment_at_state(&values, &array_refs, view.state);
         let checked_witness = ProofWitness {
             name: witness.name.clone(),
-            value: self.substitute_point_locals_in_expression(&witness.value)?,
+            value: self.substitute_fixed_state_locals_in_expression(&witness.value)?,
         };
         let value = evaluate_witness_tactic_value(
             &checked_witness,
@@ -349,7 +353,7 @@ impl<'a> Proof<'a> {
             self.facts().assumptions(),
             view.predicate_environment,
             view.click_function_environment,
-            view.program_point_states,
+            view.recorded_snapshots,
         )?;
         let goal = apply_witness_tactic(
             &checked_witness,
@@ -431,31 +435,33 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_point_instantiate_using(
+    pub(super) fn apply_fixed_state_instantiate_using(
         &self,
         surface_quantified: &ClickProposition,
         argument: &ContractExpression,
         surface_premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
         let view = match self.context.as_ref() {
-            ProofContext::Point(context) => PointOperationView::from_point(context),
+            ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // An instantiation on a judgment stated at a function outcome
             // evaluates its argument and quantified fact in that outcome's
-            // result-aware point environment.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => self
-                .outcome_point_view()
-                .expect("a focused outcome judgment resolves its point view"),
+            // result-aware fixed-state environment.
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => self
+                .outcome_fixed_state_view()
+                .expect("a focused outcome judgment resolves its fixed-state view"),
             // A leading nested `have` is a proposition proof at the
             // execution frontier. It evaluates the quantified fact and
-            // argument in that frontier's point environment without
+            // argument in that outcome's fixed-state environment without
             // exporting or checking execution state.
-            ProofContext::Execution(_) => {
-                self.execution_proposition_point_view().ok_or_else(|| {
-                    self.step_error("`instantiate` requires a point proposition proof")
-                })?
-            }
+            ProofContext::Execution(_) => self
+                .execution_proposition_fixed_state_view()
+                .ok_or_else(|| {
+                    self.step_error("`instantiate` requires a fixed-state proposition proof")
+                })?,
             _ => {
-                return Err(self.step_error("`instantiate` requires a point proposition proof"));
+                return Err(
+                    self.step_error("`instantiate` requires a fixed-state proposition proof")
+                );
             }
         };
         self.proposition_goal("`instantiate` requires a proposition goal")?;
@@ -498,7 +504,7 @@ impl<'a> Proof<'a> {
         let (values, array_refs) =
             contract_environment_at_state(&parameter_values, &array_refs, view.state);
         let mut active_functions = BTreeSet::new();
-        let argument = self.substitute_point_locals_in_expression(argument)?;
+        let argument = self.substitute_fixed_state_locals_in_expression(argument)?;
         let value = evaluate_contract_expression_with_environment(
             &values,
             &array_refs,
@@ -509,7 +515,7 @@ impl<'a> Proof<'a> {
             &argument,
             view.predicate_environment,
             view.click_function_environment,
-            view.program_point_states,
+            view.recorded_snapshots,
             &mut active_functions,
         )
         .map_err(|message| {
@@ -545,14 +551,15 @@ impl<'a> Proof<'a> {
     ) -> Result<ProofState, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.apply_pure_rewrite(surface_equality),
-            ProofContext::Point(context) => {
-                self.apply_point_rewrite(&PointOperationView::from_point(context), surface_equality)
-            }
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            ProofContext::FixedState(context) => self.apply_fixed_state_rewrite(
+                &FixedStateOperationView::from_fixed_state(context),
+                surface_equality,
+            ),
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view()
-                    .expect("a focused outcome judgment resolves its point view");
-                self.apply_point_rewrite(&view, surface_equality)
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                self.apply_fixed_state_rewrite(&view, surface_equality)
             }
             // A nested execution `have` is still a proposition proof. It
             // borrows the execution context only for lowering; its scope join
@@ -582,12 +589,12 @@ impl<'a> Proof<'a> {
         self.finish_rewrite(goal, equality, surface_equality)
     }
 
-    // Keep point-lowering and unfold temporaries out of the common rewrite
+    // Keep fixed-state lowering and unfold temporaries out of the common rewrite
     // dispatcher frame; the expansion small-stack test pins this boundary.
     #[inline(never)]
-    pub(super) fn apply_point_rewrite(
+    pub(super) fn apply_fixed_state_rewrite(
         &self,
-        view: &PointOperationView<'_>,
+        view: &FixedStateOperationView<'_>,
         surface_equality: &ClickProposition,
     ) -> Result<ProofState, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
@@ -622,7 +629,7 @@ impl<'a> Proof<'a> {
         let equality = match recorded {
             Some(equality) => equality,
             None => Box::new(
-                lower_point_proposition_with_assumptions(
+                lower_fixed_state_proposition_with_assumptions(
                     surface_equality,
                     self.facts().assumptions(),
                     view.parameters,
@@ -630,7 +637,7 @@ impl<'a> Proof<'a> {
                     view.pre_state,
                     view.state,
                     view.result,
-                    view.program_point_states,
+                    view.recorded_snapshots,
                     view.predicate_environment,
                     view.click_function_environment,
                 )
@@ -728,22 +735,24 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// The point-operation data a result-aware checker consumes, resolved
-    /// either from a point proof's borrowed context or from a focused branch
+    /// The fixed-state data a result-aware checker consumes, resolved
+    /// either from a fixed-state proof's borrowed context or from a focused branch
     /// function-outcome goal on an execution proof. This is the goal-aware
-    /// point view: outcome goals own their result, post-state, surface
+    /// fixed-state view: outcome goals own their result, post-state, surface
     /// lowerings, and effect facts, and borrow the frontier snapshot for the
-    /// remaining program-point data.
-    pub(super) fn outcome_point_view(&self) -> Option<PointOperationView<'_>> {
-        self.outcome_point_view_with_effects(OutcomeEffectContext::Path)
+    /// remaining program-outcome proof data.
+    pub(super) fn outcome_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
+        self.outcome_fixed_state_view_with_effects(OutcomeEffectContext::Path)
     }
 
-    /// Point-operation data for a proposition scope opened on an execution
+    /// Fixed-state data for a proposition scope opened on an execution
     /// frontier before a function outcome exists. The nested goal borrows the
     /// frontier snapshot solely for lowering and requirement selection;
-    /// checked point steps can refine only that proposition and proof-local
+    /// checked fixed-state steps can refine only that proposition and proof-local
     /// bindings.
-    pub(super) fn execution_proposition_point_view(&self) -> Option<PointOperationView<'_>> {
+    pub(super) fn execution_proposition_fixed_state_view(
+        &self,
+    ) -> Option<FixedStateOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
@@ -754,7 +763,7 @@ impl<'a> Proof<'a> {
             return None;
         }
         let execution = self.focused_branch()?.state.execution.as_deref()?;
-        Some(PointOperationView {
+        Some(FixedStateOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
             effect_facts: &execution.effect_facts,
@@ -763,7 +772,7 @@ impl<'a> Proof<'a> {
             pre_state: context.old_reference_state(&execution.frontier, &execution.state),
             state: &execution.state,
             result: None,
-            program_point_states: &execution.program_point_states,
+            recorded_snapshots: &execution.recorded_snapshots,
             surface_propositions: &execution.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
@@ -774,12 +783,12 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// The focused branch judgment's result-aware point data: a function-outcome
+    /// The focused branch judgment's result-aware outcome proof data: a function-outcome
     /// goal owns its data, and a proposition judgment stated at an outcome
     /// borrows that outcome's data by identity.
-    pub(super) fn focused_outcome_point(&self) -> Option<&Arc<OutcomePointData>> {
+    pub(super) fn focused_outcome_data(&self) -> Option<&Arc<OutcomeProofData>> {
         match self.focused_obligation()? {
-            Obligation::FunctionOutcome(goal) => Some(&goal.point),
+            Obligation::FunctionOutcome(goal) => Some(&goal.data),
             Obligation::Proposition(goal) => goal.outcome.as_ref(),
             Obligation::Frontier(_) => None,
         }
@@ -800,11 +809,11 @@ impl<'a> Proof<'a> {
         ) {
             return Err(self.step_error("post-execution `if` requires a focused outcome goal"));
         }
-        let point = self
-            .focused_outcome_point()
-            .expect("a focused outcome judgment resolves its point data");
+        let data = self
+            .focused_outcome_data()
+            .expect("a focused outcome judgment resolves its proof data");
         let mut recorded_value = None;
-        for decision in point.branch_decisions.iter() {
+        for decision in data.branch_decisions.iter() {
             if &decision.condition != condition {
                 continue;
             }
@@ -901,7 +910,7 @@ impl<'a> Proof<'a> {
                 .iter()
                 .map(|fact| fact.proposition().clone())
                 .collect::<Vec<_>>();
-            let lowered = lower_outcome_proposition_with_program_points(
+            let lowered = lower_outcome_proposition_with_recorded_snapshots(
                 context.parsed_function.parameters(),
                 context.arguments,
                 &pre_state,
@@ -911,7 +920,7 @@ impl<'a> Proof<'a> {
                 condition,
                 context.predicate_environment,
                 context.click_function_environment,
-                &provenance.program_point_states,
+                &provenance.recorded_snapshots,
             )
             .map_err(|message| {
                 self.step_error(format!(
@@ -960,7 +969,7 @@ impl<'a> Proof<'a> {
             checked.arguments().to_vec(),
             paths,
         );
-        execution.frontier.point = ProofExecutionPoint::FunctionExit {
+        execution.frontier.position = FrontierPosition::FunctionExit {
             execution: candidates,
         };
         execution.outcome_provenance = Arc::new(outcome_provenance);
@@ -1018,35 +1027,35 @@ impl<'a> Proof<'a> {
     /// Resolves the view with the caller's effect-availability context: the
     /// transport checker consumes the path's own execution facts, while the
     /// theorem checker consumes the frontier-wide effect set.
-    pub(super) fn outcome_point_view_with_effects(
+    pub(super) fn outcome_fixed_state_view_with_effects(
         &self,
         effects: OutcomeEffectContext,
-    ) -> Option<PointOperationView<'_>> {
+    ) -> Option<FixedStateOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let point = self.focused_outcome_point()?;
+        let data = self.focused_outcome_data()?;
         let execution = self.focused_branch()?.state.execution.as_deref()?;
-        Some(PointOperationView {
+        Some(FixedStateOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
             effect_facts: match effects {
-                OutcomeEffectContext::Path => point.effect_facts.as_ref(),
+                OutcomeEffectContext::Path => data.effect_facts.as_ref(),
                 OutcomeEffectContext::Frontier => &execution.effect_facts,
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
             pre_state: context.old_reference_state(&execution.frontier, &execution.state),
-            state: &point.state,
-            result: Some(point.result.as_ref()),
-            program_point_states: &point.program_point_states,
-            surface_propositions: &point.surface_propositions,
+            state: &data.state,
+            result: Some(data.result.as_ref()),
+            recorded_snapshots: &data.recorded_snapshots,
+            surface_propositions: &data.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
-            requirement_facts: point.requirement_facts.as_ref(),
+            requirement_facts: data.requirement_facts.as_ref(),
         })
     }
 
@@ -1057,46 +1066,50 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
     ) -> Result<ProofState, ClickError> {
         match self.context.as_ref() {
-            ProofContext::Point(context) => self.apply_point_transport_using(
+            ProofContext::FixedState(context) => self.apply_fixed_state_transport_using(
                 source,
                 target,
                 premises,
-                &PointOperationView::from_point(context),
+                &FixedStateOperationView::from_fixed_state(context),
             ),
             // A focused branch function-outcome goal transports result-aware facts
-            // through the same point checker, reading its data from the goal.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            // through the same fixed-state checker, reading its data from the goal.
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view()
-                    .expect("a focused outcome judgment resolves its point view");
-                self.apply_point_transport_using(source, target, premises, &view)
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                self.apply_fixed_state_transport_using(source, target, premises, &view)
             }
             // A nested `have` at an execution frontier is a proposition
-            // judgment borrowing that frontier's point environment. Keep
+            // judgment borrowing that outcome's fixed-state environment. Keep
             // goal-local binder substitutions (`intro` variables) on the
-            // point operation instead of routing through the outer execution
+            // fixed-state operation instead of routing through the outer execution
             // transport, which has no proposition-goal bindings.
             ProofContext::Execution(_) if self.goal().is_some() => {
-                let view = self.execution_proposition_point_view().ok_or_else(|| {
-                    self.step_error("`transport using` requires a point proposition proof")
-                })?;
-                self.apply_point_transport_using(source, target, premises, &view)
+                let view = self
+                    .execution_proposition_fixed_state_view()
+                    .ok_or_else(|| {
+                        self.step_error(
+                            "`transport using` requires a fixed-state proposition proof",
+                        )
+                    })?;
+                self.apply_fixed_state_transport_using(source, target, premises, &view)
             }
             ProofContext::Execution(context) => {
                 self.apply_execution_transport_using(source, target, premises, context)
             }
             ProofContext::Pure(_) => {
-                Err(self.step_error("`transport using` requires a point or execution proof"))
+                Err(self.step_error("`transport using` requires a fixed-state or execution proof"))
             }
         }
     }
 
-    pub(super) fn apply_point_transport_using(
+    pub(super) fn apply_fixed_state_transport_using(
         &self,
         source: &ClickProposition,
         target: &ClickProposition,
         premises: &[ClickProposition],
-        view: &PointOperationView<'_>,
+        view: &FixedStateOperationView<'_>,
     ) -> Result<ProofState, ClickError> {
         let (source, target, premises) = if premises.is_empty() {
             (source.clone(), target.clone(), premises.to_vec())
@@ -1110,7 +1123,7 @@ impl<'a> Proof<'a> {
                     .collect::<Result<Vec<_>, _>>()?,
             )
         };
-        let checked = check_point_fact_transport_using_facts(
+        let checked = check_fixed_state_fact_transport_using_facts(
             &source,
             &target,
             &premises,
@@ -1123,7 +1136,7 @@ impl<'a> Proof<'a> {
             view.pre_state,
             view.state,
             view.result,
-            view.program_point_states,
+            view.recorded_snapshots,
             view.surface_propositions,
             view.predicate_environment,
             view.click_function_environment,
@@ -1141,14 +1154,12 @@ impl<'a> Proof<'a> {
         // has to re-record them into a caller-owned map for this path.
         if let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() {
             let mut updated = goal.clone();
-            let mut point = (*updated.point).clone();
-            point
-                .surface_propositions
+            let mut data = (*updated.data).clone();
+            data.surface_propositions
                 .record_lowering(&source, &checked_facts[0])?;
-            point
-                .surface_propositions
+            data.surface_propositions
                 .record_lowering(&target, &checked_facts[1])?;
-            updated.point = Arc::new(point);
+            updated.data = Arc::new(data);
             let branch_state = &self.focused_branch().expect("focused branch exists").state;
             let state = BranchState {
                 facts,
@@ -1195,7 +1206,7 @@ impl<'a> Proof<'a> {
         let pre_state = context
             .old_reference_state(&execution.frontier, &execution.state)
             .clone();
-        let checked = check_point_fact_transport_using_facts(
+        let checked = check_fixed_state_fact_transport_using_facts(
             source,
             target,
             premises,
@@ -1208,7 +1219,7 @@ impl<'a> Proof<'a> {
             &pre_state,
             &execution.state,
             None,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             &execution.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,

@@ -10,10 +10,13 @@ prompt failure from an incomplete smart tactic is not by itself an engine bug.
 
 ## Proof kinds
 
-A **pure proof** derives a proposition from facts at one program point. It
-does not execute C, move between program points, or transform resource facts.
-Pure theorem proofs and the nested proof inside `have ... by { ... }` are pure
-proofs.
+A **pure proof** derives a proposition without a symbolic C state. This is the
+context used for pure theorem proofs.
+
+A **fixed-state proof** reasons against one fixed symbolic C state. It can
+refine propositions or logical resources but does not advance C. The nested
+proof inside `have ... by { ... }`, loop initialization, and result-aware
+outcome proofs are fixed-state proofs.
 
 An **execution proof** establishes a relationship between the entry and exit of
 a code region. It owns an execution frontier consisting of the current program
@@ -22,8 +25,9 @@ continuations. Execution steps move that frontier forward. Pure reasoning and
 resource reasoning may occur between execution steps without moving it.
 
 A function-contract proof is therefore an execution proof even when some of
-its individual steps are pure. Loop initialization is a pure proof at the loop
-entry; loop preservation is an execution proof of one arbitrary iteration.
+its individual steps are non-executing. Loop initialization is a fixed-state
+proof at the loop entry; loop preservation is an execution proof of one
+arbitrary iteration.
 Together they justify the loop rule used by the execution proof of the
 enclosing function region.
 
@@ -165,7 +169,7 @@ control flow.
 - `apply(theorem_name(args...)) using { P; ... }`: the simple spelling,
   drawing premises only from the listed facts. Expansion rewrites bare `apply`
   into this form.
-- `have proposition by { ... }`: run a scoped pure proof and add its proposition
+- `have proposition by { ... }`: run a scoped fixed-state proof and add its proposition
   to the current pure facts. The nested proof accepts
   `unfold`, `apply`, `choose`, `witness`, `simp`, nested `have`, and proof-level
   `if` case analysis; it cannot execute C or transform resources. Both `if`
@@ -431,7 +435,9 @@ position in the program, often associated with a code region, such as
 `loop_name.entry`. A visit is one runtime arrival at a program point. Visits
 are useful semantic language, but they are not currently Click syntax.
 
-Snapshot expressions use visit selectors:
+Snapshot expressions use snapshot selectors. A selector can be a C program
+point or a proof-local mark; the selected snapshot is the immutable state
+recorded there:
 
 <!-- verified-example: mdtests/grouped_function_proof.md -->
 ```click

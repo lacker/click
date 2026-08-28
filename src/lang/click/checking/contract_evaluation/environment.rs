@@ -50,37 +50,34 @@ pub(in crate::lang::click) fn contract_environment_at_state(
     (values, state_array_refs)
 }
 
-pub(in crate::lang::click) fn concrete_program_point_state<'a>(
-    selector: &VisitSelector,
+pub(in crate::lang::click) fn selected_snapshot_state<'a>(
+    selector: &SnapshotSelector,
     function_entry_state: &'a CState,
-    program_point_states: &'a ProgramPointStates,
+    recorded_snapshots: &'a RecordedSnapshots,
 ) -> Result<&'a CState, String> {
     match selector {
-        VisitSelector::ProgramPoint(ProgramPointRef {
+        SnapshotSelector::ProgramPoint(ProgramPointRef {
             region: CodeRegionRef::Function,
             kind: ProgramPointKind::Entry,
         }) => Ok(function_entry_state),
-        VisitSelector::ProgramPoint(point @ ProgramPointRef {
-            region: CodeRegionRef::Mark(name),
-            ..
-        }) => program_point_states.get(point).ok_or_else(|| {
+        SnapshotSelector::Mark(name) => recorded_snapshots.get(selector).ok_or_else(|| {
             format!(
                 "unknown proof mark `{name}`; add `mark {name};` after the proof reaches that frontier"
             )
         }),
-        VisitSelector::ProgramPoint(point @ ProgramPointRef {
+        SnapshotSelector::ProgramPoint(point @ ProgramPointRef {
             region:
                 CodeRegionRef::Statement(_)
                 | CodeRegionRef::Loop(_)
                 | CodeRegionRef::Label(_),
             ..
-        }) => program_point_states.get(point).ok_or_else(|| {
+        }) => recorded_snapshots.get(selector).ok_or_else(|| {
             format!(
                 "no state snapshot was recorded for `{}`; run `step()` across that statement before using it in `at(...)`",
                 describe_program_point_ref(point)
             )
         }),
-        VisitSelector::ProgramPoint(point) => Err(format!(
+        SnapshotSelector::ProgramPoint(point) => Err(format!(
             "`at({}, ...)` is not supported in concrete evaluation yet",
             describe_program_point_ref(point)
         )),
@@ -98,7 +95,7 @@ pub(in crate::lang::click) fn evaluate_click_function_call(
     result: Option<&CValue>,
     assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     let definition = click_function_environment
@@ -133,7 +130,7 @@ pub(in crate::lang::click) fn evaluate_click_function_call(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let expected_element_type =
@@ -167,7 +164,7 @@ pub(in crate::lang::click) fn evaluate_click_function_call(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?
         };
@@ -208,7 +205,7 @@ pub(in crate::lang::click) fn evaluate_click_function_call(
         definition.body(),
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         active_functions,
     )?;
     if inserted {
@@ -235,7 +232,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<ClickArrayRef, String> {
     match expression {
@@ -250,7 +247,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let CValue::Pointer(pointer) = pointer_value else {
@@ -270,8 +267,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
             selector,
             expression,
         } => {
-            let snapshot_state =
-                concrete_program_point_state(selector, pre_state, program_point_states)?;
+            let snapshot_state = selected_snapshot_state(selector, pre_state, recorded_snapshots)?;
             let (snapshot_values, snapshot_array_refs) =
                 contract_environment_at_state(parameter_values, array_refs, snapshot_state);
             let pointer_value = evaluate_contract_expression_with_environment(
@@ -284,13 +280,13 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let CValue::Pointer(pointer) = pointer_value else {
                 return Err(format!(
                     "array reference expression inside `at({}, ...)` did not evaluate to a pointer: `{pointer_value:?}`",
-                    describe_visit_selector(selector)
+                    describe_snapshot_selector(selector)
                 ));
             };
             let element_type =
@@ -316,7 +312,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let CValue::Pointer(pointer) = pointer_value else {
@@ -341,7 +337,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             ) {
                 let offset = evaluate_contract_expression_with_environment(
@@ -354,7 +350,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                     right,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?;
                 let CValue::Int32(offset) = offset else {
@@ -383,7 +379,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             ) {
                 let offset = evaluate_contract_expression_with_environment(
@@ -396,7 +392,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                     left,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?;
                 let CValue::Int32(offset) = offset else {
@@ -425,7 +421,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )
         }
@@ -440,7 +436,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             ) {
                 let offset = evaluate_contract_expression_with_environment(
@@ -453,7 +449,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                     right,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?;
                 let CValue::Int32(offset) = offset else {
@@ -482,7 +478,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )
         }
@@ -496,7 +492,7 @@ pub(in crate::lang::click) fn evaluate_contract_array_ref_with_environment(
             expression,
             predicate_environment,
             click_function_environment,
-            program_point_states,
+            recorded_snapshots,
             active_functions,
         ),
     }
@@ -534,7 +530,7 @@ pub(in crate::lang::click) fn evaluate_pointer_expression_as_current_array_ref(
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<ClickArrayRef, String> {
     let pointer_value = evaluate_contract_expression_with_environment(
@@ -547,7 +543,7 @@ pub(in crate::lang::click) fn evaluate_pointer_expression_as_current_array_ref(
         expression,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         active_functions,
     )?;
     let CValue::Pointer(pointer) = pointer_value else {
@@ -573,7 +569,7 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
     assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<Vec<Term>, String> {
     if arguments.len() != definition.parameters().len() {
@@ -612,7 +608,7 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let expected_element_type =
@@ -645,7 +641,7 @@ pub(in crate::lang::click) fn lower_predicate_call_arguments_with_environment(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             lowered_arguments.push(Term::CValue(value));

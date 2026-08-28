@@ -1886,7 +1886,7 @@ pub struct PureFactContext {
     /// True bitvector and int32-scaled pointer-offset equalities, indexed as
     /// an undirected adjacency graph whose edges retain one exact source
     /// proposition. Memory-load vertices use their
-    /// assumption-free canonical snapshot term. Derived lazily from
+    /// assumption-free canonical memory-load term. Derived lazily from
     /// `condition_facts` and shared by unchanged clones.
     pub(super) bitvector_equality_facts: std::sync::Arc<
         std::sync::OnceLock<BTreeMap<Bitvector32Term, BTreeMap<Bitvector32Term, Proposition>>>,

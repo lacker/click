@@ -23,8 +23,10 @@ will have exactly the names used here.
   tactics run. Structurally, this includes `have`, proof-level `if`, `branch`,
   and `loop`. Timing and expansion additionally give the selectable `have` source
   occurrence the class of its supported body: SMART, SIMPLE, or CONTROL.
-- A **pure proof** derives a proposition from facts at one program point. It
-  has no execution frontier and cannot execute C or transform resources.
+- A **pure proof** derives a proposition without a symbolic C state.
+- A **fixed-state proof** reasons against one fixed symbolic C state. It has no
+  execution frontier and cannot execute C, though it can transform logical
+  resources.
 - An **execution proof** establishes a pre/post relationship for a code region.
   It advances an execution frontier carrying symbolic state, pure facts, and
   resource facts. It may use pure and resource reasoning between execution

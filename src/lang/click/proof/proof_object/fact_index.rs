@@ -160,7 +160,7 @@ impl ProofFacts {
     /// Materializes one selected separation from the compact resource-
     /// composition index. This is target-driven: unrelated resource pairs
     /// remain implicit, while a successful result is an exact fact for the
-    /// ordinary `Assumption` checker in the new point goal.
+    /// ordinary `Assumption` checker in the new fixed-state goal.
     pub(super) fn with_selected_resource_separation(&self, goal: &Proposition) -> Self {
         if matches!(
             goal,
@@ -176,7 +176,7 @@ impl ProofFacts {
 
     /// Materializes one selected equality across a checked chain of load
     /// variables. This keeps the ordinary `Assumption` checker exact while
-    /// allowing a new point goal to consume equality transport explicitly
+    /// allowing a new fixed-state goal to consume equality transport explicitly
     /// carried through the preceding statement. Selection follows only the
     /// goal's indexed equality buckets; unrelated ambient equalities remain
     /// implicit and are never visited.
@@ -234,7 +234,7 @@ impl ProofFacts {
     }
 
     /// Availability of a proposition to the explicit pure `assumption`
-    /// judgment used inside point proofs. This deliberately excludes
+    /// judgment used inside fixed-state proofs. This deliberately excludes
     /// cross-effect snapshot transport: such a transport needs its own
     /// retained proof step before a later assumption may consume it.
     pub(in crate::lang::click::proof) fn pure_assumption_available(

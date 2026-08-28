@@ -106,7 +106,7 @@ fn individual_loop_proof_has_no_whole_claim_acceptance_check() {
 }
 
 #[test]
-fn loop_initialization_theorem_search_retains_checked_point_proof() {
+fn loop_initialization_theorem_search_retains_checked_fixed_state_proof() {
     let c_source = r#"
             int32 initialize_with_theorem(int32 x) {
                 while (x < 1) {
@@ -197,7 +197,7 @@ fn loop_initialization_theorem_search_retains_checked_point_proof() {
 }
 
 #[test]
-fn loop_initialization_simp_retains_checked_point_proof() {
+fn loop_initialization_simp_retains_checked_fixed_state_proof() {
     let c_source = r#"
             int32 initialize_by_simp(int32 x) {
                 while (x < 1) {

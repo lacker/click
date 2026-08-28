@@ -17,7 +17,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
     let mut candidates = available
         .iter()
         .filter_map(|kernel| {
-            let surface = checked_surface_comparison_fact_at_point(
+            let surface = checked_surface_comparison_fact_in_state(
                 view,
                 kernel,
                 SurfaceFactMatch::AvailabilityEquivalent,
@@ -120,7 +120,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
     Ok(selected.into_iter().map(|(_, surface)| surface).collect())
 }
 
-pub(in crate::lang::click::proof) struct CheckedPointFactTransport {
+pub(in crate::lang::click::proof) struct CheckedFixedStateFactTransport {
     pub(in crate::lang::click::proof) source: Proposition,
     pub(in crate::lang::click::proof) target: Proposition,
 }
@@ -132,7 +132,7 @@ pub(in crate::lang::click::proof) struct CheckedPointFactTransport {
 /// It does not mutate surface bookkeeping or proof provenance; it returns the
 /// exact checked source and target for those owners to record atomically.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
+pub(in crate::lang::click::proof) fn check_fixed_state_fact_transport_using_facts(
     surface_source: &ClickProposition,
     surface_target: &ClickProposition,
     surface_premises: &[ClickProposition],
@@ -145,11 +145,11 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-) -> Result<CheckedPointFactTransport, ClickError> {
+) -> Result<CheckedFixedStateFactTransport, ClickError> {
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
         let premise = if let Some(recorded) = surface_propositions
@@ -157,7 +157,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         {
             recorded.clone()
         } else {
-            lower_point_proposition_with_assumptions(
+            lower_fixed_state_proposition_with_assumptions(
                 surface_premise,
                 available.assumptions(),
                 parameters,
@@ -165,7 +165,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
                 pre_state,
                 state,
                 result,
-                program_point_states,
+                recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -209,7 +209,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
     let ordinary_source = if let Some(recorded) = &recorded_source {
         recorded.clone()
     } else {
-        lower_point_proposition_with_assumptions(
+        lower_fixed_state_proposition_with_assumptions(
             surface_source,
             available.assumptions(),
             parameters,
@@ -217,7 +217,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             pre_state,
             state,
             result,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -241,7 +241,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             .clone()
             .allow_symbolic_contract_loads()
             .force_symbolic_external_loads();
-        lower_point_proposition_with_assumptions(
+        lower_fixed_state_proposition_with_assumptions(
             surface_source,
             &symbolic_assumptions,
             parameters,
@@ -249,7 +249,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             pre_state,
             state,
             result,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -315,7 +315,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         });
     // Never resolve the target through the recorded surface map: the same
     // surface form may deliberately name an older source snapshot.
-    let target = lower_point_proposition_with_assumptions(
+    let target = lower_fixed_state_proposition_with_assumptions(
         surface_target,
         &target_lowering_assumptions,
         parameters,
@@ -323,7 +323,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -367,7 +367,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             &chain_facts,
             &chain_assumptions,
         ) {
-            return Ok(CheckedPointFactTransport { source, target });
+            return Ok(CheckedFixedStateFactTransport { source, target });
         }
         if !certified_fact_transport_reaches_through(
             &source,
@@ -383,7 +383,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             )));
         }
     }
-    Ok(CheckedPointFactTransport { source, target })
+    Ok(CheckedFixedStateFactTransport { source, target })
 }
 
 fn surface_predicate_call_name(proposition: &ClickProposition) -> Option<&str> {
@@ -556,7 +556,7 @@ pub(in crate::lang::click::proof) fn memory_erased_comparison(
 }
 
 /// Compares branch facts after erasing the memory snapshot captured at the
-/// branch point. In addition to the kernel's canonical forms, accept the
+/// branch split. In addition to the kernel's canonical forms, accept the
 /// ordinary complementary and operand-reversed forms of signed order
 /// comparisons (for example, `!(a < b)` and `a >= b`).
 pub(in crate::lang::click::proof) fn path_condition_equivalent(

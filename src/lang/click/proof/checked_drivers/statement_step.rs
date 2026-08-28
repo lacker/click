@@ -44,7 +44,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     // recording its entry snapshot. Later facts may still name this boundary.
     record_current_statement_entry(
         &execution.frontier,
-        &mut execution.program_point_states,
+        &mut execution.recorded_snapshots,
         state,
         function_block,
         function,
@@ -61,7 +61,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
         } else {
-            let proposition = lower_point_proposition_with_assumptions(
+            let proposition = lower_fixed_state_proposition_with_assumptions(
                 &case.condition,
                 assumptions,
                 parsed_function.parameters(),
@@ -69,7 +69,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
                 &pre_state,
                 state,
                 None,
-                &execution.program_point_states,
+                &execution.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -108,7 +108,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
             step_facts.push(resource_fact);
         }
     }
-    let successor = execute_step_successor_from_execution_point(
+    let successor = execute_step_successor_from_frontier_position(
         execution,
         proof_context,
         &step_facts,

@@ -1,6 +1,6 @@
 use super::diagnostics::{
     describe_code_region_ref, describe_contract_expression, describe_contract_segment,
-    describe_visit_selector,
+    describe_snapshot_selector,
 };
 use super::*;
 
@@ -31,7 +31,7 @@ pub(super) fn source_click_proposition(proposition: &ClickProposition) -> String
                 5,
                 format!(
                     "at({}, {})",
-                    describe_visit_selector(selector),
+                    describe_snapshot_selector(selector),
                     at_precedence(proposition, 0)
                 ),
             ),
@@ -552,10 +552,7 @@ mod tests {
             right: ContractExpression::CFragment(CExpression::Variable(name.to_string())),
         };
         let proposition = ClickProposition::At {
-            selector: VisitSelector::ProgramPoint(ProgramPointRef {
-                region: CodeRegionRef::Mark("checkpoint".to_string()),
-                kind: ProgramPointKind::Entry,
-            }),
+            selector: SnapshotSelector::Mark("checkpoint".to_string()),
             proposition: Box::new(ClickProposition::And(
                 Box::new(equality("left")),
                 Box::new(equality("right")),

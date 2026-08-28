@@ -826,14 +826,14 @@ impl<'a> ProofScope<'a> {
         let Some(mut body) = self.body.try_simp_closure()? else {
             return Ok(None);
         };
-        // At an outcome or pure point a bare assumption may cite an ambient
+        // At an outcome or in a pure proof a bare assumption may cite an ambient
         // fact the certificate cannot spell, so a derivation from spelled
         // premises is preferred. Mid-execution, an available fact is its own spelling:
         // `assumption();` checks by re-checking the judgment, and the
         // frontier derivation exists for what the direct closer cannot
         // prove, not to replace what it can.
         let mid_execution = matches!(self.body.context.as_ref(), ProofContext::Execution(_))
-            && self.body.focused_outcome_point().is_none();
+            && self.body.focused_outcome_data().is_none();
         if body.node.depth == 1
             && matches!(body.node.step.as_deref(), Some(ProofStep::Assumption))
             && !mid_execution
@@ -947,14 +947,14 @@ impl<'a> ProofScope<'a> {
                 .old_reference_state(&execution.frontier, &execution.state)
                 .clone();
             if let Some(derivation) =
-                kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+                kernel_standard_theorem_derivation_in_current_state_with_assumptions(
                     context.theorem_environment,
                     application,
                     context.parsed_function.parameters(),
                     context.arguments,
                     &pre_state,
                     &execution.state,
-                    &execution.program_point_states,
+                    &execution.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                     assumptions,
@@ -1042,11 +1042,10 @@ impl<'a> ProofScope<'a> {
                     goals.obligation(self.root.focused_branch).cloned()
                 {
                     let mut updated = outcome;
-                    let mut point = (*updated.point).clone();
-                    point
-                        .surface_propositions
+                    let mut data = (*updated.data).clone();
+                    data.surface_propositions
                         .record_lowering(&proposition, &kernel)?;
-                    updated.point = Arc::new(point);
+                    updated.data = Arc::new(data);
                     goals = goals.replace_obligation_at(
                         self.root.focused_branch,
                         Obligation::FunctionOutcome(updated),

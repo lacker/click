@@ -1,6 +1,6 @@
 # composite resource execute step direct mutate
 
-This checks statement-level execution points. The proof executes the declaration
+This checks statement-level execution boundaries. The proof executes the declaration
 and read as separate steps while the buffer is folded, unfolds before the write,
 then executes the write and return as separate steps before folding the buffer
 back.

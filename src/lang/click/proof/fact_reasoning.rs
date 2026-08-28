@@ -1891,7 +1891,7 @@ mod tests {
     }
 
     /// The perpetual-service `fold(service(owner))` near-miss: the body's
-    /// separation fact is available from the unfold, but the fold point
+    /// separation fact is available from the unfold, but the fold state
     /// rewrites it through a memory that retains this path's store cells, so
     /// the two forms print identically yet compare structurally unequal.
     /// The bounded separation matcher must equate them from the recorded
@@ -1936,7 +1936,7 @@ mod tests {
             value: Box::new(load(memory, &cell_field)),
             byte_width: 4,
         };
-        // The fold-point form reads the cell pointer through a memory
+        // The fold-state form reads the cell pointer through a memory
         // that still carries the `owner->cell[0] = owner->phase` store, whose
         // written address is itself written through a loaded pointer, so no
         // assumption-free normalization can drop the cell.
@@ -1999,7 +1999,7 @@ mod tests {
                 &assumptions,
             ),
             Some(available.clone()),
-            "the bounded separation matcher must transport the unfold form to the fold point"
+            "the bounded separation matcher must transport the unfold form to the fold state"
         );
     }
 }

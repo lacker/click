@@ -74,7 +74,7 @@ pub(in crate::lang::click) fn verify_loop_execution_proofs(
             state: entry_state,
             pure_facts: requirement_facts,
             surface_propositions: surface_propositions.clone(),
-            program_point_states: ProgramPointStates::new(),
+            recorded_snapshots: RecordedSnapshots::new(),
             case_path: Vec::new(),
             next_opaque_call: 0,
             next_kernel_variable: 0,
@@ -218,7 +218,7 @@ pub(in crate::lang::click::proof) struct PlanningExecutionContext {
     pub(in crate::lang::click::proof) state: CState,
     pub(in crate::lang::click::proof) pure_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
-    pub(in crate::lang::click::proof) program_point_states: ProgramPointStates,
+    pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
     pub(in crate::lang::click::proof) case_path: Vec<ProofCaseChoice>,
     pub(in crate::lang::click::proof) next_opaque_call: u64,
     pub(in crate::lang::click::proof) next_kernel_variable: u64,
@@ -404,7 +404,7 @@ pub(in crate::lang::click::proof) struct CertifiedConditionTransition {
 /// Fact transports that must become standalone surface steps are returned to
 /// the caller instead of being constructed here: their surface form is
 /// resolved against the post-statement state, which does not exist yet at this
-/// call point.
+/// call frontier.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     execution: &mut ExecutionProofState,

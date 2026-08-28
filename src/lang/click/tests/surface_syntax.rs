@@ -568,12 +568,12 @@ fn records_checked_surface_forms_for_lowered_propositions() {
     assert_eq!(
         forms
             .checked_surface(&kernel, |_| Ok(kernel.clone()))
-            .expect("the same point lowering should remain usable"),
+            .expect("the same fixed-state lowering should remain usable"),
         surface
     );
     let error = forms
         .checked_surface(&kernel, |_| Ok(kernel_left.as_ref().clone()))
-        .expect_err("a surface form from another proof point must not be reused");
+        .expect_err("a surface form from another proof state must not be reused");
     assert!(
         error
             .message()
@@ -816,7 +816,7 @@ fn retains_distinct_surface_spellings_for_the_same_kernel_fact() {
     };
     let snapshot = ClickProposition::Comparison {
         left: ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(ProgramPointRef {
+            selector: SnapshotSelector::ProgramPoint(ProgramPointRef {
                 region: CodeRegionRef::Statement(5),
                 kind: ProgramPointKind::Entry,
             }),

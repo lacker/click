@@ -47,7 +47,7 @@ impl<'a> Proof<'a> {
             return Ok(false);
         }
         let Ok((_, _, CStatement::If { condition, .. }, _)) =
-            next_top_level_statement_from_execution_point(
+            next_top_level_statement_from_frontier_position(
                 execution.view(context),
                 &execution.state,
                 context.function,
@@ -63,12 +63,12 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Statement(statement_index),
             kind: ProgramPointKind::Entry,
         };
-        let checked = surface_with_source_site(&surface_c_condition(&condition), &entry_point)?;
+        let checked = surface_at_snapshot(&surface_c_condition(&condition), &entry_point)?;
         if checked == *surface_condition {
             return Ok(true);
         }
         if proposition_contains_at_expression(surface_condition)
-            && surface_with_source_site(surface_condition, &entry_point)
+            && surface_at_snapshot(surface_condition, &entry_point)
                 .is_ok_and(|reanchored| reanchored == checked)
         {
             return Err(self.step_error(
@@ -110,7 +110,7 @@ impl<'a> Proof<'a> {
             )));
         };
         let (execution_start_state, current_state, statement, remaining) =
-            next_top_level_statement_from_execution_point(
+            next_top_level_statement_from_frontier_position(
                 execution.view(context),
                 &execution.state,
                 context.function,
@@ -127,7 +127,7 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("`branch` source region did not contain a C `if`"));
         };
-        let surface_condition = surface_with_source_site(
+        let surface_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -152,8 +152,8 @@ impl<'a> Proof<'a> {
                 else_branch.as_ref()
             };
             let mut arm_execution = execution.clone();
-            record_statement_program_point_state(
-                &mut arm_execution.program_point_states,
+            record_statement_program_snapshot_state(
+                &mut arm_execution.recorded_snapshots,
                 context.function_block,
                 statement_index,
                 ProgramPointKind::Entry,
@@ -182,22 +182,22 @@ impl<'a> Proof<'a> {
             arm_execution.frontier.continuations = PersistentSequence::default();
             arm_execution.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, CStatement::Skip) {
-                record_statement_program_point_state(
-                    &mut arm_execution.program_point_states,
+                record_statement_program_snapshot_state(
+                    &mut arm_execution.recorded_snapshots,
                     context.function_block,
                     statement_index,
                     ProgramPointKind::Exit,
                     (*arm_execution.state).clone(),
                 );
-                arm_execution.frontier.point = ProofExecutionPoint::RegionBoundary;
+                arm_execution.frontier.position = FrontierPosition::RegionBoundary;
             } else {
-                arm_execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                arm_execution.frontier.position = FrontierPosition::StatementEntry {
                     remaining: Arc::new(selected_branch.clone()),
                 };
             }
             record_current_statement_entry(
                 &arm_execution.frontier,
-                &mut arm_execution.program_point_states,
+                &mut arm_execution.recorded_snapshots,
                 &arm_execution.state,
                 context.function_block,
                 context.function,
@@ -213,7 +213,7 @@ impl<'a> Proof<'a> {
             };
             let pre_state =
                 context.old_reference_state(&arm_execution.frontier, &arm_execution.state);
-            let kernel_path_fact = lower_point_proposition_with_assumptions(
+            let kernel_path_fact = lower_fixed_state_proposition_with_assumptions(
                 &surface_path_fact,
                 transition.pure_facts.assumptions(),
                 context.parsed_function.parameters(),
@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 &arm_execution.state,
                 None,
-                &arm_execution.program_point_states,
+                &arm_execution.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -450,7 +450,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             parent_execution.view(context),
             &parent_execution.state,
             context.function,
@@ -469,7 +469,7 @@ impl<'a> Proof<'a> {
                 self.step_error("decided execution branch root no longer points at a C `if`")
             );
         };
-        let surface_condition = surface_with_source_site(
+        let surface_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -596,16 +596,16 @@ impl<'a> Proof<'a> {
                 parent_execution,
             )?;
         }
-        let common_program_points = arms[0]
+        let common_snapshots = arms[0]
             .execution
-            .program_point_states
+            .recorded_snapshots
             .common_descendant(
-                &arms[1].execution.program_point_states,
-                &parent_execution.program_point_states,
+                &arms[1].execution.recorded_snapshots,
+                &parent_execution.recorded_snapshots,
             )
             .ok_or_else(|| {
                 self.step_error(
-                    "`branch ensuring` arms do not descend from the root program-point state",
+                    "`branch ensuring` arms do not descend from the root recorded snapshots",
                 )
             })?;
 
@@ -715,11 +715,11 @@ impl<'a> Proof<'a> {
             [&then_abstract, &else_abstract],
         )?;
         execution.state = abstract_state.clone().into();
-        execution.program_point_states = common_program_points;
+        execution.recorded_snapshots = common_snapshots;
         execution
-            .program_point_states
+            .recorded_snapshots
             .insert(target, abstract_state.clone());
-        execution.program_point_states.insert(
+        execution.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -731,7 +731,7 @@ impl<'a> Proof<'a> {
             Some(join) => {
                 execution.frontier.next_statement_index = join.next_statement_index;
                 execution.frontier.continuations = join.continuations;
-                execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                execution.frontier.position = FrontierPosition::StatementEntry {
                     remaining: join.remaining,
                 };
             }
@@ -787,8 +787,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        record_statement_program_point_state(
-            &mut execution.program_point_states,
+        record_statement_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -796,7 +796,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.frontier,
-            &mut execution.program_point_states,
+            &mut execution.recorded_snapshots,
             &execution.state,
             context.function_block,
             context.function,
@@ -966,7 +966,7 @@ impl<'a> Proof<'a> {
         let (surface_condition, empty_source_arms) = if let Some(condition) = proof_case_condition {
             (condition, [false, false])
         } else {
-            let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+            let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
                 parent_execution.view(context),
                 &parent_execution.state,
                 context.function,
@@ -986,7 +986,7 @@ impl<'a> Proof<'a> {
                 );
             };
             (
-                surface_with_source_site(
+                surface_at_snapshot(
                     &surface_c_condition(&condition),
                     &ProgramPointRef {
                         region: CodeRegionRef::Statement(statement_index),
@@ -1034,16 +1034,16 @@ impl<'a> Proof<'a> {
         };
         let then_expansion = &arms[0].execution.expansion;
         let else_expansion = &arms[1].execution.expansion;
-        let common_program_points = arms[0]
+        let common_snapshots = arms[0]
             .execution
-            .program_point_states
+            .recorded_snapshots
             .common_descendant(
-                &arms[1].execution.program_point_states,
-                &parent_execution.program_point_states,
+                &arms[1].execution.recorded_snapshots,
+                &parent_execution.recorded_snapshots,
             )
             .ok_or_else(|| {
                 self.step_error(
-                    "terminal execution arms do not descend from the branch root's program points",
+                    "terminal execution arms do not descend from the branch root's recorded snapshots",
                 )
             })?;
 
@@ -1106,10 +1106,10 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.state = execution_start_state.clone().into();
-        execution.program_point_states = common_program_points;
+        execution.recorded_snapshots = common_snapshots;
         execution.frontier.continuations.clear();
         execution.frontier.execution_start_state = Some(execution_start_state);
-        execution.frontier.point = ProofExecutionPoint::FunctionExit {
+        execution.frontier.position = FrontierPosition::FunctionExit {
             execution: outcomes,
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
@@ -1342,7 +1342,7 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.state = (**then_state).clone().into();
-        execution.program_point_states.insert(
+        execution.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -1357,11 +1357,11 @@ impl<'a> Proof<'a> {
         match continuation_remaining {
             Some(remaining) => {
                 execution.frontier.next_statement_index = continuation_index;
-                execution.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+                execution.frontier.position = FrontierPosition::StatementEntry { remaining };
             }
             None => match resume_after_completed_region(&mut execution.frontier) {
                 Some(remaining) => {
-                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }
@@ -1425,8 +1425,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        record_statement_program_point_state(
-            &mut execution.program_point_states,
+        record_statement_program_snapshot_state(
+            &mut execution.recorded_snapshots,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -1434,7 +1434,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.frontier,
-            &mut execution.program_point_states,
+            &mut execution.recorded_snapshots,
             &execution.state,
             context.function_block,
             context.function,
@@ -2005,7 +2005,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
-        let (_, _, statement, _) = next_top_level_statement_from_execution_point(
+        let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             record.parent_execution.view(context),
             &record.parent_execution.state,
             context.function,
@@ -2022,7 +2022,7 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("expanded execution branch root is not a C `if`"));
         };
-        let checked_condition = surface_with_source_site(
+        let checked_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
                 region: CodeRegionRef::Statement(record.statement_index),
@@ -2315,11 +2315,11 @@ impl<'a> Proof<'a> {
         execution.frontier.next_statement_index = record.continuation_index;
         match record.continuation_remaining.clone() {
             Some(remaining) => {
-                execution.frontier.point = ProofExecutionPoint::StatementEntry { remaining };
+                execution.frontier.position = FrontierPosition::StatementEntry { remaining };
             }
             None => match resume_after_completed_region(&mut execution.frontier) {
                 Some(remaining) => {
-                    execution.frontier.point = ProofExecutionPoint::StatementEntry {
+                    execution.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }

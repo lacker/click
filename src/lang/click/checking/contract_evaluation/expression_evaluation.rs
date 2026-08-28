@@ -10,7 +10,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
     expression: &ContractExpression,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     active_functions: &mut BTreeSet<String>,
 ) -> Result<CValue, String> {
     match expression {
@@ -52,7 +52,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                         argument,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                         active_functions,
                     )?),
                 });
@@ -76,15 +76,14 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
             expression,
             predicate_environment,
             click_function_environment,
-            program_point_states,
+            recorded_snapshots,
             active_functions,
         ),
         ContractExpression::At {
             selector,
             expression,
         } => {
-            let snapshot_state =
-                concrete_program_point_state(selector, pre_state, program_point_states)?;
+            let snapshot_state = selected_snapshot_state(selector, pre_state, recorded_snapshots)?;
             let (snapshot_values, snapshot_array_refs) =
                 contract_environment_at_state(parameter_values, array_refs, snapshot_state);
             evaluate_contract_expression_with_environment(
@@ -97,7 +96,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )
         }
@@ -112,7 +111,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -125,7 +124,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_add(left, right)
@@ -141,7 +140,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -154,7 +153,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_sub(left, right)
@@ -170,7 +169,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -183,7 +182,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_multiply(left, right)
@@ -199,7 +198,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -212,7 +211,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_divide(left, right)
@@ -228,7 +227,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -241,7 +240,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_remainder(left, right)
@@ -257,7 +256,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -270,7 +269,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_shift_left(left, right)
@@ -286,7 +285,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -299,7 +298,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_shift_right(left, right)
@@ -315,7 +314,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -328,7 +327,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_bitwise_binary(left, right, "&", bitvector32_and)
@@ -344,7 +343,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -357,7 +356,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_bitwise_binary(left, right, "|", bitvector32_or)
@@ -373,7 +372,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 left,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let right = evaluate_contract_expression_with_environment(
@@ -386,7 +385,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 right,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_bitwise_binary(left, right, "^", bitvector32_xor)
@@ -402,7 +401,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 expression,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             evaluate_postcondition_bitwise_not(value)
@@ -418,7 +417,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 base,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let index = evaluate_contract_expression_with_environment(
@@ -431,7 +430,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 index,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let CValue::Int32(index) = index else {
@@ -476,7 +475,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 &mut next_variable,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             if assumptions.proves(&condition) {
@@ -490,7 +489,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                     then_branch,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 );
             }
@@ -505,7 +504,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                     else_branch,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 );
             }
@@ -520,7 +519,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 then_branch,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let else_value = evaluate_contract_expression_with_environment(
@@ -533,7 +532,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 else_branch,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             conditional_contract_value(&condition, then_value, else_value)
@@ -557,7 +556,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                     start,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "fold start",
@@ -573,7 +572,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                     end,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     active_functions,
                 )?,
                 "fold end",
@@ -588,7 +587,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 initial,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             match (
@@ -613,7 +612,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                             body,
                             predicate_environment,
                             click_function_environment,
-                            program_point_states,
+                            recorded_snapshots,
                             active_functions,
                         )?;
                     }
@@ -642,7 +641,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                         body,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                         active_functions,
                     )?;
                     symbolic_range_fold_value(start, end, value, accumulator, item, body_value)
@@ -665,7 +664,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 value,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )?;
             let value = checked_contract_let_value(value, *c_type, name)?;
@@ -681,7 +680,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
                 body,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 active_functions,
             )
         }
@@ -696,7 +695,7 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
             result,
             assumptions,
             predicate_environment,
-            program_point_states,
+            recorded_snapshots,
             active_functions,
         ),
     }

@@ -1,7 +1,7 @@
 # Predicates capture resource-count snapshots
 
-A predicate containing `count(...)` describes the resource state at the point
-where the predicate was established. After a retain transition, the proof must
+A predicate containing `count(...)` describes the resource snapshot captured
+when the predicate was established. After a retain transition, the proof must
 establish a fresh predicate for the new memory and population count.
 
 ```c filename=resource_count_predicate_snapshot.c

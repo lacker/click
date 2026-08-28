@@ -31,7 +31,7 @@ pub(super) fn check_function_claim(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
@@ -51,7 +51,7 @@ pub(super) fn check_function_claim(
                 outcome,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 unfolded_predicates,
             )?,
             Ensure::Resource(resource) => prove_ensure_resource(
@@ -94,7 +94,7 @@ pub(super) fn check_function_claim_by_simp(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     if matches!(outcome, CFunctionOutcome::VerificationDiverges) {
@@ -114,7 +114,7 @@ pub(super) fn check_function_claim_by_simp(
                 outcome,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 unfolded_predicates,
             ),
             Ensure::Resource(resource) => prove_ensure_resource(
@@ -286,7 +286,7 @@ pub(super) fn evaluate_witness_tactic_value(
     assumptions: &PureFactContext,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
 ) -> Result<Bitvector32Term, ClickError> {
     let mut active_functions = BTreeSet::new();
     let value = evaluate_contract_expression_with_environment(
@@ -299,7 +299,7 @@ pub(super) fn evaluate_witness_tactic_value(
         &witness.value,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
     .map_err(|message| {
@@ -367,7 +367,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     let surface_goal = proposition;
@@ -393,7 +393,7 @@ pub(super) fn prove_ensure_proposition_by_simp(
         outcome,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         unfolded_predicates,
     )
     .map_err(|message| {
@@ -452,13 +452,13 @@ pub(super) fn lower_ensure_proposition_goal(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<Proposition, String> {
     let CFunctionOutcome::Return { value, state } = outcome else {
         return Err("the execution path does not return".to_string());
     };
-    let proposition = lower_outcome_proposition_with_program_points(
+    let proposition = lower_outcome_proposition_with_recorded_snapshots(
         parameters,
         arguments,
         pre_state,
@@ -468,7 +468,7 @@ pub(super) fn lower_ensure_proposition_goal(
         proposition,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
     );
     if crate::instrumentation::deadline_exceeded() {
         return Err(format!(
@@ -499,7 +499,7 @@ pub(super) fn prove_ensure_proposition(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Result<(), ClickError> {
     match proposition {
@@ -515,7 +515,7 @@ pub(super) fn prove_ensure_proposition(
             );
             match outcome {
                 CFunctionOutcome::Return { value, state } => {
-                    let left_value = evaluate_contract_expression_with_program_points(
+                    let left_value = evaluate_contract_expression_with_recorded_snapshots(
                         parameters,
                         arguments,
                         pre_state,
@@ -525,7 +525,7 @@ pub(super) fn prove_ensure_proposition(
                         left,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -539,7 +539,7 @@ pub(super) fn prove_ensure_proposition(
                             )
                         ))
                     })?;
-                    let right_value = evaluate_contract_expression_with_program_points(
+                    let right_value = evaluate_contract_expression_with_recorded_snapshots(
                         parameters,
                         arguments,
                         pre_state,
@@ -549,7 +549,7 @@ pub(super) fn prove_ensure_proposition(
                         right,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -626,7 +626,7 @@ pub(super) fn prove_ensure_proposition(
                 outcome,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 unfolded_predicates,
             )?;
             prove_ensure_proposition(
@@ -641,7 +641,7 @@ pub(super) fn prove_ensure_proposition(
                 outcome,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 unfolded_predicates,
             )?;
         }
@@ -661,7 +661,7 @@ pub(super) fn prove_ensure_proposition(
                     )
                 )));
             };
-            let mut lowered_proposition = lower_outcome_proposition_with_program_points(
+            let mut lowered_proposition = lower_outcome_proposition_with_recorded_snapshots(
                 parameters,
                 arguments,
                 pre_state,
@@ -671,7 +671,7 @@ pub(super) fn prove_ensure_proposition(
                 surface_goal,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
             )
             .map_err(|message| {
                 ClickError::new(format!(

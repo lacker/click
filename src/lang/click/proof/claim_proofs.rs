@@ -103,7 +103,7 @@ fn unsupported_proof_shape(proof_label: &str) -> ClickError {
     ))
 }
 
-fn leading_point_have_supported(have: &ProofHave) -> bool {
+fn leading_fixed_state_have_supported(have: &ProofHave) -> bool {
     // Proposition lowering and every accepted body operation are owned by the
     // nested Proof scope. Keep one capability query for that source driver;
     // a second leading-scope classifier can only lag behind checked steps
@@ -147,7 +147,7 @@ fn exact_empty_frame_outcome_segment(tactics: &[ProofTactic]) -> (bool, BTreeSet
         }
         if saw_execution
             && segment_supported
-            && matches!(tactic, ProofTactic::Have(have) if leading_point_have_supported(have))
+            && matches!(tactic, ProofTactic::Have(have) if leading_fixed_state_have_supported(have))
         {
             pending_haves.push(index);
             continue;
@@ -323,10 +323,10 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
         grouped_contract: false,
     };
     let frontier = ExecutionFrontier::default();
-    let mut program_point_states = ProgramPointStates::new();
+    let mut recorded_snapshots = RecordedSnapshots::new();
     record_current_statement_entry(
         &frontier,
-        &mut program_point_states,
+        &mut recorded_snapshots,
         &state,
         function_block,
         &function,
@@ -338,7 +338,7 @@ pub(in crate::lang::click) fn prove_claim_by_tactics(
     let initial = ExecutionProofState::at_entry(
         state,
         frontier,
-        program_point_states,
+        recorded_snapshots,
         surface_propositions,
         PersistentSequence::default(),
     );
@@ -493,10 +493,10 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
         grouped_contract: true,
     };
     let frontier = ExecutionFrontier::default();
-    let mut program_point_states = ProgramPointStates::new();
+    let mut recorded_snapshots = RecordedSnapshots::new();
     record_current_statement_entry(
         &frontier,
-        &mut program_point_states,
+        &mut recorded_snapshots,
         &state,
         function_block,
         &function,
@@ -508,7 +508,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_tactics(
     let initial = ExecutionProofState::at_entry(
         state,
         frontier,
-        program_point_states,
+        recorded_snapshots,
         surface_propositions,
         PersistentSequence::default(),
     );
@@ -784,7 +784,7 @@ mod exit_claim {
 
         /// Close a claim covered by the path's grouped transition
         /// certificate. Taking the certificate is the point: it is either the
-        /// terminal output of the checked point-obligation Proof operation or
+        /// terminal output of the checked fixed-state-obligation Proof operation or
         /// the output of the remaining grouped legacy certifier.
         pub(super) fn by_grouped_transition(_certificate: &ProofCertificate) -> Self {
             Self::Closed(ClosedClaim {
@@ -846,7 +846,7 @@ fn begin_outcome_existence_proof<'a>(
     let root = outcome_root
         .with_outcome_snapshot(outcome)?
         .with_checked_outcome_facts(path_requirements)?;
-    let mut proof = root.focus_point_surface_goal(&surface_goal)?;
+    let mut proof = root.focus_fixed_state_surface_goal(&surface_goal)?;
     for equality in &rewrite_claim_equalities[claim_index] {
         proof = proof.apply_step(ProofStep::Rewrite(equality.clone()))?;
     }
@@ -1158,7 +1158,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     .path_case_decisions(path_index)
                     .into_iter()
                     .filter_map(|(condition, value)| {
-                        let lowered = super::point_proofs::lower_point_proposition(
+                        let lowered = super::fixed_state_proofs::lower_fixed_state_proposition(
                             &condition,
                             &certification_facts,
                             parsed_function.parameters(),
@@ -1166,7 +1166,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             pre_state,
                             pre_state,
                             None,
-                            &proof_execution.program_point_states,
+                            &proof_execution.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1374,7 +1374,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         let case_fact = if let Some(fact) = &case.fact {
                             fact.clone()
                         } else {
-                            let Ok(condition) = lower_outcome_proposition_with_program_points(
+                            let Ok(condition) = lower_outcome_proposition_with_recorded_snapshots(
                                 parsed_function.parameters(),
                                 arguments,
                                 pre_state,
@@ -1384,7 +1384,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &case.condition,
                                 predicate_environment,
                                 click_function_environment,
-                                &proof_execution.program_point_states,
+                                &proof_execution.recorded_snapshots,
                             ) else {
                                 return false;
                             };
@@ -1477,7 +1477,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     let fact = if let Some(fact) = &case.fact {
                         fact.clone()
                     } else {
-                        let Ok(condition) = lower_outcome_proposition_with_program_points(
+                        let Ok(condition) = lower_outcome_proposition_with_recorded_snapshots(
                             parsed_function.parameters(),
                             arguments,
                             pre_state,
@@ -1487,7 +1487,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &proof_execution.program_point_states,
+                            &proof_execution.recorded_snapshots,
                         ) else {
                             return Ok(false);
                         };
@@ -1678,7 +1678,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             let fact = if let Some(fact) = &case.fact {
                                 fact.clone()
                             } else {
-                                let condition = lower_outcome_proposition_with_program_points(
+                                let condition = lower_outcome_proposition_with_recorded_snapshots(
                             parsed_function.parameters(),
                             arguments,
                             pre_state,
@@ -1688,7 +1688,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &proof_execution.program_point_states,
+                            &proof_execution.recorded_snapshots,
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
@@ -1771,7 +1771,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -2059,7 +2059,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 } else {
                                     // The unconditional substrate makes this unreachable;
                                     // fail loudly rather than silently routing through the
-                                    // deleted legacy point root.
+                                    // deleted legacy fixed-state root.
                                     return Err(ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
                                     )));
@@ -2115,7 +2115,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 } else {
                                     // The unconditional substrate makes this unreachable;
                                     // fail loudly rather than silently routing through the
-                                    // deleted legacy point root.
+                                    // deleted legacy fixed-state root.
                                     return Err(ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
                                     )));
@@ -2172,7 +2172,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 } else {
                                     // The unconditional substrate makes this unreachable;
                                     // fail loudly rather than silently routing through the
-                                    // deleted legacy point root.
+                                    // deleted legacy fixed-state root.
                                     return Err(ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
                                     )));
@@ -2258,7 +2258,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     // The unconditional substrate makes this
                                     // unreachable; fail loudly rather than
                                     // silently routing the whole `have`
-                                    // through the deleted legacy point root.
+                                    // through the deleted legacy fixed-state root.
                                     return Err(ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
                                     )));
@@ -2418,7 +2418,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             premises: premises.clone(),
                                         })?
                                     } else {
-                                        resynced.search_point_fact_transport(
+                                        resynced.search_fixed_state_fact_transport(
                                             source,
                                             target,
                                             candidates
@@ -2434,7 +2434,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 } else {
                                     // The unconditional substrate makes this unreachable;
                                     // fail loudly rather than silently routing through the
-                                    // deleted legacy point root.
+                                    // deleted legacy fixed-state root.
                                     return Err(ClickError::new(format!(
                                         "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for this path is unavailable"
                                     )));
@@ -2539,7 +2539,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // Claim closers focus fresh obligation roots;
                                 // the evolving outcome proof supplies them
                                 // when this path derived a goal.
-                                let point_root = match (outcome_proof.as_ref(), &outcome) {
+                                let fixed_state_root = match (outcome_proof.as_ref(), &outcome) {
                                     (Some(evolving), _) => Some(evolving.clone()),
                                     (
                                         None,
@@ -2547,7 +2547,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             value: result,
                                             state: post_state,
                                         },
-                                    ) => Some(Proof::for_point_frontier(
+                                    ) => Some(Proof::for_fixed_state_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -2556,7 +2556,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2623,7 +2623,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.program_point_states,
+                                            &proof_execution.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2634,11 +2634,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                             }
                                         }
                                     };
-                                    let Some(point_root) = &point_root else {
+                                    let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
-                                    match point_root
-                                        .focus_point_goal(goal)?
+                                    match fixed_state_root
+                                        .focus_fixed_state_goal(goal)?
                                         .apply_step(ProofStep::Assumption)
                                     {
                                         Ok(proof) => {
@@ -2677,7 +2677,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // Claim closers focus fresh obligation roots;
                                 // the evolving outcome proof supplies them
                                 // when this path derived a goal.
-                                let point_root = match (outcome_proof.as_ref(), &outcome) {
+                                let fixed_state_root = match (outcome_proof.as_ref(), &outcome) {
                                     (Some(evolving), _) => Some(evolving.clone()),
                                     (
                                         None,
@@ -2685,7 +2685,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             value: result,
                                             state: post_state,
                                         },
-                                    ) => Some(Proof::for_point_frontier(
+                                    ) => Some(Proof::for_fixed_state_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -2694,7 +2694,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2741,7 +2741,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.program_point_states,
+                                            &proof_execution.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2750,11 +2750,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                             ))
                                         })?,
                                     };
-                                    let Some(point_root) = &point_root else {
+                                    let Some(fixed_state_root) = &fixed_state_root else {
                                         continue;
                                     };
-                                    match point_root
-                                        .focus_point_goal(goal)?
+                                    match fixed_state_root
+                                        .focus_fixed_state_goal(goal)?
                                         .apply_step(ProofStep::Normalize)
                                     {
                                         Ok(proof) => {
@@ -2802,9 +2802,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // roots; the evolving outcome proof supplies
                                 // them when this path derived a goal, and the
                                 // path lineage itself is not advanced.
-                                let point_root = match outcome_proof.as_ref() {
+                                let fixed_state_root = match outcome_proof.as_ref() {
                                     Some(evolving) => evolving.clone(),
-                                    None => Proof::for_point_frontier(
+                                    None => Proof::for_fixed_state_frontier(
                                         &proof_label,
                                         *tactic_index,
                                         &path_requirements,
@@ -2813,7 +2813,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2847,7 +2847,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.program_point_states,
+                                            &proof_execution.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2856,8 +2856,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                             ))
                                         })?,
                                     };
-                                    match point_root
-                                        .focus_point_goal(goal)?
+                                    match fixed_state_root
+                                        .focus_fixed_state_goal(goal)?
                                         .apply_step(ProofStep::Rewrite(surface_equality.clone()))
                                     {
                                         Ok(proof) => {
@@ -2914,7 +2914,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     &outcome,
                                     predicate_environment,
                                     click_function_environment,
-                                    &proof_execution.program_point_states,
+                                    &proof_execution.recorded_snapshots,
                                     &unfolded_predicates,
                                 ) {
                                     frame_certified_claim_goals[claim_index] = Some(goal.clone());
@@ -3371,14 +3371,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                         let transition_facts = path.execution_facts();
                                         // The evolving outcome proof supplies
                                         // the grouped obligation root when the
-                                        // path derived a goal; its point data
+                                        // path derived a goal; its outcome proof data
                                         // carries the statement-entry anchor.
                                         let mut direct_proof = match (true, outcome_proof.as_ref())
                                         {
                                             (true, Some(evolving)) => {
                                                 evolving.clone()
                                             }
-                                            _ => Proof::for_point_frontier_with_premise_anchor(
+                                            _ => Proof::for_fixed_state_frontier_with_premise_anchor(
                                                 &proof_label,
                                                 *tactic_index,
                                                 &path_requirements,
@@ -3389,7 +3389,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 Some(result),
                                                 proof_execution.surface_record.last_step_entry
                                                     .as_ref(),
-                                                &proof_execution.program_point_states,
+                                                &proof_execution.recorded_snapshots,
                                                 &outcome_surface_propositions,
                                                 predicate_environment,
                                                 click_function_environment,
@@ -3515,7 +3515,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     &outcome,
                                                     predicate_environment,
                                                     click_function_environment,
-                                                    &proof_execution.program_point_states,
+                                                    &proof_execution.recorded_snapshots,
                                                     &unfolded_predicates,
                                                 ) {
                                                     return Err(error);
@@ -3555,7 +3555,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         let completed = if surface_goals.is_empty() {
                                             direct_proof.certificate_since(&direct_base)?
                                         } else {
-                                            direct_proof.complete_point_obligations_since(
+                                            direct_proof.complete_fixed_state_obligations_since(
                                                 &direct_base,
                                                 &surface_goals,
                                             )?
@@ -3689,7 +3689,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         &unfolded_predicates,
                                     ) {
                                         return Err(error);
@@ -3802,7 +3802,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &outcome,
                                 predicate_environment,
                                 click_function_environment,
-                                &proof_execution.program_point_states,
+                                &proof_execution.recorded_snapshots,
                                 &unfolded_predicates,
                             );
                             match result {
@@ -3952,7 +3952,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &proof_execution.program_point_states,
+                                        &proof_execution.recorded_snapshots,
                                         &unfolded_predicates,
                                     )
                                     .is_ok()

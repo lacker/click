@@ -1153,7 +1153,7 @@ impl AnnotationLowerer<'_> {
 
     fn lower_at_expression_to_spec(
         &mut self,
-        selector: &VisitSelector,
+        selector: &SnapshotSelector,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
@@ -1178,12 +1178,15 @@ impl AnnotationLowerer<'_> {
 
     fn resolve_visit_selector(
         &self,
-        selector: &VisitSelector,
+        selector: &SnapshotSelector,
     ) -> Result<ResolvedProgramPoint, String> {
         match selector {
-            VisitSelector::ProgramPoint(program_point) => {
+            SnapshotSelector::ProgramPoint(program_point) => {
                 self.resolve_program_point_ref(program_point)
             }
+            SnapshotSelector::Mark(name) => Err(format!(
+                "proof-local mark `{name}` is available only in an execution proof"
+            )),
         }
     }
 
@@ -1226,9 +1229,6 @@ impl AnnotationLowerer<'_> {
                 .find(|clause| clause.label() == Some(label.as_str()))
                 .map(|clause| *clause.region())
                 .ok_or_else(|| format!("unknown code region label `{label}`")),
-            CodeRegionRef::Mark(name) => Err(format!(
-                "proof-local mark `{name}` is available only in an execution proof"
-            )),
         }
     }
 
@@ -1505,7 +1505,7 @@ impl AnnotationLowerer<'_> {
 
     fn lower_at_array_ref_to_spec(
         &mut self,
-        selector: &VisitSelector,
+        selector: &SnapshotSelector,
         expression: &ContractExpression,
         environment: &SpecElaborationContext,
     ) -> Result<SpecArrayRef, String> {

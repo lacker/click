@@ -238,7 +238,7 @@ fn defined_rejects_concrete_undefined_expression() {
 }
 
 #[test]
-fn failed_point_normalize_does_not_dump_internal_memory() {
+fn failed_fixed_state_normalize_does_not_dump_internal_memory() {
     let c_source = r#"
         int32 read(int32* data) {
             return data[0];
@@ -300,7 +300,7 @@ fn parses_local_have_proof_tactic() {
 }
 
 #[test]
-fn point_proof_intro_places_forall_binder_in_surface_scope() {
+fn fixed_state_proof_intro_places_forall_binder_in_surface_scope() {
     let c_source = r#"
         int32 forall_scope(int32 value) {
             return value;
@@ -1252,11 +1252,11 @@ fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
     assert_eq!(
         context_exports, 0,
-        "the existential point scope must not export semantic state"
+        "the existential fixed-state scope must not export semantic state"
     );
     assert_eq!(
         certificate_checks, 0,
-        "ordinary existential point verification must not check a certificate"
+        "ordinary existential fixed-state verification must not check a certificate"
     );
     assert!(
         events.iter().all(|event| !matches!(
@@ -1343,7 +1343,7 @@ fn explicit_mid_execution_witness_certificate_checks_and_expands() {
         "#;
 
     let verified = verify_c0_sources(click_source, &[("explicit_witness.c", c_source)])
-        .expect("an explicit witness certificate should verify through the point Proof");
+        .expect("an explicit witness certificate should verify through the fixed-state Proof");
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the retained witness certificate should expand structurally");
@@ -1362,7 +1362,7 @@ fn explicit_mid_execution_witness_certificate_checks_and_expands() {
 }
 
 #[test]
-fn point_witness_retains_a_structural_surface_goal_for_simp() {
+fn fixed_state_witness_retains_a_structural_surface_goal_for_simp() {
     let c_source = "int32 witness_pair(int32 x, int32 y) { return x; }";
     let click_source = r#"
             verifying "witness_pair.c";
@@ -1844,7 +1844,7 @@ fn smart_pure_theorem_application_discharges_exact_goal() {
 }
 
 #[test]
-fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
+fn smart_fixed_state_nested_have_theorem_search_retains_checked_scopes() {
     let c_source = r#"
         int32 keep(int32 x) {
             return x;
@@ -1888,15 +1888,16 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
                 })
             }
         });
-    let verified = verified.expect("nested point have search should verify through Proof scopes");
+    let verified =
+        verified.expect("nested fixed-state have search should verify through Proof scopes");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
     assert_eq!(
         context_exports, 0,
-        "the leading point scope must not export semantic state"
+        "the leading fixed-state scope must not export semantic state"
     );
     assert_eq!(
         certificate_checks, 0,
-        "ordinary leading-point verification must not check a certificate"
+        "ordinary fixed-state verification must not check a certificate"
     );
     assert!(
         events.iter().all(|event| !matches!(
@@ -1904,7 +1905,7 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "keep.contract" && name == "generated certificate validation"
         )),
-        "nested point scope search must not reconstruct and check a body: {events:#?}"
+        "nested fixed-state scope search must not reconstruct and check a body: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -1932,15 +1933,15 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
         "{expanded_source}"
     );
     verify_c0_sources(&expanded_source, &[("keep.c", c_source)])
-        .expect("the serialized nested point scopes should independently reverify");
+        .expect("the serialized nested fixed-state scopes should independently reverify");
 
     let corrupted = expanded_source.replacen("have x == 0 by {", "have x != 0 by {", 1);
     assert_ne!(
         corrupted, expanded_source,
-        "the expansion should expose the checked leading point scope"
+        "the expansion should expose the checked leading fixed-state scope"
     );
     verify_c0_sources(&corrupted, &[("keep.c", c_source)])
-        .expect_err("tampering with the extracted point goal must invalidate the proof");
+        .expect_err("tampering with the extracted fixed-state goal must invalidate the proof");
 }
 
 #[test]
@@ -2298,7 +2299,7 @@ fn smart_pure_cases_retains_checked_arm_proofs_directly() {
 }
 
 #[test]
-fn point_have_cases_certificate_uses_checked_proof_branches() {
+fn fixed_state_have_cases_certificate_uses_checked_proof_branches() {
     let c_source = r#"
         int32 keep(int32 x) {
             return x;
@@ -2324,11 +2325,11 @@ fn point_have_cases_certificate_uses_checked_proof_branches() {
     "#;
 
     verify_c0_sources(click_source, &[("keep.c", c_source)])
-        .expect("point have cases should check through branch-local Proofs");
+        .expect("fixed-state have cases should check through branch-local Proofs");
 }
 
 #[test]
-fn smart_point_have_if_retains_checked_arm_proofs_directly() {
+fn smart_fixed_state_have_if_retains_checked_arm_proofs_directly() {
     let c_source = r#"
         int32 keep(int32 x) {
             return x;
@@ -2371,8 +2372,8 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("keep.c", c_source)])
     });
-    let verified =
-        verified.expect("smart point-have arms should retain their checked Proof descendants");
+    let verified = verified
+        .expect("smart fixed-state-have arms should retain their checked Proof descendants");
     assert!(
         events.iter().all(|event| !matches!(
             event,
@@ -2394,7 +2395,7 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
         "keep",
         CProofClaim::Grouped,
     )
-    .expect("the checked point branch paths should serialize");
+    .expect("the checked fixed-state branch paths should serialize");
     assert!(
         expanded_source.contains("apply(equality_case(x)) using {")
             && expanded_source.contains("apply(inequality_case(x)) using {")
@@ -2403,7 +2404,7 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
         "{expanded_source}"
     );
     verify_c0_sources(&expanded_source, &[("keep.c", c_source)])
-        .expect("the serialized point branch paths should independently reverify");
+        .expect("the serialized fixed-state branch paths should independently reverify");
 }
 
 #[test]

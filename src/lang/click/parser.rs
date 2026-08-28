@@ -1387,7 +1387,7 @@ impl Parser {
         if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
             let start = self.position;
             self.position += 2;
-            let proposition_at_point = self.parse_visit_selector().and_then(|selector| {
+            let proposition_at_snapshot = self.parse_snapshot_selector().and_then(|selector| {
                 self.expect(Token::Comma)?;
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::RParen)?;
@@ -1396,8 +1396,8 @@ impl Parser {
                     proposition: Box::new(proposition),
                 })
             });
-            if proposition_at_point.is_ok() {
-                return proposition_at_point;
+            if proposition_at_snapshot.is_ok() {
+                return proposition_at_snapshot;
             }
             self.position = start;
         }
@@ -2739,7 +2739,7 @@ impl Parser {
 
         if self.peek_ident() == Some("at") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            let selector = self.parse_visit_selector()?;
+            let selector = self.parse_snapshot_selector()?;
             self.expect(Token::Comma)?;
             let expression = self.parse_contract_expression()?;
             self.expect(Token::RParen)?;
@@ -2858,16 +2858,15 @@ impl Parser {
         }
     }
 
-    fn parse_visit_selector(&mut self) -> Result<VisitSelector, ClickError> {
+    fn parse_snapshot_selector(&mut self) -> Result<SnapshotSelector, ClickError> {
         if let (Some(Token::Ident(name)), Some(Token::Comma)) = (self.peek(), self.peek_next()) {
             let name = name.clone();
             self.position += 1;
-            return Ok(VisitSelector::ProgramPoint(ProgramPointRef {
-                region: CodeRegionRef::Mark(name),
-                kind: ProgramPointKind::Entry,
-            }));
+            return Ok(SnapshotSelector::Mark(name));
         }
-        Ok(VisitSelector::ProgramPoint(self.parse_program_point_ref()?))
+        Ok(SnapshotSelector::ProgramPoint(
+            self.parse_program_point_ref()?,
+        ))
     }
 
     fn parse_program_point_ref(&mut self) -> Result<ProgramPointRef, ClickError> {

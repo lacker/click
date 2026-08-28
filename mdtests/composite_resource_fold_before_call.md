@@ -1,7 +1,7 @@
 # composite resource fold before call
 
-This checks that `fold(...)` changes the resource facts at the current execution
-point, so the folded resource can satisfy a following function call.
+This checks that `fold(...)` changes the resource facts in the current state,
+so the folded resource can satisfy a following function call.
 
 ```c filename=use_bundle.c
 int32 use_bundle(int32 x) {

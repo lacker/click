@@ -344,7 +344,7 @@ fn step_executes_with_the_whole_proof_context() {
 }
 
 #[test]
-fn execute_step_records_a_point_checked_surface_expansion() {
+fn execute_step_records_a_state_checked_surface_expansion() {
     let c_source = r#"
             int32 increment(int32 x) {
                 return x + 1;

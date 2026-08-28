@@ -290,7 +290,7 @@ The next phase should proceed in independently green substrate slices rather
 than additional tactic-specific adapters:
 
 1. Specify and implement stable goal identity plus a persistent typed goal
-   collection inside `Proof`. Adapt the existing proposition, point, and
+   collection inside `Proof`. Adapt the existing proposition, fixed-state, and
    execution-frontier states without changing their checked semantics.
    Because goals are the only cross-operation currency, `GoalRef` and
    `SplitId` identity across fork and join is load-bearing for three
@@ -644,17 +644,17 @@ theorem's instantiated premises and advance only through `Proof::apply_step`;
 they export the retained certificate without the ordinary construction/check
 gateway.
 
-The second checkpoint extends the same private `Proof` core to point-level
+The second checkpoint extends the same private `Proof` core to fixed-state
 goals and migrates `have proposition by { apply(theorem); }`. Premise search is
 now a selection-only query; the chosen `ApplyTheoremUsing` is checked once by
-`Proof::apply_step`, which closes the point goal when the theorem's checked
+`Proof::apply_step`, which closes the fixed-state goal when the theorem's checked
 conclusion is exact. The retained nested certificate is appended directly to
 the enclosing proof, while `click expand` still prints and independently
 verifies it. A regression verifies that ordinary construction emits no
 `generated certificate validation` event for the migrated claim and that deleting a
 selected premise from the expanded proof is rejected.
 
-The remaining pure forms, point-level smart forms, and all C-execution tactics
+The remaining pure forms, fixed-state smart forms, and all C-execution tactics
 still use the legacy path and remain migration work.
 
 The third checkpoint introduces an explicit open `ExecutionFrontier` goal and
@@ -668,7 +668,7 @@ construction check plus that final check. Proposition-only closers are
 transactionally rejected on an execution-frontier proof.
 
 The fourth checkpoint extracts mid-execution `TransportUsing` into one
-audited `check_point_fact_transport_using` operation shared by explicit source
+audited `check_fixed_state_fact_transport_using` operation shared by explicit source
 check and `Proof::apply_step`. Bare mid-execution `transport` now searches for
 premises, applies the selected proof step once through `Proof`, incorporates
 its checked target delta, and retains its source/target spellings and
@@ -684,19 +684,19 @@ need richer simple vocabulary continue through the legacy path for now.
 Fully explicit linear pure scripts composed of `apply using`, `assumption`,
 and `normalize` use the same checked path.
 
-Direct point-level smart `have` goals now use the same fork-and-apply search
+Direct fixed-state smart `have` goals now use the same fork-and-apply search
 for `assumption` and `normalize`. The accepted successor is wrapped as the
 nested `Have` certificate and incorporated directly, without reconstructing
 or ordinarily checking the selected closer.
 
-One-step explicit point `have` bodies using `assumption`, `normalize`, or
+One-step explicit fixed-state `have` bodies using `assumption`, `normalize`, or
 `apply using` now check their semantic transition through `Proof` as well.
 Their already-simple source certificate remains the enclosing record, so the
 migration neither rebuilds nor duplicates it.
 
 The checked proposition vocabulary now also includes the existing
 deterministic `intro`, `split`, `left`, `right`, and bounded `enumerate`
-operations. Direct pure and point smart closures share a small combinator that
+operations. Direct pure and fixed-state smart closures share a small combinator that
 tries these candidates only through `apply_step`; a nonterminal `intro`
 strictly removes one outer goal connective.
 
@@ -716,7 +716,7 @@ owned exact fact set and surface lowerings without advancing C. Linear smart
 step/execute plans may therefore retain mixed sequences of explicit fact
 transports and statement steps; structured steps remain the fallback boundary.
 
-The existing execution-point `UnfoldPredicate` judgment is now one named
+The existing execution-frontier `UnfoldPredicate` judgment is now one named
 `check_unfold_predicate` operation rather than an inline dispatcher branch.
 It preserves the current fact rewriting, surface lowering, and contract-entry
 derivation behavior. Execution-frontier `Proof` now admits that exact shared
@@ -766,9 +766,9 @@ those descendants as the structured certificate. Unsupported richer searches
 still fall back to the legacy planner while the shared smart-search vocabulary
 continues to migrate.
 
-Point-level `have` now accepts the same structured `If`, `Cases`, and nested
+Fixed-state `have` now accepts the same structured `If`, `Cases`, and nested
 `Have` certificates through `Proof::check_certificate`, rather than limiting
-the migrated path to one flat step. Smart point `if`/`cases` bodies with direct
+the migrated path to one flat step. Smart fixed-state `if`/`cases` bodies with direct
 logical arm closures use `ProofBranches` directly. The post-execution outcome
 drain also calls this checked branch path against its outcome-specific surface
 map without cloning execution state, so these smart bodies no longer fall back to
@@ -797,7 +797,7 @@ facts; final certification makes the one owned copy it actually extends. A
 fast small-corpus clone.
 
 The Proof fact component is now `ProofFacts`: one persistent exact AVL index
-paired with the kernel's persistent `PureFactContext`. Point-Proof lowering
+paired with the kernel's persistent `PureFactContext`. Fixed-state proof lowering
 accepts that already-indexed context directly instead of rebuilding it by
 scanning every available fact for each local step; legacy vector callers keep
 their existing adapter. A deterministic 16-through-4096 regression proves
@@ -881,7 +881,7 @@ ambient fact sequence nor rebuilds a kernel assumption context. Exact premise
 selection and target availability use the persistent check indexes; only a
 failing diagnostic materializes the ambient facts. The checked target is
 inserted as the operation's local delta, and the now-unused vector checker and
-duplicate point-context fact slice were removed. The existing deterministic
+duplicate fixed-state proof context fact slice were removed. The existing deterministic
 explicit-transport curve over increasing unrelated ambient facts now exercises
 this `Proof` path directly, while the focused snapshot, materialization,
 resource, and expansion tests preserve the transport judgment's semantics.
@@ -913,7 +913,7 @@ changing the accepted descendant or its ancestor. The old direct check-state
 mutation has been removed.
 
 Execution `ApplyTheoremUsing` now advances through `Proof::apply_step`. One
-canonical point-theorem checker receives the small named premise set as its
+canonical fixed-state theorem checker receives the small named premise set as its
 complete admissible evidence and borrows the ambient persistent `ProofFacts`
 assumptions plus observable resource facts only for lowering. It inserts
 conclusions into the persistent successor and returns any standard
@@ -929,7 +929,7 @@ logarithmic persistent-node growth, omitted-premise rejection despite ambient
 availability, alternate descendants, C-state sharing, structural certificate
 retention, and atomic function-entry evidence.
 
-Point-proof `Witness` now advances through `Proof::apply_step` as a local goal
+Fixed-state proof `Witness` now advances through `Proof::apply_step` as a local goal
 refinement. The checked step evaluates its one explicit witness expression
 against the persistent assumption context, replaces the existential goal with
 the instantiated body, and retains the exact surface witness in provenance.
@@ -949,7 +949,7 @@ proper-conjunct case. Failed extraction is transactional; successful
 extraction retains the named step and promotes the conjunct to a top-level
 fact with logarithmic persistent work. A deterministic 16-through-4096
 regression covers nested conjunctions and distinguishes a proper conjunct from
-an independently available fact. Point certificates using this structural
+an independently available fact. Fixed-state certificates using this structural
 case now cross the Proof boundary.
 
 Discharged-implication extraction now has a persistent consequent index as
@@ -966,14 +966,14 @@ implications while the selected consequent and alpha-equivalent antecedent
 buckets remain singleton, bounds persistent allocation logarithmically, and
 checks missing-antecedent rejection and ancestor transactionality.
 
-Point-proof `InstantiateUsing` now crosses the same checked boundary. The
+Fixed-state proof `InstantiateUsing` now crosses the same checked boundary. The
 selected universal is found through `ProofFacts`' alpha-normal quantified
 index and then revalidated by the existing binder-equivalence judgment; named
 guards are checked through persistent check-availability indexes. One shared
 deterministic instantiation judgment substitutes the evaluated `int32`
 argument, discharges guards from only the explicitly listed premises, invokes
 the kernel universal-application rule, and validates its theorem before the
-conclusion enters the successor. The legacy point prover delegates to that
+conclusion enters the successor. The legacy fixed-state prover delegates to that
 same judgment while unsupported quantified atom families retain their legacy
 fallback. A 16-through-4096 regression holds one instantiation fixed under
 unrelated facts, checks a singleton universal bucket and logarithmic
@@ -981,7 +981,7 @@ persistent allocation, rejects an omitted guard despite ambient availability,
 and preserves the ancestor and exact retained certificate.
 
 Explicit proposition `Rewrite` now advances through `Proof::apply_step` for
-pure and point goals. The rewrite engine accepts an indexed availability
+pure and fixed-state goals. The rewrite engine accepts an indexed availability
 query, so recursively visiting a structured goal no longer rescans the entire
 ambient fact vector at every atomic child. `ProofFacts` answers the rule's
 exact and direct-load-materialization-equivalent membership without admitting
@@ -1089,29 +1089,29 @@ local persistent-node work remains logarithmically bounded.
 
 Predicate unfolding now uses that same semantic core for proposition goals,
 not only execution frontiers. `ProofState` owns a persistent insertion-ordered
-delta of proof-local unfolded predicate names, while inherited point and
+delta of proof-local unfolded predicate names, while inherited fixed-state and
 execution names remain borrowed from their already-shared contexts. Forks
 therefore share the definition environment without rebuilding its history,
 and one accepted `UnfoldPredicate` updates only the local delta and the facts
 in the selected predicate bucket.
-Pure and point goals unfold through `Proof::apply_step`, retain the exact
+Pure and fixed-state goals unfold through `Proof::apply_step`, retain the exact
 surface step, and can close from the resulting indexed fact without the
 legacy mutable fact vector. The existing execution transition delegates its
 fact work to this shared checker and keeps its function-entry artifacts in the
 execution wrapper. A 16-through-4096 regression checks singleton candidate
 selection, bounded persistent allocation, transactional unknown-name failure,
-explicit-certificate validation, and ancestor isolation; a focused point-goal
+explicit-certificate validation, and ancestor isolation; a focused fixed-state goal
 regression exercises the same retained transition.
-A 4096-name regression separately proves that constructing a point `Proof`
+A 4096-name regression separately proves that constructing a fixed-state `Proof`
 allocates no persistent nodes for inherited unfold history.
-Point and pure scripts whose smart search is an explicit predicate-unfold
+Fixed-state and pure scripts whose smart search is an explicit predicate-unfold
 prefix followed by `simp` now apply those unfolds to the same `Proof` and run
 the direct logical closer on its successor. The resulting certificate is the
 retained path (`UnfoldPredicate` plus the selected simple closer); ordinary
-verification does not run the surface-certificate validation gateway. The point
+verification does not run the surface-certificate validation gateway. The fixed-state
 expansion regression independently reparses and checks that retained output.
 
-Point `have` scripts whose smart search is an explicit `witness`/predicate-
+Fixed-state `have` scripts whose smart search is an explicit `witness`/predicate-
 unfold refinement prefix followed by `simp` use that same path now. Each
 refinement advances the immutable `Proof`, and the direct closer continues
 from that checked successor. In particular, the common
@@ -1120,7 +1120,7 @@ without constructing and checking another body certificate; its expansion
 regression checks the exact retained path and independently verifies the
 serialized proof.
 
-Point-proof `Choose` is now a checked refinement too. Function parsing builds
+Fixed-state proof `Choose` is now a checked refinement too. Function parsing builds
 the requirement-label index once, so a named source is not rediscovered by a
 linear requirement scan. The successor stores the fresh int32 choice in a
 persistent proof-local value map and inserts only the instantiated existential
@@ -1134,13 +1134,13 @@ A deterministic 16-through-4096 unrelated-fact regression bounds persistent
 node growth logarithmically, and the source expansion regression independently
 verifies the serialized path.
 
-Point smart theorem application now has a proof-object query seam. The query
+Fixed-state smart theorem application now has a proof-object query seam. The query
 lowers only the selected theorem's explicit requirements against the
 persistent assumption context, probes `ProofFacts`' exact/materialization
 indexes, and returns a concrete `ApplyTheoremUsing`; it cannot insert the
 conclusion or edit provenance. The smart `apply(...); simp()` form submits that
 step to the same `Proof`, then continues its direct closure search on the
-checked successor. Point `ApplyTheoremUsing` is no longer restricted to a root
+checked successor. Fixed-state `ApplyTheoremUsing` is no longer restricted to a root
 proof and uses the same persistent-fact theorem checker as execution
 application, so an application may follow another accepted refinement without
 reconstructing ambient facts. A deterministic 16-through-4096 regression
@@ -1166,7 +1166,7 @@ records zero persistent-index allocations during selection, and focused
 direct-check plus expansion regressions check the retained
 `ApplyTheoremUsing`/closer path and independently reverify its serialization.
 
-Pure and point proposition proofs now share one linear smart-script driver on
+Pure and fixed-state proposition proofs now share one linear smart-script driver on
 `Proof` instead of maintaining tactic-shape recognizers in their callers. The
 driver pre-recognizes scripts composed of already-admitted explicit
 proposition steps, bare `apply`, and a final `simp`; each explicit or selected
@@ -1175,20 +1175,20 @@ search to continue across mixed paths such as
 `extract(...); apply(...); simp();` without reconstructing intermediate
 semantic state or checking a generated body certificate. Unsupported
 structural, execution, and resource scripts remain outside this driver. Pure
-and point expansion regressions independently reverify the retained mixed
+and fixed-state expansion regressions independently reverify the retained mixed
 paths, and deterministic 16-through-4096-fact tests bound the complete fixed
 linear script by logarithmic persistent-index allocation.
 
-Audited pure and point `if`/`cases` containers now run that same driver on
+Audited pure and fixed-state `if`/`cases` containers now run that same driver on
 each branch-local `Proof`, replacing the former caller-side restriction that
 both bodies be exactly `[simp]`. A bare theorem application inside an arm
 selects and applies its explicit step against that arm's facts, and `join`
 embeds the already-checked descendant certificates. The deferred
 post-execution `have` drain recognizes the same structural bodies instead of
-requiring their original smart syntax to be a certificate. Point theorem
+requiring their original smart syntax to be a certificate. Fixed-state theorem
 selection also uses the explicit proof checker's indexed condition-polarity
 availability, so an `else` arm's `condition == false` fact can select a
-surface `not(condition)` premise without an ambient scan. Pure and point
+surface `not(condition)` premise without an ambient scan. Pure and fixed-state
 regressions check no ordinary construction check, retained
 `ApplyTheoremUsing` arms, expansion, and independent verification.
 
@@ -1196,10 +1196,10 @@ Audited nested `have` scopes now use the linear driver as well. Search inside
 the body advances the scope-owned `Proof`; `join` publishes only the checked
 proposition and embeds that descendant's exact certificate. The former pure
 caller-side loop for “smart have plus selected simple outer steps” has been
-deleted, and point proofs use the same path, including recursively nested
+deleted, and fixed-state proofs use the same path, including recursively nested
 smart `have` bodies. An already-simple body inside a surrounding smart script
 is checked through the scope's `Proof` rather than treated as planner
-metadata. Pure and point regressions retain nested `ApplyTheoremUsing` steps,
+metadata. Pure and fixed-state regressions retain nested `ApplyTheoremUsing` steps,
 observe no ordinary construction check, serialize the nested scopes, and
 independently verify them. A deterministic 16-through-4096-fact regression
 holds the smart body fixed, bounds scope search/join/outer closure by
@@ -1207,19 +1207,19 @@ logarithmic persistent-node allocation, and checks that rejected nested
 search leaves the original scope untouched.
 
 `If` and `Cases` are now recursive operations of that same script driver,
-not root-level cases orchestrated by the pure and point callers. The driver
+not root-level cases orchestrated by the pure and fixed-state callers. The driver
 opens the audited branch container, runs each smart arm on its branch-local
 `Proof`, checks an already-simple sibling through that same arm API when a
 branch mixes smart and explicit bodies, and joins the retained descendants.
 This works at the root or inside arbitrarily nested checked `have` scopes;
 fully explicit branches still bypass smart search and remain their own source
-certificate. The old pure direct-branch block and point `SmartIf`/`SmartCases`
+certificate. The old pure direct-branch block and fixed-state `SmartIf`/`SmartCases`
 plans have been deleted. A nested-have/branch/theorem regression expands both
 selected arm applications and independently verifies the recursive
 certificate.
 
 Post-execution proposition proofs now use that shared driver beyond the
-previous branch-only case. A point `Proof` owns the optional checked return
+previous branch-only case. A fixed-state `Proof` owns the optional checked return
 value used by its goal lowering, witness evaluation, rewriting, theorem
 selection/application, and fact transport; result-dependent Surface Click is
 therefore interpreted by the same immutable object that retains the accepted
@@ -1231,14 +1231,14 @@ that ordinary construction emits no surface-certificate validation, expands the
 retained `ApplyTheoremUsing`, and independently verifies it. A deterministic
 16-through-4096-fact regression holds that result-aware theorem search fixed
 and bounds its persistent-node work logarithmically. Exercising the broader
-driver also removed the former root-only guard on point `TransportUsing`:
+driver also removed the former root-only guard on fixed-state `TransportUsing`:
 the shared checker already consumes the current persistent facts, so the step
 can soundly follow another accepted refinement and retain both operations.
 The copy-segment mdtest and a focused predecessor/transport regression pin
 that nested case.
 
 Top-level post-execution theorem application now crosses the same result-aware
-point boundary. Bare `apply` asks its outcome `Proof` for one
+fixed-state boundary. Bare `apply` asks its outcome `Proof` for one
 `ApplyTheoremUsing`, then submits that step once; explicit `apply using`
 submits its source step through the identical checker. The outcome drain
 incorporates only the accepted step's fact delta and serializes its retained
@@ -1272,7 +1272,7 @@ equations, preceding outcome facts, transactional rejection, and logarithmic
 persistent allocation for a fixed explicit result-aware transport across 16
 through 4096 unrelated facts.
 
-Post-execution predicate unfolding now uses the same result-aware point
+Post-execution predicate unfolding now uses the same result-aware fixed-state
 frontier instead of mutating the outcome fact vector and separately recording
 an `UnfoldPredicate` tactic. The proposition-level unfold transition accepts
 an execution-frontier goal as a facts-only refinement, updates only the
@@ -1286,7 +1286,7 @@ unfolding, transactional unknown-predicate rejection, logarithmic persistent
 allocation, and ancestor isolation.
 
 Grouped post-execution proposition goals now share one immutable result-aware
-point-frontier `Proof` context. An audited `focus_point_goal` root operation
+fixed-state `Proof` context. An audited `focus_fixed_state_goal` root operation
 selects each externally owned contract goal without rebuilding its persistent
 fact indexes or inheriting another goal's provenance. Outcome `assumption` and
 `normalize` apply their existing proof steps to those focused roots and retain
@@ -1306,11 +1306,11 @@ mutation and transactional rejection, and a result-finalization regression
 checks the retained rewrite/normalize path without ordinary certificate
 check.
 
-Point-frontier `have` scopes are now a checked structural publication
+Mid-execution fixed-state `have` scopes are now a checked structural publication
 operation for grouped obligations. A completed nested proof inserts exactly
 its proved fact into the immutable frontier and retains the nested certificate;
 later scopes share that successor and may use the published fact. The audited
-`complete_point_obligations` terminal operation then selects every external
+`complete_fixed_state_obligations` terminal operation then selects every external
 contract goal against the accumulated context, applies an ordinary
 `Assumption` step to each, and exports the combined retained certificate.
 Caller code cannot append unchecked closing syntax. Grouped outcome `simp`
@@ -1319,8 +1319,8 @@ direct logical vocabulary, abandoning failed descendants and falling back
 without mutation for richer searches. Regressions cover inter-obligation fact
 flow, independent expansion/reverification, no ordinary construction check,
 ancestor isolation, and logarithmic work across 16 through 4096 unrelated
-facts. Newly stated point goals also lower strictly at the current semantic
-point rather than borrowing a same-spelled fact's older snapshot lowering; a
+facts. Newly stated fixed-state goals also lower strictly against the current
+symbolic state rather than borrowing a same-spelled fact's older snapshot lowering; a
 focused regression and the sorted-loop mdtest prevent Proof success from
 serializing an `assumption` that explicit verification would reject.
 
@@ -1366,7 +1366,7 @@ same immutable `Proof` through checked transitions. Its successful
 descendant is the returned proof object, so ordinary verification no longer
 constructs the signed-order certificate and sends it through `surface
 certificate validation`. The three-edge regression now asserts that absence in
-addition to expansion and independent verification. Point and execution
+addition to expansion and independent verification. Fixed-state and execution
 atomic derivation consumers, and non-order theory decisions, remain pending.
 A deterministic 16-through-4096 unrelated-fact regression also holds that
 three-edge proof fixed, checks ancestor isolation and the retained
@@ -1384,17 +1384,17 @@ surface-certificate validation, expands the retained path, and independently
 verifies it. Memory-derived equality edges stay with the child
 atomic-derivation work.
 
-Point and post-execution outcome `simp` now use that typed atomic-path query
+Fixed-state and post-execution outcome `simp` now use that typed atomic-path query
 on their own immutable `Proof` as well. Premise spellings come from the
 existing exact kernel-to-Surface index; signed paths apply their retained
 transitivity theorems through `Proof::apply_step`, and equality paths apply
-their retained rewrites through the same boundary. Point theorem application
+their retained rewrites through the same boundary. Fixed-state theorem application
 already completes an exact matching goal, so the path planner explicitly
 omits the pure proof's trailing `assumption` instead of submitting a redundant
 step. Result-dependent outcome regressions observe no ordinary construction
 check or ambient equality harvest, expand the retained paths, and
 independently verify them. Separate 16-through-4096 unrelated-fact curves pin
-logarithmic persistent updates for both the point theorem and rewrite paths.
+logarithmic persistent updates for both the fixed-state theorem and rewrite paths.
 Execution-frontier atomic search and the remaining non-order/equality theory
 decisions still require their corresponding typed Proof queries.
 
@@ -1407,7 +1407,7 @@ two-premise member: it retains the exact non-strict lower edge and strict
 upper edge selected by search. The greater-equal lower-bound,
 strict-greater lower-bound, and increment-preserves-order decisions now retain
 that same exact pair under distinct typed rule variants. Unrestricted
-point/outcome `simp` turns each decision into one checked theorem application
+fixed-state/outcome `simp` turns each decision into one checked theorem application
 on the current `Proof`.
 Standalone pure
 `simp() using` now has a restricted Proof query for every currently typed
@@ -1435,7 +1435,7 @@ Three direct predecessor decisions now use the same theorem-application seam:
 positive-to-nonnegative, positive-to-strict-decrease, and the two-premise
 nonnegative predecessor upper bound. Exact premise selection uses a bounded
 set of persistent-map lookups across comparison orientations, so a coexisting
-strict edge cannot displace the non-strict theorem leg. Both pure and point
+strict edge cannot displace the non-strict theorem leg. Both pure and fixed-state
 Proof paths retain only the accepted named application, reject missing
 premises without mutating their ancestor, and stay within logarithmic
 persistent-allocation bounds from 16 through 4096 unrelated facts. The
@@ -1452,9 +1452,9 @@ applies either `int32_positive_predecessor_is_nonnegative` or
 application and the scope are accepted by `Proof` as they are selected; the
 retained structured descendant is the certificate.
 
-Point applications close exact goals immediately at both nesting levels,
+Fixed-state applications close exact goals immediately at both nesting levels,
 whereas the pure form retains explicit `Assumption` closers. The planner now
-models that Proof transition directly rather than submitting redundant point
+models that Proof transition directly rather than submitting redundant fixed-state
 steps. Expansion independently verifies both derived forms, omitted premises
 leave the ancestor unchanged, and the common 16-through-4096 unrelated-fact
 curve covers the nested structure. Derived predecessor variants that require
@@ -1470,7 +1470,7 @@ once to the immutable `Proof`. Evidence selection uses exact assumed-fact
 membership rather than asking the order solver for an equivalent orientation,
 so it cannot silently replace the source-supported named rule with its dual.
 This closes the common kernel-versus-Surface polarity mismatch without
-scanning ambient facts. Pure and point descendants retain only the selected
+scanning ambient facts. Pure and fixed-state descendants retain only the selected
 named application (plus the pure goal's ordinary `assumption`), rejected
 premise subsets leave their ancestor untouched, and deterministic
 16-through-4096 coverage bounds persistent updates logarithmically. Source
@@ -1482,7 +1482,7 @@ From an exact indexed `1 <= value` or `0 < value` source edge, atomic search
 retains `int32_positive_is_nonnegative(value)` or
 `int32_strictly_positive_is_nonnegative(value)` and submits that application
 to the immutable `Proof`; it does not return a bare fact and rediscover the
-theorem during certificate lowering. Point and restricted-pure paths retain
+theorem during certificate lowering. Fixed-state and restricted-pure paths retain
 the accepted application, rejected premise omission leaves the root
 unchanged, and the existing 16-through-4096 single-premise arithmetic curve
 bounds both paths logarithmically. Ordinary source verification performs no
@@ -1494,7 +1494,7 @@ Atomic search retains the source-supported `left <= right` and
 `left != right` facts and submits one `int32_le_and_neq_implies_lt`
 application to the immutable `Proof`. Fixed-size polarity probes recover a
 Surface spelling for the negated equality without scanning ambient facts.
-The point descendant contains exactly that accepted application, the
+The fixed-state descendant contains exactly that accepted application, the
 16-through-4096 unrelated-fact curve bounds its persistent updates
 logarithmically, and the pure source regression observes no construction
 check before independently verifying the expansion.
@@ -1503,16 +1503,16 @@ Mid-execution bare theorem application now crosses the same query/transition
 seam. The smart form asks its immutable execution-frontier `Proof` for one
 concrete `ApplyTheoremUsing`, and only `Proof::apply_step` may add the theorem
 conclusion or its provenance. Selection shares the persistent fact indexes
-used by point proofs instead of materializing the ambient fact vector through
+used by fixed-state proofs instead of materializing the ambient fact vector through
 the legacy premise selector. A 16-through-4096 unrelated-fact curve pins zero
 persistent-index reconstruction during selection and logarithmic checked
 updates; a source regression observes no ordinary construction check,
 retains the explicit premise, expands it, and independently verifies it.
 
-Loop-invariant initialization theorem search now uses that point theorem seam
-as well. The structural point-goal planner no longer rewrites a bare `apply`
+Loop-invariant initialization theorem search now uses that fixed-state theorem seam
+as well. The structural fixed-state goal planner no longer rewrites a bare `apply`
 by copying every declared theorem requirement into a second, unchecked
-`apply using` representation. It builds the invariant's point `Proof`, asks
+`apply using` representation. It builds the invariant's fixed-state `Proof`, asks
 the shared query for the concrete application, and advances only through
 `apply_step`. The loop initialization gateway carries an explicit
 `certificate_already_checked` result: when every invariant body was retained
@@ -1521,28 +1521,28 @@ instead of independently checking the generated phase certificate. Explicit
 source certificates and smart shapes not yet migrated still take the check
 path. A focused initialization regression observes no round-trip validation,
 expands the retained `ApplyTheoremUsing`, and independently verifies that
-serialization; the existing 16-through-4096 point-application curve covers
+serialization; the existing 16-through-4096 fixed-state-application curve covers
 the shared selection and transition path used here.
 
-Default and `by simp` loop-invariant initialization now enter that same point
+Default and `by simp` loop-invariant initialization now enter that same fixed-state
 `Proof` capability boundary before the legacy atomic planner. Direct logical
 closure and every already-typed atomic path retain their accepted simple
 steps and return the checked invariant fact set to the phase gateway, so they
 also skip round-trip validation. Unsupported smart shapes still fall back without
 changing diagnostics. The capability query is syntax-only and runs before
-constructing the point proof, so fully explicit initialization scripts do not
+constructing the fixed-state proof, so fully explicit initialization scripts do not
 pay to rebuild persistent fact indexes. A focused assumption-closure
 regression checks retained expansion and independent verification; the
-existing point-simp scaling curves cover the shared closure implementation.
+existing fixed-state-simp scaling curves cover the shared closure implementation.
 
 Automatic execution branches expose a separate structural requirement. A C
 branch that reaches distinct function-exit outcomes expands as a logical
 `If`, not as the existing equal-state execution `Branch`, so it needs a
 Proof-owned multiple-outcome container rather than another flat check
-adapter. `ProgramPointStates` now retains a persistent mutation lineage and
+adapter. `RecordedSnapshots` now retains a persistent mutation lineage and
 can intersect two descendants relative to their exact common ancestor by
 visiting only fork-local changed keys. Its deterministic 16-through-4096
-regression preserves shared ambient points, drops arm-specific points, rejects
+regression preserves shared ambient snapshots, drops arm-specific snapshots, rejects
 unrelated lineages, and bounds persistent allocations logarithmically. The
 version metadata is boxed behind the map's single pointer-sized value: an
 existing deep pure case-split regression caught the stack-cost regression from
@@ -1660,9 +1660,9 @@ boundary.
 
 Linear open scopes can now incorporate a completed nested `have` as one direct
 checked child node. The inner proposition proof borrows the execution Proof's
-immutable point snapshot for lowering and indexed theorem selection, but it
-cannot advance C execution, open or mutate a resource representation, mark a
-point, or close loop invariants. Its join restores the exact outer execution
+immutable state snapshot for lowering and indexed theorem selection, but it
+cannot advance C execution, open or mutate a resource representation, create a
+proof mark, or close loop invariants. Its join restores the exact outer execution
 frontier and publishes only the stated proposition; the outer scope verifies
 the child's exact ancestry before accepting it. A source regression selects a
 bare theorem application inside `open { have ... }`, observes no ordinary
@@ -1766,7 +1766,7 @@ arm. The legacy empty-premise source spelling still conflates an explicit
 empty set with ambient-fact selection and must not be imported into the
 simple checker.
 
-Atomic point `have ... by simp` now asks its nested proposition `Proof` for
+Atomic fixed-state `have ... by simp` now asks its nested proposition `Proof` for
 the same typed simp closure already used by pure claims and smart scripts,
 instead of limiting the owned path to assumption/normalization closure and
 then constructing and checking theorem-backed certificates in the legacy
@@ -2007,7 +2007,7 @@ typed effect goal intentionally ranges over every owned outcome; after that
 frame, the suffix is outcome-local too. The driver must not try to lower a
 later `have result ...` as one proposition on the joined execution Proof,
 because `result` is path-local and is intentionally interpreted by each
-result-aware point Proof.
+result-aware fixed-state Proof.
 
 Straight-line `execute_until(...)` now stays on that common successor as well.
 The bounded search is a Proof operation shared with resource scopes: it
@@ -2093,7 +2093,7 @@ expansion check must still reject a corrupted printed certificate.
 
 ### Progress (2026-08-16: composed arithmetic theorem proofs)
 
-The pure and point `simp` consumers now retain the first composed typed
+The pure and fixed-state `simp` consumers now retain the first composed typed
 arithmetic derivation: from `not (value < 2)` they build a scoped proof of
 `value >= 2`, a normalized constant bound `2 >= 1`, and the final
 `int32_ge_transitive` application. Every operation advances the same
@@ -2105,12 +2105,12 @@ the persistent Surface-to-kernel requirement index before lowering them
 afresh. This preserves exact-premise checking when Surface Click spells a
 canonical false condition as `not (...)`; it does not broaden theorem search
 or accept merely derivable ambient premises. A deterministic 16-through-4096
-unrelated-fact regression covers both the point and restricted-pure composed
+unrelated-fact regression covers both the fixed-state and restricted-pure composed
 paths.
 
 The same theorem-application seam now covers the direct adjacent-bound rule
 `lower + 1 <= value` to `lower < value`. The kernel retains the exact
-non-strict source edge, and pure, point, and outcome `simp` submit
+non-strict source edge, and pure, fixed-state, and outcome `simp` submit
 `int32_successor_le_implies_lt` directly to `Proof`. This one-step case shares
 the same deterministic unrelated-fact curve and expansion check.
 
@@ -2130,7 +2130,7 @@ later step on the same `Proof`. From the exact source `value <= 3`, smart
 `int32_increment_upper_bound(value, 5)` against that successor. The accepted
 certificate is exactly those two applications (plus the pure proof's terminal
 `assumption`); ordinary verification neither reconstructs nor independently
-checks them. Point and restricted-pure tests pin the structure and bound
+checks them. Fixed-state and restricted-pure tests pin the structure and bound
 persistent allocations from 16 through 4096 unrelated facts.
 
 Symbolic addition definedness now uses the same seam. Given the exact named
@@ -2142,7 +2142,7 @@ though the explicit simple theorem already existed. The kernel now retains
 both selected order edges, including their original reversed Surface Click
 spellings; ordinary verification does no construction check, expansion
 independently verifies the application, and a 16-through-4096 unrelated-fact
-curve bounds both point and restricted-pure transitions logarithmically.
+curve bounds both fixed-state and restricted-pure transitions logarithmically.
 
 Symbolic subtraction definedness now follows the identical path. The exact
 `0 <= amount` and `amount <= value` edges select
@@ -2151,7 +2151,7 @@ application advances the immutable `Proof`. Before this migration the smart
 reasoner proved the semantic result but reported that no explicit simple
 certificate existed. Reversed source comparisons, no round-trip validation,
 independent expansion, omitted-premise transactionality, and the shared
-16-through-4096 point/restricted-pure allocation curve are all pinned.
+16-through-4096 fixed-state/restricted-pure allocation curve are all pinned.
 
 The two operand-order-specific `1 + value` rules now cross the seam as well.
 Previously `defined(1 + value)` had a semantic result but no explicit
@@ -2228,12 +2228,12 @@ verification neither rebuilds nor independently checks the sequence.
 
 Outcome facts that mention a C local after it leaves scope use the Proof's
 selected statement-entry anchor. Candidate Surface spellings must lower
-directly at the Proof's semantic point before theorem selection accepts them;
+directly against the Proof's symbolic state before theorem selection accepts them;
 an old Surface-index association alone is insufficient authority for theorem
 arguments. This keeps spelling recovery within the exact selected fact's
 small spelling bucket, and the expanded `at(...)` applications independently
 reverify. A 16-through-4096 unrelated-fact curve covers the same two-step
-path for point and restricted-pure Proofs.
+path for fixed-state and restricted-pure Proofs.
 
 Post-execution smart `have` now receives that same selected premise anchor.
 It retains the nested two-application Proof directly instead of falling back
@@ -2270,7 +2270,7 @@ applies `int32_nonnegative_predecessor_upper_bound`. The existing `drop_one`
 source regression now forbids entry into the explicitly instrumented outcome
 compatibility constructor; its expansion independently reverifies the nested
 scope and theorem application. A separate 16-through-4096 unrelated-fact
-curve pins the point-Proof structure, logarithmic persistent updates, and
+curve pins the fixed-state `Proof` structure, logarithmic persistent updates, and
 ancestor isolation. General historical equality search remains a compatibility
 boundary rather than being approximated by an ambient scan.
 
@@ -2282,7 +2282,7 @@ disjunction elimination for arbitrary conclusions, and `Proof` opens the
 selected Surface spelling with `begin_cases`, proves each branch on its owned
 immutable descendant, and joins the retained bodies as one
 `ProofStep::Cases`. The grouped outcome certifier accepts that checked
-point `have` directly; it no longer requires a flat legacy certificate before
+fixed-state `have` directly; it no longer requires a flat legacy certificate before
 the Proof search can run, nor independently checks the already-checked body.
 
 The motivating `x == 0 or x == 1` proof of `0 <= result` expands to two exact
@@ -2329,7 +2329,7 @@ outcome compatibility construction.
 Pure theorem goals now retain their exact Surface `ensures` proposition when
 they enter direct Proof search. Both `ensures ... by simp` and the one-tactic
 `ensures ... by { simp(); }` form can therefore use the same recursive
-implication/conjunction/disjunction closure as point proofs. The conjunction
+implication/conjunction/disjunction closure as fixed-state proofs. The conjunction
 regression observes no surface-certificate construction check, expands both
 source forms to the same checked child theorem applications and `Split`, and
 independently verifies each expansion. The underlying structural search
@@ -2355,7 +2355,7 @@ proofs inside checked `if` arms. The pure branch regression expands the owning
 The existing 16-through-4096 structural curve now also requires every branch
 fork to share the root Surface goal allocation by pointer identity.
 
-The production point-level `have` adapter now uses that paired constructor as
+The production fixed-state `have` adapter now uses that paired constructor as
 well. Previously it lowered the Surface goal and then discarded the spelling
 when it created the root `Proof`; the compatibility constructor silently
 masked the lost direct path. The post-execution structural-`have` regression
@@ -2369,7 +2369,7 @@ reconstructing a certificate. The existing `ordered_pair` expansion now also
 requires ordinary verification to avoid compatibility construction and
 check.
 
-Checked point `Witness` now performs the corresponding capture-avoiding
+Checked fixed-state `Witness` now performs the corresponding capture-avoiding
 substitution on the Proof-owned existential Surface goal after the kernel has
 accepted and evaluated the witness. A following structural `simp` can refine
 an instantiated conjunction on that successor directly. The 16-through-4096
@@ -2379,8 +2379,8 @@ the retained `witness`, child proofs, and `split` without compatibility work.
 
 Checked proposition `Rewrite` now keeps the kernel rewrite as its sole
 authority and treats Surface substitution only as an untrusted spelling
-candidate. The candidate is retained when direct lowering at the current
-semantic point equals the checked kernel successor exactly; normalized,
+candidate. The candidate is retained when direct lowering against the current
+symbolic state equals the checked kernel successor exactly; normalized,
 historical, or otherwise mismatched spellings are discarded. A 16-through-
 4096 conjunction regression requires the accepted rewrite, both recursively
 checked child proofs, and `split` to remain one persistent proof lineage. A
@@ -2422,7 +2422,7 @@ transition.
 ### Progress (2026-08-18: one theorem-application seam)
 
 Bare theorem application now has one transactional operation on `Proof`
-across pure, point, and live execution-frontier contexts. Context-specific
+across pure, fixed-state, and live execution-frontier contexts. Context-specific
 selection may inspect only the immutable proof and returns one concrete
 `ApplyTheoremUsing`; the shared seam submits that candidate to `apply_step`
 on the same root and returns only the already-checked descendant. Linear
@@ -2432,11 +2432,11 @@ with a state transition. A missing candidate leaves the ancestor unchanged,
 while a selected candidate rejected by `apply_step` remains a loud tooling
 error rather than permission to retry through compatibility semantics.
 
-The existing 16-through-4096 pure, point, execution, branch, and scope curves
+The existing 16-through-4096 pure, fixed-state, execution, branch, and scope curves
 continue to bound selection and persistent updates logarithmically; they now
 also exercise transactional misses through the common seam. Function-exit
 execution proofs remain an explicit boundary: one such proof may own several
-result-sensitive outcomes, so ordered finalization still creates one point
+result-sensitive outcomes, so ordered finalization still creates one fixed-state
 proof per outcome until typed outcome proposition goals migrate into `Proof`.
 
 ### Progress (2026-08-18: resource-scoped smart statement steps)
@@ -2534,7 +2534,7 @@ fallback paths.
 
 `try_direct_logical_closure`, `try_simp_closure`, and the structural closure
 search now run on these combinators with `Result<Option<Proof>>` signatures
-through their production callers; the point/outcome atomic-derivation helpers
+through their production callers; the fixed-state/outcome atomic-derivation helpers
 retain their internal `Option` idiom behind one deadline check at the `simp`
 search boundary until their own migration. Regressions pin: a locally
 successful prefix whose continuation fails returns the unchanged ancestor and
@@ -2580,7 +2580,7 @@ rejection and that the genuine arms still join afterward.
 `ProofState` no longer owns an `execution` field. The C execution snapshot —
 frontier, check metadata, branch provenance, and per-step delta — lives on
 the goal that needs it: a `FrontierObligation` pairs the effect selection with its
-`Arc`-shared snapshot, and a proposition goal stated at an execution point
+`Arc`-shared snapshot, and a proposition goal stated at an execution frontier
 borrows the same snapshot by identity as its lowering/theorem context,
 without any authority to republish a frontier. Ordinary execution successors
 go through `replace_sole_frontier`/`replace_sole_execution`, which preserve
@@ -2651,7 +2651,7 @@ sharing by pointer identity, sibling isolation, ancestor immutability,
 rejection of re-derivation, and a 16-through-4096 allocation curve for the
 derivation itself. The next slice migrates the ordered outcome drain to
 consume these goals — evolving one persistent result-aware proof per outcome
-through its tactics — instead of constructing a fresh point root per outcome
+through its tactics — instead of constructing a fresh fixed-state root per outcome
 per tactic.
 
 ### Outcome-drain migration plan (written 2026-08-18, next work)
@@ -2660,7 +2660,7 @@ The ordered outcome drain (`finish_ordered_proof_check` and the per-path
 per-tactic loop in `claim_proofs.rs`) is the remaining large consumer of the
 deleted interpreter boundary: it receives a `ProofCheckContext`, maintains each
 path's working set as a mutable `path_requirements: Vec<Proposition>`
-(seventy-plus touch points), and constructs a fresh `for_point_frontier`
+(seventy-plus touch points), and constructs a fresh `for_fixed_state_frontier`
 `Proof` per outcome per tactic. Typed outcome goals exist; this migration
 makes them load-bearing. Stage it as independently green slices:
 
@@ -2677,7 +2677,7 @@ makes them load-bearing. Stage it as independently green slices:
    consumes.
 2. **Per-outcome persistent proofs.** For drained paths with an available
    outcome goal, the drain evolves that one result-aware `Proof` through the
-   path's tactics: each already-migrated point operation (`unfold`,
+   path's tactics: each already-migrated fixed-state operation (`unfold`,
    `transport using`, `apply using`, `have`, rewrite, `simp` closures)
    advances the outcome-focused proof, and `path_requirements` for
    still-legacy tactic kinds is materialized from the goal's facts at an
@@ -2687,8 +2687,8 @@ makes them load-bearing. Stage it as independently green slices:
    evolve tactic-by-tactic alongside the requirements vector, so the outcome
    goal's context must own its surface-lowering map and unfold history (both
    already persistent structures) before any tactic consumes the goal; and
-   the point operations read result, pre/post state, premise anchor, and
-   surface maps from `PointProofContext`, so they need one goal-aware point
+   the fixed-state operations read result, pre/post state, premise anchor, and
+   surface maps from `FixedStateProofContext`, so they need one goal-aware fixed-state
    view that resolves those from a `FunctionOutcome` goal on an execution
    proof. Migrate the view first, then `UnfoldPredicate` as the first
    consuming tactic, with the slice-1 parity assertion extended to hold
@@ -2697,7 +2697,7 @@ makes them load-bearing. Stage it as independently green slices:
    refine outcome goals through the recorded split structure instead of
    re-deriving membership per path from the requirements vector.
 4. **Delete the vector.** When every drained tactic kind consumes the goal,
-   remove `path_requirements` and the per-tactic `for_point_frontier`
+   remove `path_requirements` and the per-tactic `for_fixed_state_frontier`
    constructions; the drain becomes traversal over outcome goals plus the
    ordered resource transitions it already owns.
 
@@ -2748,7 +2748,7 @@ snapshot is shared by every sibling outcome and must not absorb one path's
 unfolding — and the drain now threads one evolving result-aware proof per
 path: the unfold advances that lineage, retains its checked step, and its
 per-tactic certificate comes from a checkpoint rather than a fresh root's
-whole derivation. The `for_point_frontier` construction at the unfold site
+whole derivation. The `for_fixed_state_frontier` construction at the unfold site
 survives only as the fallback for contexts that derived no outcome goals.
 The interim resync adapter (`with_drained_outcome_facts`) re-imports the
 legacy working set before each migrated tactic while unmigrated kinds still
@@ -2762,18 +2762,18 @@ twice its isolated time in the failing run, the isolated re-run and a full
 gate re-run both passed on the identical tree — but it prompted the gating,
 which is correct regardless.) Remaining for slice 2: the other result-aware
 tactic kinds (transport, theorem application, `have`, rewrite, `simp`
-closures), whose point views need the goal to own its evolving surface maps
+closures), whose fixed-state views need the goal to own its evolving surface maps
 first.
 
-### Progress (2026-08-18: the goal-aware point view; transport consumes it)
+### Progress (2026-08-18: the goal-aware fixed-state view; transport consumes it)
 
-`PointOperationView` is the goal-aware point view the slice-2 plan called
-for: the point-operation data a result-aware checker consumes, resolved
-either from a point proof's borrowed context or from a focused
+`FixedStateOperationView` is the goal-aware fixed-state view the slice-2 plan called
+for: the fixed-state data a result-aware checker consumes, resolved
+either from a fixed-state proof's borrowed context or from a focused
 function-outcome goal — which now owns its surface-lowering map and its
 path's effect facts alongside result, state, facts, and unfold delta.
 Explicit post-execution `transport using` is the second tactic kind on the
-evolving outcome proof: the shared point checker runs against the view, and
+evolving outcome proof: the shared fixed-state checker runs against the view, and
 the outcome successor records the checker-owned source and target lowerings
 on the goal's own map atomically with its fact update — the drain still
 records into its caller-owned map only for the benefit of unmigrated
@@ -2784,15 +2784,15 @@ explicit transports.
 ### Progress (2026-08-18: explicit theorem application consumes the view)
 
 Explicit post-execution `apply using` is the third tactic kind on the
-evolving outcome proof. The point theorem checker now runs against
-`PointOperationView` for point proofs and outcome goals alike, and the view
+evolving outcome proof. The fixed-state theorem checker now runs against
+`FixedStateOperationView` for fixed-state proofs and outcome goals alike, and the view
 carries the theorem environment. Parity exposed a per-operation distinction
 the legacy drain made silently: the transport checker consumes the path's
 own execution facts while the theorem checker consumes the check-level
 effect set, so the outcome view resolves its effect-availability context
 per operation (`OutcomeEffectContext::Path` versus `::Check`) instead of
 flattening the two. Smart `apply` (the selection query) remains legacy until
-`select_theorem_application_step_at_point` reads the view; the derivation
+`select_theorem_application_step_in_fixed_state` reads the view; the derivation
 gate admits explicit applications.
 
 ### Progress (2026-08-18: smart apply selects on the outcome goal)
@@ -2800,7 +2800,7 @@ gate admits explicit applications.
 The theorem-selection seam that previously refused function-exit execution
 proofs — "until outcome proposition goals themselves migrate into Proof" —
 now recognizes a focused function-outcome goal as exactly one
-result-sensitive point context and runs the shared indexed selection against
+result-sensitive fixed-state proof context and runs the shared indexed selection against
 the goal-aware view. Bare post-execution `apply` is the fourth drained
 tactic kind on the evolving outcome proof: selection reads the view, the
 accepted application advances the path's lineage, and the per-tactic
@@ -2813,7 +2813,7 @@ that derived no goals.
 Bare post-execution `transport` is the fifth drained tactic kind on the
 evolving outcome proof. Candidate gathering stays drain-side — it reads the
 legacy working set and check indexes — but every candidate now advances the
-outcome-focused proof through the same transactional search used by point
+outcome-focused proof through the same transactional search used by fixed-state
 proofs, whose accepted step records its lowerings on the goal atomically.
 The search guard recognizes a focused outcome goal as result-aware; the
 derivation gate admits all transports. Every post-execution transport and
@@ -2833,7 +2833,7 @@ silently unapplied migration invisible to the gate.
 
 Post-execution `have` is the sixth drained tactic kind on the evolving
 outcome proof. `OutcomeObligation` now keeps its result-aware data behind one
-shared `OutcomePointData`, and a proposition judgment stated at an outcome
+shared `OutcomeProofData`, and a proposition judgment stated at an outcome
 borrows that data by identity — it can read the outcome's result, state,
 and lowerings but can never publish a changed outcome. Refinement rules
 preserve the borrowed data (`refined_proposition`); `begin_have` on an
@@ -2846,8 +2846,8 @@ Two regressions caught real semantic traps. The expanded owned-string
 certificate failed check because the outcome lowering arm initially reused
 the recorded-lowering shortcut, letting a newly stated `have` goal borrow a
 same-spelled fact's older snapshot anchoring — the exact historic bug the
-strict-point lowering rule exists for; `lower_surface_goal` now lowers
-outcome-stated judgments strictly, mirroring its point arm. And a grouped
+strict fixed-state lowering rule exists for; `lower_surface_goal` now lowers
+outcome-stated judgments strictly, mirroring its fixed-state arm. And a grouped
 `have` mdtest exposed that `witness` needed the view (now wired) while
 `choose` needs the function requirement tables the view does not yet carry —
 such bodies stay legacy by an explicit support check rather than an error.
@@ -2857,15 +2857,15 @@ such bodies stay legacy by an explicit support check rather than an error.
 The grouped claim operations — `rewrite` over ensure goals and the
 `assumption`/`normalize` closers — now focus their per-claim obligation
 roots from the evolving outcome proof when the path derived a goal.
-`focus_point_goal` recognizes a focused function-outcome goal as a
-result-aware point frontier: the focused root borrows the outcome's point
+`focus_fixed_state_goal` recognizes a focused function-outcome goal as a
+result-aware fixed-state proof context: the focused root borrows the outcome's proof
 data and unfold delta by identity, exactly like a nested `have`, and the
 path lineage itself is not advanced by claim-goal work. The
 `loop_sorted_range_invariant` mdtest caught the availability regression this
-exposed: `assumption` gave point contexts the check-availability bridge but
+exposed: `assumption` gave fixed-state proof contexts the check-availability bridge but
 execution contexts exact-only matching, so outcome-focused roots could not
-close goals their legacy point roots closed — outcome-stated judgments now
-use point-level check availability. The derivation gate admits the three
+close goals their legacy fixed-state roots closed — outcome-stated judgments now
+use fixed-state check availability. The derivation gate admits the three
 claim operations; `simp`, the existence tactics, and the resource/frame
 kinds remain.
 
@@ -2873,11 +2873,11 @@ kinds remain.
 
 Grouped and ungrouped exit `simp` is the seventh drained kind on the
 evolving outcome proof: the grouped obligation root comes from the resynced
-evolving proof, whose `OutcomePointData` now carries the statement-entry
+evolving proof, whose `OutcomeProofData` now carries the statement-entry
 premise anchor captured at derivation, and the atomic `simp` derivation
 recognizes outcome-stated judgments — supplying the outcome's recorded
 lowerings and anchor where it previously refused execution contexts.
-`complete_point_obligations` gained an explicitly checkpoint-relative form:
+`complete_fixed_state_obligations` gained an explicitly checkpoint-relative form:
 an evolving root carries every earlier drained tactic in its lineage, and
 those steps are recorded by their own tactics, so the grouped closure
 exports only the scope and closer work after the caller's checkpoint — the
@@ -2888,10 +2888,10 @@ frame family; then case routing and the deletion slice.
 
 ### Progress (2026-08-18: `choose` reads the outcome view)
 
-The goal-aware point view now carries the function requirement sources:
+The goal-aware fixed-state view now carries the function requirement sources:
 declared requirements and label indices resolve from the execution context's
 function block, and the lowered requirement facts travel as a raw indexed
-prefix on `OutcomePointData` — `choose` selects its source by requirement
+prefix on `OutcomeProofData` — `choose` selects its source by requirement
 index, which persistent deduplication would misalign, and path preparation
 unfolds requirement entries in place, so the resync adapter refreshes the
 prefix from the live working set. `choose` and `witness` both run through
@@ -3301,7 +3301,7 @@ authority for ordered finalization. `ExecutionOutcomeProofBranches` and
 the now-orphaned `branch_children` allocator are deleted; the existing
 partitioned-outcome contextual-frame regressions cover the flip.
 Remaining from the plan: the drain's legacy readers (recorded-lowering
-membership gates) and the no-goal fallback point roots.
+membership gates) and the no-goal fallback fixed-state roots.
 
 ### Progress (2026-08-18: the outcome substrate is unconditional)
 
@@ -3312,7 +3312,7 @@ every fixture run, and the gate timings did not move. This is the armed
 precondition for the final inversion: replace the `path_requirements`
 vector's ~80 read sites with goal-derived reads, delete the vector and
 the `with_drained_outcome_facts` resync adapters, and retire the no-goal
-fallback point roots that the unconditional substrate makes unreachable.
+fallback fixed-state roots that the unconditional substrate makes unreachable.
 
 ### The working-set inversion, sliced (written 2026-08-18, next work)
 
@@ -3335,7 +3335,7 @@ therefore per-arm semantic migration, not a mechanical read swap:
    deletes.
 4. **Deletion.** Replace the read sites with a goal-derived view, delete
    the vector, `with_drained_outcome_facts`, and `working_set_dirty`, and
-   retire the no-goal fallback point roots the unconditional substrate
+   retire the no-goal fallback fixed-state roots the unconditional substrate
    made unreachable.
 
 ### Refinement (2026-08-18): the dirty sites are mostly fallback entries
@@ -3344,7 +3344,7 @@ Of the nine `working_set_dirty` sites, only three (the two resource
 projections and the region-frame certifier) mark completed mutations at
 arm end, where an immediate goal re-import can replace the deferred
 flag. The other six are *entries into no-goal fallback arms* — the
-legacy point-root paths taken when `outcome_proof` is unavailable — and
+legacy fixed-state-root paths taken when `outcome_proof` is unavailable — and
 the `Simp` legacy-planner escape; their mutations follow the flag, so
 they cannot resync at the site. The order of work is therefore: first
 make substrate derivation failure a hard error (its `.ok()` currently
@@ -3375,7 +3375,7 @@ stop being probe-invisible.
 ### Progress (2026-08-18: four no-goal fallback arms fail loudly)
 
 The four uniform no-goal fallback arms (unfold, apply, apply-using,
-transport) are prompt errors now: each `else` that built a legacy point
+transport) are prompt errors now: each `else` that built a legacy fixed-state
 root when the typed outcome goal was unavailable returns "the typed
 outcome goal for this path is unavailable" instead, per the probe
 evidence that no test reaches them and the rule that deleted routes fail
@@ -3391,7 +3391,7 @@ now set at exactly those two sites.
 
 The `have` arm's two `None` meanings are split. A missing outcome goal is
 now the same loud error as the other four arms — the whole `have` no
-longer routes through the deleted legacy point root — while a goal-based
+longer routes through the deleted legacy fixed-state root — while a goal-based
 smart miss (the search legitimately declining) still falls back to the
 deleted interpreter, preserving smart-miss behavior exactly. The dirty flag
 now marks only that miss route and the `Simp` planner escape; both are
@@ -3595,18 +3595,18 @@ certificate; ordinary verification performs no separate simple-have check.
 The canonical metadata-write reproduction exposed two final legacy certificate
 conventions rather than a checker budget problem: source scripts and the
 increment-lower-bound transport planner retained `assumption` after steps that
-already close point goals. The source suffixes are deleted, the planner now
+already close fixed-state goals. The source suffixes are deleted, the planner now
 emits only the goal-closing theorem and transport steps, and focused regressions
 pin both direct retention and independent expansion. `scripts/check.sh` is
 green. Residual drain misses are smart `simp`/exit-planner certificates whose
 binder, rewrite, or loadability shapes still need the outcome-closer migration;
 they are no longer searchless source-script dispatch gaps.
 
-### Progress (2026-08-19: explicit instantiation reads the outcome point view)
+### Progress (2026-08-19: explicit instantiation reads the outcome proof view)
 
 `instantiate(..., value) using {...}` now resolves the same
-`PointOperationView` for an outcome-stated proposition judgment that it uses
-for an ordinary point proof. Argument evaluation, recorded Surface lowering,
+`FixedStateOperationView` for an outcome-stated proposition judgment that it uses
+for an ordinary fixed-state proof. Argument evaluation, recorded Surface lowering,
 the post-state, and `result` therefore come from the typed outcome goal, and
 the checked successor retains the `InstantiateUsing` node without entering
 the post-execution simple-have check. An end-to-end regression observes that
@@ -3638,10 +3638,10 @@ A quantified post-execution regression observes no outcome compatibility
 construction, expands to `Intro`/`InstantiateUsing`, and independently
 reverifies; the canonical bubble-pass mdtest remains green.
 
-### Progress (2026-08-19: direct recorded-point outcome transport stays on Proof)
+### Progress (2026-08-19: direct recorded-snapshot outcome transport stays on Proof)
 
 When direct and typed atomic closure miss, an outcome proposition goal now
-searches the execution's recorded program-point index for an exact historical
+searches the execution's recorded-snapshot index for an exact historical
 spelling of that same Surface goal. Each candidate is submitted as an
 ordinary `TransportUsing` step; only a complete checked descendant is
 returned. This is smart search over explicit source/target syntax, not ambient
@@ -3659,7 +3659,7 @@ Outcome `simp` now recognizes the syntactic current/entry equality
 `expression == old(expression)` (in either orientation), chooses the reflexive
 entry equality as its explicit source, and submits that candidate to the
 checked `TransportUsing` transition. The selector carries no semantic
-authority: the point checker still decides from the retained effect facts
+authority: the fixed-state checker still decides from the retained effect facts
 whether the component was unchanged.
 
 The reproduction exposed two adjacent Proof-boundary gaps. Transport target
@@ -3685,13 +3685,13 @@ derivations rather than this component-old equality class.
 The function-outcome adapter now moves the current persistent `CState` root
 and result together with each legacy fact-set re-import. Previously `fold` and
 `close` updated the drain's outcome resources but refreshed only the Proof's
-facts, leaving its result-aware point view anchored to the pre-fold resource
+facts, leaving its result-aware fixed-state view anchored to the pre-fold resource
 snapshot. A later checked `UnfoldPredicate` consequently lowered `count(...)`
 against stale populations and rejected certificates that independent verification
 accepted against the live outcome.
 
-Point and outcome predicate unfolding now re-lowers the retained unfolded
-Surface body against the checked successor facts in the current point view,
+Fixed-state and outcome predicate unfolding now re-lowers the retained unfolded
+Surface body against the checked successor facts in the current fixed-state view,
 matching explicit-certificate validation in the audited `UnfoldPredicate`
 transition itself. A resource-count predicate regression retains
 `UnfoldPredicate` plus `Normalize` on the evolving Proof, observes neither
@@ -3728,8 +3728,8 @@ resource transition exactly once and immediately reimports the transitioned
 outcome into the evolving `Proof`. This also covers isolated ensure proofs,
 whose claim set contains no effect goal even though their postcondition must be
 lowered against the same transitioned resource population as the grouped
-contract. Outcome rewrite now uses the result-aware point view, and retained
-premise spellings prefer their explicit `at(...)`/`old(...)` source site so a
+contract. Outcome rewrite now uses the result-aware fixed-state view, and retained
+premise spellings prefer their explicit `at(...)`/`old(...)` snapshot-qualified form so a
 pre-frame equality cannot be reinterpreted against the post-frame state.
 
 The remaining bounded-pool return shape also exposed two missing atomic proof
@@ -3807,9 +3807,9 @@ proof-object migration board is now seven open leaves.
 
 Outcome arithmetic after a checked branch join now resolves every premise
 from the atomic derivation's finite typed premise list. When the latest
-statement-entry anchor has moved past the point where those premises were
+statement-entry anchor has moved past the snapshot where those premises were
 established, an already selected explicit `at(...)` spelling may nominate the
-one common earlier point. The resolver re-synthesizes only the missing selected
+one common earlier snapshot. The resolver re-synthesizes only the missing selected
 premises at that indexed state and accepts each spelling only when ordinary
 lowering recovers the exact retained kernel fact. It does not scan ambient
 facts or program points.

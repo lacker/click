@@ -30,8 +30,8 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
             )
         })
         .unwrap_or_else(|| (legacy_site.description(), 0, legacy_site));
-    let mut program_point_states = context.program_point_states.clone();
-    program_point_states.insert(
+    let mut recorded_snapshots = context.recorded_snapshots.clone();
+    recorded_snapshots.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Entry,
@@ -45,7 +45,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
         .filter(|clause| clause.region() == &CodeRegion::Loop(loop_index))
         .filter_map(StructuralClause::label)
     {
-        program_point_states.insert(
+        recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Label(label.to_string()),
                 kind: ProgramPointKind::Entry,
@@ -154,7 +154,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     )
                 });
                 let plan = |expansion_capture: Option<&mut ExpansionCapture>| {
-                    plan_point_pure_goal_certificate(
+                    plan_fixed_state_pure_goal_certificate(
                         expansion_capture,
                         &initialize_site,
                         proposition,
@@ -166,7 +166,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                         environment.arguments,
                         environment.initial_state,
                         &context.state,
-                        &program_point_states,
+                        &recorded_snapshots,
                         environment.predicate_environment,
                         environment.click_function_environment,
                         &context.surface_propositions,
@@ -277,7 +277,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     })
                     .unwrap_or_else(|| format!("{claim_label} prerequisite {certificate_index}"));
                 let surface_propositions = initialization_surface_propositions.borrow();
-                let fact = prove_pure_proposition_at_point(
+                let fact = prove_pure_proposition_in_state(
                     &have.proposition,
                     surface_propositions.unique_kernel(&have.proposition),
                     &have.proof,
@@ -292,7 +292,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     environment.initial_state,
                     &context.state,
                     None,
-                    &program_point_states,
+                    &recorded_snapshots,
                     Some(&surface_propositions),
                     environment.predicate_environment,
                     environment.click_function_environment,
@@ -334,7 +334,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
     let frontier = ExecutionFrontier {
-        point: ProofExecutionPoint::StatementEntry {
+        position: FrontierPosition::StatementEntry {
             remaining: body.clone().into(),
         },
         region: ExecutionRegionKind::LoopBody,
@@ -342,7 +342,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
     };
-    let mut program_point_states = ProgramPointStates::new();
+    let mut recorded_snapshots = RecordedSnapshots::new();
     let constants = ExecutionProofConstants {
         proof_site: environment
             .frontier_loop_source
@@ -351,15 +351,15 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         function_entry_state: Some(environment.initial_state.clone()),
         ..ExecutionProofConstants::default()
     };
-    record_statement_program_point_state(
-        &mut program_point_states,
+    record_statement_program_snapshot_state(
+        &mut recorded_snapshots,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    record_loop_program_point_state(
-        &mut program_point_states,
+    record_loop_program_snapshot_state(
+        &mut recorded_snapshots,
         environment.function_block,
         loop_index,
         ProgramPointKind::Entry,
@@ -371,7 +371,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
         ExecutionProofState::at_entry(
             preservation.state().clone(),
             frontier,
-            program_point_states,
+            recorded_snapshots,
             environment.surface_propositions.clone(),
             PersistentSequence::default(),
         ),
@@ -409,7 +409,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             .statement(view.frontier.next_statement_index)
             .is_some_and(|region| matches!(region.kind, SourceStatementKind::If { .. }));
         if is_branch {
-            let ProofExecutionPoint::StatementEntry { remaining } = &view.frontier.point else {
+            let FrontierPosition::StatementEntry { remaining } = &view.frontier.position else {
                 return Err(ClickError::new(format!(
                     "`{claim_label}` automatic preservation branch is not at a statement entry"
                 )));
@@ -1234,7 +1234,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ClickError::new(format!("`{claim_label}` has no source loop({loop_index})"))
     })?;
     let frontier = ExecutionFrontier {
-        point: ProofExecutionPoint::StatementEntry {
+        position: FrontierPosition::StatementEntry {
             remaining: body.clone().into(),
         },
         region: ExecutionRegionKind::LoopBody,
@@ -1242,7 +1242,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         next_statement_index: loop_body_statement_index,
         ..ExecutionFrontier::default()
     };
-    let mut program_point_states = ProgramPointStates::new();
+    let mut recorded_snapshots = RecordedSnapshots::new();
     let constants = ExecutionProofConstants {
         proof_site: Some(preserve_site),
         source_layout,
@@ -1250,14 +1250,14 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ..ExecutionProofConstants::default()
     };
     let mut surface_propositions = environment.surface_propositions.clone();
-    record_statement_program_point_state(
-        &mut program_point_states,
+    record_statement_program_snapshot_state(
+        &mut recorded_snapshots,
         environment.function_block,
         loop_body_statement_index,
         ProgramPointKind::Entry,
         preservation.state().clone(),
     );
-    program_point_states.insert(
+    recorded_snapshots.insert(
         ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
             kind: ProgramPointKind::Entry,
@@ -1284,7 +1284,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         });
     {
         for surface in invariant_surfaces.chain(std::iter::once(&loop_condition)) {
-            if let Ok(lowered) = lower_point_proposition(
+            if let Ok(lowered) = lower_fixed_state_proposition(
                 surface,
                 pure_facts,
                 environment.parsed_function.parameters(),
@@ -1292,11 +1292,11 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
                 environment.initial_state,
                 preservation.state(),
                 None,
-                &program_point_states,
+                &recorded_snapshots,
                 environment.predicate_environment,
                 environment.click_function_environment,
             ) {
-                let surface = surface_with_source_site(
+                let surface = surface_at_snapshot(
                     surface,
                     &ProgramPointRef {
                         region: CodeRegionRef::Statement(loop_body_statement_index),
@@ -1322,7 +1322,7 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
         ExecutionProofState::at_entry(
             preservation.state().clone(),
             frontier,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             PersistentSequence::default(),
         ),

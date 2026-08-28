@@ -1,18 +1,18 @@
 use super::*;
 
-pub(in crate::lang::click::proof) struct CheckedPointTheoremApplication {
+pub(in crate::lang::click::proof) struct CheckedFixedStateTheoremApplication {
     pub(in crate::lang::click::proof) facts: ProofFacts,
     pub(in crate::lang::click::proof) added_facts: Vec<Proposition>,
     pub(in crate::lang::click::proof) function_entry_prerequisite: Option<Proposition>,
     pub(in crate::lang::click::proof) function_entry_derivation: Option<Theorem>,
 }
 
-/// Canonical checker for an explicit theorem application at a C execution
-/// point. Named premises are the complete evidence set. Ambient proof facts
+/// Canonical checker for an explicit theorem application against one fixed
+/// symbolic C state. Named premises are the complete evidence set. Ambient proof facts
 /// and observable resource facts may only lower those premises and theorem
 /// arguments; they cannot discharge an omitted theorem requirement.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts(
+pub(in crate::lang::click::proof) fn check_fixed_state_theorem_application_using_facts(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     surface_premises: &[ClickProposition],
@@ -24,14 +24,14 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     unfolded_predicates: &[String],
     effect_facts: &[ExecutionPureFact],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     retain_function_entry_derivation: bool,
-) -> Result<CheckedPointTheoremApplication, ClickError> {
+) -> Result<CheckedFixedStateTheoremApplication, ClickError> {
     let resource_facts = state
         .resources()
         .observable_facts_assuming_valid(available.assumptions());
@@ -42,7 +42,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
 
     let mut explicit_premises = Vec::new();
     for surface_premise in surface_premises {
-        let freshly_lowered = lower_point_proposition_with_assumptions(
+        let freshly_lowered = lower_fixed_state_proposition_with_assumptions(
             surface_premise,
             &lowering_assumptions,
             parameters,
@@ -50,7 +50,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
             pre_state,
             state,
             result,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         );
@@ -107,7 +107,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
         pre_state,
         post_state: state,
         result,
-        program_point_states,
+        recorded_snapshots,
     };
     let conclusions = instantiate_theorem_application_with_assumptions(
         theorem_environment,
@@ -134,14 +134,14 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
     }
 
     let function_entry_derivation = if retain_function_entry_derivation {
-        kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+        kernel_standard_theorem_derivation_in_current_state_with_assumptions(
             theorem_environment,
             application,
             parameters,
             arguments,
             pre_state,
             state,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
             &lowering_assumptions,
@@ -156,7 +156,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
         }
         conclusion.clone()
     });
-    Ok(CheckedPointTheoremApplication {
+    Ok(CheckedFixedStateTheoremApplication {
         facts,
         added_facts,
         function_entry_prerequisite,
@@ -169,27 +169,27 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
 /// certification. Surface proof checking still validates the application separately;
 /// this carries only the fixed kernel axiom, never a searched conclusion.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_current_point(
+pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_in_current_state(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     lowering_facts: &[Proposition],
 ) -> Result<Option<Theorem>, ClickError> {
     let assumptions = assumptions_from_propositions(lowering_facts);
-    kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+    kernel_standard_theorem_derivation_in_current_state_with_assumptions(
         theorem_environment,
         application,
         parameters,
         arguments,
         pre_state,
         state,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
         &assumptions,
@@ -199,14 +199,14 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
 /// Persistent-context form used by `Proof::apply_step`: theorem arguments may
 /// consult the ambient checked context without rebuilding it from a vector.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_current_point_with_assumptions(
+pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_in_current_state_with_assumptions(
     theorem_environment: &TheoremEnvironment,
     application: &TheoremApplication,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     lowering_assumptions: &PureFactContext,
@@ -236,7 +236,7 @@ pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_curre
         pre_state,
         post_state: state,
         result: None,
-        program_point_states,
+        recorded_snapshots,
     };
     let (values, _) = theorem_application_bindings(
         theorem,
@@ -397,7 +397,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     check_verification_deadline()?;
     let lowering_facts = facts_for_smart_have_lowering(available);
     let check = |surface: &ClickProposition| {
-        lower_outcome_proposition_with_program_points(
+        lower_outcome_proposition_with_recorded_snapshots(
             parameters,
             arguments,
             pre_state,
@@ -407,7 +407,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             surface,
             predicate_environment,
             click_function_environment,
-            &view.program_point_states,
+            &view.recorded_snapshots,
         )
         .map_err(ClickError::new)
     };
@@ -423,7 +423,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     // Recorded source forms are the cheapest exact candidates and cover
     // ordinary premises. Check them before synthesizing variants at every
     // retained program point; an ambiguous form simply fails `check` and
-    // falls through to the point-qualified search below.
+    // falls through to the snapshot-qualified search below.
     if let Ok(surface) = view.surface_propositions.checked_surface(kernel, check) {
         return Ok(surface);
     }
@@ -446,15 +446,16 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             return Ok(surface.clone());
         }
     }
-    let (exact_points, compatible_points) =
-        snapshot_indexed_program_points(kernel, &view.program_point_states);
-    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
+    let (exact_snapshots, compatible_snapshots) =
+        snapshot_indexed_selectors(kernel, &view.recorded_snapshots);
+    for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         check_verification_deadline()?;
-        let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
+        let Some(base) =
+            synthesize_surface_proposition(kernel, parameters, arguments, snapshot_state)
         else {
             continue;
         };
-        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(*point))
+        let Some(variants) = comparison_snapshot_variants(&base, std::slice::from_ref(*selector))
         else {
             continue;
         };
@@ -491,19 +492,19 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
     {
         bases.push(surface);
     }
-    let points = exact_points
+    let selectors = exact_snapshots
         .iter()
-        .chain(&compatible_points)
-        .map(|(point, _)| (*point).clone())
+        .chain(&compatible_snapshots)
+        .map(|(selector, _)| (*selector).clone())
         .collect::<Vec<_>>();
-    for indexed_points in [&exact_points, &compatible_points] {
-        let indexed_points = indexed_points
+    for indexed_snapshots in [&exact_snapshots, &compatible_snapshots] {
+        let indexed_selectors = indexed_snapshots
             .iter()
-            .map(|(point, _)| (*point).clone())
+            .map(|(selector, _)| (*selector).clone())
             .collect::<Vec<_>>();
         for base in &bases {
             check_verification_deadline()?;
-            let Some(variants) = comparison_program_point_variants(base, &indexed_points) else {
+            let Some(variants) = comparison_snapshot_variants(base, &indexed_selectors) else {
                 continue;
             };
             for candidate in variants {
@@ -514,13 +515,14 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             }
         }
     }
-    for (point, point_state) in exact_points.iter().chain(&compatible_points) {
+    for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         check_verification_deadline()?;
-        let Some(base) = synthesize_surface_proposition(kernel, parameters, arguments, point_state)
+        let Some(base) =
+            synthesize_surface_proposition(kernel, parameters, arguments, snapshot_state)
         else {
             continue;
         };
-        let Some(variants) = comparison_program_point_variants(&base, std::slice::from_ref(*point))
+        let Some(variants) = comparison_snapshot_variants(&base, std::slice::from_ref(*selector))
         else {
             continue;
         };
@@ -557,7 +559,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         }
         for base in &kernel_folded_bases {
             check_verification_deadline()?;
-            let Some(variants) = comparison_program_point_variants(base, &points) else {
+            let Some(variants) = comparison_snapshot_variants(base, &selectors) else {
                 continue;
             };
             for candidate in variants {
@@ -591,12 +593,12 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
                     folded_bases.push(surface.clone());
                 }
             }
-            let (folded_exact_points, folded_compatible_points) =
-                snapshot_indexed_program_points(fact, &view.program_point_states);
+            let (folded_exact_snapshots, folded_compatible_snapshots) =
+                snapshot_indexed_selectors(fact, &view.recorded_snapshots);
             for state in std::iter::once(post_state).chain(
-                folded_exact_points
+                folded_exact_snapshots
                     .iter()
-                    .chain(&folded_compatible_points)
+                    .chain(&folded_compatible_snapshots)
                     .map(|(_, state)| *state),
             ) {
                 check_verification_deadline()?;
@@ -609,7 +611,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
             }
             for base in &folded_bases {
                 check_verification_deadline()?;
-                let Some(variants) = comparison_program_point_variants(base, &points) else {
+                let Some(variants) = comparison_snapshot_variants(base, &selectors) else {
                     continue;
                 };
                 for candidate in variants {

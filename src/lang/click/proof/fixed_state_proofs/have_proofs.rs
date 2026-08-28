@@ -1,7 +1,7 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn lower_point_proposition(
+pub(in crate::lang::click::proof) fn lower_fixed_state_proposition(
     proposition: &ClickProposition,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
@@ -9,12 +9,12 @@ pub(in crate::lang::click::proof) fn lower_point_proposition(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let assumptions = assumptions_from_propositions(available);
-    lower_point_proposition_with_assumptions(
+    lower_fixed_state_proposition_with_assumptions(
         proposition,
         &assumptions,
         parameters,
@@ -22,19 +22,19 @@ pub(in crate::lang::click::proof) fn lower_point_proposition(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
 }
 
-/// Lowers one point proposition against an already-indexed fact context.
+/// Lowers one proposition against a fixed symbolic C state and an already-indexed fact context.
 ///
 /// `Proof` keeps this context persistent and incrementally updated, so a
 /// local step does not rebuild it by scanning every unrelated fact. Legacy
-/// vector callers continue through `lower_point_proposition` above.
+/// vector callers continue through `lower_fixed_state_proposition` above.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn lower_point_proposition_with_assumptions(
+pub(in crate::lang::click::proof) fn lower_fixed_state_proposition_with_assumptions(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
     parameters: &[syntax::C0Parameter],
@@ -42,14 +42,14 @@ pub(in crate::lang::click::proof) fn lower_point_proposition_with_assumptions(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
     let (values, array_refs) = contract_environment_at_state(&values, &array_refs, state);
-    lower_point_proposition_with_values_and_assumptions(
+    lower_fixed_state_proposition_with_values_and_assumptions(
         proposition,
         assumptions,
         values,
@@ -57,14 +57,14 @@ pub(in crate::lang::click::proof) fn lower_point_proposition_with_assumptions(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_point_proposition_with_values(
+fn lower_fixed_state_proposition_with_values(
     proposition: &ClickProposition,
     available: &[Proposition],
     values: BTreeMap<String, CValue>,
@@ -72,12 +72,12 @@ fn lower_point_proposition_with_values(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
     let assumptions = assumptions_from_propositions(available);
-    lower_point_proposition_with_values_and_assumptions(
+    lower_fixed_state_proposition_with_values_and_assumptions(
         proposition,
         &assumptions,
         values,
@@ -85,14 +85,14 @@ fn lower_point_proposition_with_values(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_point_proposition_with_values_and_assumptions(
+fn lower_fixed_state_proposition_with_values_and_assumptions(
     proposition: &ClickProposition,
     assumptions: &PureFactContext,
     mut values: BTreeMap<String, CValue>,
@@ -100,7 +100,7 @@ fn lower_point_proposition_with_values_and_assumptions(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
@@ -117,13 +117,13 @@ fn lower_point_proposition_with_values_and_assumptions(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_point_proposition_with_memory_resolution(
+fn lower_fixed_state_proposition_with_memory_resolution(
     proposition: &ClickProposition,
     available: &[Proposition],
     mut values: BTreeMap<String, CValue>,
@@ -131,7 +131,7 @@ fn lower_point_proposition_with_memory_resolution(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
@@ -150,7 +150,7 @@ fn lower_point_proposition_with_memory_resolution(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        program_point_states,
+        recorded_snapshots,
         &mut active_functions,
     )
 }
@@ -201,7 +201,7 @@ pub(in crate::lang::click::proof) fn reverse_kernel_equality(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn prove_have_at_current_point(
+pub(in crate::lang::click::proof) fn prove_have_in_current_state(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
@@ -212,13 +212,13 @@ pub(in crate::lang::click::proof) fn prove_have_at_current_point(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     original_requirements: &[Requirement],
 ) -> Result<Proposition, ClickError> {
-    prove_have_at_point(
+    prove_have_in_state(
         have,
         theorem_environment,
         claim_label,
@@ -230,7 +230,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_current_point(
         pre_state,
         state,
         None,
-        program_point_states,
+        recorded_snapshots,
         Some(surface_propositions),
         predicate_environment,
         click_function_environment,
@@ -240,7 +240,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
+pub(in crate::lang::click::proof) fn plan_smart_have_in_current_state(
     have: &ProofHave,
     claim_label: &str,
     outer_tactic_index: usize,
@@ -249,7 +249,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: &SurfacePropositionMap,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -285,7 +285,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         claim_label,
         "smart have: goal lowering",
     );
-    let fact = match lower_point_proposition(
+    let fact = match lower_fixed_state_proposition(
         &have.proposition,
         &direct_lowering_facts,
         parameters,
@@ -293,7 +293,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         pre_state,
         state,
         None,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     ) {
@@ -304,7 +304,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 "`{claim_label}` have proof {outer_tactic_index}: could not lower restricted `simp` goal without applying an ambient equality: {message}"
             )));
         }
-        Err(message) => match lower_point_proposition(
+        Err(message) => match lower_fixed_state_proposition(
             &have.proposition,
             &facts_for_simple_goal_lowering(available),
             parameters,
@@ -312,7 +312,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
             pre_state,
             state,
             None,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         ) {
@@ -378,7 +378,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 exact.push(recorded.clone());
                 continue;
             }
-            let lowered = lower_point_proposition(
+            let lowered = lower_fixed_state_proposition(
                 surface,
                 &lowering_facts,
                 parameters,
@@ -386,7 +386,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
                 pre_state,
                 state,
                 None,
-                program_point_states,
+                recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )
@@ -505,7 +505,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn prove_have_at_point(
+pub(in crate::lang::click::proof) fn prove_have_in_state(
     have: &ProofHave,
     theorem_environment: &TheoremEnvironment,
     claim_label: &str,
@@ -517,14 +517,14 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: Option<&SurfacePropositionMap>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     original_requirements: &[Requirement],
     path_index: Option<usize>,
 ) -> Result<Proposition, ClickError> {
-    prove_pure_proposition_at_point(
+    prove_pure_proposition_in_state(
         &have.proposition,
         None,
         &have.proof,
@@ -539,7 +539,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         surface_propositions,
         predicate_environment,
         click_function_environment,
@@ -549,7 +549,7 @@ pub(in crate::lang::click::proof) fn prove_have_at_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
+pub(in crate::lang::click::proof) fn prove_pure_proposition_in_state(
     proposition: &ClickProposition,
     prelowered_goal: Option<&Proposition>,
     proof: &SourceProof,
@@ -564,7 +564,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: Option<&SurfacePropositionMap>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -588,7 +588,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
     };
     let mut proven_fact = None;
     for proof_case in proof_cases {
-        let fact = prove_pure_proposition_case_at_point(
+        let fact = prove_pure_proposition_case_in_state(
             proposition,
             prelowered_goal,
             &proof_case,
@@ -604,7 +604,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
             pre_state,
             state,
             result,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -628,7 +628,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_at_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
+pub(in crate::lang::click::proof) fn prove_pure_proposition_case_in_state(
     proposition: &ClickProposition,
     prelowered_goal: Option<&Proposition>,
     proof_case: &ExpandedProofCase,
@@ -644,7 +644,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     surface_propositions: Option<&SurfacePropositionMap>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -686,7 +686,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             pre_state,
             state,
             result,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )?;
@@ -733,7 +733,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     post_state: state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                 };
                 available = apply_theorem_applications_to_available(
                     theorem_environment,
@@ -754,7 +754,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let explicit_premises = premises
                     .iter()
                     .map(|premise| {
-                        lower_point_proposition_with_values(
+                        lower_fixed_state_proposition_with_values(
                             premise,
                             &available,
                             values.clone(),
@@ -762,7 +762,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             pre_state,
                             state,
                             result,
-                            program_point_states,
+                            recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -786,7 +786,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     post_state: state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                 };
                 let mut applied = apply_theorem_applications_to_available_with_lowering_context(
                     theorem_environment,
@@ -808,7 +808,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 available = applied;
             }
             ProofTactic::Have(inner_have) => {
-                let inner_fact = prove_have_at_point(
+                let inner_fact = prove_have_in_state(
                     inner_have,
                     theorem_environment,
                     claim_label,
@@ -820,7 +820,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     surface_propositions,
                     predicate_environment,
                     click_function_environment,
@@ -845,7 +845,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         })
                         .map(Ok)
                         .unwrap_or_else(|| {
-                            lower_point_proposition_with_values(
+                            lower_fixed_state_proposition_with_values(
                                 surface,
                                 facts,
                                 values.clone(),
@@ -853,7 +853,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 pre_state,
                                 state,
                                 result,
-                                program_point_states,
+                                recorded_snapshots,
                                 predicate_environment,
                                 click_function_environment,
                             )
@@ -862,7 +862,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let premise_timing = crate::instrumentation::OperationTiming::new(
                     profile_function,
                     claim_label,
-                    "point transport explicit premise lowering",
+                    "fixed-state transport explicit premise lowering",
                 );
                 let mut explicit_premises = surface_premises
                     .iter()
@@ -889,7 +889,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let source_timing = crate::instrumentation::OperationTiming::new(
                     profile_function,
                     claim_label,
-                    "point transport source lowering",
+                    "fixed-state transport source lowering",
                 );
                 let ordinary_source = lower(surface_source, &available).map_err(|message| {
                     ClickError::new(format!(
@@ -903,7 +903,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     || proposition_contains_old_expression(surface_source))
                     && let Some(result) = result
                 {
-                    lower_outcome_proposition_symbolically_with_program_points(
+                    lower_outcome_proposition_symbolically_with_recorded_snapshots(
                         parameters,
                         arguments,
                         pre_state,
@@ -913,7 +913,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         surface_source,
                         predicate_environment,
                         click_function_environment,
-                        program_point_states,
+                        recorded_snapshots,
                     )
                     .unwrap_or_else(|_| ordinary_source.clone())
                 } else {
@@ -941,7 +941,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let selected_assumptions = crate::instrumentation::measure_operation(
                     profile_function,
                     claim_label,
-                    "point transport assumption selection",
+                    "fixed-state transport assumption selection",
                     || {
                         let explicit_assumptions =
                             assumptions_from_propositions(&explicit_premises);
@@ -976,9 +976,9 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let target_timing = crate::instrumentation::OperationTiming::new(
                     profile_function,
                     claim_label,
-                    "point transport target lowering",
+                    "fixed-state transport target lowering",
                 );
-                let target = lower_point_proposition_with_values(
+                let target = lower_fixed_state_proposition_with_values(
                     surface_target,
                     &available,
                     values.clone(),
@@ -986,7 +986,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1033,7 +1033,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     let reaches = crate::instrumentation::measure_operation(
                         profile_function,
                         claim_label,
-                        "point certified fact transport reachability",
+                        "fixed-state certified fact transport reachability",
                         || {
                             certified_fact_transport_reaches_through(
                                 &source,
@@ -1109,7 +1109,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         })
                         .map(Ok)
                         .unwrap_or_else(|| {
-                            lower_point_proposition_with_values(
+                            lower_fixed_state_proposition_with_values(
                                 surface,
                                 facts,
                                 values.clone(),
@@ -1117,7 +1117,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 pre_state,
                                 state,
                                 result,
-                                program_point_states,
+                                recorded_snapshots,
                                 predicate_environment,
                                 click_function_environment,
                             )
@@ -1174,7 +1174,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     argument,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                     &mut active_functions,
                 )
                 .map_err(|message| {
@@ -1221,7 +1221,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     let lowered = if let Some(prelowered_goal) = prelowered_goal {
                         prelowered_goal.clone()
                     } else {
-                        lower_point_proposition_with_values(
+                        lower_fixed_state_proposition_with_values(
                             proposition,
                             &available,
                             values.clone(),
@@ -1229,7 +1229,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             pre_state,
                             state,
                             result,
-                            program_point_states,
+                            recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1268,7 +1268,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     &assumptions,
                     predicate_environment,
                     click_function_environment,
-                    program_point_states,
+                    recorded_snapshots,
                 )?;
                 goal = Some(apply_witness_tactic(
                     witness,
@@ -1280,7 +1280,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 )?);
             }
             ProofTactic::Extract(surface_proposition) => {
-                let proposition = lower_point_proposition_with_values(
+                let proposition = lower_fixed_state_proposition_with_values(
                     surface_proposition,
                     &available,
                     values.clone(),
@@ -1288,7 +1288,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1340,7 +1340,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 })
                                 .map(Ok)
                                 .unwrap_or_else(|| {
-                                    lower_point_proposition_with_values(
+                                    lower_fixed_state_proposition_with_values(
                                         premise,
                                         &lowering_facts,
                                         values.clone(),
@@ -1348,7 +1348,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                         pre_state,
                                         state,
                                         result,
-                                        program_point_states,
+                                        recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -1364,7 +1364,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         }
                         if lowering_facts.len() == prior_fact_count && !next.is_empty() {
                             let premise = next[0];
-                            let message = lower_point_proposition_with_values(
+                            let message = lower_fixed_state_proposition_with_values(
                                 premise,
                                 &lowering_facts,
                                 values.clone(),
@@ -1372,7 +1372,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 pre_state,
                                 state,
                                 result,
-                                program_point_states,
+                                recorded_snapshots,
                                 predicate_environment,
                                 click_function_environment,
                             )
@@ -1407,7 +1407,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         .unwrap_or_default();
                     let directly_lowered_assumption = quantified_assumption
                         .then(|| {
-                            lower_point_proposition_with_values(
+                            lower_fixed_state_proposition_with_values(
                                 proposition,
                                 &[],
                                 values.clone(),
@@ -1415,12 +1415,12 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 pre_state,
                                 state,
                                 result,
-                                program_point_states,
+                                recorded_snapshots,
                                 predicate_environment,
                                 click_function_environment,
                             )
                             .or_else(|_| {
-                                lower_point_proposition_with_values(
+                                lower_fixed_state_proposition_with_values(
                                     proposition,
                                     &assumption_shape_facts,
                                     values.clone(),
@@ -1428,7 +1428,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     pre_state,
                                     state,
                                     result,
-                                    program_point_states,
+                                    recorded_snapshots,
                                     predicate_environment,
                                     click_function_environment,
                                 )
@@ -1464,7 +1464,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     .as_deref()
                                     .or(direct_goal_lowering_facts.as_deref())
                                     .unwrap_or(&available);
-                                lower_point_proposition_with_values(
+                                lower_fixed_state_proposition_with_values(
                                     proposition,
                                     lowering_facts,
                                     values.clone(),
@@ -1472,12 +1472,12 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     pre_state,
                                     state,
                                     result,
-                                    program_point_states,
+                                    recorded_snapshots,
                                     predicate_environment,
                                     click_function_environment,
                                 )
                                 .or_else(|_| {
-                                    lower_point_proposition_with_memory_resolution(
+                                    lower_fixed_state_proposition_with_memory_resolution(
                                         proposition,
                                         lowering_facts,
                                         values.clone(),
@@ -1485,7 +1485,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                         pre_state,
                                         state,
                                         result,
-                                        program_point_states,
+                                        recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -1590,7 +1590,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 {
                                     recorded.clone()
                                 } else {
-                                    lower_point_proposition_with_values(
+                                    lower_fixed_state_proposition_with_values(
                                         surface_fact,
                                         &available,
                                         values.clone(),
@@ -1598,7 +1598,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                         pre_state,
                                         state,
                                         result,
-                                        program_point_states,
+                                        recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -1670,7 +1670,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                 ) {
                                     Ok(recorded.clone())
                                 } else {
-                                    lower_point_proposition_with_values(
+                                    lower_fixed_state_proposition_with_values(
                                         premise,
                                         derivation_lowering_facts,
                                         values.clone(),
@@ -1678,7 +1678,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                         pre_state,
                                         state,
                                         result,
-                                        program_point_states,
+                                        recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -1720,7 +1720,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             })
                             .map(Ok)
                             .unwrap_or_else(|| {
-                                lower_point_proposition_with_values(
+                                lower_fixed_state_proposition_with_values(
                                     surface_equality,
                                     &available,
                                     values.clone(),
@@ -1728,7 +1728,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                                     pre_state,
                                     state,
                                     result,
-                                    program_point_states,
+                                    recorded_snapshots,
                                     predicate_environment,
                                     click_function_environment,
                                 )
@@ -1777,7 +1777,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
         pre_state,
         state,
         result,
-        program_point_states,
+        recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )?;
@@ -1788,7 +1788,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             if let Some(prelowered_goal) = prelowered_goal {
                 prelowered_goal.clone()
             } else {
-                lower_point_proposition_with_values(
+                lower_fixed_state_proposition_with_values(
                     proposition,
                     &available,
                     values.clone(),
@@ -1796,12 +1796,12 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
                 .or_else(|_| {
-                    lower_point_proposition_with_memory_resolution(
+                    lower_fixed_state_proposition_with_memory_resolution(
                         proposition,
                         &available,
                         values,
@@ -1809,7 +1809,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                         pre_state,
                         state,
                         result,
-                        program_point_states,
+                        recorded_snapshots,
                         predicate_environment,
                         click_function_environment,
                     )
@@ -1874,7 +1874,7 @@ fn add_have_case_assumptions(
     pre_state: &CState,
     state: &CState,
     result: Option<&CValue>,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<(), ClickError> {
@@ -1885,7 +1885,7 @@ fn add_have_case_assumptions(
     {
         match &case_assumption.kind {
             ProofCaseAssumptionKind::Condition { proposition, value } => {
-                let proposition = lower_point_proposition(
+                let proposition = lower_fixed_state_proposition(
                     proposition,
                     available,
                     parameters,
@@ -1893,7 +1893,7 @@ fn add_have_case_assumptions(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1911,7 +1911,7 @@ fn add_have_case_assumptions(
                 }));
             }
             ProofCaseAssumptionKind::Disjunct { disjunction, left } => {
-                let lowered = lower_point_proposition(
+                let lowered = lower_fixed_state_proposition(
                     disjunction,
                     available,
                     parameters,
@@ -1919,7 +1919,7 @@ fn add_have_case_assumptions(
                     pre_state,
                     state,
                     result,
-                    program_point_states,
+                    recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )

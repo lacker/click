@@ -117,7 +117,7 @@ pub(in crate::lang::click) fn count_checked_expanded_execution_ifs<R>(
 ///
 /// Cloning a `Proof` shares its semantic state and derivation prefix. Applying
 /// a step copies only persistent index paths and the step's own semantic delta;
-/// proposition, point, and execution-frontier goals use the same boundary.
+/// proposition, fixed-state, and execution-frontier goals use the same boundary.
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
     context: Arc<ProofContext<'a>>,
@@ -774,7 +774,7 @@ fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
 
 enum ProofContext<'a> {
     Pure(PureProofContext<'a>),
-    Point(PointProofContext<'a>),
+    FixedState(FixedStateProofContext<'a>),
     Execution(ExecutionProofContext<'a>),
 }
 
@@ -786,7 +786,7 @@ struct PureProofContext<'a> {
     theorem_environment: &'a TheoremEnvironment,
 }
 
-struct PointProofContext<'a> {
+struct FixedStateProofContext<'a> {
     claim_label: &'a str,
     tactic_index: usize,
     parameters: &'a [syntax::C0Parameter],
@@ -795,7 +795,7 @@ struct PointProofContext<'a> {
     state: &'a CState,
     result: Option<&'a CValue>,
     premise_anchor: Option<ProgramPointRef>,
-    program_point_states: &'a ProgramPointStates,
+    recorded_snapshots: &'a RecordedSnapshots,
     surface_propositions: &'a SurfacePropositionMap,
     predicate_environment: &'a PredicateEnvironment,
     click_function_environment: &'a ClickFunctionEnvironment,
@@ -1136,9 +1136,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// Where execution stands: the program point, region, region start
     /// state, and pending continuations.
     pub(in crate::lang::click::proof) frontier: ExecutionFrontier,
-    /// The states recorded at program points this path has passed, which
-    /// `at(point, ...)` premises resolve against.
-    pub(in crate::lang::click::proof) program_point_states: ProgramPointStates,
+    /// The immutable states recorded under program points or proof marks,
+    /// which `at(selector, ...)` premises resolve against.
+    pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
     /// The surface spellings this path has lowered, paired with their
     /// kernel propositions, so premises can be written as the source wrote
     /// them.
@@ -1226,7 +1226,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// one entry in constant time.
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     /// Path-local provenance aligned with terminal execution candidates.
-    /// Keeping each outcome's lineage, Surface lowerings, and program-point
+    /// Keeping each outcome's lineage, Surface lowerings, and recorded-snapshot
     /// snapshots in one record makes their correspondence structural rather
     /// than an invariant across parallel vectors. The record is output-sized
     /// Proof provenance; its persistent roots do not copy semantic state.
@@ -1252,11 +1252,11 @@ impl ExecutionProofState {
             .unwrap_or_else(|| OutcomeProvenance {
                 branch_decisions: self.branch_decisions.clone(),
                 surface_propositions: self.surface_propositions.clone(),
-                program_point_states: self.program_point_states.clone(),
+                recorded_snapshots: self.recorded_snapshots.clone(),
             })
     }
 
-    /// The read-only execution data lowering and point proofs consult.
+    /// The read-only execution data lowering and fixed-state proofs consult.
     pub(in crate::lang::click::proof) fn view<'s>(
         &'s self,
         context: &'s ExecutionProofContext<'_>,
@@ -1264,7 +1264,7 @@ impl ExecutionProofState {
         ExecutionView::new(
             &self.frontier,
             &self.effect_facts,
-            &self.program_point_states,
+            &self.recorded_snapshots,
             &self.surface_propositions,
             context.constants.function_entry_state.as_ref(),
         )
@@ -1275,14 +1275,14 @@ impl ExecutionProofState {
     pub(in crate::lang::click::proof) fn at_entry(
         state: CState,
         frontier: ExecutionFrontier,
-        program_point_states: ProgramPointStates,
+        recorded_snapshots: RecordedSnapshots,
         surface_propositions: SurfacePropositionMap,
         branch_path: PersistentSequence<String>,
     ) -> Self {
         Self {
             state: state.into(),
             frontier,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             case_assumptions: PersistentSequence::default(),
             effect_facts: SharedVec::default(),
@@ -1396,7 +1396,7 @@ impl ProofFinalizationView<'_> {
 struct OutcomeProvenance {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     surface_propositions: SurfacePropositionMap,
-    program_point_states: ProgramPointStates,
+    recorded_snapshots: RecordedSnapshots,
 }
 
 /// One open semantic branch of a `Proof`: what it must establish and the
@@ -1415,10 +1415,10 @@ enum Obligation {
     FunctionOutcome(OutcomeObligation),
 }
 
-/// The point-operation data a result-aware checker consumes, resolved from
-/// either a point proof's borrowed context or a focused branch function-outcome
-/// goal (see [`Proof::outcome_point_view`]).
-/// Which effect-availability context an outcome-goal point operation
+/// The fixed-state data a result-aware checker consumes, resolved from
+/// either a fixed-state proof's borrowed context or a focused function-outcome
+/// goal (see [`Proof::outcome_fixed_state_view`]).
+/// Which effect-availability context an outcome-goal fixed-state operation
 /// consumes; each migrated tactic matches its legacy drain input exactly.
 #[derive(Clone, Copy)]
 enum OutcomeEffectContext {
@@ -1427,7 +1427,7 @@ enum OutcomeEffectContext {
 }
 
 #[derive(Clone, Copy)]
-struct PointOperationView<'p> {
+struct FixedStateOperationView<'p> {
     claim_label: &'p str,
     tactic_index: usize,
     effect_facts: &'p [ExecutionPureFact],
@@ -1436,7 +1436,7 @@ struct PointOperationView<'p> {
     pre_state: &'p CState,
     state: &'p CState,
     result: Option<&'p CValue>,
-    program_point_states: &'p ProgramPointStates,
+    recorded_snapshots: &'p RecordedSnapshots,
     surface_propositions: &'p SurfacePropositionMap,
     predicate_environment: &'p PredicateEnvironment,
     click_function_environment: &'p ClickFunctionEnvironment,
@@ -1446,8 +1446,8 @@ struct PointOperationView<'p> {
     requirement_facts: &'p [Proposition],
 }
 
-impl<'p> PointOperationView<'p> {
-    fn from_point(context: &'p PointProofContext<'_>) -> Self {
+impl<'p> FixedStateOperationView<'p> {
+    fn from_fixed_state(context: &'p FixedStateProofContext<'_>) -> Self {
         Self {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
@@ -1457,7 +1457,7 @@ impl<'p> PointOperationView<'p> {
             pre_state: context.pre_state,
             state: context.state,
             result: context.result,
-            program_point_states: context.program_point_states,
+            recorded_snapshots: context.recorded_snapshots,
             surface_propositions: context.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
@@ -1489,22 +1489,22 @@ struct OutcomeObligation {
     /// Ordered finalization consumes this private authority without checking
     /// the same effect transition again.
     checked_effects: Arc<Vec<usize>>,
-    /// The outcome's result-aware point data. Behind one `Arc` so a nested
+    /// The outcome's result-aware proof data. Behind one `Arc` so a nested
     /// proposition judgment stated at this outcome borrows it by identity;
     /// a checked operation that records new lowerings installs a fresh
     /// shared value atomically with its fact successor.
-    point: Arc<OutcomePointData>,
+    data: Arc<OutcomeProofData>,
 }
 
-/// The result-aware data one function outcome supplies to point operations:
+/// The result-aware data one function outcome supplies to fixed-state operations:
 /// its checked return value, post-outcome state, recorded surface
 /// lowerings, and effect-availability facts.
 #[derive(Clone)]
-struct OutcomePointData {
+struct OutcomeProofData {
     result: Arc<CValue>,
     state: SharedValue<CState>,
     surface_propositions: SurfacePropositionMap,
-    program_point_states: ProgramPointStates,
+    recorded_snapshots: RecordedSnapshots,
     effect_facts: Arc<Vec<ExecutionPureFact>>,
     /// The path's non-effect execution facts, matching the resource-fold law's
     /// historical input exactly.
@@ -1533,7 +1533,7 @@ struct OutcomePointData {
 struct BranchState {
     facts: ProofFacts,
     /// Predicate definitions activated by accepted proof-local unfold steps
-    /// on this judgment's path. Inherited point/execution names remain in
+    /// on this judgment's path. Inherited fixed-state/execution names remain in
     /// their shared context; this is only the path-local delta, so sibling
     /// goals unfold independently.
     unfolded_predicates: PersistentOrderedSet<String>,
@@ -1563,11 +1563,11 @@ struct PropositionObligation {
     /// Universal binders are goal-local: sibling goals share the persistent
     /// map root at a split, then refine independently without leaking names.
     surface_bindings: PersistentMap<String, ContractExpression>,
-    /// Result-aware point data borrowed by identity from the function
+    /// Result-aware proof data borrowed by identity from the function
     /// outcome this judgment was stated at, when it was. The judgment can
     /// read the outcome's result, state, and lowerings; it can never
     /// publish a changed outcome through this reference.
-    outcome: Option<Arc<OutcomePointData>>,
+    outcome: Option<Arc<OutcomeProofData>>,
 }
 
 impl OpenBranch {
@@ -1615,10 +1615,10 @@ impl OpenBranch {
     }
 
     /// A surface proposition judgment stated at one function outcome,
-    /// borrowing that outcome's result-aware point data by identity.
+    /// borrowing that outcome's result-aware proof data by identity.
     fn surface_proposition_at_outcome(
         state: BranchState,
-        outcome: Arc<OutcomePointData>,
+        outcome: Arc<OutcomeProofData>,
         kernel: Proposition,
         surface: ClickProposition,
     ) -> Self {
@@ -1775,7 +1775,7 @@ enum BitvectorEqualityAtomKey {
 
 /// An equality with an `old(...)` operand can use that entry expression's
 /// reflexivity as an explicit transport source. Keep this selector
-/// intentionally syntactic: the point checker remains the authority for
+/// intentionally syntactic: the fixed-state checker remains the authority for
 /// whether execution effects and result provenance permit the transport.
 fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickProposition> {
     let ClickProposition::Comparison {
@@ -1853,7 +1853,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Rebuilds the focused branch proposition judgment with new content under the
-    /// given context, preserving any outcome point data the judgment
+    /// given context, preserving any outcome proof data the judgment
     /// borrowed: a refinement changes what is claimed, never where it was
     /// stated.
     fn refined_proposition(
@@ -1864,7 +1864,7 @@ impl<'a> Proof<'a> {
     ) -> OpenBranch {
         let outcome = match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => goal.outcome.clone(),
-            Some(Obligation::FunctionOutcome(goal)) => Some(goal.point.clone()),
+            Some(Obligation::FunctionOutcome(goal)) => Some(goal.data.clone()),
             _ => None,
         };
         OpenBranch::new(
@@ -1903,7 +1903,7 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn outcome_result(&self) -> Option<&CValue> {
         match self.focused_obligation()? {
-            Obligation::FunctionOutcome(goal) => Some(goal.point.result.as_ref()),
+            Obligation::FunctionOutcome(goal) => Some(goal.data.result.as_ref()),
             _ => None,
         }
     }
@@ -1944,35 +1944,36 @@ impl<'a> Proof<'a> {
     }
 
     /// Starts one externally selected proposition judgment from a
-    /// point-frontier context without rebuilding its persistent facts.
+    /// fixed-state proof context without rebuilding its persistent facts.
     ///
     /// Grouped contract finalization owns several independent ensure goals;
     /// this audited root operation focuses one of them while sharing the
     /// checked outcome context. It is not a proof transition and therefore
-    /// starts fresh provenance. A point-frontier descendant may have published
+    /// starts fresh provenance. A fixed-state descendant may have published
     /// checked `have` facts before another external obligation is selected;
     /// a proof that already owns a proposition goal cannot replace it.
-    pub(super) fn focus_point_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
-        self.focus_point_goal_with_surface(goal, None)
+    pub(super) fn focus_fixed_state_goal(&self, goal: Proposition) -> Result<Self, ClickError> {
+        self.focus_fixed_state_goal_with_surface(goal, None)
     }
 
-    fn focus_point_goal_with_surface(
+    fn focus_fixed_state_goal_with_surface(
         &self,
         goal: Proposition,
         surface_goal: Option<ClickProposition>,
     ) -> Result<Self, ClickError> {
-        let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
+        let fixed_state_context = matches!(self.context.as_ref(), ProofContext::FixedState(_))
             && matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
-        // A function-outcome goal is itself a result-aware point frontier:
+        // A function-outcome goal is itself a result-aware fixed-state proof context:
         // an externally owned obligation focused branch from it borrows the
-        // outcome's point data by identity, exactly like a nested `have`.
+        // outcome's proof data by identity, exactly like a nested `have`.
         let outcome = match self.focused_obligation() {
-            Some(Obligation::FunctionOutcome(outcome_goal)) => Some(outcome_goal.point.clone()),
+            Some(Obligation::FunctionOutcome(outcome_goal)) => Some(outcome_goal.data.clone()),
             _ => None,
         };
-        if !point_frontier && outcome.is_none() {
-            return Err(self
-                .step_error("a proposition obligation can be focused only from a point frontier"));
+        if !fixed_state_context && outcome.is_none() {
+            return Err(self.step_error(
+                "a proposition obligation can be focused only from a fixed-state proof context",
+            ));
         }
         // Resource compositions retain same-block separation compactly in
         // `PureFactContext`; materialize only the selected external
@@ -2021,17 +2022,17 @@ impl<'a> Proof<'a> {
     }
 
     /// Lowers and selects one externally owned Surface Click obligation from
-    /// a point frontier. The returned proof shares every accumulated checked
+    /// a fixed-state proof context. The returned proof shares every accumulated checked
     /// fact but owns fresh provenance for that obligation's closing steps.
-    pub(super) fn focus_point_surface_goal(
+    pub(super) fn focus_fixed_state_surface_goal(
         &self,
         goal: &ClickProposition,
     ) -> Result<Self, ClickError> {
-        let kernel = self.lower_surface_goal(goal, "point obligation")?;
-        self.focus_point_goal_with_surface(kernel, Some(goal.clone()))
+        let kernel = self.lower_surface_goal(goal, "fixed-state obligation")?;
+        self.focus_fixed_state_goal_with_surface(kernel, Some(goal.clone()))
     }
 
-    /// Completes externally owned point obligations against this frontier and
+    /// Completes externally owned fixed-state obligations against this frontier and
     /// exports their one structured certificate.
     ///
     /// Earlier checked descendants (notably `have` scopes) remain in the
@@ -2040,11 +2041,11 @@ impl<'a> Proof<'a> {
     /// context. Certificate composition is therefore an audited terminal
     /// operation of `Proof`, not caller-owned syntax assembly.
     #[cfg(test)]
-    pub(super) fn complete_point_obligations(
+    pub(super) fn complete_fixed_state_obligations(
         &self,
         goals: &[ClickProposition],
     ) -> Result<ProofCertificate, ClickError> {
-        self.complete_point_obligations_inner(None, goals)
+        self.complete_fixed_state_obligations_inner(None, goals)
     }
 
     /// Completes the obligations with a certificate relative to `since`.
@@ -2054,30 +2055,33 @@ impl<'a> Proof<'a> {
     /// closure exports only the scope and closer work performed after the
     /// caller's checkpoint. A fresh grouped root passes its own root
     /// checkpoint and the two forms agree.
-    pub(super) fn complete_point_obligations_since(
+    pub(super) fn complete_fixed_state_obligations_since(
         &self,
         since: &ProofCheckpoint<'a>,
         goals: &[ClickProposition],
     ) -> Result<ProofCertificate, ClickError> {
-        self.complete_point_obligations_inner(Some(since), goals)
+        self.complete_fixed_state_obligations_inner(Some(since), goals)
     }
 
-    fn complete_point_obligations_inner(
+    fn complete_fixed_state_obligations_inner(
         &self,
         since: Option<&ProofCheckpoint<'a>>,
         goals: &[ClickProposition],
     ) -> Result<ProofCertificate, ClickError> {
         if goals.is_empty() {
-            return Err(self.step_error("point obligation completion requires at least one goal"));
+            return Err(
+                self.step_error("fixed-state obligation completion requires at least one goal")
+            );
         }
-        let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
+        let fixed_state_context = matches!(self.context.as_ref(), ProofContext::FixedState(_))
             && matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let outcome_frontier = matches!(
             self.focused_obligation(),
             Some(Obligation::FunctionOutcome(_))
         );
-        if !point_frontier && !outcome_frontier {
-            return Err(self.step_error("point obligations require an open point frontier"));
+        if !fixed_state_context && !outcome_frontier {
+            return Err(self
+                .step_error("fixed-state obligations require an open fixed-state proof context"));
         }
         let mut steps = match since {
             Some(since) => self.certificate_since(since)?.steps().to_vec(),
@@ -2085,7 +2089,7 @@ impl<'a> Proof<'a> {
         };
         for goal in goals {
             let closer = self
-                .focus_point_surface_goal(goal)?
+                .focus_fixed_state_surface_goal(goal)?
                 .apply_step(ProofStep::Assumption)?;
             steps.extend_from_slice(closer.certificate().steps());
         }
@@ -2099,7 +2103,7 @@ impl<'a> Proof<'a> {
     fn active_unfolded_predicates(&self) -> Vec<String> {
         let inherited = match self.context.as_ref() {
             ProofContext::Pure(_) => &[][..],
-            ProofContext::Point(context) => context.unfolded_predicates,
+            ProofContext::FixedState(context) => context.unfolded_predicates,
             ProofContext::Execution(_) => self
                 .execution()
                 .map(|execution| execution.unfolded_predicates.as_slice())
@@ -2253,7 +2257,7 @@ impl ProofContext<'_> {
     fn claim_label(&self) -> &str {
         match self {
             Self::Pure(context) => context.claim_label,
-            Self::Point(context) => context.claim_label,
+            Self::FixedState(context) => context.claim_label,
             Self::Execution(context) => context.claim_label,
         }
     }
@@ -2264,8 +2268,8 @@ mod execution_entry;
 mod execution_joins;
 mod execution_statements;
 mod fact_index;
+mod fixed_state_steps;
 mod outcomes_and_focus;
-mod point_steps;
 mod resource_steps;
 mod scope;
 mod smart_closures;

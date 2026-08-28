@@ -4,8 +4,8 @@ Both branches select a valid input pointer, and the shared suffix reads through
 that selection at the common frontier.
 
 The selected pointer has no local name once the function has returned.
-Certificate generation recovers a point-qualified spelling from the retained
-program-point state so the final `simp` can check without a hand-written
+Certificate generation recovers a snapshot-qualified spelling from the
+retained recorded snapshot so the final `simp` can check without a hand-written
 bridge.
 
 ```c filename=advance_selected_pointer.c

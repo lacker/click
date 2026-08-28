@@ -767,7 +767,7 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
 fn outcome_simp_spells_a_call_postcondition_across_two_snapshots() {
     // `touch` may write both fields and certifies `p->x == old(p->x)`: after
     // each call the caller's `p->x` is a fresh cell related to its previous
-    // value only by that certified fact, and no single execution point
+    // value only by that certified fact, and no single frontier position
     // denotes both operands. Two calls make the caller's outcome a chain of
     // two such facts, so the outcome `simp` must cite them as premises,
     // spelled with one anchor per operand, and close through the checked

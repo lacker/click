@@ -1,4 +1,4 @@
-//! Constructors for pure, point, and surface proof goals.
+//! Constructors for pure, fixed-state, and surface proof goals.
 
 use super::*;
 
@@ -162,7 +162,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::lang::click::proof) fn for_point_goal(
+    pub(in crate::lang::click::proof) fn for_fixed_state_goal(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -171,7 +171,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         pre_state: &'a CState,
         state: &'a CState,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -179,7 +179,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
-        Self::for_point(
+        Self::for_fixed_state(
             claim_label,
             tactic_index,
             available,
@@ -190,7 +190,7 @@ impl<'a> Proof<'a> {
             state,
             None,
             None,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -204,7 +204,7 @@ impl<'a> Proof<'a> {
 
     #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
-    pub(in crate::lang::click::proof) fn for_point_surface_goal(
+    pub(in crate::lang::click::proof) fn for_fixed_state_surface_goal(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -214,7 +214,7 @@ impl<'a> Proof<'a> {
         arguments: &'a [CExpression],
         pre_state: &'a CState,
         state: &'a CState,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -222,7 +222,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
-        Self::for_point(
+        Self::for_fixed_state(
             claim_label,
             tactic_index,
             available,
@@ -233,7 +233,7 @@ impl<'a> Proof<'a> {
             state,
             None,
             None,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -247,7 +247,7 @@ impl<'a> Proof<'a> {
 
     #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
-    pub(in crate::lang::click::proof) fn for_point_goal_with_requirements(
+    pub(in crate::lang::click::proof) fn for_fixed_state_goal_with_requirements(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -258,7 +258,7 @@ impl<'a> Proof<'a> {
         state: &'a CState,
         result: Option<&'a CValue>,
         premise_anchor: Option<&ProgramPointRef>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -268,7 +268,7 @@ impl<'a> Proof<'a> {
         original_requirements: &'a [Requirement],
         requirement_label_indices: &'a BTreeMap<String, usize>,
     ) -> Self {
-        Self::for_point_goal_with_requirements_inner(
+        Self::for_fixed_state_goal_with_requirements_inner(
             claim_label,
             tactic_index,
             available,
@@ -279,7 +279,7 @@ impl<'a> Proof<'a> {
             state,
             result,
             premise_anchor,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -292,7 +292,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::lang::click::proof) fn for_point_surface_goal_with_requirements(
+    pub(in crate::lang::click::proof) fn for_fixed_state_surface_goal_with_requirements(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -304,7 +304,7 @@ impl<'a> Proof<'a> {
         state: &'a CState,
         result: Option<&'a CValue>,
         premise_anchor: Option<&ProgramPointRef>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -314,7 +314,7 @@ impl<'a> Proof<'a> {
         original_requirements: &'a [Requirement],
         requirement_label_indices: &'a BTreeMap<String, usize>,
     ) -> Self {
-        Self::for_point_goal_with_requirements_inner(
+        Self::for_fixed_state_goal_with_requirements_inner(
             claim_label,
             tactic_index,
             available,
@@ -325,7 +325,7 @@ impl<'a> Proof<'a> {
             state,
             result,
             premise_anchor,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -338,7 +338,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn for_point_goal_with_requirements_inner(
+    pub(super) fn for_fixed_state_goal_with_requirements_inner(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -349,7 +349,7 @@ impl<'a> Proof<'a> {
         state: &'a CState,
         result: Option<&'a CValue>,
         premise_anchor: Option<&ProgramPointRef>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -359,7 +359,7 @@ impl<'a> Proof<'a> {
         original_requirements: &'a [Requirement],
         requirement_label_indices: &'a BTreeMap<String, usize>,
     ) -> Self {
-        Self::for_point(
+        Self::for_fixed_state(
             claim_label,
             tactic_index,
             available,
@@ -370,7 +370,7 @@ impl<'a> Proof<'a> {
             state,
             result,
             premise_anchor.cloned(),
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -383,7 +383,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::lang::click::proof) fn for_point_frontier(
+    pub(in crate::lang::click::proof) fn for_fixed_state_frontier(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -392,7 +392,7 @@ impl<'a> Proof<'a> {
         pre_state: &'a CState,
         state: &'a CState,
         result: Option<&'a CValue>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -400,7 +400,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
-        Self::for_point(
+        Self::for_fixed_state(
             claim_label,
             tactic_index,
             available,
@@ -411,7 +411,7 @@ impl<'a> Proof<'a> {
             state,
             result,
             None,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -424,7 +424,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::lang::click::proof) fn for_point_frontier_with_premise_anchor(
+    pub(in crate::lang::click::proof) fn for_fixed_state_frontier_with_premise_anchor(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -434,7 +434,7 @@ impl<'a> Proof<'a> {
         state: &'a CState,
         result: Option<&'a CValue>,
         premise_anchor: Option<&ProgramPointRef>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -442,7 +442,7 @@ impl<'a> Proof<'a> {
         unfolded_predicates: &'a [String],
         effect_facts: &'a [ExecutionPureFact],
     ) -> Self {
-        Self::for_point(
+        Self::for_fixed_state(
             claim_label,
             tactic_index,
             available,
@@ -453,7 +453,7 @@ impl<'a> Proof<'a> {
             state,
             result,
             premise_anchor.cloned(),
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -466,7 +466,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn for_point(
+    pub(super) fn for_fixed_state(
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
@@ -477,7 +477,7 @@ impl<'a> Proof<'a> {
         state: &'a CState,
         result: Option<&'a CValue>,
         premise_anchor: Option<ProgramPointRef>,
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         predicate_environment: &'a PredicateEnvironment,
         click_function_environment: &'a ClickFunctionEnvironment,
@@ -507,7 +507,7 @@ impl<'a> Proof<'a> {
             Obligation::Frontier(_) | Obligation::FunctionOutcome(_) => goal.clone(),
         };
         Self {
-            context: Arc::new(ProofContext::Point(PointProofContext {
+            context: Arc::new(ProofContext::FixedState(FixedStateProofContext {
                 claim_label,
                 tactic_index,
                 parameters,
@@ -516,7 +516,7 @@ impl<'a> Proof<'a> {
                 state,
                 result,
                 premise_anchor,
-                program_point_states,
+                recorded_snapshots,
                 surface_propositions,
                 predicate_environment,
                 click_function_environment,

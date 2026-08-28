@@ -12,7 +12,7 @@ impl<'a> Proof<'a> {
                 context.claim_label,
                 self.node.depth,
             ),
-            ProofContext::Point(context) => self.apply_proposition_predicate_unfold(
+            ProofContext::FixedState(context) => self.apply_proposition_predicate_unfold(
                 name,
                 context.predicate_environment,
                 context.click_function_environment,
@@ -22,7 +22,7 @@ impl<'a> Proof<'a> {
             // A function-outcome goal unfolds its own path-local facts and
             // delta only: the borrowed execution snapshot is shared by every
             // sibling outcome and must not absorb one path's unfolding.
-            ProofContext::Execution(context) if self.focused_outcome_point().is_some() => self
+            ProofContext::Execution(context) if self.focused_outcome_data().is_some() => self
                 .apply_proposition_predicate_unfold(
                     name,
                     context.predicate_environment,
@@ -63,7 +63,7 @@ impl<'a> Proof<'a> {
                     ),
                     None => None,
                 };
-                // Point and outcome certificates check `unfold` from its
+                // Fixed-state and outcome certificates check `unfold` from its
                 // retained surface form.  Re-lower that unfolded body
                 // against the checked successor facts as part of this same
                 // audited step, so resource counts and current memory loads
@@ -71,9 +71,9 @@ impl<'a> Proof<'a> {
                 // Unfolding only the already-lowered kernel predicate leaves
                 // those expressions stranded in the older lowering context.
                 let kernel = match (&surface, self.context.as_ref()) {
-                    (Some(surface), ProofContext::Point(context)) => {
-                        let surface = self.substitute_point_locals_in_proposition(surface)?;
-                        lower_point_proposition_with_assumptions(
+                    (Some(surface), ProofContext::FixedState(context)) => {
+                        let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                        lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
                             context.parameters,
@@ -81,20 +81,20 @@ impl<'a> Proof<'a> {
                             context.pre_state,
                             context.state,
                             context.result,
-                            context.program_point_states,
+                            context.recorded_snapshots,
                             context.predicate_environment,
                             context.click_function_environment,
                         )
                         .map_err(|message| self.step_error(message))?
                     }
                     (Some(surface), ProofContext::Execution(_))
-                        if self.focused_outcome_point().is_some() =>
+                        if self.focused_outcome_data().is_some() =>
                     {
                         let view = self
-                            .outcome_point_view()
-                            .expect("a focused outcome judgment resolves its point view");
-                        let surface = self.substitute_point_locals_in_proposition(surface)?;
-                        lower_point_proposition_with_assumptions(
+                            .outcome_fixed_state_view()
+                            .expect("a focused outcome judgment resolves its fixed-state view");
+                        let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
+                        lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
                             view.parameters,
@@ -102,7 +102,7 @@ impl<'a> Proof<'a> {
                             view.pre_state,
                             view.state,
                             view.result,
-                            view.program_point_states,
+                            view.recorded_snapshots,
                             view.predicate_environment,
                             view.click_function_environment,
                         )
@@ -184,10 +184,10 @@ impl<'a> Proof<'a> {
                     .transpose()?;
                 let kernel = match &surface {
                     Some(surface) => {
-                        let surface = self.substitute_point_locals_in_proposition(surface)?;
+                        let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
                         let pre_state =
                             context.old_reference_state(&execution.frontier, &execution.state);
-                        lower_point_proposition_with_assumptions(
+                        lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
                             context.parsed_function.parameters(),
@@ -195,7 +195,7 @@ impl<'a> Proof<'a> {
                             pre_state,
                             &execution.state,
                             None,
-                            &execution.program_point_states,
+                            &execution.recorded_snapshots,
                             context.predicate_environment,
                             context.click_function_environment,
                         )
@@ -399,17 +399,17 @@ impl<'a> Proof<'a> {
         })?;
         let pre_state = execution.frontier.execution_start_state(&execution.state);
         let outcome = CFunctionOutcome::Return {
-            value: (*goal.point.result).clone(),
-            state: (*goal.point.state).clone(),
+            value: (*goal.data.result).clone(),
+            state: (*goal.data.state).clone(),
         };
         let checked = fold_composite_resource_on_outcome_for_proof(
             context.resource_environment,
             resource,
             context.claim_label,
             goal.path_index,
-            &goal.point.execution_pure_facts,
+            &goal.data.execution_pure_facts,
             self.facts().clone(),
-            &goal.point.surface_propositions,
+            &goal.data.surface_propositions,
             context.parsed_function.parameters(),
             context.arguments,
             pre_state,
@@ -421,11 +421,11 @@ impl<'a> Proof<'a> {
         let CFunctionOutcome::Return { value, state } = checked.outcome else {
             unreachable!("folding a return outcome preserves its outcome kind")
         };
-        let mut point = (*goal.point).clone();
-        point.result = Arc::new(value);
-        point.state = state.into();
+        let mut data = (*goal.data).clone();
+        data.result = Arc::new(value);
+        data.state = state.into();
         let mut updated = goal.clone();
-        updated.point = Arc::new(point);
+        updated.data = Arc::new(data);
         let state = BranchState {
             facts: checked.facts,
             unfolded_predicates: branch_state.unfolded_predicates.clone(),

@@ -71,8 +71,8 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
         };
         Ok(CFunctionOutcome::Return {
-            value: (*goal.point.result).clone(),
-            state: (*goal.point.state).clone(),
+            value: (*goal.data.result).clone(),
+            state: (*goal.data.state).clone(),
         })
     }
 
@@ -97,8 +97,8 @@ impl<'a> Proof<'a> {
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(self.step_error("an outcome snapshot requires a return outcome"));
         };
-        let point = match self.focused_obligation() {
-            Some(Obligation::FunctionOutcome(goal)) => goal.point.as_ref(),
+        let outcome_data = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => goal.data.as_ref(),
             Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
                 self.step_error("an outcome snapshot requires a result-aware proposition goal")
             })?,
@@ -106,22 +106,22 @@ impl<'a> Proof<'a> {
                 return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
             }
         };
-        let mut point = point.clone();
+        let mut data = outcome_data.clone();
         // Resource-producing post-execution tactics can replace the outcome
         // state after this goal was derived. Carry that persistent snapshot
         // root forward; otherwise later
-        // checked point operations lower resource counts against the stale
+        // checked fixed-state operations lower resource counts against the stale
         // pre-fold state. CState's components are shared immutable roots, so
         // this update is constant-size rather than a resource/history
         // materialization.
-        point.result = Arc::new(value.clone());
-        point.state = state.clone().into();
-        let point = Arc::new(point);
+        data.result = Arc::new(value.clone());
+        data.state = state.clone().into();
+        let data = Arc::new(data);
         let mut state = (*self.state).clone();
         state.open_branches = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
-                updated.point = point;
+                updated.data = data;
                 state.open_branches.replace_obligation_at(
                     self.focused_branch,
                     Obligation::FunctionOutcome(updated),
@@ -129,12 +129,12 @@ impl<'a> Proof<'a> {
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
-                updated.outcome = Some(point);
+                updated.outcome = Some(data);
                 state
                     .open_branches
                     .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
             }
-            _ => unreachable!("the outcome point was selected above"),
+            _ => unreachable!("the outcome data was selected above"),
         };
         Ok(Self {
             context: self.context.clone(),
@@ -151,28 +151,28 @@ impl<'a> Proof<'a> {
         &self,
         facts: &[Proposition],
     ) -> Result<Self, ClickError> {
-        let point = match self.focused_obligation() {
-            Some(Obligation::FunctionOutcome(goal)) => goal.point.as_ref(),
+        let data = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => goal.data.as_ref(),
             Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
                 self.step_error("outcome facts require a result-aware proposition goal")
             })?,
             _ => return Err(self.step_error("outcome facts require a focused outcome goal")),
         };
         // Path preparation can unfold predicate requirements in place. Keep
-        // the point view's requirement prefix aligned with the checked fact
+        // the fixed-state view's requirement prefix aligned with the checked fact
         // context so indexed `choose` sources use that exact form.
         let requires = match self.context.as_ref() {
             ProofContext::Execution(context) => context.function_block.requires().len(),
             _ => 0,
         };
-        let mut point = point.clone();
-        point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
-        let point = Arc::new(point);
+        let mut data = data.clone();
+        data.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
+        let data = Arc::new(data);
         let mut state = (*self.state).clone();
         state.open_branches = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
-                updated.point = point;
+                updated.data = data;
                 state.open_branches.replace_obligation_at(
                     self.focused_branch,
                     Obligation::FunctionOutcome(updated),
@@ -180,12 +180,12 @@ impl<'a> Proof<'a> {
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
-                updated.outcome = Some(point);
+                updated.outcome = Some(data);
                 state
                     .open_branches
                     .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
             }
-            _ => unreachable!("the outcome point was selected above"),
+            _ => unreachable!("the outcome data was selected above"),
         };
         state.open_branches = state.open_branches.with_facts_at(
             self.focused_branch,
@@ -303,7 +303,7 @@ impl<'a> Proof<'a> {
             };
             // The goal owns the path-local pure facts. Effect-region facts
             // stay in the execution snapshot and are consumed only by the
-            // checked point operations that explicitly cross effects.
+            // checked fixed-state operations that explicitly cross effects.
             let mut facts = self.facts().clone();
             for fact in path.facts() {
                 facts = facts.with_fact(fact.proposition().clone());
@@ -319,11 +319,11 @@ impl<'a> Proof<'a> {
                             path_index,
                             selection: effect_selection,
                             checked_effects: Arc::new(Vec::new()),
-                            point: Arc::new(OutcomePointData {
+                            data: Arc::new(OutcomeProofData {
                                 result: Arc::new(result),
                                 state: state.into(),
                                 surface_propositions: provenance.surface_propositions,
-                                program_point_states: provenance.program_point_states,
+                                recorded_snapshots: provenance.recorded_snapshots,
                                 effect_facts: Arc::new(execution_facts),
                                 execution_pure_facts: Arc::new(path.facts().to_vec()),
                                 premise_anchor: frontier_anchor.clone(),
@@ -440,15 +440,24 @@ impl<'a> Proof<'a> {
 /// executed statement (or the most recent recorded program point), with an
 /// exit marker mapped to the matching recorded entry. Premises established
 /// across one statement use its entry snapshot as their stable Surface Click
-/// spelling; a retained Proof may carry the equivalent exit point as its most
-/// recent provenance marker. Outcome points and mid-execution judgments
+/// spelling; a retained Proof may carry the equivalent exit snapshot as its most
+/// recent provenance marker. Outcomes and mid-execution judgments
 /// anchor their premises by this one law.
 pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option<ProgramPointRef> {
     let anchor = execution
         .surface_record
         .last_step_entry
         .clone()
-        .or_else(|| execution.program_point_states.keys().next_back().cloned())?;
+        .or_else(|| {
+            execution
+                .recorded_snapshots
+                .keys()
+                .rev()
+                .find_map(|selector| match selector {
+                    SnapshotSelector::ProgramPoint(point) => Some(point.clone()),
+                    SnapshotSelector::Mark(_) => None,
+                })
+        })?;
     if anchor.kind != ProgramPointKind::Exit {
         return Some(anchor);
     }
@@ -458,7 +467,7 @@ pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option
     };
     Some(
         execution
-            .program_point_states
+            .recorded_snapshots
             .contains_key(&entry)
             .then_some(entry)
             .unwrap_or(anchor),

@@ -2424,7 +2424,7 @@ fn fold_composite_resources_on_outcome_with_facts(
                     .count();
                 let snapshot_note = if identically_printed > 0 {
                     format!(
-                        "\n  note: {identically_printed} available fact(s) print identically but carry different memory-snapshot terms, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
+                        "\n  note: {identically_printed} available fact(s) print identically but carry different embedded memory snapshots, and the recorded execution effects do not prove the snapshots agree at the loaded pointers"
                     )
                 } else {
                     String::new()
@@ -2453,7 +2453,7 @@ fn fold_composite_resources_on_outcome_with_facts(
         };
         let mut post_state = state;
         // Range forms in held resource facts embed loads at their
-        // creation snapshot; carrying them to the fold point needs the
+        // creation snapshot; carrying them to the fold state needs the
         // execution's store effect facts alongside the pure facts.
         let mut assumptions = pure_facts.assumptions().clone();
         for fact in execution_pure_facts {

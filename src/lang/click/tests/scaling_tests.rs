@@ -513,7 +513,7 @@ fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
 }
 
 /// Load variables are content-addressed: constructing one, and finding the
-/// same variable again for an unwritten cell at a later point, must cost work
+/// same variable again for an unwritten cell in a later state, must cost work
 /// proportional to the load and the steps it crosses, not to the number of
 /// load variables or facts already in the proof.
 #[test]
@@ -776,50 +776,47 @@ fn scaling_assertion_rejects_a_quadratic_curve() {
 }
 
 #[test]
-fn program_point_branch_merge_visits_only_fork_local_changes() {
-    let point = |name: String| ProgramPointRef {
-        region: CodeRegionRef::Mark(name),
-        kind: ProgramPointKind::Entry,
-    };
-    let common_point = point("common".to_string());
-    let left_only = point("left-only".to_string());
-    let right_only = point("right-only".to_string());
+fn recorded_snapshot_branch_merge_visits_only_fork_local_changes() {
+    let mark_selector = |name: String| SnapshotSelector::Mark(name);
+    let common_selector = mark_selector("common".to_string());
+    let left_only = mark_selector("left-only".to_string());
+    let right_only = mark_selector("right-only".to_string());
     let common_state = CState::new();
     let mut samples = Vec::new();
 
     for size in [16_usize, 64, 256, 1024, 4096] {
-        let mut ancestor = ProgramPointStates::new();
+        let mut ancestor = RecordedSnapshots::new();
         for index in 0..size {
-            ancestor.insert(point(format!("ambient-{index:05}")), CState::new());
+            ancestor.insert(mark_selector(format!("ambient-{index:05}")), CState::new());
         }
         let mut left = ancestor.clone();
         let mut right = ancestor.clone();
-        left.insert(common_point.clone(), common_state.clone());
-        right.insert(common_point.clone(), common_state.clone());
+        left.insert(common_selector.clone(), common_state.clone());
+        right.insert(common_selector.clone(), common_state.clone());
         left.insert(left_only.clone(), CState::new());
         right.insert(right_only.clone(), CState::new());
 
-        let before = program_point_node_allocations();
+        let before = recorded_snapshot_node_allocations();
         let merged = left
             .common_descendant(&right, &ancestor)
             .expect("fork siblings should have an exact persistent ancestor");
-        let allocations = program_point_node_allocations() - before;
+        let allocations = recorded_snapshot_node_allocations() - before;
         samples.push((
             size,
             (usize::BITS - size.leading_zeros()) as usize,
             allocations,
         ));
 
-        assert_eq!(merged.get(&common_point), Some(&common_state));
+        assert_eq!(merged.get(&common_selector), Some(&common_state));
         assert!(merged.get(&left_only).is_none());
         assert!(merged.get(&right_only).is_none());
         assert_eq!(
-            merged.get(&point(format!("ambient-{:05}", size / 2))),
+            merged.get(&mark_selector(format!("ambient-{:05}", size / 2))),
             Some(&CState::new())
         );
         assert_eq!(ancestor.iter().count(), size);
 
-        let unrelated = ProgramPointStates::new();
+        let unrelated = RecordedSnapshots::new();
         assert!(left.common_descendant(&right, &unrelated).is_none());
     }
 
@@ -828,7 +825,7 @@ fn program_point_branch_merge_visits_only_fork_local_changes() {
         let bound = base_allocations + 8 * (height - base_height);
         assert!(
             allocations <= bound,
-            "size {size} program-point merge allocated {allocations} nodes (logarithmic bound {bound})"
+            "size {size} recorded-snapshot merge allocated {allocations} nodes (logarithmic bound {bound})"
         );
     }
 }

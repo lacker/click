@@ -194,7 +194,7 @@ impl PureFactContext {
                                 )
                         )
                     // Two terms for one value that differ only
-                    // representationally (snapshot terms inside loads,
+                    // representationally (memory snapshots embedded in loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls are memoized.
                     || *value
@@ -714,7 +714,7 @@ impl PureFactContext {
                                 )
                         )
                     // Two terms for one value that differ only
-                    // representationally (snapshot terms inside loads,
+                    // representationally (memory snapshots embedded in loads,
                     // including under folds and conditionals) are equal by
                     // deep canonicalization; both calls are memoized.
                     || *value

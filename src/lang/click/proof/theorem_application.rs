@@ -6,7 +6,7 @@ pub(super) struct TheoremApplicationContext<'a> {
     pub(super) pre_state: &'a CState,
     pub(super) post_state: &'a CState,
     pub(super) result: Option<&'a CValue>,
-    pub(super) program_point_states: &'a ProgramPointStates,
+    pub(super) recorded_snapshots: &'a RecordedSnapshots,
 }
 
 pub(super) fn apply_theorem_applications_to_available(
@@ -292,7 +292,7 @@ pub(super) fn theorem_application_bindings(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                context.program_point_states,
+                context.recorded_snapshots,
                 &mut active_functions,
             )?;
             let expected_element_type =
@@ -328,7 +328,7 @@ pub(super) fn theorem_application_bindings(
                 argument,
                 predicate_environment,
                 click_function_environment,
-                context.program_point_states,
+                context.recorded_snapshots,
                 &mut active_functions,
             )?;
             if !c_value_matches_click_type(&value, parameter.c_type()) {

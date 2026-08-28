@@ -185,7 +185,7 @@ in a generation-independent positive cache (only negative answers are retried
 after an edge is added); four-byte loadability checks rank bounded
 structure/DAG-matching ranges ahead of unrelated same-block ranges; and
 certificate minimization declines optional general search over deeply nested
-snapshot terms. The same run now reaches the separate certificate-spelling
+terms carrying memory snapshots. The same run now reaches the separate certificate-spelling
 frontier in about 10.4s. The regression test keeps several misleading
 same-block loadability ranges alongside the owned-string symbolic buffer range.
 

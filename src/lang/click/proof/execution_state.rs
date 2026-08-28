@@ -452,7 +452,7 @@ impl ProofFactStore {
 /// for each committed search move at the moment the move is made. Passing
 /// `None` runs the executor without surface-certificate construction.
 /// The path's surface record: what the constructed certificate's own check
-/// knows at this point. Planning sinks seed from it and write the anchor
+/// knows in the current state. Planning sinks seed from it and write the anchor
 /// back; a proof-level case split records its choice here.
 #[derive(Clone, Default)]
 pub(super) struct SurfaceRecord {
@@ -462,7 +462,7 @@ pub(super) struct SurfaceRecord {
     pub(super) path_choices: Vec<SurfacePathChoice>,
     pub(super) blocker: Option<String>,
     /// The facts the constructed certificate's own check will have at the
-    /// current point. Planning executes with automatically transported facts,
+    /// current state. Planning executes with automatically transported facts,
     /// but certificate validation carries only path facts, statement-local
     /// rewrites, and explicit surface transports across each step. Generated
     /// evidence is written against this certificate-visible set.
@@ -905,7 +905,7 @@ pub(super) fn append_surface_tactics_by_leaf(
 /// Appends one context's post-execution surface tactics as a flat top-level
 /// suffix. A proof-branch context records its branch decision as a
 /// [`SurfacePathChoice`]; the tactics it runs after that decision belong after
-/// the choice point — where cross-context synthesis will place the surface
+/// the branch choice — where cross-context synthesis will place the surface
 /// `if` — not inside the leaves of an earlier execution branch, which would
 /// graft one case's closers onto execution paths the case excluded.
 pub(super) fn append_surface_tactics_flat(
@@ -1007,7 +1007,7 @@ pub(super) fn surface_branch_path_for_outcome(
     pre_state: &CState,
     post_state: &CState,
     result: &CValue,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<bool>, String> {
@@ -1020,7 +1020,7 @@ pub(super) fn surface_branch_path_for_outcome(
         }) else {
             return Ok(branch_path);
         };
-        let lowered = lower_outcome_proposition_with_program_points(
+        let lowered = lower_outcome_proposition_with_recorded_snapshots(
             parameters,
             arguments,
             pre_state,
@@ -1030,7 +1030,7 @@ pub(super) fn surface_branch_path_for_outcome(
             &proof_if.condition,
             predicate_environment,
             click_function_environment,
-            program_point_states,
+            recorded_snapshots,
         )?;
         let assumptions = assumptions_from_propositions(available);
         let is_true = exact_fact_is_available(&lowered, available) || assumptions.proves(&lowered);
@@ -1322,7 +1322,7 @@ mod proof_fact_store_tests {
             }
             let remaining = Arc::new(statement);
             let mut frontier = ExecutionFrontier {
-                point: ProofExecutionPoint::StatementEntry {
+                position: FrontierPosition::StatementEntry {
                     remaining: remaining.clone(),
                 },
                 continuations: PersistentSequence::default(),
@@ -1335,13 +1335,13 @@ mod proof_fact_store_tests {
             let ancestor = frontier.clone();
 
             let (
-                ProofExecutionPoint::StatementEntry {
+                FrontierPosition::StatementEntry {
                     remaining: fork_remaining,
                 },
-                ProofExecutionPoint::StatementEntry {
+                FrontierPosition::StatementEntry {
                     remaining: ancestor_remaining,
                 },
-            ) = (&frontier.point, &ancestor.point)
+            ) = (&frontier.position, &ancestor.position)
             else {
                 panic!("test frontiers should remain at statement entry")
             };
@@ -1504,7 +1504,7 @@ pub(super) enum ExecutionRegionKind {
 
 #[derive(Clone, Default)]
 pub(super) struct ExecutionFrontier {
-    pub(super) point: ProofExecutionPoint,
+    pub(super) position: FrontierPosition,
     pub(super) region: ExecutionRegionKind,
     pub(super) execution_start_state: Option<CState>,
     pub(super) next_statement_index: usize,
@@ -1518,7 +1518,7 @@ pub(super) struct ProofExecutionContinuation {
 }
 
 #[derive(Clone, Default)]
-pub(super) enum ProofExecutionPoint {
+pub(super) enum FrontierPosition {
     #[default]
     FunctionEntry,
     StatementEntry {
@@ -1535,26 +1535,26 @@ pub(super) enum ProofExecutionPoint {
 }
 impl ExecutionFrontier {
     pub(super) fn is_at_function_exit(&self) -> bool {
-        matches!(self.point, ProofExecutionPoint::FunctionExit { .. })
+        matches!(self.position, FrontierPosition::FunctionExit { .. })
     }
 
     pub(super) fn is_at_function_entry(&self) -> bool {
-        matches!(self.point, ProofExecutionPoint::FunctionEntry)
+        matches!(self.position, FrontierPosition::FunctionEntry)
     }
 
     /// Execution reached the typed back-edge boundary of a bounded region:
     /// the region's own statement tree is exhausted and no enclosing
     /// continuation remains.
     pub(super) fn is_at_region_boundary(&self) -> bool {
-        matches!(self.point, ProofExecutionPoint::RegionBoundary)
+        matches!(self.position, FrontierPosition::RegionBoundary)
     }
 
     pub(super) fn execution(&self) -> Option<&CFunctionExecutionCandidates> {
-        match &self.point {
-            ProofExecutionPoint::FunctionEntry
-            | ProofExecutionPoint::StatementEntry { .. }
-            | ProofExecutionPoint::RegionBoundary => None,
-            ProofExecutionPoint::FunctionExit { execution, .. } => Some(execution),
+        match &self.position {
+            FrontierPosition::FunctionEntry
+            | FrontierPosition::StatementEntry { .. }
+            | FrontierPosition::RegionBoundary => None,
+            FrontierPosition::FunctionExit { execution, .. } => Some(execution),
         }
     }
 
@@ -1594,15 +1594,15 @@ pub(super) fn old_reference_state<'a>(
     }
 }
 
-/// The execution data that lowering and point proofs read: the frontier,
-/// the recorded program-point states, the surface spellings, the effect
+/// The execution data that lowering and fixed-state proofs read: the frontier,
+/// the recorded snapshots, the surface spellings, the effect
 /// facts, and the state `old(...)` resolves to. Owners build it from
 /// wherever they keep those fields, so consumers do not depend on the
 /// check bag's layout.
 #[derive(Clone, Copy)]
 pub(super) struct ExecutionView<'a> {
     pub(super) frontier: &'a ExecutionFrontier,
-    pub(super) program_point_states: &'a ProgramPointStates,
+    pub(super) recorded_snapshots: &'a RecordedSnapshots,
     pub(super) surface_propositions: &'a SurfacePropositionMap,
     pub(super) effect_facts: &'a [ExecutionPureFact],
     function_entry_state: Option<&'a CState>,
@@ -1638,13 +1638,13 @@ impl<'a> ExecutionView<'a> {
     pub(super) fn new(
         frontier: &'a ExecutionFrontier,
         effect_facts: &'a [ExecutionPureFact],
-        program_point_states: &'a ProgramPointStates,
+        recorded_snapshots: &'a RecordedSnapshots,
         surface_propositions: &'a SurfacePropositionMap,
         function_entry_state: Option<&'a CState>,
     ) -> Self {
         ExecutionView {
             frontier,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             effect_facts,
             function_entry_state,

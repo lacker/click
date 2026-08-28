@@ -216,8 +216,8 @@ pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Propositio
         if fact_base.block != base.block {
             return false;
         }
-        // Loadability of a covering span transports across snapshot term
-        // differences and recorded write effects just like an exact-range
+        // Loadability of a covering span transports across differences in
+        // embedded memory snapshots and recorded write effects just like an exact-range
         // fact does.
         if fact_memory != memory
             && !crate::kernel::reasoning::memory_range_still_available(fact_memory, memory, base)

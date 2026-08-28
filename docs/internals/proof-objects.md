@@ -36,7 +36,7 @@ during ordinary verification in the intended architecture.
 
 `ExecutionProofState` owns every semantic path fact: the `CState`, the
 execution frontier (program point, region, region start state, continuations),
-the program-point states recorded on the path, the surface spellings the path
+the snapshots recorded on the path, the surface spellings the path
 has lowered, case assumptions, execution facts, frontier-local loop clauses
 and rules, function-entry prerequisites and derivations, planned statement
 transitions, the freshness counters, the loop-effect goal and region flags,
@@ -58,8 +58,14 @@ source or generated proof tree is checked that way. The earlier interpreter
 that advanced this context as a parallel engine is gone; the snapshot owns the
 C store and the goal owns the facts.
 
-Lowering and point proofs read execution data through `ExecutionView`, a
-borrowed view of the frontier, recorded program-point states, surface
+`RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
+A selector is either a static C `ProgramPointRef` or a proof-local mark. A
+recorded `CState` is logically complete, but its memory, facts, and resources
+are immutable shared roots: recording or branching a snapshot copies only
+small roots and changed map paths rather than materializing the whole state.
+
+Lowering and fixed-state proofs read execution data through `ExecutionView`, a
+borrowed view of the frontier, recorded snapshots, surface
 spellings, execution facts, and the `old(...)` reference state. It is built from
 typed fields only (`ExecutionProofState::view`, or `ExecutionView::new` for a
 planner's scratch state); nothing in it borrows a cursor.

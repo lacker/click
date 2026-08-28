@@ -16,7 +16,7 @@ fn proposition_is_reflexive_equality(proposition: &Proposition) -> bool {
     }
 }
 
-pub(super) fn checked_surface_fact_at_point(
+pub(super) fn checked_surface_fact_in_state(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     available: &[Proposition],
@@ -27,7 +27,7 @@ pub(super) fn checked_surface_fact_at_point(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
-    checked_surface_fact_at_point_with_assumptions(
+    checked_surface_fact_in_state_with_assumptions(
         view,
         kernel,
         &assumptions,
@@ -40,7 +40,7 @@ pub(super) fn checked_surface_fact_at_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn checked_surface_fact_at_point_with_assumptions(
+fn checked_surface_fact_in_state_with_assumptions(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     assumptions: &PureFactContext,
@@ -51,7 +51,7 @@ fn checked_surface_fact_at_point_with_assumptions(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     let check = |surface: &ClickProposition| {
-        lower_point_proposition_with_assumptions(
+        lower_fixed_state_proposition_with_assumptions(
             surface,
             assumptions,
             parameters,
@@ -59,7 +59,7 @@ fn checked_surface_fact_at_point_with_assumptions(
             view.old_reference_state(state),
             state,
             None,
-            &view.program_point_states,
+            &view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -116,13 +116,13 @@ fn checked_surface_fact_at_point_with_assumptions(
             else {
                 continue;
             };
-            for point in view.program_point_states.keys().rev() {
+            for selector in view.recorded_snapshots.keys().rev() {
                 let candidate = ClickProposition::PredicateCall {
                     name: surface_name.clone(),
                     arguments: surface_arguments
                         .iter()
                         .map(|argument| ContractExpression::At {
-                            selector: VisitSelector::ProgramPoint(point.clone()),
+                            selector: selector.clone(),
                             expression: Box::new(argument.clone()),
                         })
                         .collect(),
@@ -161,23 +161,23 @@ fn checked_surface_fact_at_point_with_assumptions(
     let round_trip_matches =
         |lowered: &Proposition| lowered == kernel || *lowered == resolved_kernel;
     // A fact that mentions a load variable is anchored to the snapshot its
-    // cell was read from; synthesize it through the program point recorded
-    // for that snapshot, so the form stays correct at every later proof
-    // point where the certificate is checked, rather than a plain form
+    // cell was read from; synthesize it through the selector recorded for
+    // that snapshot, so the form stays correct in every later proof state
+    // where the certificate is checked, rather than a plain form
     // that is correct only until the cell changes.
     if crate::kernel::proposition_mentions_registered_load_variable(kernel) {
-        let (exact_points, compatible_points) =
-            snapshot_indexed_program_points(&resolved_kernel, &view.program_point_states);
-        for (point, point_state) in exact_points.iter().chain(&compatible_points) {
+        let (exact_snapshots, compatible_snapshots) =
+            snapshot_indexed_selectors(&resolved_kernel, &view.recorded_snapshots);
+        for (selector, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
             let Some(candidate) = synthesize_surface_proposition(
                 &resolved_kernel,
                 parameters,
                 arguments,
-                point_state,
+                snapshot_state,
             ) else {
                 continue;
             };
-            let Ok(anchored) = surface_with_source_site(&candidate, point) else {
+            let Ok(anchored) = surface_at_snapshot(&candidate, *selector) else {
                 continue;
             };
             if check(&anchored).as_ref().is_ok_and(&round_trip_matches) {
@@ -212,17 +212,17 @@ fn checked_surface_fact_at_point_with_assumptions(
     }
     match lowered {
         Ok(lowered) => Err(ClickError::new(format!(
-            "synthesized Click fact does not lower to the kernel fact at this proof point\n  Click: {candidate:?}\n  lowered: {lowered:?}\n  kernel: {kernel:?}"
+            "synthesized Click fact does not lower to the kernel fact at this proof state\n  Click: {candidate:?}\n  lowered: {lowered:?}\n  kernel: {kernel:?}"
         ))),
         Err(error) => Err(ClickError::new(format!(
-            "synthesized Click fact could not be lowered at this proof point\n  Click: {candidate:?}\n  error: {}\n  kernel: {kernel:?}",
+            "synthesized Click fact could not be lowered at this proof state\n  Click: {candidate:?}\n  error: {}\n  kernel: {kernel:?}",
             error.message()
         ))),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn checked_surface_frame_premise_at_point(
+fn checked_surface_frame_premise_in_state(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     available: &[Proposition],
@@ -232,7 +232,7 @@ fn checked_surface_frame_premise_at_point(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
-    checked_surface_fact_at_point(
+    checked_surface_fact_in_state(
         view,
         kernel,
         available,
@@ -318,23 +318,23 @@ fn proposition_snapshot_memories(proposition: &Proposition) -> Vec<CMemory> {
     memories
 }
 
-type ProgramPointStateMatches<'a> = Vec<(&'a ProgramPointRef, &'a CState)>;
+type SnapshotMatches<'a> = Vec<(&'a SnapshotSelector, &'a CState)>;
 
-pub(super) fn snapshot_indexed_program_points<'a>(
+pub(super) fn snapshot_indexed_selectors<'a>(
     kernel: &Proposition,
-    program_point_states: &'a ProgramPointStates,
-) -> (ProgramPointStateMatches<'a>, ProgramPointStateMatches<'a>) {
+    recorded_snapshots: &'a RecordedSnapshots,
+) -> (SnapshotMatches<'a>, SnapshotMatches<'a>) {
     let memories = proposition_snapshot_memories(kernel);
     let mut exact = Vec::new();
     let mut compatible = Vec::new();
-    for (point, state) in program_point_states.iter().rev() {
+    for (selector, state) in recorded_snapshots.iter().rev() {
         if memories.iter().any(|memory| memory == state.memory()) {
-            exact.push((point, state));
+            exact.push((selector, state));
         } else if memories
             .iter()
             .any(|memory| memory.has_same_snapshot_markers(state.memory()))
         {
-            compatible.push((point, state));
+            compatible.push((selector, state));
         }
     }
     (exact, compatible)
@@ -347,7 +347,7 @@ pub(super) enum SurfaceFactMatch {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn checked_surface_comparison_fact_at_point(
+pub(super) fn checked_surface_comparison_fact_in_state(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
@@ -359,7 +359,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
-    checked_surface_comparison_fact_at_point_with_availability(
+    checked_surface_comparison_fact_in_state_with_availability(
         view,
         kernel,
         match_kind,
@@ -376,7 +376,7 @@ pub(super) fn checked_surface_comparison_fact_at_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
+pub(super) fn checked_surface_comparison_fact_in_state_with_indexed_facts(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
@@ -388,7 +388,7 @@ pub(super) fn checked_surface_comparison_fact_at_point_with_indexed_facts(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
-    checked_surface_comparison_fact_at_point_with_availability(
+    checked_surface_comparison_fact_in_state_with_availability(
         view,
         kernel,
         match_kind,
@@ -417,7 +417,7 @@ pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<ClickProposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
-    checked_surface_comparison_fact_at_point_with_availability(
+    checked_surface_comparison_fact_in_state_with_availability(
         view,
         kernel,
         match_kind,
@@ -434,7 +434,7 @@ pub(super) fn checked_surface_comparison_fact_for_typed_derivation(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn checked_surface_comparison_fact_at_point_with_availability(
+fn checked_surface_comparison_fact_in_state_with_availability(
     view: ExecutionView<'_>,
     kernel: &Proposition,
     match_kind: SurfaceFactMatch,
@@ -484,7 +484,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
     let strictly_available = |surface: &ClickProposition| {
-        lower_point_proposition_with_assumptions(
+        lower_fixed_state_proposition_with_assumptions(
             surface,
             assumptions,
             parameters,
@@ -492,7 +492,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             view.old_reference_state(state),
             state,
             None,
-            &view.program_point_states,
+            &view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -500,7 +500,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         .is_ok_and(&fact_is_available)
     };
     // A snapshot-indexed form paired with this exact available kernel fact
-    // is checkable through the view engine's program-point record. Requiring
+    // is checkable through the recorded-snapshot map. Requiring
     // it to lower again against the current heap would incorrectly demand that
     // old loads remain loadable now. Current-state forms do not have that
     // stable anchor and still go through `strictly_available` below.
@@ -550,7 +550,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             // loop-region proof). The candidate lowering resolves recorded
             // snapshots without demanding current loadability, so it is the
             // right scope check here.
-            && lower_surface_candidate_at_point_with_assumptions(
+            && lower_surface_candidate_in_state_with_assumptions(
                 view,
                 surface,
                 assumptions,
@@ -567,12 +567,12 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     // A fact that mentions a load variable is anchored to the snapshot the
     // cell was read from, so its program-point-anchored surface forms stay
-    // correct at every later proof point, while a plain current-state form
+    // correct at every later proof state, while a plain current-state form
     // is correct only until the cell changes: anchored forms are tried first
     // and plain forms last.
     let prefer_anchored = crate::kernel::proposition_mentions_registered_load_variable(kernel);
     if !prefer_anchored
-        && let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
+        && let Ok(surface) = checked_surface_fact_in_state_with_assumptions(
             view,
             kernel,
             assumptions,
@@ -594,7 +594,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         }
     }
     let resolved_kernel = crate::kernel::resolve_minted_load_variables(kernel, &view.effect_facts);
-    // Load variables represent loads whose snapshots the point index needs;
+    // Load variables represent loads whose snapshots the snapshot index needs;
     // resolve through the registry when no defining fact is in scope, and
     // index points from the load term rather than the kernel variable.
     let resolved_kernel = if &resolved_kernel == kernel {
@@ -602,17 +602,17 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     } else {
         resolved_kernel
     };
-    let (exact_points, compatible_points) =
-        snapshot_indexed_program_points(&resolved_kernel, &view.program_point_states);
+    let (exact_snapshots, compatible_snapshots) =
+        snapshot_indexed_selectors(&resolved_kernel, &view.recorded_snapshots);
     if let Some(surface) =
         synthesize_surface_proposition(&resolved_kernel, parameters, arguments, state)
         && !bases.contains(&surface)
     {
         bases.push(surface);
     }
-    for (_, point_state) in exact_points.iter().chain(&compatible_points) {
+    for (_, snapshot_state) in exact_snapshots.iter().chain(&compatible_snapshots) {
         if let Some(surface) =
-            synthesize_surface_proposition(&resolved_kernel, parameters, arguments, point_state)
+            synthesize_surface_proposition(&resolved_kernel, parameters, arguments, snapshot_state)
             && !bases.contains(&surface)
         {
             bases.push(surface);
@@ -622,7 +622,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         bases
             .iter()
             .find(|base| {
-                lower_surface_candidate_at_point_with_assumptions(
+                lower_surface_candidate_in_state_with_assumptions(
                     view,
                     base,
                     assumptions,
@@ -647,10 +647,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     if !prefer_anchored && let Some(base) = plain_base_candidate(&bases) {
         return Ok(base);
     }
-    for (point, _) in exact_points.iter().chain(&compatible_points) {
+    for (selector, _) in exact_snapshots.iter().chain(&compatible_snapshots) {
         for base in &bases {
-            if let Ok(candidate) = surface_with_source_site(base, point)
-                && lower_surface_candidate_at_point_with_assumptions(
+            if let Ok(candidate) = surface_at_snapshot(base, *selector)
+                && lower_surface_candidate_in_state_with_assumptions(
                     view,
                     &candidate,
                     assumptions,
@@ -673,29 +673,29 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             else {
                 continue;
             };
-            let at_point = |expression: &ContractExpression| ContractExpression::At {
-                selector: VisitSelector::ProgramPoint((*point).clone()),
+            let at_snapshot = |expression: &ContractExpression| ContractExpression::At {
+                selector: (*selector).clone(),
                 expression: Box::new(expression.clone()),
             };
             let candidates = [
                 ClickProposition::Comparison {
-                    left: at_point(left),
+                    left: at_snapshot(left),
                     operator: *operator,
-                    right: at_point(right),
+                    right: at_snapshot(right),
                 },
                 ClickProposition::Comparison {
-                    left: at_point(left),
+                    left: at_snapshot(left),
                     operator: *operator,
                     right: right.clone(),
                 },
                 ClickProposition::Comparison {
                     left: left.clone(),
                     operator: *operator,
-                    right: at_point(right),
+                    right: at_snapshot(right),
                 },
             ];
             for candidate in candidates {
-                let lowered = lower_surface_candidate_at_point_with_assumptions(
+                let lowered = lower_surface_candidate_in_state_with_assumptions(
                     view,
                     &candidate,
                     assumptions,
@@ -713,18 +713,18 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             }
         }
     }
-    for indexed_points in [&exact_points, &compatible_points] {
-        let points = indexed_points
+    for indexed_snapshots in [&exact_snapshots, &compatible_snapshots] {
+        let selectors = indexed_snapshots
             .iter()
-            .map(|(point, _)| (*point).clone())
+            .map(|(selector, _)| (*selector).clone())
             .collect::<Vec<_>>();
         for base in &bases {
-            let Some(variants) = comparison_program_point_variants(base, &points) else {
+            let Some(variants) = comparison_snapshot_variants(base, &selectors) else {
                 continue;
             };
             for candidate in variants {
                 check_verification_deadline()?;
-                if lower_surface_candidate_at_point_with_assumptions(
+                if lower_surface_candidate_in_state_with_assumptions(
                     view,
                     &candidate,
                     assumptions,
@@ -743,7 +743,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         }
     }
     if prefer_anchored {
-        if let Ok(surface) = checked_surface_fact_at_point_with_assumptions(
+        if let Ok(surface) = checked_surface_fact_in_state_with_assumptions(
             view,
             kernel,
             assumptions,
@@ -762,13 +762,13 @@ fn checked_surface_comparison_fact_at_point_with_availability(
     }
     if let Some(exhaustion) = surface_synthesis_exhaustion_description() {
         return Err(ClickError::new(format!(
-            "comparison fact has no checked surface form at this proof point: {exhaustion}"
+            "comparison fact has no checked surface form at this proof state: {exhaustion}"
         )));
     }
     Err(ClickError::new(format!(
-        "comparison fact has no checkable surface form at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
-        exact_points.len(),
-        compatible_points.len(),
+        "comparison fact has no checkable surface form at this proof state ({} exact and {} compatible recorded snapshots, {} structural bases)",
+        exact_snapshots.len(),
+        compatible_snapshots.len(),
         bases.len(),
     )))
 }
@@ -822,7 +822,7 @@ pub(super) fn lower_certified_frame_path_tactics(
     surface_propositions: &mut SurfacePropositionMap,
     frontier: &ExecutionFrontier,
     effect_facts: &[ExecutionPureFact],
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     proof_context: &ExecutionProofContext<'_>,
     state: &CState,
     available: &[Proposition],
@@ -856,11 +856,11 @@ pub(super) fn lower_certified_frame_path_tactics(
                 .flat_map(PropositionDerivation::context_premises)
             {
                 check_verification_deadline()?;
-                if let Ok(surface) = checked_surface_frame_premise_at_point(
+                if let Ok(surface) = checked_surface_frame_premise_in_state(
                     ExecutionView::new(
                         frontier,
                         effect_facts,
-                        program_point_states,
+                        recorded_snapshots,
                         surface_propositions,
                         proof_context.constants.function_entry_state.as_ref(),
                     ),
@@ -908,42 +908,42 @@ pub(super) fn lower_certified_frame_path_tactics(
                 let memories = c_condition_fact_memories(derivation.conclusion());
                 // Prefer the stable function-entry selector. Statement-entry
                 // states are transient planning artifacts.
-                let mut candidate_points = Vec::new();
+                let mut candidate_snapshots = Vec::new();
                 if let Some(entry_state) = &proof_context.constants.function_entry_state {
-                    candidate_points.push((
-                        ProgramPointRef {
+                    candidate_snapshots.push((
+                        SnapshotSelector::ProgramPoint(ProgramPointRef {
                             region: CodeRegionRef::Function,
                             kind: ProgramPointKind::Entry,
-                        },
+                        }),
                         entry_state.clone(),
                     ));
                 }
-                candidate_points.extend(
-                    program_point_states
+                candidate_snapshots.extend(
+                    recorded_snapshots
                         .iter()
                         .rev()
-                        .map(|(point, state)| (point.clone(), state.clone())),
+                        .map(|(selector, state)| (selector.clone(), state.clone())),
                 );
-                let anchor_point = candidate_points
+                let anchor_snapshot = candidate_snapshots
                     .into_iter()
-                    .find(|(_, point_state)| {
+                    .find(|(_, snapshot_state)| {
                         !memories.is_empty()
                             && memories.iter().any(|memory| {
-                                memory.has_same_snapshot_markers(point_state.memory())
+                                memory.has_same_snapshot_markers(snapshot_state.memory())
                             })
                     })
-                    .map(|(point, _)| point);
+                    .map(|(selector, _)| selector);
                 let (conclusion, proof) = lower_surface_atomic_derivation(
                     ExecutionView::new(
                         frontier,
                         effect_facts,
-                        program_point_states,
+                        recorded_snapshots,
                         surface_propositions,
                         proof_context.constants.function_entry_state.as_ref(),
                     ),
                     derivation,
                     None,
-                    anchor_point.as_ref(),
+                    anchor_snapshot.as_ref(),
                     &path_available,
                     parameters,
                     arguments,
@@ -1143,7 +1143,7 @@ pub(super) fn append_proof_step_for_operation(
                     {
                         continue;
                     }
-                    let Ok(lowered) = lower_surface_candidate_at_point(
+                    let Ok(lowered) = lower_surface_candidate_in_state(
                         construction.view(construction.context),
                         &surface,
                         &evidence.transition.pure_facts,
@@ -1305,16 +1305,15 @@ pub(super) fn append_proof_step_for_operation(
                                     else {
                                         return None;
                                     };
-                                    let source_point = predicate_call_source_site(surface);
+                                    let source_selector = predicate_call_snapshot_selector(surface);
                                     let definition = predicate_environment.get(surface_name)?;
                                     let mut surface = instantiate_click_predicate_definition(
                                         definition,
                                         surface_arguments,
                                     )
                                     .ok()?;
-                                    if let Some(point) = source_point {
-                                        surface =
-                                            surface_with_source_site(&surface, &point).ok()?;
+                                    if let Some(selector) = source_selector {
+                                        surface = surface_at_snapshot(&surface, &selector).ok()?;
                                     }
                                     Some((surface, unfolded.clone()))
                                 })
@@ -1365,7 +1364,7 @@ pub(super) fn append_proof_step_for_operation(
                     })
                     .collect::<Vec<_>>();
                 for have in current_loadable_haves {
-                    let Ok((fact, plan)) = plan_smart_have_at_current_point(
+                    let Ok((fact, plan)) = plan_smart_have_in_current_state(
                         &have,
                         "surface loop-summary certificate",
                         0,
@@ -1376,7 +1375,7 @@ pub(super) fn append_proof_step_for_operation(
                             .context
                             .old_reference_state(&construction.frontier, state),
                         state,
-                        &construction.program_point_states,
+                        &construction.recorded_snapshots,
                         &construction.surface_propositions,
                         predicate_environment,
                         click_function_environment,
@@ -1448,7 +1447,7 @@ pub(super) fn append_proof_step_for_operation(
                         proposition: invariant,
                         proof: SourceProof::Tactic(SmartTactic::Simp),
                     };
-                    let planned = plan_smart_have_at_current_point(
+                    let planned = plan_smart_have_in_current_state(
                         &have,
                         "surface loop-summary certificate",
                         0,
@@ -1459,7 +1458,7 @@ pub(super) fn append_proof_step_for_operation(
                             .context
                             .old_reference_state(&construction.frontier, state),
                         state,
-                        &construction.program_point_states,
+                        &construction.recorded_snapshots,
                         &construction.surface_propositions,
                         predicate_environment,
                         click_function_environment,
@@ -1557,7 +1556,7 @@ pub(super) fn append_proof_step_for_operation(
                 let mut premises = Vec::new();
                 for (fact, normalized, materialized) in normalized_needed {
                     let check_candidate = |available_fact: &Proposition| {
-                        checked_surface_comparison_fact_at_point(
+                        checked_surface_comparison_fact_in_state(
                             view,
                             available_fact,
                             SurfaceFactMatch::CanonicalExact,
@@ -1616,7 +1615,7 @@ pub(super) fn append_proof_step_for_operation(
             construction.proof_certificate_builder.block(match premises {
                 Ok(_) => "a detached loop-summary certificate has no surface form; use a frontier-local `loop { ... }` tactic".to_string(),
                 Err(error) => format!(
-                    "could not express a loop-summary premise at the current proof point: {}",
+                    "could not express a loop-summary premise at the current proof state: {}",
                     error.message()
                 ),
             });
@@ -1685,26 +1684,27 @@ pub(super) fn append_proof_step_for_operation(
                 ));
                 return;
             }
-            let mut points = construction
-                .program_point_states
+            let mut selectors = construction
+                .recorded_snapshots
                 .keys()
                 .cloned()
                 .collect::<Vec<_>>();
-            if !points.contains(&step_entry) {
-                points.push(step_entry.clone());
+            let step_entry = SnapshotSelector::ProgramPoint(step_entry);
+            if !selectors.contains(&step_entry) {
+                selectors.push(step_entry);
             }
             let mut candidates = Vec::new();
             for base_surface in base_surfaces {
                 let mut variants = vec![base_surface.clone()];
-                for point in &points {
-                    if let Ok(candidate) = surface_with_source_site(&base_surface, point)
+                for selector in &selectors {
+                    if let Ok(candidate) = surface_at_snapshot(&base_surface, selector)
                         && !variants.contains(&candidate)
                     {
                         variants.push(candidate);
                     }
                 }
                 if let Some(comparison_variants) =
-                    comparison_program_point_variants(&base_surface, &points)
+                    comparison_snapshot_variants(&base_surface, &selectors)
                 {
                     for candidate in comparison_variants {
                         if !variants.contains(&candidate) {
@@ -1723,7 +1723,7 @@ pub(super) fn append_proof_step_for_operation(
                     return None;
                 }
                 let lower = |candidate: &ClickProposition| {
-                    lower_surface_candidate_at_point(
+                    lower_surface_candidate_in_state(
                         construction.view(construction.context),
                         candidate,
                         available,
@@ -1743,8 +1743,8 @@ pub(super) fn append_proof_step_for_operation(
                     if &actual == expected {
                         return Some((candidate.clone(), actual));
                     }
-                    // The certified pair may sit at a snapshot no recorded
-                    // point reproduces syntactically; accept a candidate
+                    // The certified pair may sit at a snapshot that no
+                    // recorded selector reproduces syntactically; accept a candidate
                     // whose lowering provably transports to the certified
                     // form.
                     if memory_erased_comparison(&actual).is_some()
@@ -1858,8 +1858,8 @@ pub(super) fn append_proof_step_for_operation(
                     }
                 }
                 _ => construction.proof_certificate_builder.block(format!(
-                    "no placement of the comparison operands at the {} recorded program points lowered to the certified fact transport\n  certified source: {source:?}\n  certified target: {target:?}",
-                    points.len()
+                    "no placement of the comparison operands at the {} recorded snapshots lowered to the certified fact transport\n  certified source: {source:?}\n  certified target: {target:?}",
+                    selectors.len()
                 )),
             }
         }
@@ -1884,7 +1884,7 @@ pub(super) fn append_proof_step_for_operation(
             } else {
                 negate_click_proposition(&condition)
             };
-            let lowered = lower_surface_candidate_at_point(
+            let lowered = lower_surface_candidate_in_state(
                 construction.view(construction.context),
                 &surface_fact,
                 available,
@@ -2087,7 +2087,7 @@ enum PremiseForm {
 }
 
 /// Selects a Surface-expressible operation plan for a smart `have`/`simp` at
-/// the current proof point. The caller must apply this plan to `Proof`; the
+/// the current proof state. The caller must apply this plan to `Proof`; the
 /// planner result itself has no semantic authority.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn construct_smart_have_plan(
@@ -2105,7 +2105,7 @@ pub(super) fn construct_smart_have_plan(
 ) -> Result<(Proposition, SourceProof), ClickError> {
     let planning_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
-    let (fact, evidence) = plan_smart_have_at_current_point(
+    let (fact, evidence) = plan_smart_have_in_current_state(
         have,
         claim_label,
         tactic_index,
@@ -2114,7 +2114,7 @@ pub(super) fn construct_smart_have_plan(
         arguments,
         view.old_reference_state(state),
         state,
-        &view.program_point_states,
+        &view.recorded_snapshots,
         &view.surface_propositions,
         predicate_environment,
         click_function_environment,
@@ -2184,7 +2184,7 @@ pub(super) fn surface_smart_have_proof(
                         {
                             return Ok((kernel, PremiseForm::ExactlyAvailable));
                         }
-                        let freshly_lowered = lower_point_proposition(
+                        let freshly_lowered = lower_fixed_state_proposition(
                             surface,
                             &facts_for_restricted_simp_lowering(restricted_context_available),
                             parameters,
@@ -2192,7 +2192,7 @@ pub(super) fn surface_smart_have_proof(
                             view.old_reference_state(state),
                             state,
                             None,
-                            &view.program_point_states,
+                            &view.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         );
@@ -2277,7 +2277,7 @@ pub(super) fn surface_smart_have_proof(
                 ))
             })?
         };
-        let explicit_goal = lower_point_proposition(
+        let explicit_goal = lower_fixed_state_proposition(
             &active_surface_goal,
             &facts_for_restricted_simp_lowering(available),
             parameters,
@@ -2285,7 +2285,7 @@ pub(super) fn surface_smart_have_proof(
             view.old_reference_state(state),
             state,
             None,
-            &view.program_point_states,
+            &view.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )

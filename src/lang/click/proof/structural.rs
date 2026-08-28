@@ -20,11 +20,6 @@ pub(super) fn resolve_code_region_ref(
                     "`{claim_label}` tactic {tactic_index}: unknown code region label `{label}`"
                 ))
             })?,
-        CodeRegionRef::Mark(name) => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: proof mark `{name}` is not a code region"
-            )));
-        }
     })
 }
 

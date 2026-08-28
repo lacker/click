@@ -571,7 +571,7 @@ pub enum ClickProposition {
         expression: ContractExpression,
     },
     At {
-        selector: VisitSelector,
+        selector: SnapshotSelector,
         proposition: Box<ClickProposition>,
     },
     And(Box<ClickProposition>, Box<ClickProposition>),
@@ -1142,7 +1142,7 @@ impl SurfacePropositionMap {
     pub fn checked_surface<F>(
         &self,
         kernel: &Proposition,
-        mut lower_at_current_point: F,
+        mut lower_in_current_state: F,
     ) -> Result<ClickProposition, ClickError>
     where
         F: FnMut(&ClickProposition) -> Result<Proposition, ClickError>,
@@ -1154,14 +1154,14 @@ impl SurfacePropositionMap {
         })?;
         let mut last_mismatch = None;
         for surface in forms.ordered.iter().rev() {
-            match lower_at_current_point(surface) {
+            match lower_in_current_state(surface) {
                 Ok(lowered) if &lowered == kernel => return Ok(surface.clone()),
                 Ok(lowered) => last_mismatch = Some(format!("{surface:?} -> {lowered:?}")),
                 Err(error) => last_mismatch = Some(format!("{surface:?} -> {}", error.message())),
             }
         }
         Err(ClickError::new(format!(
-            "none of the recorded surface forms lower to the proposition at the current proof point{}; expected {kernel:?}",
+            "none of the recorded surface forms lower to the proposition at the current proof state{}; expected {kernel:?}",
             last_mismatch
                 .map(|mismatch| format!(" (last mismatch: {mismatch})"))
                 .unwrap_or_default()
@@ -1196,7 +1196,7 @@ pub enum ContractExpression {
     ResourceWildcard,
     Old(Box<ContractExpression>),
     At {
-        selector: VisitSelector,
+        selector: SnapshotSelector,
         expression: Box<ContractExpression>,
     },
     Add(Box<ContractExpression>, Box<ContractExpression>),
@@ -1245,20 +1245,20 @@ struct ClickArrayRef {
 
 type ClickArrayRefs = BTreeMap<String, ClickArrayRef>;
 #[derive(Clone)]
-struct ProgramPointStates {
-    version: std::sync::Arc<ProgramPointStateVersion>,
+struct RecordedSnapshots {
+    version: std::sync::Arc<RecordedSnapshotVersion>,
 }
 
-struct ProgramPointStateVersion {
-    root: Option<std::sync::Arc<ProgramPointStateNode>>,
-    history: Option<std::sync::Arc<ProgramPointStateChange>>,
+struct RecordedSnapshotVersion {
+    root: Option<std::sync::Arc<RecordedSnapshotNode>>,
+    history: Option<std::sync::Arc<RecordedSnapshotChange>>,
     origin: std::sync::Arc<()>,
 }
 
-impl Default for ProgramPointStates {
+impl Default for RecordedSnapshots {
     fn default() -> Self {
         Self {
-            version: std::sync::Arc::new(ProgramPointStateVersion {
+            version: std::sync::Arc::new(RecordedSnapshotVersion {
                 root: None,
                 history: None,
                 origin: std::sync::Arc::new(()),
@@ -1268,42 +1268,42 @@ impl Default for ProgramPointStates {
 }
 
 #[derive(Clone)]
-struct ProgramPointStateNode {
-    point: ProgramPointRef,
+struct RecordedSnapshotNode {
+    selector: SnapshotSelector,
     state: Option<CState>,
-    left: Option<std::sync::Arc<ProgramPointStateNode>>,
-    right: Option<std::sync::Arc<ProgramPointStateNode>>,
+    left: Option<std::sync::Arc<RecordedSnapshotNode>>,
+    right: Option<std::sync::Arc<RecordedSnapshotNode>>,
     height: u8,
 }
 
 /// One persistent map mutation. Proof branches share their complete prefix;
 /// an audited join can therefore visit only the keys changed in either arm
-/// instead of intersecting every program point accumulated by the project.
+/// instead of intersecting every snapshot accumulated by the project.
 #[derive(Clone)]
-struct ProgramPointStateChange {
-    point: ProgramPointRef,
-    parent: Option<std::sync::Arc<ProgramPointStateChange>>,
+struct RecordedSnapshotChange {
+    selector: SnapshotSelector,
+    parent: Option<std::sync::Arc<RecordedSnapshotChange>>,
 }
 
 #[cfg(test)]
 thread_local! {
-    static PROGRAM_POINT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static RECORDED_SNAPSHOT_NODE_ALLOCATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
-fn program_point_node_allocations() -> usize {
-    PROGRAM_POINT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
+fn recorded_snapshot_node_allocations() -> usize {
+    RECORDED_SNAPSHOT_NODE_ALLOCATIONS.with(std::cell::Cell::get)
 }
 
-impl ProgramPointStates {
+impl RecordedSnapshots {
     fn new() -> Self {
         Self::default()
     }
 
-    fn get(&self, point: &ProgramPointRef) -> Option<&CState> {
+    fn get<K: RecordedSnapshotKey + ?Sized>(&self, key: &K) -> Option<&CState> {
         let mut node = self.version.root.as_deref();
         while let Some(current) = node {
-            match point.cmp(&current.point) {
+            match key.compare(&current.selector) {
                 std::cmp::Ordering::Less => node = current.left.as_deref(),
                 std::cmp::Ordering::Greater => node = current.right.as_deref(),
                 std::cmp::Ordering::Equal => return current.state.as_ref(),
@@ -1312,20 +1312,21 @@ impl ProgramPointStates {
         None
     }
 
-    fn contains_key(&self, point: &ProgramPointRef) -> bool {
-        self.get(point).is_some()
+    fn contains_key<K: RecordedSnapshotKey + ?Sized>(&self, key: &K) -> bool {
+        self.get(key).is_some()
     }
 
-    fn insert(&mut self, point: ProgramPointRef, state: CState) -> Option<CState> {
-        let prior = self.get(&point).cloned();
-        self.version = std::sync::Arc::new(ProgramPointStateVersion {
-            root: Some(program_point_insert(
+    fn insert(&mut self, selector: impl Into<SnapshotSelector>, state: CState) -> Option<CState> {
+        let selector = selector.into();
+        let prior = self.get(&selector).cloned();
+        self.version = std::sync::Arc::new(RecordedSnapshotVersion {
+            root: Some(recorded_snapshot_insert(
                 self.version.root.as_ref(),
-                point.clone(),
+                selector.clone(),
                 Some(state),
             )),
-            history: Some(std::sync::Arc::new(ProgramPointStateChange {
-                point,
+            history: Some(std::sync::Arc::new(RecordedSnapshotChange {
+                selector,
                 parent: self.version.history.clone(),
             })),
             origin: self.version.origin.clone(),
@@ -1333,17 +1334,18 @@ impl ProgramPointStates {
         prior
     }
 
-    fn remove(&mut self, point: &ProgramPointRef) -> Option<CState> {
-        let prior = self.get(point).cloned();
+    fn remove<K: RecordedSnapshotKey + ?Sized>(&mut self, key: &K) -> Option<CState> {
+        let selector = key.to_selector();
+        let prior = self.get(key).cloned();
         if prior.is_some() {
-            self.version = std::sync::Arc::new(ProgramPointStateVersion {
-                root: Some(program_point_insert(
+            self.version = std::sync::Arc::new(RecordedSnapshotVersion {
+                root: Some(recorded_snapshot_insert(
                     self.version.root.as_ref(),
-                    point.clone(),
+                    selector.clone(),
                     None,
                 )),
-                history: Some(std::sync::Arc::new(ProgramPointStateChange {
-                    point: point.clone(),
+                history: Some(std::sync::Arc::new(RecordedSnapshotChange {
+                    selector,
                     parent: self.version.history.clone(),
                 })),
                 origin: self.version.origin.clone(),
@@ -1355,14 +1357,14 @@ impl ProgramPointStates {
     /// Intersects two descendants of one exact persistent ancestor by
     /// visiting only the keys changed after the fork.
     ///
-    /// This is the program-point merge required by a proof-level execution
+    /// This is the recorded-snapshot merge required by a proof-level execution
     /// case split. Returning `None` for unrelated histories prevents a caller
     /// from treating structurally similar maps as branches of the same proof.
     fn common_descendant(&self, other: &Self, ancestor: &Self) -> Option<Self> {
         fn changed_keys_since(
-            descendant: &ProgramPointStates,
-            ancestor: &ProgramPointStates,
-            changed: &mut BTreeSet<ProgramPointRef>,
+            descendant: &RecordedSnapshots,
+            ancestor: &RecordedSnapshots,
+            changed: &mut BTreeSet<SnapshotSelector>,
         ) -> bool {
             let mut current = descendant.version.history.as_ref();
             loop {
@@ -1372,7 +1374,7 @@ impl ProgramPointStates {
                     }
                     (None, None) => return true,
                     (Some(change), _) => {
-                        changed.insert(change.point.clone());
+                        changed.insert(change.selector.clone());
                         current = change.parent.as_ref();
                     }
                     (None, Some(_)) => return false,
@@ -1392,70 +1394,96 @@ impl ProgramPointStates {
             return None;
         }
         let mut common = ancestor.clone();
-        for point in changed {
-            match (self.get(&point), other.get(&point)) {
+        for selector in changed {
+            match (self.get(&selector), other.get(&selector)) {
                 (Some(left), Some(right)) if left == right => {
-                    common.insert(point, left.clone());
+                    common.insert(selector, left.clone());
                 }
                 _ => {
-                    common.remove(&point);
+                    common.remove(&selector);
                 }
             }
         }
         Some(common)
     }
 
-    fn iter(&self) -> std::vec::IntoIter<(&ProgramPointRef, &CState)> {
+    fn iter(&self) -> std::vec::IntoIter<(&SnapshotSelector, &CState)> {
         let mut entries = Vec::new();
-        program_point_entries(self.version.root.as_deref(), &mut entries);
+        recorded_snapshot_entries(self.version.root.as_deref(), &mut entries);
         entries.into_iter()
     }
 
-    fn keys(&self) -> impl DoubleEndedIterator<Item = &ProgramPointRef> {
-        self.iter().map(|(point, _)| point)
+    fn keys(&self) -> impl DoubleEndedIterator<Item = &SnapshotSelector> {
+        self.iter().map(|(selector, _)| selector)
     }
 
-    fn retain(&mut self, mut keep: impl FnMut(&ProgramPointRef, &mut CState) -> bool) {
+    fn retain(&mut self, mut keep: impl FnMut(&SnapshotSelector, &mut CState) -> bool) {
         let mut retained = Self::new();
-        for (point, state) in self.iter() {
+        for (selector, state) in self.iter() {
             let mut state = state.clone();
-            if keep(point, &mut state) {
-                retained.insert(point.clone(), state);
+            if keep(selector, &mut state) {
+                retained.insert(selector.clone(), state);
             }
         }
         *self = retained;
     }
 }
 
-impl std::fmt::Debug for ProgramPointStates {
+trait RecordedSnapshotKey {
+    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering;
+    fn to_selector(&self) -> SnapshotSelector;
+}
+
+impl RecordedSnapshotKey for SnapshotSelector {
+    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering {
+        self.cmp(selector)
+    }
+
+    fn to_selector(&self) -> SnapshotSelector {
+        self.clone()
+    }
+}
+
+impl RecordedSnapshotKey for ProgramPointRef {
+    fn compare(&self, selector: &SnapshotSelector) -> std::cmp::Ordering {
+        SnapshotSelector::ProgramPoint(self.clone()).cmp(selector)
+    }
+
+    fn to_selector(&self) -> SnapshotSelector {
+        SnapshotSelector::ProgramPoint(self.clone())
+    }
+}
+
+impl std::fmt::Debug for RecordedSnapshots {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl PartialEq for ProgramPointStates {
+impl PartialEq for RecordedSnapshots {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }
 }
 
-impl Eq for ProgramPointStates {}
+impl Eq for RecordedSnapshots {}
 
-fn program_point_height(node: Option<&std::sync::Arc<ProgramPointStateNode>>) -> u8 {
+fn recorded_snapshot_height(node: Option<&std::sync::Arc<RecordedSnapshotNode>>) -> u8 {
     node.map_or(0, |node| node.height)
 }
 
-fn program_point_node(
-    point: ProgramPointRef,
+fn recorded_snapshot_node(
+    selector: SnapshotSelector,
     state: Option<CState>,
-    left: Option<std::sync::Arc<ProgramPointStateNode>>,
-    right: Option<std::sync::Arc<ProgramPointStateNode>>,
-) -> std::sync::Arc<ProgramPointStateNode> {
+    left: Option<std::sync::Arc<RecordedSnapshotNode>>,
+    right: Option<std::sync::Arc<RecordedSnapshotNode>>,
+) -> std::sync::Arc<RecordedSnapshotNode> {
     #[cfg(test)]
-    PROGRAM_POINT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
-    let height = 1 + program_point_height(left.as_ref()).max(program_point_height(right.as_ref()));
-    std::sync::Arc::new(ProgramPointStateNode {
-        point,
+    RECORDED_SNAPSHOT_NODE_ALLOCATIONS.with(|allocations| allocations.set(allocations.get() + 1));
+    let height =
+        1 + recorded_snapshot_height(left.as_ref()).max(recorded_snapshot_height(right.as_ref()));
+    std::sync::Arc::new(RecordedSnapshotNode {
+        selector,
         state,
         left,
         right,
@@ -1463,28 +1491,28 @@ fn program_point_node(
     })
 }
 
-fn program_point_balance(
-    point: ProgramPointRef,
+fn recorded_snapshot_balance(
+    selector: SnapshotSelector,
     state: Option<CState>,
-    mut left: Option<std::sync::Arc<ProgramPointStateNode>>,
-    mut right: Option<std::sync::Arc<ProgramPointStateNode>>,
-) -> std::sync::Arc<ProgramPointStateNode> {
-    let balance = i16::from(program_point_height(left.as_ref()))
-        - i16::from(program_point_height(right.as_ref()));
+    mut left: Option<std::sync::Arc<RecordedSnapshotNode>>,
+    mut right: Option<std::sync::Arc<RecordedSnapshotNode>>,
+) -> std::sync::Arc<RecordedSnapshotNode> {
+    let balance = i16::from(recorded_snapshot_height(left.as_ref()))
+        - i16::from(recorded_snapshot_height(right.as_ref()));
     if balance > 1 {
         let left_root = left.as_ref().expect("left-heavy AVL node has a left child");
-        if program_point_height(left_root.left.as_ref())
-            < program_point_height(left_root.right.as_ref())
+        if recorded_snapshot_height(left_root.left.as_ref())
+            < recorded_snapshot_height(left_root.right.as_ref())
         {
             let pivot = left_root
                 .right
                 .as_ref()
                 .expect("left-right AVL rotation has a pivot");
-            left = Some(program_point_node(
-                pivot.point.clone(),
+            left = Some(recorded_snapshot_node(
+                pivot.selector.clone(),
                 pivot.state.clone(),
-                Some(program_point_node(
-                    left_root.point.clone(),
+                Some(recorded_snapshot_node(
+                    left_root.selector.clone(),
                     left_root.state.clone(),
                     left_root.left.clone(),
                     pivot.left.clone(),
@@ -1493,30 +1521,35 @@ fn program_point_balance(
             ));
         }
         let pivot = left.as_ref().expect("left AVL rotation has a pivot");
-        return program_point_node(
-            pivot.point.clone(),
+        return recorded_snapshot_node(
+            pivot.selector.clone(),
             pivot.state.clone(),
             pivot.left.clone(),
-            Some(program_point_node(point, state, pivot.right.clone(), right)),
+            Some(recorded_snapshot_node(
+                selector,
+                state,
+                pivot.right.clone(),
+                right,
+            )),
         );
     }
     if balance < -1 {
         let right_root = right
             .as_ref()
             .expect("right-heavy AVL node has a right child");
-        if program_point_height(right_root.right.as_ref())
-            < program_point_height(right_root.left.as_ref())
+        if recorded_snapshot_height(right_root.right.as_ref())
+            < recorded_snapshot_height(right_root.left.as_ref())
         {
             let pivot = right_root
                 .left
                 .as_ref()
                 .expect("right-left AVL rotation has a pivot");
-            right = Some(program_point_node(
-                pivot.point.clone(),
+            right = Some(recorded_snapshot_node(
+                pivot.selector.clone(),
                 pivot.state.clone(),
                 pivot.left.clone(),
-                Some(program_point_node(
-                    right_root.point.clone(),
+                Some(recorded_snapshot_node(
+                    right_root.selector.clone(),
                     right_root.state.clone(),
                     pivot.right.clone(),
                     right_root.right.clone(),
@@ -1524,55 +1557,68 @@ fn program_point_balance(
             ));
         }
         let pivot = right.as_ref().expect("right AVL rotation has a pivot");
-        return program_point_node(
-            pivot.point.clone(),
+        return recorded_snapshot_node(
+            pivot.selector.clone(),
             pivot.state.clone(),
-            Some(program_point_node(point, state, left, pivot.left.clone())),
+            Some(recorded_snapshot_node(
+                selector,
+                state,
+                left,
+                pivot.left.clone(),
+            )),
             pivot.right.clone(),
         );
     }
-    program_point_node(point, state, left, right)
+    recorded_snapshot_node(selector, state, left, right)
 }
 
-fn program_point_insert(
-    root: Option<&std::sync::Arc<ProgramPointStateNode>>,
-    point: ProgramPointRef,
+fn recorded_snapshot_insert(
+    root: Option<&std::sync::Arc<RecordedSnapshotNode>>,
+    selector: SnapshotSelector,
     state: Option<CState>,
-) -> std::sync::Arc<ProgramPointStateNode> {
+) -> std::sync::Arc<RecordedSnapshotNode> {
     let Some(root) = root else {
-        return program_point_node(point, state, None, None);
+        return recorded_snapshot_node(selector, state, None, None);
     };
-    match point.cmp(&root.point) {
-        std::cmp::Ordering::Less => program_point_balance(
-            root.point.clone(),
+    match selector.cmp(&root.selector) {
+        std::cmp::Ordering::Less => recorded_snapshot_balance(
+            root.selector.clone(),
             root.state.clone(),
-            Some(program_point_insert(root.left.as_ref(), point, state)),
+            Some(recorded_snapshot_insert(
+                root.left.as_ref(),
+                selector,
+                state,
+            )),
             root.right.clone(),
         ),
-        std::cmp::Ordering::Greater => program_point_balance(
-            root.point.clone(),
+        std::cmp::Ordering::Greater => recorded_snapshot_balance(
+            root.selector.clone(),
             root.state.clone(),
             root.left.clone(),
-            Some(program_point_insert(root.right.as_ref(), point, state)),
+            Some(recorded_snapshot_insert(
+                root.right.as_ref(),
+                selector,
+                state,
+            )),
         ),
         std::cmp::Ordering::Equal => {
-            program_point_node(point, state, root.left.clone(), root.right.clone())
+            recorded_snapshot_node(selector, state, root.left.clone(), root.right.clone())
         }
     }
 }
 
-fn program_point_entries<'a>(
-    node: Option<&'a ProgramPointStateNode>,
-    entries: &mut Vec<(&'a ProgramPointRef, &'a CState)>,
+fn recorded_snapshot_entries<'a>(
+    node: Option<&'a RecordedSnapshotNode>,
+    entries: &mut Vec<(&'a SnapshotSelector, &'a CState)>,
 ) {
     let Some(node) = node else {
         return;
     };
-    program_point_entries(node.left.as_deref(), entries);
+    recorded_snapshot_entries(node.left.as_deref(), entries);
     if let Some(state) = &node.state {
-        entries.push((&node.point, state));
+        entries.push((&node.selector, state));
     }
-    program_point_entries(node.right.as_deref(), entries);
+    recorded_snapshot_entries(node.right.as_deref(), entries);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2829,13 +2875,23 @@ pub enum CodeRegionRef {
     Loop(usize),
     Statement(usize),
     Label(String),
-    #[doc(hidden)]
+}
+
+/// A proof-visible name for one recorded symbolic state.
+///
+/// Program points are locations in C. Marks are proof-local names bound to
+/// the current state, so they deliberately remain a separate variant rather
+/// than masquerading as C code regions.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum SnapshotSelector {
+    ProgramPoint(ProgramPointRef),
     Mark(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub enum VisitSelector {
-    ProgramPoint(ProgramPointRef),
+impl From<ProgramPointRef> for SnapshotSelector {
+    fn from(point: ProgramPointRef) -> Self {
+        Self::ProgramPoint(point)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]

@@ -39,7 +39,7 @@ impl<'a> Proof<'a> {
                 // callee's entry snapshot, while the same surface syntax in
                 // the caller names the caller's function entry. Do not cache
                 // that ambiguous spelling as caller provenance. Explicit
-                // program points (including proof marks) retain the exact
+                // Snapshot-qualified forms (including proof marks) retain the exact
                 // call-frontier identity needed to name such a fact later.
                 if proposition_contains_old_expression(&surface) {
                     continue;
@@ -90,16 +90,13 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let point = ProgramPointRef {
-            region: CodeRegionRef::Mark(name.to_string()),
-            kind: ProgramPointKind::Entry,
-        };
-        if execution.program_point_states.contains_key(&point) {
+        let selector = SnapshotSelector::Mark(name.to_string());
+        if execution.recorded_snapshots.contains_key(&selector) {
             return Err(self.step_error(format!("duplicate proof mark `{name}`")));
         }
         execution
-            .program_point_states
-            .insert(point, (*execution.state).clone());
+            .recorded_snapshots
+            .insert(selector, (*execution.state).clone());
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -224,7 +221,7 @@ impl<'a> Proof<'a> {
         // form lowers, exactly as the checked `if` did.
         record_current_statement_entry(
             &base_execution.frontier,
-            &mut base_execution.program_point_states,
+            &mut base_execution.recorded_snapshots,
             &base_execution.state,
             context.function_block,
             context.function,
@@ -368,7 +365,7 @@ impl<'a> Proof<'a> {
         };
         let mut planning_facts = facts_vec;
         let assumptions = assumptions_from_propositions(&planning_facts);
-        execute_step_from_execution_point(
+        execute_step_from_frontier_position(
             &mut planning,
             &tactic_context,
             &mut planning_facts,
@@ -469,7 +466,7 @@ impl<'a> Proof<'a> {
             }
             let assumptions = assumptions_from_propositions(facts);
             let pre_state = view.context.old_reference_state(frontier, state);
-            let source = lower_point_proposition(
+            let source = lower_fixed_state_proposition(
                 surface_source,
                 facts,
                 context.parsed_function.parameters(),
@@ -477,7 +474,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &view.execution.program_point_states,
+                &view.execution.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -499,7 +496,7 @@ impl<'a> Proof<'a> {
                     )
                 )));
             }
-            let target = lower_point_proposition(
+            let target = lower_fixed_state_proposition(
                 surface_target,
                 facts,
                 context.parsed_function.parameters(),
@@ -507,7 +504,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &view.execution.program_point_states,
+                &view.execution.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -672,7 +669,7 @@ impl<'a> Proof<'a> {
         let mut sink = planning_sink();
         let mut planning_facts = facts_vec.clone();
         let direct_result = (!force_all_paths).then(|| {
-            execute_rest_from_execution_point(
+            execute_rest_from_frontier_position(
                 &mut planning,
                 &tactic_context,
                 &mut planning_facts,
@@ -689,7 +686,7 @@ impl<'a> Proof<'a> {
                 ProofFactStore::from_ordered(facts_vec.clone());
             sink = planning_sink();
             planning_facts = facts_vec.clone();
-            bounded_execute_from_execution_point(
+            bounded_execute_from_frontier_position(
                 &mut planning,
                 &tactic_context,
                 &mut planning_facts,

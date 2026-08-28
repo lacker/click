@@ -5,7 +5,7 @@ pub(super) fn lower_surface_atomic_derivation(
     view: ExecutionView<'_>,
     derivation: &PropositionDerivation,
     preferred_conclusion: Option<&ClickProposition>,
-    anchor_point: Option<&ProgramPointRef>,
+    anchor: Option<&SnapshotSelector>,
     available: &[Proposition],
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],
@@ -20,7 +20,7 @@ pub(super) fn lower_surface_atomic_derivation(
             "atomic derivation lowering",
             "derivation lowering: conclusion form",
             || {
-                checked_surface_fact_at_point(
+                checked_surface_fact_in_state(
                     view,
                     derivation.conclusion(),
                     available,
@@ -33,8 +33,8 @@ pub(super) fn lower_surface_atomic_derivation(
             },
         )?,
     };
-    if let Some(point) = anchor_point {
-        conclusion = surface_with_source_site(&conclusion, point)?;
+    if let Some(selector) = anchor {
+        conclusion = surface_at_snapshot(&conclusion, selector)?;
     }
     if let (
         Some((left_derivation, right_derivation)),
@@ -45,7 +45,7 @@ pub(super) fn lower_surface_atomic_derivation(
             view,
             left_derivation,
             Some(surface_left),
-            anchor_point,
+            anchor,
             available,
             parameters,
             arguments,
@@ -57,7 +57,7 @@ pub(super) fn lower_surface_atomic_derivation(
             view,
             right_derivation,
             Some(surface_right),
-            anchor_point,
+            anchor,
             available,
             parameters,
             arguments,
@@ -91,7 +91,7 @@ pub(super) fn lower_surface_atomic_derivation(
             view,
             false_proof,
             Some(&negated_antecedent),
-            anchor_point,
+            anchor,
             available,
             parameters,
             arguments,
@@ -148,7 +148,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     click_function_environment,
                 )
             } else {
-                checked_surface_comparison_fact_at_point(
+                checked_surface_comparison_fact_in_state(
                     view,
                     premise,
                     SurfaceFactMatch::AvailabilityEquivalent,
@@ -174,7 +174,7 @@ pub(super) fn lower_surface_atomic_derivation(
             synthesize_premise(&resolved)
         }) {
             Ok(surface) => {
-                let surface = match anchor_point {
+                let surface = match anchor {
                     // Requirement-definedness facts are recorded when the
                     // function context is built. Re-elaborating their
                     // parameter-only expression after resources have been
@@ -198,7 +198,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     {
                         surface
                     }
-                    Some(point) => surface_with_source_site(&surface, point)?,
+                    Some(point) => surface_at_snapshot(&surface, point)?,
                     None => surface,
                 };
                 premise_pairs.push((premise, surface));
@@ -212,7 +212,7 @@ pub(super) fn lower_surface_atomic_derivation(
         "atomic derivation lowering",
         "derivation lowering: conclusion lowering",
     );
-    let lowered_conclusion = lower_point_proposition(
+    let lowered_conclusion = lower_fixed_state_proposition(
         &conclusion,
         available,
         parameters,
@@ -220,7 +220,7 @@ pub(super) fn lower_surface_atomic_derivation(
         view.old_reference_state(state),
         state,
         None,
-        &view.program_point_states,
+        &view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -236,7 +236,7 @@ pub(super) fn lower_surface_atomic_derivation(
         "atomic derivation lowering",
         "derivation lowering: context-free normalization check",
     );
-    let surface_normalizes_context_free = lower_point_proposition(
+    let surface_normalizes_context_free = lower_fixed_state_proposition(
         &conclusion,
         &facts_for_direct_surface_lowering(available),
         parameters,
@@ -244,7 +244,7 @@ pub(super) fn lower_surface_atomic_derivation(
         view.old_reference_state(state),
         state,
         None,
-        &view.program_point_states,
+        &view.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -259,7 +259,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     .cloned()
                     .map(Ok)
                     .unwrap_or_else(|| {
-                        lower_point_proposition(
+                        lower_fixed_state_proposition(
                             surface,
                             available,
                             parameters,
@@ -267,7 +267,7 @@ pub(super) fn lower_surface_atomic_derivation(
                             view.old_reference_state(state),
                             state,
                             None,
-                            &view.program_point_states,
+                            &view.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1045,7 +1045,7 @@ pub(super) fn lower_surface_atomic_derivation(
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| {
-                lower_point_proposition(
+                lower_fixed_state_proposition(
                     surface,
                     available,
                     parameters,
@@ -1053,7 +1053,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     view.old_reference_state(state),
                     state,
                     None,
-                    &view.program_point_states,
+                    &view.recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1152,7 +1152,7 @@ pub(super) fn lower_surface_atomic_derivation(
             .cloned()
             .map(Ok)
             .unwrap_or_else(|| {
-                lower_point_proposition(
+                lower_fixed_state_proposition(
                     surface_source,
                     available,
                     parameters,
@@ -1160,7 +1160,7 @@ pub(super) fn lower_surface_atomic_derivation(
                     view.old_reference_state(state),
                     state,
                     None,
-                    &view.program_point_states,
+                    &view.recorded_snapshots,
                     predicate_environment,
                     click_function_environment,
                 )
@@ -1338,7 +1338,7 @@ fn plan_explicit_increment_lower_bound_transport(
 #[cfg(test)]
 #[test]
 fn increment_lower_bound_transport_matches_source_anchored_constant() {
-    let selector = VisitSelector::ProgramPoint(ProgramPointRef {
+    let selector = SnapshotSelector::ProgramPoint(ProgramPointRef {
         region: CodeRegionRef::Statement(5),
         kind: ProgramPointKind::Entry,
     });
@@ -1398,7 +1398,7 @@ fn increment_lower_bound_transport_matches_source_anchored_constant() {
 
     let tactics =
         plan_explicit_increment_lower_bound_transport(&kernel_goal, &goal, &premise_pairs).expect(
-            "source-site annotation on the constant must not hide the increment certificate",
+            "snapshot qualification on the constant must not hide the increment certificate",
         );
     assert!(
         matches!(
@@ -1411,7 +1411,7 @@ fn increment_lower_bound_transport_matches_source_anchored_constant() {
                 ProofTactic::TransportUsing { .. }
             ] if matches!(body.as_slice(), [ProofTactic::ApplyTheoremUsing { .. }])
         ),
-        "point-closing theorem and transport steps must not retain dead assumptions: {tactics:?}"
+        "goal-closing theorem and transport steps must not retain dead assumptions: {tactics:?}"
     );
 }
 
@@ -1692,7 +1692,7 @@ fn plan_explicit_forall_goal(
             (body, _) => (None, body, None),
         };
     // Without a universal premise the body may still be a preserved load:
-    // discharge it point-wise with the explicit unchanged-load transport
+    // discharge it pointwise with the explicit unchanged-load transport
     // under the same binder introduction.
     let surface_conclusion = match surface_body.as_ref() {
         ClickProposition::Implies(_, conclusion) => conclusion.as_ref(),
@@ -1709,7 +1709,7 @@ fn plan_explicit_forall_goal(
         &introduced,
     )?;
     // The introduced bounds are what place the binder's cell inside the
-    // preserved range, so the point-wise transport must name them. A simple
+    // preserved range, so the pointwise transport must name them. A simple
     // transport consumes atomic premises; write conjunction elimination
     // explicitly after introducing the guarded antecedent.
     let mut extracted = Vec::new();
@@ -2623,10 +2623,10 @@ pub(super) fn recorded_int32_le_and_neq_implies_strict_pairs(
 pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_upper_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2635,10 +2635,10 @@ pub(super) fn plan_recorded_int32_increment_upper_bound_for_context(
 pub(super) fn plan_recorded_int32_increment_constant_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_constant_upper_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2647,10 +2647,10 @@ pub(super) fn plan_recorded_int32_increment_constant_upper_bound_for_context(
 pub(super) fn plan_recorded_int32_increment_strictly_increases_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_strictly_increases(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2659,10 +2659,10 @@ pub(super) fn plan_recorded_int32_increment_strictly_increases_for_context(
 pub(super) fn plan_recorded_int32_increment_below_max_is_defined_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_below_max_is_defined(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2671,10 +2671,10 @@ pub(super) fn plan_recorded_int32_increment_below_max_is_defined_for_context(
 pub(super) fn plan_recorded_int32_one_plus_below_max_is_defined_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_one_plus_below_max_is_defined(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2683,10 +2683,10 @@ pub(super) fn plan_recorded_int32_one_plus_below_max_is_defined_for_context(
 pub(super) fn plan_recorded_int32_one_plus_strictly_increases_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_one_plus_strictly_increases(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2695,10 +2695,10 @@ pub(super) fn plan_recorded_int32_one_plus_strictly_increases_for_context(
 pub(super) fn plan_recorded_int32_nonnegative_add_within_max_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_nonnegative_add_within_max_is_defined(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2707,11 +2707,11 @@ pub(super) fn plan_recorded_int32_nonnegative_add_within_max_for_context(
 pub(super) fn plan_recorded_int32_nonnegative_subtract_within_value_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics =
         plan_explicit_nonnegative_subtract_within_value_is_defined(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2720,10 +2720,10 @@ pub(super) fn plan_recorded_int32_nonnegative_subtract_within_value_for_context(
 pub(super) fn plan_recorded_int32_increment_lower_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_lower_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2732,10 +2732,10 @@ pub(super) fn plan_recorded_int32_increment_lower_bound_for_context(
 pub(super) fn plan_recorded_int32_increment_greater_equal_lower_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_greater_equal_lower_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2744,10 +2744,10 @@ pub(super) fn plan_recorded_int32_increment_greater_equal_lower_bound_for_contex
 pub(super) fn plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_strict_greater_lower_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2756,11 +2756,11 @@ pub(super) fn plan_recorded_int32_increment_strict_greater_lower_bound_for_conte
 pub(super) fn plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics =
         plan_explicit_increment_strict_greater_from_strict_lower(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2769,10 +2769,10 @@ pub(super) fn plan_recorded_int32_increment_strict_greater_from_strict_lower_for
 pub(super) fn plan_recorded_int32_increment_preserves_order_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_increment_preserves_order(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2781,10 +2781,10 @@ pub(super) fn plan_recorded_int32_increment_preserves_order_for_context(
 pub(super) fn plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_positive_predecessor_is_nonnegative(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2793,10 +2793,10 @@ pub(super) fn plan_recorded_int32_positive_predecessor_is_nonnegative_for_contex
 pub(super) fn plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_positive_predecessor_strictly_decreases(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2805,10 +2805,10 @@ pub(super) fn plan_recorded_int32_positive_predecessor_strictly_decreases_for_co
 pub(super) fn plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_predecessor_upper_bound(goal, premise_pairs, false)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2817,10 +2817,10 @@ pub(super) fn plan_recorded_int32_nonnegative_predecessor_upper_bound_for_contex
 pub(super) fn plan_recorded_int32_one_le_predecessor_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_one_le_predecessor(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
         let ProofTactic::Have(have) = tactics.first_mut()? else {
             return None;
@@ -2837,7 +2837,7 @@ pub(super) fn plan_recorded_int32_equal_one_predecessor_for_context(
     goal: &Proposition,
     derivation: &PropositionDerivation,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let path = derivation
         .int32_equal_one_predecessor_is_nonnegative_path()
@@ -2885,7 +2885,7 @@ pub(super) fn plan_recorded_int32_equal_one_predecessor_for_context(
 
     let mut predecessor_tactics =
         plan_explicit_one_le_predecessor(goal, &[(one_le_kernel, one_le_surface.clone())])?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut predecessor_tactics)?;
         let ProofTactic::Have(positive) = predecessor_tactics.first_mut()? else {
             return None;
@@ -2942,10 +2942,10 @@ pub(super) fn plan_recorded_int32_equal_one_predecessor_is_zero(
 pub(super) fn plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_le_and_not_lt_implies_eq(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2954,10 +2954,10 @@ pub(super) fn plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
 pub(super) fn plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_ge_and_not_gt_implies_eq(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2966,10 +2966,10 @@ pub(super) fn plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
 pub(super) fn plan_recorded_int32_positive_is_nonnegative_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_positive_is_nonnegative(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2978,10 +2978,10 @@ pub(super) fn plan_recorded_int32_positive_is_nonnegative_for_context(
 pub(super) fn plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_strictly_positive_is_nonnegative(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -2990,10 +2990,10 @@ pub(super) fn plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
 pub(super) fn plan_recorded_int32_successor_le_implies_lt_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_successor_le_implies_lt(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -3002,10 +3002,10 @@ pub(super) fn plan_recorded_int32_successor_le_implies_lt_for_context(
 pub(super) fn plan_recorded_int32_constant_lower_bound_weakening_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_le_transitive_constant_lower(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -3014,10 +3014,10 @@ pub(super) fn plan_recorded_int32_constant_lower_bound_weakening_for_context(
 pub(super) fn plan_recorded_int32_negated_strict_successor_bound_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_negated_strict_successor_bound(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
         let ProofTactic::Have(have) = tactics.first_mut()? else {
             return None;
@@ -3033,10 +3033,10 @@ pub(super) fn plan_recorded_int32_negated_strict_successor_bound_for_context(
 pub(super) fn plan_recorded_int32_le_and_neq_implies_strict_for_context(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     let mut tactics = plan_explicit_le_and_neq_implies_lt(goal, premise_pairs)?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut tactics)?;
     }
     Some(tactics)
@@ -3055,11 +3055,11 @@ pub(super) fn plan_recorded_signed_order_path(
 pub(super) fn plan_recorded_signed_order_path_for_context(
     goal: &Proposition,
     path: &[(Proposition, ClickProposition)],
-    point_application_closes_goal: bool,
+    fixed_state_application_closes_goal: bool,
 ) -> Option<Vec<ProofTactic>> {
     if path.len() < 2 {
         let mut tactics = plan_explicit_named_signed_rule(goal, path)?;
-        if point_application_closes_goal {
+        if fixed_state_application_closes_goal {
             remove_trailing_theorem_assumption(&mut tactics)?;
         }
         return Some(tactics);
@@ -3131,7 +3131,7 @@ pub(super) fn plan_recorded_signed_order_path_for_context(
             },
             premises: vec![current.1.clone(), next.1.clone()],
         }];
-        if !point_application_closes_goal {
+        if !fixed_state_application_closes_goal {
             proof.push(ProofTactic::Assumption);
         }
         tactics.push(ProofTactic::Have(ProofHave {
@@ -3142,7 +3142,7 @@ pub(super) fn plan_recorded_signed_order_path_for_context(
     }
     let final_edge = path.last()?.clone();
     let mut suffix = plan_explicit_named_signed_rule(goal, &[current, final_edge])?;
-    if point_application_closes_goal {
+    if fixed_state_application_closes_goal {
         remove_trailing_theorem_assumption(&mut suffix)?;
     }
     tactics.extend(suffix);
@@ -5137,7 +5137,7 @@ pub(super) fn frame_certified_ensure_goals(
     outcome: &CFunctionOutcome,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     unfolded_predicates: &[String],
 ) -> Vec<(usize, Proposition)> {
     let mut reasoning_facts = path_requirements.to_vec();
@@ -5174,7 +5174,7 @@ pub(super) fn frame_certified_ensure_goals(
                 outcome,
                 predicate_environment,
                 click_function_environment,
-                program_point_states,
+                recorded_snapshots,
                 unfolded_predicates,
             )
             .ok()?;
@@ -5185,13 +5185,13 @@ pub(super) fn frame_certified_ensure_goals(
         .collect()
 }
 
-pub(super) fn comparison_program_point_variants(
+pub(super) fn comparison_snapshot_variants(
     proposition: &ClickProposition,
-    points: &[ProgramPointRef],
+    selectors: &[SnapshotSelector],
 ) -> Option<Vec<ClickProposition>> {
     if let ClickProposition::Not(body) = proposition {
         return Some(
-            comparison_program_point_variants(body, points)?
+            comparison_snapshot_variants(body, selectors)?
                 .into_iter()
                 .map(|variant| ClickProposition::Not(Box::new(variant)))
                 .collect(),
@@ -5199,7 +5199,7 @@ pub(super) fn comparison_program_point_variants(
     }
     if let ClickProposition::ForAll { c_type, name, body } = proposition {
         return Some(
-            comparison_program_point_variants(body, points)?
+            comparison_snapshot_variants(body, selectors)?
                 .into_iter()
                 .map(|body| ClickProposition::ForAll {
                     c_type: *c_type,
@@ -5210,11 +5210,11 @@ pub(super) fn comparison_program_point_variants(
         );
     }
     if let ClickProposition::Implies(left, right) = proposition {
-        let mut variants = comparison_program_point_variants(right, points)?
+        let mut variants = comparison_snapshot_variants(right, selectors)?
             .into_iter()
             .map(|right| ClickProposition::Implies(left.clone(), Box::new(right)))
             .collect::<Vec<_>>();
-        if let Some(left_variants) = comparison_program_point_variants(left, points) {
+        if let Some(left_variants) = comparison_snapshot_variants(left, selectors) {
             variants.extend(
                 left_variants
                     .into_iter()
@@ -5224,8 +5224,8 @@ pub(super) fn comparison_program_point_variants(
         return Some(variants);
     }
     if let ClickProposition::Or(left, right) = proposition {
-        let left_variants = comparison_program_point_variants(left, points)?;
-        let right_variants = comparison_program_point_variants(right, points)?;
+        let left_variants = comparison_snapshot_variants(left, selectors)?;
+        let right_variants = comparison_snapshot_variants(right, selectors)?;
         let mut variants = vec![proposition.clone()];
         let mut push = |left: ClickProposition, right: ClickProposition| {
             let candidate = ClickProposition::Or(Box::new(left), Box::new(right));
@@ -5246,14 +5246,14 @@ pub(super) fn comparison_program_point_variants(
     }
     if let ClickProposition::And(left, right) = proposition {
         let mut variants = Vec::new();
-        if let Some(right_variants) = comparison_program_point_variants(right, points) {
+        if let Some(right_variants) = comparison_snapshot_variants(right, selectors) {
             variants.extend(
                 right_variants
                     .into_iter()
                     .map(|right| ClickProposition::And(left.clone(), Box::new(right))),
             );
         }
-        if let Some(left_variants) = comparison_program_point_variants(left, points) {
+        if let Some(left_variants) = comparison_snapshot_variants(left, selectors) {
             variants.extend(
                 left_variants
                     .into_iter()
@@ -5265,8 +5265,8 @@ pub(super) fn comparison_program_point_variants(
     // A predicate call names its memory snapshot only through its array-ref
     // arguments, so the snapshot is selected by wrapping the arguments —
     // uniformly, the way the recorded-form search in
-    // `checked_surface_fact_at_point` already does. Wrapping a value argument
-    // is harmless: it evaluates to the same value at every point it is
+    // `checked_surface_fact_in_state` already does. Wrapping a value argument
+    // is harmless: it evaluates to the same value in every selected snapshot where it is
     // synthesizable at, and a wrapping that does not lower is discarded by the
     // caller's `check`.
     if let ClickProposition::PredicateCall { name, arguments } = proposition {
@@ -5285,9 +5285,9 @@ pub(super) fn comparison_program_point_variants(
                 ContractExpression::Old(Box::new(argument.clone()))
             }));
         }
-        for point in points.iter().rev() {
+        for selector in selectors.iter().rev() {
             let candidate = call(&|argument| ContractExpression::At {
-                selector: VisitSelector::ProgramPoint(point.clone()),
+                selector: selector.clone(),
                 expression: Box::new(argument.clone()),
             });
             if !variants.contains(&candidate) {
@@ -5304,9 +5304,9 @@ pub(super) fn comparison_program_point_variants(
     else {
         return None;
     };
-    let at_point =
-        |expression: &ContractExpression, point: &ProgramPointRef| ContractExpression::At {
-            selector: VisitSelector::ProgramPoint(point.clone()),
+    let at_snapshot =
+        |expression: &ContractExpression, selector: &SnapshotSelector| ContractExpression::At {
+            selector: selector.clone(),
             expression: Box::new(expression.clone()),
         };
     let comparison = |left, right| ClickProposition::Comparison {
@@ -5318,10 +5318,10 @@ pub(super) fn comparison_program_point_variants(
         .then(|| ContractExpression::Old(Box::new(left.clone())));
     let old_right = (!matches!(right, ContractExpression::Old(_)))
         .then(|| ContractExpression::Old(Box::new(right.clone())));
-    let point_pairs = points
+    let snapshot_pairs = selectors
         .iter()
         .rev()
-        .map(|point| (at_point(left, point), at_point(right, point)))
+        .map(|selector| (at_snapshot(left, selector), at_snapshot(right, selector)))
         .collect::<Vec<_>>();
     let mut variants = Vec::new();
     let mut push = |left, right| {
@@ -5340,10 +5340,10 @@ pub(super) fn comparison_program_point_variants(
     if let (Some(old_left), Some(old_right)) = (&old_left, &old_right) {
         push(old_left.clone(), old_right.clone());
     }
-    for (point_left, point_right) in &point_pairs {
-        push(point_left.clone(), right.clone());
-        push(left.clone(), point_right.clone());
-        push(point_left.clone(), point_right.clone());
+    for (snapshot_left, snapshot_right) in &snapshot_pairs {
+        push(snapshot_left.clone(), right.clone());
+        push(left.clone(), snapshot_right.clone());
+        push(snapshot_left.clone(), snapshot_right.clone());
     }
 
     let mut left_variants = vec![left.clone()];
@@ -5354,9 +5354,9 @@ pub(super) fn comparison_program_point_variants(
     if let Some(old_right) = old_right {
         right_variants.push(old_right);
     }
-    for (point_left, point_right) in point_pairs {
-        left_variants.push(point_left);
-        right_variants.push(point_right);
+    for (snapshot_left, snapshot_right) in snapshot_pairs {
+        left_variants.push(snapshot_left);
+        right_variants.push(snapshot_right);
     }
     for left in left_variants {
         for right in &right_variants {
@@ -5367,7 +5367,7 @@ pub(super) fn comparison_program_point_variants(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower_surface_candidate_at_point(
+pub(super) fn lower_surface_candidate_in_state(
     view: ExecutionView<'_>,
     candidate: &ClickProposition,
     available: &[Proposition],
@@ -5378,7 +5378,7 @@ pub(super) fn lower_surface_candidate_at_point(
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
     let assumptions = assumptions_from_propositions(available);
-    lower_surface_candidate_at_point_with_assumptions(
+    lower_surface_candidate_in_state_with_assumptions(
         view,
         candidate,
         &assumptions,
@@ -5391,7 +5391,7 @@ pub(super) fn lower_surface_candidate_at_point(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn lower_surface_candidate_at_point_with_assumptions(
+pub(super) fn lower_surface_candidate_in_state_with_assumptions(
     view: ExecutionView<'_>,
     candidate: &ClickProposition,
     assumptions: &PureFactContext,
@@ -5419,7 +5419,7 @@ pub(super) fn lower_surface_candidate_at_point_with_assumptions(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        &view.program_point_states,
+        &view.recorded_snapshots,
         &mut active_functions,
     )
     .map_err(ClickError::new)

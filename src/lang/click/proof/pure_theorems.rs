@@ -1662,7 +1662,7 @@ fn apply_pure_induction_hypothesis(
         argument,
         predicate_environment,
         click_function_environment,
-        &ProgramPointStates::new(),
+        &RecordedSnapshots::new(),
         &mut active_functions,
     )
     .map_err(|message| {
@@ -1874,14 +1874,14 @@ fn prove_pure_theorem_goal(
     )
     .map_err(|message| ClickError::new(format!("`{claim_label}` failed: {message}")))?;
     let state = CState::new().with_memory(context.memory.clone());
-    let program_point_states = ProgramPointStates::new();
+    let recorded_snapshots = RecordedSnapshots::new();
     let application_context = TheoremApplicationContext {
         values: &context.values,
         array_refs: &context.array_refs,
         pre_state: &state,
         post_state: &state,
         result: None,
-        program_point_states: &program_point_states,
+        recorded_snapshots: &recorded_snapshots,
     };
     available = apply_theorem_applications_to_available(
         theorem_environment,
@@ -1937,14 +1937,14 @@ fn prove_pure_theorem_tactics(
     induction_setup: Option<&PureInductionSetup>,
 ) -> Result<(), ClickError> {
     let state = CState::new().with_memory(context.memory.clone());
-    let program_point_states = ProgramPointStates::new();
+    let recorded_snapshots = RecordedSnapshots::new();
     let application_context = TheoremApplicationContext {
         values: &context.values,
         array_refs: &context.array_refs,
         pre_state: &state,
         post_state: &state,
         result: None,
-        program_point_states: &program_point_states,
+        recorded_snapshots: &recorded_snapshots,
     };
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();

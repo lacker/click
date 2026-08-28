@@ -104,23 +104,23 @@ impl<'a> Proof<'a> {
             .map(|(proof, _)| proof))
     }
 
-    /// Searches explicit premise forms for one point fact transport.
+    /// Searches explicit premise forms for one fixed-state fact transport.
     ///
     /// Every candidate is checked by applying the corresponding proof step
     /// to this immutable root. Failed descendants are discarded; the
     /// returned `Proof` is the already-checked, deletion-minimized success,
     /// so callers never reconstruct or check the selected certificate.
-    pub(in crate::lang::click::proof) fn search_point_fact_transport(
+    pub(in crate::lang::click::proof) fn search_fixed_state_fact_transport(
         &self,
         source: &ClickProposition,
         target: &ClickProposition,
         candidates: impl IntoIterator<Item = ClickProposition>,
     ) -> Result<Self, ClickError> {
-        let result_aware = matches!(self.context.as_ref(), ProofContext::Point(_))
-            || self.focused_outcome_point().is_some();
+        let result_aware = matches!(self.context.as_ref(), ProofContext::FixedState(_))
+            || self.focused_outcome_data().is_some();
         if !result_aware {
             return Err(self.step_error(
-                "fact-transport search requires a point proof or a focused outcome goal",
+                "fact-transport search requires a fixed-state proof or a focused outcome goal",
             ));
         }
         self.search_fact_transport_from_candidates(
@@ -241,27 +241,29 @@ impl<'a> Proof<'a> {
     }
 
     /// Untrusted smart-tactic query for one explicit theorem-application
-    /// candidate on a point proof.
+    /// candidate on a fixed-state proof.
     ///
     /// Requirement selection probes the current persistent fact indexes. It
     /// returns only a `ProofStep`; theorem conclusions and provenance
     /// are created later, if and only if the caller submits that step to
     /// `apply_step` on this same proof.
-    pub(in crate::lang::click::proof) fn select_point_theorem_application_step(
+    pub(in crate::lang::click::proof) fn select_fixed_state_theorem_application_step(
         &self,
         application: &TheoremApplication,
     ) -> Result<ProofStep, ClickError> {
-        let ProofContext::Point(context) = self.context.as_ref() else {
-            return Err(self.step_error("point theorem-application search requires a point proof"));
+        let ProofContext::FixedState(context) = self.context.as_ref() else {
+            return Err(self.step_error(
+                "fixed-state theorem-application search requires a fixed-state proof",
+            ));
         };
-        self.select_theorem_application_step_at_point(
+        self.select_theorem_application_step_in_fixed_state(
             application,
             context.parameters,
             context.arguments,
             context.pre_state,
             context.state,
             context.result,
-            context.program_point_states,
+            context.recorded_snapshots,
             context.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
@@ -286,14 +288,14 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
-        self.select_theorem_application_step_at_point(
+        self.select_theorem_application_step_in_fixed_state(
             application,
             context.parsed_function.parameters(),
             context.arguments,
             pre_state,
             &execution.state,
             None,
-            &execution.program_point_states,
+            &execution.recorded_snapshots,
             &execution.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
@@ -332,7 +334,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let Some(step) = self.select_theorem_application_step(application)? else {
             return Err(self.step_error(
-                "theorem application requires a result-sensitive point proof after function exit",
+                "theorem application requires a result-sensitive fixed-state proof after function exit",
             ));
         };
         self.apply_selected_theorem_application(step)
@@ -344,21 +346,23 @@ impl<'a> Proof<'a> {
     ) -> Result<Option<ProofStep>, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.select_pure_theorem_application_step(application),
-            ProofContext::Point(_) => self.select_point_theorem_application_step(application),
-            // A focused branch function-outcome goal is one result-sensitive point
-            // context: selection reads the goal-aware view directly.
-            ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
+            ProofContext::FixedState(_) => {
+                self.select_fixed_state_theorem_application_step(application)
+            }
+            // A focused function-outcome goal is one result-sensitive
+            // fixed-state context: selection reads the goal-aware view directly.
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
                 let view = self
-                    .outcome_point_view_with_effects(OutcomeEffectContext::Frontier)
-                    .expect("a focused outcome judgment resolves its point view");
-                self.select_theorem_application_step_at_point(
+                    .outcome_fixed_state_view_with_effects(OutcomeEffectContext::Frontier)
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                self.select_theorem_application_step_in_fixed_state(
                     application,
                     view.parameters,
                     view.arguments,
                     view.pre_state,
                     view.state,
                     view.result,
-                    view.program_point_states,
+                    view.recorded_snapshots,
                     view.surface_propositions,
                     view.predicate_environment,
                     view.click_function_environment,
@@ -369,7 +373,7 @@ impl<'a> Proof<'a> {
                 self.select_execution_theorem_application_step(application)
             }
             // A function-exit execution Proof not focused branch on one outcome
-            // still owns several result-sensitive point contexts; ordered
+            // still owns several result-sensitive fixed-state proof contexts; ordered
             // finalization keeps that seam until its paths derive goals.
             ProofContext::Execution(_) => return Ok(None),
         }
@@ -389,7 +393,7 @@ impl<'a> Proof<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn select_theorem_application_step_at_point(
+    pub(super) fn select_theorem_application_step_in_fixed_state(
         &self,
         application: &TheoremApplication,
         parameters: &[syntax::C0Parameter],
@@ -397,7 +401,7 @@ impl<'a> Proof<'a> {
         pre_state: &CState,
         state: &CState,
         result: Option<&CValue>,
-        program_point_states: &ProgramPointStates,
+        recorded_snapshots: &RecordedSnapshots,
         surface_propositions: &SurfacePropositionMap,
         predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
@@ -417,7 +421,7 @@ impl<'a> Proof<'a> {
             pre_state,
             post_state: state,
             result,
-            program_point_states,
+            recorded_snapshots,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let mut lowering_assumptions = self.facts().assumptions().clone();
@@ -456,7 +460,7 @@ impl<'a> Proof<'a> {
             // Reuse the established snapshot-surface search for execution
             // proofs, with availability answered by persistent indexes. The
             // canonical fact above comes from the requirement's shape bucket,
-            // so sibling snapshot terms remain visible without rebuilding
+            // so sibling terms carrying different memory snapshots remain visible without rebuilding
             // the complete ambient fact vector. The returned form still
             // has to survive `apply_step` below.
             let mut snapshot_surface_error = None;
@@ -464,7 +468,7 @@ impl<'a> Proof<'a> {
                 let execution = self
                     .execution()
                     .expect("execution proof owns semantic state");
-                match checked_surface_comparison_fact_at_point_with_indexed_facts(
+                match checked_surface_comparison_fact_in_state_with_indexed_facts(
                     execution.view(context),
                     &matched,
                     SurfaceFactMatch::CanonicalExact,
@@ -514,7 +518,7 @@ impl<'a> Proof<'a> {
                 // SurfacePropositionMap treats the most recently recorded
                 // form as canonical. Prefer it here too; earlier entries
                 // can be mechanically valid but over-anchor constants as
-                // `at(point, constant)` and produce needlessly unstable
+                // `at(selector, constant)` and produce needlessly unstable
                 // certificates.
                 .rev()
                 .find(|candidate| {
@@ -524,7 +528,7 @@ impl<'a> Proof<'a> {
                             || condition_polarity_equivalent(lowered, &requirement))
                             && self                                .facts()                                .available_across_effects(lowered, &[])
                     };
-                    let direct = lower_point_proposition_with_assumptions(
+                    let direct = lower_fixed_state_proposition_with_assumptions(
                         candidate,
                         &lowering_assumptions,
                         parameters,
@@ -532,7 +536,7 @@ impl<'a> Proof<'a> {
                         pre_state,
                         state,
                         result,
-                        program_point_states,
+                        recorded_snapshots,
                         predicate_environment,
                         click_function_environment,
                     );
@@ -573,14 +577,14 @@ impl<'a> Proof<'a> {
             );
         };
         let state = CState::new().with_memory(context.theorem_context.memory.clone());
-        let program_point_states = ProgramPointStates::new();
+        let recorded_snapshots = RecordedSnapshots::new();
         let application_context = TheoremApplicationContext {
             values: &context.theorem_context.values,
             array_refs: &context.theorem_context.array_refs,
             pre_state: &state,
             post_state: &state,
             result: None,
-            program_point_states: &program_point_states,
+            recorded_snapshots: &recorded_snapshots,
         };
         let unfolded_predicates = self.active_unfolded_predicates();
         let requirements = lower_theorem_application_requirements_with_assumptions(

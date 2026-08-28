@@ -281,9 +281,9 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     std::sync::Arc::make_mut(&mut memory.cells).retain(|stored_pointer, _| {
         !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions)
     });
-    // The reduced memory is embedded in the returned symbolic value, so it
-    // becomes a snapshot term other queries must relate back to its
-    // source. Dropping cells provably distinct from the loaded pointer is a
+    // The returned symbolic load carries the reduced memory snapshot, so
+    // other queries must relate it back to its source. Dropping cells
+    // provably distinct from the loaded pointer is a
     // no-op for every load, which is exactly the `CellsForgotten` edge;
     // without it the derivation walk dead-ends at this variant.
     if let Some(base) = reduction_base
@@ -1303,7 +1303,7 @@ pub(crate) fn load_variable_for_cell_with_origin(
 /// Returns the load variable for a load term's provenance-stable form.
 /// The term is first canonicalized without assumptions, resolving cached
 /// cells and snapshot representation differences. The same cell loaded at
-/// different execution points therefore shares one load variable whenever
+/// different symbolic states therefore shares one load variable whenever
 /// the difference is representational. The second return value is the form
 /// used by the variable's defining equation.
 pub(crate) fn load_variable_for_term(

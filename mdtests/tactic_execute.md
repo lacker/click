@@ -1,7 +1,7 @@
 # execute rest tactic
 
 This checks `execute()`, the clearer name for executing from the current
-execution point to function exit. From function entry, this is equivalent to
+execution frontier to function exit. From function entry, this is equivalent to
 the deprecated `execute()` spelling.
 
 ```c filename=increment.c

@@ -221,7 +221,7 @@ pub(in crate::lang::click::proof) fn verify_execution_proofs_forward(
                         state: preservation.state().clone(),
                         pure_facts,
                         surface_propositions: context.surface_propositions.clone(),
-                        program_point_states: context.program_point_states.clone(),
+                        recorded_snapshots: context.recorded_snapshots.clone(),
                         case_path: context.case_path.clone(),
                         next_opaque_call: context.next_opaque_call,
                         next_kernel_variable: context.next_kernel_variable,
@@ -464,7 +464,7 @@ fn split_execution_proof_branch_contexts(
                 state: context.state.clone(),
                 pure_facts: transition.pure_facts,
                 surface_propositions: context.surface_propositions.clone(),
-                program_point_states: context.program_point_states.clone(),
+                recorded_snapshots: context.recorded_snapshots.clone(),
                 case_path: {
                     let mut case_path = context.case_path.clone();
                     case_path.push(ProofCaseChoice {
@@ -495,7 +495,7 @@ pub(in crate::lang::click::proof) struct PlannedPointPureGoal {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
+pub(in crate::lang::click::proof) fn plan_fixed_state_pure_goal_certificate(
     mut expansion_capture: Option<&mut ExpansionCapture>,
     proof_site: &ProofSite,
     proposition: &ClickProposition,
@@ -507,7 +507,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     arguments: &[CExpression],
     pre_state: &CState,
     state: &CState,
-    program_point_states: &ProgramPointStates,
+    recorded_snapshots: &RecordedSnapshots,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     surface_propositions: &SurfacePropositionMap,
@@ -517,7 +517,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     let fact = if let Some(prelowered_goal) = prelowered_goal {
         prelowered_goal.clone()
     } else {
-        lower_point_proposition(
+        lower_fixed_state_proposition(
             proposition,
             available,
             parameters,
@@ -525,7 +525,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             pre_state,
             state,
             None,
-            program_point_states,
+            recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -536,13 +536,13 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         })?
     };
 
-    // Structural point goals use the same checked source-script seam as
-    // ordinary point `have` proofs. Search may select a theorem application,
+    // Structural fixed-state goals use the same checked source-script seam as
+    // ordinary fixed-state `have` proofs. Search may select a theorem application,
     // but only `Proof::apply_step` installs its conclusion and provenance.
     // This replaces the former source rewrite that copied every theorem
     // requirement into an unchecked `apply using` certificate.
     if Proof::supports_linear_source(proof) {
-        let root = Proof::for_point_goal(
+        let root = Proof::for_fixed_state_goal(
             claim_label,
             proof_index,
             available,
@@ -551,7 +551,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
             arguments,
             pre_state,
             state,
-            program_point_states,
+            recorded_snapshots,
             surface_propositions,
             predicate_environment,
             click_function_environment,
@@ -569,7 +569,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         if let Some(checked) = checked {
             if !checked.is_complete() {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` proof {proof_index}: checked point proof retained an open goal"
+                    "`{claim_label}` proof {proof_index}: checked fixed-state proof retained an open goal"
                 )));
             }
             let certificate = checked.certificate();
@@ -624,7 +624,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         proposition: proposition.clone(),
         proof: proof.clone(),
     };
-    let (fact, plan) = plan_smart_have_at_current_point(
+    let (fact, plan) = plan_smart_have_in_current_state(
         &have,
         claim_label,
         proof_index,
@@ -633,7 +633,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         arguments,
         pre_state,
         state,
-        program_point_states,
+        recorded_snapshots,
         surface_propositions,
         predicate_environment,
         click_function_environment,
@@ -659,9 +659,9 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
                         if unfolded_surface == *surface {
                             return None;
                         }
-                        if let Some(point) = predicate_call_source_site(surface) {
+                        if let Some(point) = predicate_call_snapshot_selector(surface) {
                             unfolded_surface =
-                                surface_with_source_site(&unfolded_surface, &point).ok()?;
+                                surface_at_snapshot(&unfolded_surface, &point).ok()?;
                         }
                         let unfolded_kernel = unfold_predicates_in_proposition(
                             predicate_environment,
@@ -706,7 +706,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
         ExecutionView::new(
             &ExecutionFrontier::default(),
             &[],
-            program_point_states,
+            recorded_snapshots,
             &planning_surface,
             None,
         ),
@@ -727,7 +727,7 @@ pub(in crate::lang::click::proof) fn plan_point_pure_goal_certificate(
     };
     let certificate = ProofCertificate::from_proof_tactics(&tactics).map_err(|error| {
         ClickError::new(format!(
-            "`{claim_label}` produced an invalid point-pure certificate: {error:?}"
+            "`{claim_label}` produced an invalid fixed-state/pure certificate: {error:?}"
         ))
     })?;
     if matches!(proof_site, ProofSite::StructuralItem { .. })
@@ -765,8 +765,8 @@ fn advance_execution_proof_statement(
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     let mut advanced = Vec::new();
     for mut context in contexts {
-        record_code_region_program_point_state(
-            &mut context.program_point_states,
+        record_code_region_program_snapshot_state(
+            &mut context.recorded_snapshots,
             environment.function_block,
             CodeRegion::Statement(statement_index),
             ProgramPointKind::Entry,
@@ -838,14 +838,14 @@ fn advance_execution_proof_statement(
         }
         for transition in transitions {
             let mut surface_propositions = context.surface_propositions.clone();
-            let mut program_point_states = context.program_point_states.clone();
+            let mut recorded_snapshots = context.recorded_snapshots.clone();
             if let CStatementOutcome::Normal(exit_state)
             | CStatementOutcome::Return {
                 state: exit_state, ..
             } = &transition.outcome
             {
-                record_code_region_program_point_state(
-                    &mut program_point_states,
+                record_code_region_program_snapshot_state(
+                    &mut recorded_snapshots,
                     environment.function_block,
                     CodeRegion::Statement(statement_index),
                     ProgramPointKind::Exit,
@@ -866,9 +866,9 @@ fn advance_execution_proof_statement(
                     region: CodeRegionRef::Loop(loop_index),
                     kind: ProgramPointKind::Entry,
                 };
-                program_point_states.insert(entry_point, context.state.clone());
+                recorded_snapshots.insert(entry_point, context.state.clone());
                 for label in &loop_labels {
-                    program_point_states.insert(
+                    recorded_snapshots.insert(
                         ProgramPointRef {
                             region: CodeRegionRef::Label(label.clone()),
                             kind: ProgramPointKind::Entry,
@@ -881,9 +881,9 @@ fn advance_execution_proof_statement(
                         region: CodeRegionRef::Loop(loop_index),
                         kind: ProgramPointKind::Exit,
                     };
-                    program_point_states.insert(exit_point.clone(), exit_state.clone());
+                    recorded_snapshots.insert(exit_point.clone(), exit_state.clone());
                     for label in &loop_labels {
-                        program_point_states.insert(
+                        recorded_snapshots.insert(
                             ProgramPointRef {
                                 region: CodeRegionRef::Label(label.clone()),
                                 kind: ProgramPointKind::Exit,
@@ -917,14 +917,14 @@ fn advance_execution_proof_statement(
                                     "execution proof traversal loop({loop_index}) omitted an exported fact for an invariant"
                                 ))
                             })?;
-                            let exit_surface = surface_with_source_site(surface, &exit_point)?;
+                            let exit_surface = surface_at_snapshot(surface, &exit_point)?;
                             surface_propositions.record_lowering(&exit_surface, target)?;
                         }
                     }
                     if let CStatement::While { condition, .. } = statement {
                         let exit_condition =
                             ClickProposition::Not(Box::new(surface_c_condition(condition)));
-                        let lowered_exit_condition = lower_point_proposition(
+                        let lowered_exit_condition = lower_fixed_state_proposition(
                             &exit_condition,
                             &transition.pure_facts,
                             environment.parsed_function.parameters(),
@@ -932,7 +932,7 @@ fn advance_execution_proof_statement(
                             environment.initial_state,
                             exit_state,
                             None,
-                            &program_point_states,
+                            &recorded_snapshots,
                             environment.predicate_environment,
                             environment.click_function_environment,
                         )
@@ -942,8 +942,7 @@ fn advance_execution_proof_statement(
                             ))
                         })?;
                         if transition.pure_facts.contains(&lowered_exit_condition) {
-                            let exit_surface =
-                                surface_with_source_site(&exit_condition, &exit_point)?;
+                            let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
                             surface_propositions
                                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
                         }
@@ -955,7 +954,7 @@ fn advance_execution_proof_statement(
                     state,
                     pure_facts: transition.pure_facts,
                     surface_propositions,
-                    program_point_states,
+                    recorded_snapshots,
                     case_path: context.case_path.clone(),
                     next_opaque_call: context.next_opaque_call,
                     next_kernel_variable: context.next_kernel_variable,
