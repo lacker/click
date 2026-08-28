@@ -363,7 +363,7 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
     };
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -500,7 +500,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
             obligations: Vec::new(),
         }],
     };
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -521,7 +521,7 @@ pub(in crate::kernel) fn read_c_lvalue_expression_paths(
             &mut budget.next_kernel_variable,
         ));
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -649,7 +649,7 @@ pub(in crate::kernel) fn address_of_lvalue_paths(
             },
         });
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 

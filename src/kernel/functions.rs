@@ -217,7 +217,7 @@ pub(super) fn execute_c_function_paths_with_contract_resources(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -391,7 +391,7 @@ pub(super) fn execute_c_function_verification_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -530,7 +530,7 @@ pub(super) fn execute_c_function_call_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1003,7 +1003,7 @@ fn execute_verified_function_rule(
             obligations,
         });
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1495,11 +1495,11 @@ pub(super) fn evaluate_c_arguments_paths(
                 }
             }
         }
-        budget.consume_paths(next_paths.len())?;
+        budget.check_path_width(next_paths.len())?;
         paths = next_paths;
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 

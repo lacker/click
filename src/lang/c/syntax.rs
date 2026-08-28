@@ -1074,15 +1074,7 @@ impl Parser {
         }
         self.expect(Token::RBrace)?;
 
-        let mut statements = statements.into_iter();
-        let Some(mut statement) = statements.next() else {
-            return Ok(C0Statement::Skip);
-        };
-        for next in statements {
-            statement = C0Statement::Seq(Box::new(statement), Box::new(next));
-        }
-
-        Ok(statement)
+        Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
     }
 
     fn parse_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -1985,6 +1977,21 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
     }
 
     Ok((tokens, positions))
+}
+
+fn balanced_statement_sequence(mut statements: Vec<C0Statement>) -> Option<C0Statement> {
+    while statements.len() > 1 {
+        let mut next_level = Vec::with_capacity(statements.len().div_ceil(2));
+        let mut iter = statements.into_iter();
+        while let Some(first) = iter.next() {
+            next_level.push(match iter.next() {
+                Some(second) => C0Statement::Seq(Box::new(first), Box::new(second)),
+                None => first,
+            });
+        }
+        statements = next_level;
+    }
+    statements.pop()
 }
 
 fn parse_char_literal(chars: &[char], start: usize) -> Result<(u8, usize), C0SyntaxError> {

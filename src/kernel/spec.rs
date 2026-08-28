@@ -1141,7 +1141,7 @@ pub(super) fn evaluate_spec_expression_paths_with_loop_entry(
             paths
         }
     };
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 

@@ -66,6 +66,27 @@ fn c0_syntax_ignores_line_and_block_comments() {
 }
 
 #[test]
+fn large_straight_line_block_parses_and_lowers_on_a_small_stack() {
+    std::thread::Builder::new()
+        .name("large-straight-line-c-block".to_string())
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut source = String::from("int32 straight(int32 x) {\n");
+            for _ in 0..10_000 {
+                source.push_str("x = x;\n");
+            }
+            source.push_str("return x;\n}\n");
+
+            let function = syntax::parse_function(&source)
+                .expect("a large straight-line C block should parse");
+            let _lowered = function.to_kernel_function();
+        })
+        .expect("the small-stack C parser thread should start")
+        .join()
+        .expect("large straight-line parsing and lowering should be stack bounded");
+}
+
+#[test]
 fn c0_void_functions_accept_return_and_fallthrough() {
     let explicit = syntax::parse_function("void stop() { return; }")
         .expect("a void function may return without a value");

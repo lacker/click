@@ -1121,18 +1121,34 @@ fn executor_budgets_cap_steps_calls_and_paths() {
         Some(ExecutionLimit::FunctionCalls)
     );
 
-    let a = Variable(75);
-    let b = Variable(76);
-    let branchy_statement = c_return(c_less_than(
-        CExpression::Value(int32(Bitvector32Term::Variable(a))),
-        CExpression::Value(int32(Bitvector32Term::Variable(b))),
-    ));
+    let straight_line = (0..128).fold(c_return(c_int32_literal(1)), |tail, _| {
+        c_seq(CStatement::Skip, tail)
+    });
+    assert_eq!(
+        prove_symbolic_c_execution_paths_with_budget(
+            state.clone(),
+            straight_line,
+            PureFactContext::new(),
+            ExecutionBudget::new()
+                .with_statement_steps(129)
+                .with_paths(1),
+        )
+        .limit(),
+        None,
+        "a path budget is not a source-length budget; singleton continuations are free"
+    );
+
+    let branchy_statement = c_if(
+        CExpression::Value(int32(Bitvector32Term::Variable(Variable(75)))),
+        c_return(c_int32_literal(1)),
+        c_return(c_int32_literal(0)),
+    );
     assert_eq!(
         prove_symbolic_c_execution_paths_with_budget(
             state,
             branchy_statement,
             PureFactContext::new(),
-            ExecutionBudget::new().with_paths(3),
+            ExecutionBudget::new().with_paths(1),
         )
         .limit(),
         Some(ExecutionLimit::Paths)

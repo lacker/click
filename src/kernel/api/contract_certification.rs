@@ -104,7 +104,7 @@ pub(super) fn contract_resource_condition_cases(
             when_false.push(negated.clone());
             next.push(when_false);
         }
-        budget.consume_paths(next.len()).ok()?;
+        budget.check_path_width(next.len()).ok()?;
         cases = next;
     }
     Some(cases)

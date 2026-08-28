@@ -707,13 +707,9 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             label: label.clone(),
         },
-        CStatement::Seq(first, second) => CStatement::Seq(
-            Box::new(substitute_bitvector_variable_in_c_statement(
-                first, from, to,
-            )),
-            Box::new(substitute_bitvector_variable_in_c_statement(
-                second, from, to,
-            )),
+        CStatement::Seq(first, second) => c_seq(
+            substitute_bitvector_variable_in_c_statement(first, from, to),
+            substitute_bitvector_variable_in_c_statement(second, from, to),
         ),
         CStatement::Return(expression) => CStatement::Return(
             substitute_bitvector_variable_in_c_expression(expression, from, to),

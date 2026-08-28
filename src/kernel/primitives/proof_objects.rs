@@ -775,14 +775,20 @@ impl ExecutionBudget {
         consume_budget(&mut self.loop_unrolls, ExecutionLimit::LoopUnrolls)
     }
 
-    pub(in crate::kernel) fn consume_paths(&mut self, paths: usize) -> ExecutionResult<()> {
+    /// Enforces the maximum number of paths returned by one evaluator result.
+    ///
+    /// Returning one continuation is ordinary straight-line execution, not
+    /// path growth. Charging that singleton at every expression and statement
+    /// wrapper made a fixed path-explosion guard behave like a hidden source
+    /// length limit. Propagating the same paths through another wrapper does
+    /// not spend the capacity again.
+    pub(in crate::kernel) fn check_path_width(&self, produced_paths: usize) -> ExecutionResult<()> {
         if crate::instrumentation::deadline_exceeded() {
             return Err(ExecutionLimit::Deadline);
         }
-        if self.paths < paths {
+        if self.paths < produced_paths {
             return Err(ExecutionLimit::Paths);
         }
-        self.paths -= paths;
         Ok(())
     }
 }

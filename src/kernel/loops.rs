@@ -69,7 +69,7 @@ pub(super) fn execute_c_call_assign_paths(
         }
     })
     .collect::<Vec<_>>();
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -115,7 +115,7 @@ pub(super) fn execute_c_call_paths(
         obligations: path.obligations,
     })
     .collect::<Vec<_>>();
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -155,7 +155,7 @@ pub(super) fn execute_c_statement_paths_with_prefix(
         })
     })
     .collect::<Vec<_>>();
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -168,7 +168,10 @@ pub(super) fn execute_c_statement_verification_paths(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    budget.consume_statement_step()?;
+    // `Seq` only groups source statements; it is not another statement step.
+    if !matches!(statement, CStatement::Seq(_, _)) {
+        budget.consume_statement_step()?;
+    }
     if execution_semantics.loops == CLoopSemantics::ApplyVerifiedRules
         && matches!(
             statement,
@@ -196,7 +199,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 path
             })
             .collect::<Vec<_>>();
-        budget.consume_paths(paths.len())?;
+        budget.check_path_width(paths.len())?;
         return Ok(paths);
     }
     let paths = match statement {
@@ -361,7 +364,7 @@ pub(super) fn execute_c_statement_verification_paths(
             paths?
         }
     };
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -403,7 +406,7 @@ pub(super) fn execute_c_statement_verification_paths_with_prefix(
         })
     })
     .collect::<Vec<_>>();
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -600,7 +603,7 @@ fn execute_c_while_exit_paths(
             obligations,
         });
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 

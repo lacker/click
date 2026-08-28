@@ -9,6 +9,7 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 mod contracts;
 mod memory_state;
@@ -401,7 +402,9 @@ pub enum CStatement {
         condition: CExpression,
         label: Option<String>,
     },
-    Seq(Box<CStatement>, Box<CStatement>),
+    /// Two statement regions whose immutable subtrees are shared by execution
+    /// frontiers as they advance through a block.
+    Seq(Arc<CStatement>, Arc<CStatement>),
     Return(CExpression),
     Store {
         pointer: CExpression,

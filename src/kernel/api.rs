@@ -1,6 +1,7 @@
 use super::functions::apply_verified_contract_resource_transition;
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
+use std::sync::Arc;
 
 #[cfg(test)]
 thread_local! {
@@ -633,7 +634,7 @@ pub fn c_labeled_assert(condition: CExpression, label: impl Into<String>) -> CSt
 }
 
 pub fn c_seq(first: CStatement, second: CStatement) -> CStatement {
-    CStatement::Seq(Box::new(first), Box::new(second))
+    CStatement::Seq(Arc::new(first), Arc::new(second))
 }
 
 pub fn c_skip() -> CStatement {

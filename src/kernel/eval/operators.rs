@@ -101,7 +101,7 @@ pub(in crate::kernel) fn evaluate_c_add_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -787,7 +787,7 @@ pub(in crate::kernel) fn evaluate_c_equal_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -912,7 +912,7 @@ pub(in crate::kernel) fn evaluate_c_not_equal_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1002,7 +1002,7 @@ pub(in crate::kernel) fn evaluate_c_not_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1093,7 +1093,7 @@ pub(in crate::kernel) fn evaluate_c_logical_and_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1184,7 +1184,7 @@ pub(in crate::kernel) fn evaluate_c_logical_or_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1294,7 +1294,7 @@ pub(in crate::kernel) fn evaluate_c_int32_binary_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1349,6 +1349,6 @@ pub(in crate::kernel) fn evaluate_c_int32_total_unary_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }

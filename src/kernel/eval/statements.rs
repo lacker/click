@@ -94,7 +94,7 @@ pub(in crate::kernel) fn execute_c_lvalue_assignment_paths(
             }
         }
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -358,7 +358,7 @@ fn execute_c_heap_allocate_paths(
             });
         }
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -543,7 +543,7 @@ fn execute_c_heap_free_paths(
             obligations,
         });
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -745,7 +745,12 @@ pub(in crate::kernel) fn execute_c_statement_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    budget.consume_statement_step()?;
+    // `Seq` is the tree representation of a source block, not an executed C
+    // statement. Charging it made the statement budget depend on tree shape
+    // and counted every straight-line source statement twice.
+    if !matches!(statement, CStatement::Seq(_, _)) {
+        budget.consume_statement_step()?;
+    }
     let paths = match statement {
         CStatement::Skip => vec![CStatementExecutionPath {
             outcome: CStatementOutcome::Normal(state.clone()),
@@ -958,7 +963,7 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             budget,
         )?,
     };
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1006,7 +1011,7 @@ pub(in crate::kernel) fn execute_c_assert_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1101,7 +1106,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
         }
     }
 
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 
@@ -1176,7 +1181,7 @@ pub(in crate::kernel) fn execute_c_while_body_paths(
             }),
         }
     }
-    budget.consume_paths(paths.len())?;
+    budget.check_path_width(paths.len())?;
     Ok(paths)
 }
 

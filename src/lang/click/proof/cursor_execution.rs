@@ -2624,15 +2624,17 @@ fn split_next_execution_step(
 pub(super) fn split_next_source_operation(
     statement: &CStatement,
 ) -> Result<(CStatement, Option<CStatement>), String> {
-    let mut statements = Vec::new();
-    flatten_top_level_sequence(statement, &mut statements).map_err(|message| {
-        format!("could not flatten the lowered statement sequence: {message}")
-    })?;
-    let Some(source_statement) = statements.first() else {
-        return Err("lowered statement is missing its source operation".to_string());
-    };
-    let remaining = sequence_from_statements(&statements[1..]);
-    Ok((source_statement.clone(), remaining))
+    match statement {
+        CStatement::Seq(first, second) => {
+            let (source_statement, first_remaining) = split_next_source_operation(first)?;
+            let remaining = match first_remaining {
+                Some(first_remaining) => c_seq(first_remaining, second.as_ref().clone()),
+                None => second.as_ref().clone(),
+            };
+            Ok((source_statement, Some(remaining)))
+        }
+        statement => Ok((statement.clone(), None)),
+    }
 }
 
 pub(super) fn flatten_top_level_sequence(
@@ -2652,8 +2654,19 @@ pub(super) fn flatten_top_level_sequence(
 }
 
 pub(super) fn sequence_from_statements(statements: &[CStatement]) -> Option<CStatement> {
-    let (first, rest) = statements.split_first()?;
-    Some(rest.iter().cloned().fold(first.clone(), c_seq))
+    let mut level = statements.to_vec();
+    while level.len() > 1 {
+        let mut next_level = Vec::with_capacity(level.len().div_ceil(2));
+        let mut statements = level.into_iter();
+        while let Some(first) = statements.next() {
+            next_level.push(match statements.next() {
+                Some(second) => c_seq(first, second),
+                None => first,
+            });
+        }
+        level = next_level;
+    }
+    level.pop()
 }
 
 fn set_function_exit_execution(
@@ -2672,4 +2685,36 @@ fn set_function_exit_execution(
     frontier.execution_start_state = Some(execution_start_state);
     frontier.position = FrontierPosition::FunctionExit { execution };
     Ok(())
+}
+
+#[cfg(test)]
+mod cursor_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn large_straight_line_cursor_advances_on_a_small_stack() {
+        std::thread::Builder::new()
+            .name("large-straight-line-cursor".to_string())
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let statements = vec![CStatement::Skip; 10_000];
+                let mut remaining = sequence_from_statements(&statements)
+                    .expect("the generated block should not be empty");
+                let mut count = 0;
+                loop {
+                    let (statement, tail) = split_next_source_operation(&remaining)
+                        .expect("a balanced sequence should have a next operation");
+                    assert_eq!(statement, CStatement::Skip);
+                    count += 1;
+                    let Some(tail) = tail else {
+                        break;
+                    };
+                    remaining = tail;
+                }
+                assert_eq!(count, 10_000);
+            })
+            .expect("the small-stack cursor thread should start")
+            .join()
+            .expect("large straight-line cursor advancement should be stack bounded");
+    }
 }
