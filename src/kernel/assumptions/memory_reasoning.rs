@@ -1670,16 +1670,33 @@ impl PureFactContext {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        let proves_order = |left: &Bitvector32Term, right: &Bitvector32Term, strict: bool| {
+            let condition = if strict {
+                ConditionTerm::signed_less_than(left.clone(), right.clone())
+            } else {
+                ConditionTerm::signed_less_equal(left.clone(), right.clone())
+            };
+            self.exact_condition_value(&condition) == Some(true)
+                || crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource read",
+                    "resource read: exact order path",
+                    || self.has_exact_order_path(left, right, strict),
+                )
+                || crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource read",
+                    "resource read: fallback order decision",
+                    || self.decide(&condition) == Some(true),
+                )
+        };
         // Scalar and pointer fields both occupy one surface element: ranges
         // count fields, so a pointer-width access at an in-range element
         // index is authorized exactly like an int32 access.
         if (byte_width == 4 || byte_width == crate::kernel::C_POINTER_BYTE_WIDTH)
             && let Some(index) = pointer.element_index_from_base(base)
-            && self.decide(&ConditionTerm::signed_less_equal(
-                start.clone(),
-                index.clone(),
-            )) == Some(true)
-            && self.decide(&ConditionTerm::signed_less_than(index, end.clone())) == Some(true)
+            && proves_order(start, &index, false)
+            && proves_order(&index, end, true)
         {
             return true;
         }

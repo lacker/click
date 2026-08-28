@@ -213,11 +213,27 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load(
     value_type: CType,
     assumptions: &PureFactContext,
 ) -> Result<CValue, String> {
-    evaluate_contract_memory_load_from_memory(state.memory(), pointer, value_type, assumptions)
+    evaluate_contract_memory_load_with_resources(
+        state.memory(),
+        Some(state.resources()),
+        pointer,
+        value_type,
+        assumptions,
+    )
 }
 
 pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
     memory: &CMemory,
+    pointer: Pointer,
+    value_type: CType,
+    assumptions: &PureFactContext,
+) -> Result<CValue, String> {
+    evaluate_contract_memory_load_with_resources(memory, None, pointer, value_type, assumptions)
+}
+
+pub(in crate::lang::click) fn evaluate_contract_memory_load_with_resources(
+    memory: &CMemory,
+    resources: Option<&ResourceContext>,
     pointer: Pointer,
     value_type: CType,
     assumptions: &PureFactContext,
@@ -255,6 +271,24 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
             "contract load produced a value incompatible with {value_type:?}"
         )),
         _outcome => {
+            let resource_read = crate::instrumentation::measure_operation(
+                "kernel",
+                "contract load",
+                "contract load: current resource permission",
+                || {
+                    resources.is_some_and(|resources| {
+                        crate::kernel::resource_context_has_read(
+                            resources,
+                            &pointer,
+                            value_type.byte_width(),
+                            assumptions,
+                        )
+                    })
+                },
+            );
+            if resource_read {
+                return symbolic_contract_memory_load(memory, pointer, value_type);
+            }
             if assumptions.should_allow_symbolic_contract_loads() {
                 return symbolic_contract_memory_load(memory, pointer, value_type);
             }
@@ -276,7 +310,12 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_from_memory(
                     &Bitvector32Term::Constant(value_type.byte_width()),
                 )
             } else {
-                assumptions.proves(&required)
+                crate::instrumentation::measure_operation(
+                    "kernel",
+                    "contract load",
+                    "contract load: historical permission",
+                    || assumptions.proves(&required),
+                )
             };
             if is_loadable {
                 return symbolic_contract_memory_load(memory, pointer, value_type);

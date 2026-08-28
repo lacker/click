@@ -442,8 +442,16 @@ pub(in crate::lang::click) fn evaluate_contract_expression_with_environment(
             let element_type = array_ref.element_type;
             let pointer =
                 offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
-            let value = evaluate_contract_memory_load_from_memory(
+            let resources = if &array_ref.memory == post_state.memory() {
+                Some(post_state.resources())
+            } else if &array_ref.memory == pre_state.memory() {
+                Some(pre_state.resources())
+            } else {
+                None
+            };
+            let value = evaluate_contract_memory_load_with_resources(
                 &array_ref.memory,
+                resources,
                 pointer,
                 element_type,
                 assumptions,

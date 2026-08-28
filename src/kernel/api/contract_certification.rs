@@ -2257,14 +2257,6 @@ pub(super) fn certification_proves_proposition(
         // quantified proof search.
         return true;
     }
-    // Disjunction elimination is a bounded structural proof rule, not a
-    // fuel-dependent simp heuristic. Contract certification must recognize
-    // the same rule as proposition derivation; otherwise a retained `cases`
-    // proof can verify while the independently certified contract frontier
-    // rejects its atomic conclusion.
-    if assumptions.proves_by_disjunction_cases(proposition) {
-        return true;
-    }
     if let Proposition::ConditionIs(condition, value) = proposition
         && let Some(canonical) = condition_with_canonicalized_loads(condition)
         && &canonical != condition
@@ -2275,36 +2267,7 @@ pub(super) fn certification_proves_proposition(
     {
         return true;
     }
-    if let Proposition::ConditionIs(condition, value) = proposition
-        && assumptions.prop_facts.iter().any(|fact| {
-            assumptions
-                .forall_instantiations_for_condition(fact, condition)
-                .into_iter()
-                .any(|instance| {
-                    let mut body = &instance;
-                    let mut premises = Vec::new();
-                    while let Proposition::Implies(premise, rest) = body {
-                        premises.push(premise.as_ref());
-                        body = rest;
-                    }
-                    let Proposition::ConditionIs(_, instance_value) = body else {
-                        return false;
-                    };
-                    instance_value == value
-                        && c_condition_facts_equivalent_for_memory_resolution(
-                            body,
-                            &Proposition::ConditionIs(condition.clone(), *value),
-                            assumptions,
-                        )
-                        && premises
-                            .into_iter()
-                            .all(|premise| certification_proves_proposition(assumptions, premise))
-                })
-        })
-    {
-        return true;
-    }
-    match proposition {
+    let directly_proven = match proposition {
         // Order conditions use the deterministic bounded order prover; the
         // fuel-dependent simp decision procedure stays out of certification.
         Proposition::ConditionIs(condition, value)
@@ -2494,7 +2457,57 @@ pub(super) fn certification_proves_proposition(
                 )
         }
         _ => assumptions.proves(proposition),
+    };
+    if directly_proven {
+        return true;
     }
+
+    if let Proposition::ConditionIs(condition, value) = proposition
+        && crate::instrumentation::measure_operation(
+            "kernel",
+            "certification proposition",
+            "certification proof: quantified condition facts",
+            || {
+                assumptions.prop_facts.iter().any(|fact| {
+                    assumptions
+                        .forall_instantiations_for_condition(fact, condition)
+                        .into_iter()
+                        .any(|instance| {
+                            let mut body = &instance;
+                            let mut premises = Vec::new();
+                            while let Proposition::Implies(premise, rest) = body {
+                                premises.push(premise.as_ref());
+                                body = rest;
+                            }
+                            let Proposition::ConditionIs(_, instance_value) = body else {
+                                return false;
+                            };
+                            instance_value == value
+                                && c_condition_facts_equivalent_for_memory_resolution(
+                                    body,
+                                    &Proposition::ConditionIs(condition.clone(), *value),
+                                    assumptions,
+                                )
+                                && premises.into_iter().all(|premise| {
+                                    certification_proves_proposition(assumptions, premise)
+                                })
+                        })
+                })
+            },
+        )
+    {
+        return true;
+    }
+
+    // Disjunction elimination is a bounded structural fallback, not a
+    // fuel-dependent simp heuristic. Try the proposition's direct rules
+    // first so unrelated ambient branches do not multiply their work.
+    crate::instrumentation::measure_operation(
+        "kernel",
+        "certification proposition",
+        "certification proof: ambient disjunction cases",
+        || assumptions.proves_by_disjunction_cases(proposition),
+    )
 }
 
 /// Two load variables for one address are equal when the cell is framed
@@ -2801,12 +2814,150 @@ fn certification_proves_predicate_from_quantified_implication(
     })
 }
 
+/// Proves a guarded quantified conclusion from already-certified guarded
+/// quantified facts without copying the ambient execution context. The bound
+/// variable remains symbolic: facts with the same guard are instantiated at
+/// that variable, and only their pointwise conclusions enter the local proof
+/// context.
+fn certification_proves_forall_from_quantified_facts(
+    assumptions: &PureFactContext,
+    goal: &Proposition,
+) -> bool {
+    fn implication_parts(body: &Proposition) -> (Vec<&Proposition>, &Proposition) {
+        let mut premises = Vec::new();
+        let mut conclusion = body;
+        while let Proposition::Implies(premise, rest) = conclusion {
+            premises.push(premise.as_ref());
+            conclusion = rest.as_ref();
+        }
+        (premises, conclusion)
+    }
+
+    let Proposition::ForAll {
+        var: goal_var,
+        sort: goal_sort,
+        body: goal_body,
+    } = goal
+    else {
+        return false;
+    };
+    let (goal_premises, goal_conclusion) = implication_parts(goal_body);
+    if goal_premises.is_empty() {
+        return false;
+    }
+
+    let mut local = PureFactContext::new();
+    for premise in &goal_premises {
+        local = local.assume_proposition((*premise).clone());
+    }
+    let mut supporting_facts = 0usize;
+    for fact in assumptions.prop_facts.iter() {
+        let Proposition::ForAll {
+            var: fact_var,
+            sort: fact_sort,
+            body: fact_body,
+        } = fact
+        else {
+            continue;
+        };
+        if fact_sort != goal_sort {
+            continue;
+        }
+        let renamed = substitute_bitvector_variable_in_proposition(
+            fact_body,
+            *fact_var,
+            &Bitvector32Term::Variable(*goal_var),
+        );
+        let (fact_premises, fact_conclusion) = implication_parts(&renamed);
+        if fact_premises.len() != goal_premises.len()
+            || !fact_premises
+                .iter()
+                .zip(&goal_premises)
+                .all(|(fact_premise, goal_premise)| {
+                    *fact_premise == *goal_premise
+                        || propositions_alpha_equivalent(fact_premise, goal_premise)
+                })
+        {
+            continue;
+        }
+        local = local.assume_proposition(fact_conclusion.clone());
+        supporting_facts += 1;
+    }
+    supporting_facts > 0 && certification_proves_proposition(&local, goal_conclusion)
+}
+
+#[cfg(test)]
+mod quantified_composition_tests {
+    use super::*;
+
+    fn guarded_equality(
+        binder: Variable,
+        upper: Bitvector32Term,
+        left: Bitvector32Term,
+        right: Bitvector32Term,
+    ) -> Proposition {
+        let index = Bitvector32Term::Variable(binder);
+        Proposition::ForAll {
+            var: binder,
+            sort: Sort::CInt32,
+            body: Box::new(Proposition::Implies(
+                Box::new(Proposition::And(
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_equal(
+                            Bitvector32Term::Constant(0),
+                            index.clone(),
+                        ),
+                        true,
+                    )),
+                    Box::new(Proposition::ConditionIs(
+                        ConditionTerm::signed_less_than(index, upper),
+                        true,
+                    )),
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(left, right),
+                    true,
+                )),
+            )),
+        }
+    }
+
+    #[test]
+    fn guarded_quantified_equalities_compose_in_a_scoped_context() {
+        let binder = Variable(7_100_000);
+        let upper = Bitvector32Term::Variable(Variable(7_100_001));
+        let old = Bitvector32Term::Variable(Variable(7_100_002));
+        let middle = Bitvector32Term::Variable(Variable(7_100_003));
+        let current = Bitvector32Term::Variable(Variable(7_100_004));
+        let old_to_middle = guarded_equality(binder, upper.clone(), old.clone(), middle.clone());
+        let middle_to_current = guarded_equality(binder, upper.clone(), middle, current.clone());
+        let goal = guarded_equality(binder, upper, old, current);
+
+        let only_first = PureFactContext::new().assume_proposition(old_to_middle.clone());
+        assert!(!certification_proves_forall_from_quantified_facts(
+            &only_first,
+            &goal
+        ));
+
+        let assumptions = only_first.assume_proposition(middle_to_current);
+        assert!(certification_proves_forall_from_quantified_facts(
+            &assumptions,
+            &goal
+        ));
+    }
+}
+
 fn certification_proves_post_proposition(
     assumptions: &PureFactContext,
     proposition: &Proposition,
     post_memory: &CMemory,
     execution_facts: &[ExecutionPureFact],
 ) -> bool {
+    if matches!(proposition, Proposition::ForAll { .. })
+        && certification_proves_forall_from_quantified_facts(assumptions, proposition)
+    {
+        return true;
+    }
     if certification_proves_proposition(assumptions, proposition) {
         return true;
     }

@@ -1243,6 +1243,14 @@ impl ResourceContext {
         byte_width: u32,
         assumptions: &PureFactContext,
     ) -> bool {
+        // A contract expression can reload a pointer-valued field after an
+        // opaque call. Match that kernel-minted name to the resource's
+        // retained load origin before consulting the block and range
+        // indexes, just as the write lookup below does. The indexed
+        // structural check then answers from the exact supporting resource
+        // instead of comparing every historical range through call havoc.
+        let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
+        let pointer = &resolved;
         if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
             return true;
         }

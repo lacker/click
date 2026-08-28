@@ -11,10 +11,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// suite is a meaningful green gate. Run one with `CLICK_EXAMPLE=<name>`, or
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/internals/testing.md).
-const QUARANTINED: &[(&str, &str)] = &[(
-    "owned-vector",
-    "allocated_vector_push.contract retains an observed child view after vector_grow retires its allocation; see issues/resource-tracking.md",
-)];
+const QUARANTINED: &[(&str, &str)] = &[];
 
 #[test]
 fn example_projects() {

@@ -770,13 +770,21 @@ pub(in crate::kernel) fn collect_c_memory_range_bitvector_variables(
     collect_bitvector_variables(&range.end, variables);
 }
 
-pub(in crate::kernel) fn resource_context_has_read(
+pub(crate) fn resource_context_has_read(
     resources: &ResourceContext,
     pointer: &Pointer,
     byte_width: u32,
     assumptions: &PureFactContext,
 ) -> bool {
-    resources.permits_memory_read(pointer, byte_width, assumptions)
+    // Resource-backed reads are loadability checks too: a view retained
+    // across an opaque effect may name its bounds with load atoms from the
+    // pre-effect snapshot, while the expression being loaded names the same
+    // cells at the current snapshot. Keep the snapshot-DAG bridge scoped to
+    // this permission query, just as `proves_memory_loadable` does for
+    // proposition-backed permissions.
+    crate::kernel::api::with_extended_dag_bridging(|| {
+        resources.permits_memory_read(pointer, byte_width, assumptions)
+    })
 }
 
 pub(in crate::kernel) fn resource_context_has_structural_read(

@@ -18,9 +18,4 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 1
-
-- [Resource tracking across execution transitions](resource-tracking.md):
-  umbrella roadmap for the scoped owned-vector repair, resource-lifetime
-  regressions, and final end-to-end unquarantine; its `observe`-view witness
-  reproduces on the checked engine and is tracked in the file.
+## Other open issues: 0
