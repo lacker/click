@@ -125,8 +125,8 @@ pub(super) struct Proof<'a> {
     node: Arc<ProofNode>,
     /// The open goal this handle addresses. Focus is a cursor, not semantic
     /// state: two handles over one state may address different judgments,
-    /// and checked operations advance exactly the focused goal.
-    focused: GoalId,
+    /// and checked operations advance exactly the focused branch goal.
+    focused_branch: BranchId,
 }
 
 /// An opaque position in one `Proof` derivation.
@@ -154,7 +154,7 @@ pub(super) struct ProofCheckpoint<'a> {
 pub(super) struct ExecutionSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
-    ids: [Option<GoalId>; 2],
+    arm_branches: [Option<BranchId>; 2],
     condition_theorems: [Option<Theorem>; 2],
     base_facts: [Option<ProofFacts>; 2],
     base_executions: [Option<Arc<ExecutionProofState>>; 2],
@@ -173,7 +173,7 @@ pub(super) struct ExecutionSplit<'a> {
 pub(super) struct ExecutionProofCaseSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
-    ids: [GoalId; 2],
+    arm_branches: [BranchId; 2],
     surface_condition: ClickProposition,
     base_facts: [ProofFacts; 2],
     base_executions: [Arc<ExecutionProofState>; 2],
@@ -191,7 +191,7 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
 pub(super) struct ExecutionLogicalCasesSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
-    ids: [GoalId; 2],
+    arm_branches: [BranchId; 2],
     path_facts: [Vec<Proposition>; 2],
 }
 
@@ -231,7 +231,7 @@ struct CheckedExecutionJoinParts {
 impl<'a> ExecutionSplit<'a> {
     /// `Some(take_then)` when the kernel certified exactly one feasible arm.
     pub(super) fn sole_feasible_arm(&self) -> Option<bool> {
-        match self.ids {
+        match self.arm_branches {
             [Some(_), None] => Some(true),
             [None, Some(_)] => Some(false),
             _ => None,
@@ -239,8 +239,8 @@ impl<'a> ExecutionSplit<'a> {
     }
 
     /// The recorded sibling goal id for one arm, when that arm is feasible.
-    pub(super) fn arm_id(&self, take_then: bool) -> Option<GoalId> {
-        self.ids[usize::from(!take_then)]
+    pub(super) fn arm_id(&self, take_then: bool) -> Option<BranchId> {
+        self.arm_branches[usize::from(!take_then)]
     }
 
     /// The structural preflight for `branch ensuring` on this split: a
@@ -279,7 +279,7 @@ impl<'a> ExecutionSplit<'a> {
 pub(super) struct OutcomeSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
-    ids: [GoalId; 2],
+    arm_branches: [BranchId; 2],
     condition: ClickProposition,
     expected_effects: Vec<usize>,
     path_facts: [Vec<Proposition>; 2],
@@ -884,84 +884,96 @@ impl<'a> ExecutionProofContext<'a> {
 #[derive(Clone)]
 struct ProofState {
     locals: ProofLocals,
-    goals: ProofGoals,
+    open_branches: OpenBranches,
     added_facts: Arc<Vec<Proposition>>,
     checked_facts: Arc<Vec<Proposition>>,
 }
 
-/// Identity of one open obligation within a proof lineage.
+/// Identity of one open semantic branch within a proof lineage.
 ///
 /// Allocation is monotonic per lineage. Ids allocated after divergent forks
 /// may collide numerically; identity comparison is meaningful only along one
 /// ancestry chain or against the recorded structure that allocated the id.
-/// See the goal and split identity rules in
+/// See the branch and split identity rules in
 /// `design/proof-object-api.md`.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct GoalId(u64);
+pub(super) struct BranchId(u64);
 
-impl GoalId {
-    /// The id every fresh lineage allocates for its root obligation.
+impl BranchId {
+    /// The id every fresh proof allocates for its root branch.
     const ROOT: Self = Self(1);
 }
 
 /// Identity of one audited split within a proof lineage.
 ///
-/// A split allocates this id and its labeled child goal ids together, in rule
-/// order, from the same lineage counter as ordinary goals. The recorded split
+/// A split allocates this id and its labeled child branch ids together, in rule
+/// order, from the same lineage counter as ordinary branches. The recorded split
 /// structure — not id magnitude — is what joins verify: each arm additionally
 /// receives a unique entry provenance marker, so a checked descendant of one
 /// split instance cannot be joined by another.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct SplitId(u64);
 
-/// The persistent typed goal collection owned by one `ProofState`, paired
+/// The persistent open-branch collection owned by one `ProofState`, paired
 /// with its lineage-local id allocator.
 ///
-/// Every proof currently owns at most one open goal; the collection exists so
-/// audited splits can record several labeled successor goals without a second
-/// representation. A goal id names one obligation for its lifetime: focused
-/// refinements preserve it, discharge retires it, and a retired id is never
-/// reused within its lineage. Forks share the map root; a local update copies
-/// only logarithmic paths.
+/// A fresh proof has one root branch. Checked splits replace one branch with
+/// labeled child branches, and checked joins replace those children with their
+/// common continuation. A branch id names one branch for its lifetime:
+/// focused branch refinements preserve it, closure retires it, and a retired id is
+/// never reused within its lineage. Candidate forks share the map root; one
+/// local update copies only logarithmic paths.
 #[derive(Clone)]
-struct ProofGoals {
-    open: PersistentMap<GoalId, Goal>,
+struct OpenBranches {
+    open: PersistentMap<BranchId, OpenBranch>,
     next_id: u64,
 }
 
-impl ProofGoals {
-    /// Creates the root goal set of a fresh proof: one open goal under
-    /// [`GoalId::ROOT`].
-    fn root(goal: Goal) -> Self {
+impl OpenBranches {
+    /// Creates a fresh proof's single root branch under
+    /// [`BranchId::ROOT`].
+    fn root(branch: OpenBranch) -> Self {
         Self {
-            open: PersistentMap::default().with_inserted(GoalId::ROOT, goal),
-            next_id: GoalId::ROOT.0 + 1,
+            open: PersistentMap::default().with_inserted(BranchId::ROOT, branch),
+            next_id: BranchId::ROOT.0 + 1,
         }
     }
 
-    fn get(&self, at: GoalId) -> Option<&Goal> {
+    fn get(&self, at: BranchId) -> Option<&OpenBranch> {
         self.open.get(&at)
     }
 
-    /// Replaces the addressed goal's content while preserving its identity.
-    /// This is the successor shape of a goal-preserving refinement rule.
-    fn replace_at(&self, at: GoalId, goal: Goal) -> Self {
+    fn obligation(&self, at: BranchId) -> Option<&Obligation> {
+        Some(&self.get(at)?.obligation)
+    }
+
+    /// Replaces the addressed branch while preserving its identity.
+    fn replace_at(&self, at: BranchId, branch: OpenBranch) -> Self {
         debug_assert!(
             self.open.contains_key(&at),
-            "goal refinement requires the addressed open goal"
+            "branch refinement requires the addressed open branch"
         );
         Self {
-            open: self.open.with_inserted(at, goal),
+            open: self.open.with_inserted(at, branch),
             next_id: self.next_id,
         }
     }
 
-    /// Retires the addressed goal: the discharge shape of a goal-closing
-    /// rule. The id is never reallocated within this lineage.
-    fn discharge_at(&self, at: GoalId) -> Self {
+    /// Replaces only what the addressed branch must establish, preserving its
+    /// branch-local state.
+    fn replace_obligation_at(&self, at: BranchId, obligation: Obligation) -> Self {
+        let Some(branch) = self.get(at) else {
+            unreachable!("obligation refinement requires the addressed open branch");
+        };
+        self.replace_at(at, branch.with_obligation(obligation))
+    }
+
+    /// Closes the addressed branch after its obligation is discharged. The id
+    /// is never reallocated within this lineage.
+    fn close_at(&self, at: BranchId) -> Self {
         debug_assert!(
             self.open.contains_key(&at),
-            "goal discharge requires the addressed open goal"
+            "branch closure requires the addressed open branch"
         );
         Self {
             open: self.open.without_key(&at),
@@ -969,24 +981,25 @@ impl ProofGoals {
         }
     }
 
-    /// Replaces the addressed goal with labeled sibling goals in this same
+    /// Replaces the addressed branch with labeled sibling branches in this
     /// collection, in rule order: the parent id is retired by the split and
     /// each arm owns its recorded fresh id (identity rule 1); the siblings
     /// coexist in one state.
     fn split_at<const ARMS: usize>(
         &self,
-        at: GoalId,
-        arms: [Goal; ARMS],
-    ) -> (SplitId, [GoalId; ARMS], Self) {
+        at: BranchId,
+        arms: [OpenBranch; ARMS],
+    ) -> (SplitId, [BranchId; ARMS], Self) {
         debug_assert!(
             self.open.contains_key(&at),
-            "an audited split requires the addressed open goal"
+            "an audited split requires the addressed open branch"
         );
         let split = SplitId(self.next_id);
-        let ids: [GoalId; ARMS] = std::array::from_fn(|arm| GoalId(self.next_id + 1 + arm as u64));
+        let ids: [BranchId; ARMS] =
+            std::array::from_fn(|arm| BranchId(self.next_id + 1 + arm as u64));
         let mut open = self.open.without_key(&at);
-        for (id, goal) in ids.iter().zip(arms) {
-            open = open.with_inserted(*id, goal);
+        for (id, branch) in ids.iter().zip(arms) {
+            open = open.with_inserted(*id, branch);
         }
         (
             split,
@@ -998,31 +1011,26 @@ impl ProofGoals {
         )
     }
 
-    /// Retains the addressed goal under an updated path-local context,
-    /// preserving identity, kind, and selection/content. This is the
-    /// successor shape of a fact-adding or snapshot-updating rule.
-    fn with_context_at(&self, at: GoalId, context: GoalContext) -> Self {
-        let Some(goal) = self.get(at) else {
-            unreachable!("a context successor requires the addressed open goal");
+    /// Retains the addressed obligation under updated branch-local state.
+    fn with_branch_state_at(&self, at: BranchId, state: BranchState) -> Self {
+        let Some(branch) = self.get(at) else {
+            unreachable!("a state successor requires the addressed open branch");
         };
-        Self {
-            open: self.open.with_inserted(at, goal.with_context(context)),
-            next_id: self.next_id,
-        }
+        self.replace_at(at, branch.with_state(state))
     }
 
     /// Retains the addressed goal under updated facts, preserving any
     /// execution snapshot it already borrowed.
-    fn with_facts_at(&self, at: GoalId, facts: ProofFacts) -> Self {
-        let Some(goal) = self.get(at) else {
-            unreachable!("a fact successor requires the addressed open goal");
+    fn with_facts_at(&self, at: BranchId, facts: ProofFacts) -> Self {
+        let Some(branch) = self.get(at) else {
+            unreachable!("a fact successor requires the addressed open branch");
         };
-        self.with_context_at(
+        self.with_branch_state_at(
             at,
-            GoalContext {
+            BranchState {
                 facts,
-                unfolded_predicates: goal.context().unfolded_predicates.clone(),
-                execution: goal.context().execution.clone(),
+                unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                execution: branch.state.execution.clone(),
             },
         )
     }
@@ -1032,18 +1040,18 @@ impl ProofGoals {
     /// judgment stated at a frontier may also refine facts.
     fn replace_execution_at(
         &self,
-        at: GoalId,
+        at: BranchId,
         facts: ProofFacts,
         execution: ExecutionProofState,
     ) -> Self {
-        let Some(goal) = self.get(at) else {
-            unreachable!("an execution successor requires the addressed open goal");
+        let Some(branch) = self.get(at) else {
+            unreachable!("an execution successor requires the addressed open branch");
         };
-        self.with_context_at(
+        self.with_branch_state_at(
             at,
-            GoalContext {
+            BranchState {
                 facts,
-                unfolded_predicates: goal.context().unfolded_predicates.clone(),
+                unfolded_predicates: branch.state.unfolded_predicates.clone(),
                 execution: Some(Arc::new(execution)),
             },
         )
@@ -1054,11 +1062,15 @@ impl ProofGoals {
     /// nested proposition judgments use [`Self::replace_execution_at`].
     fn replace_frontier_at(
         &self,
-        at: GoalId,
+        at: BranchId,
         facts: ProofFacts,
         execution: ExecutionProofState,
     ) -> Self {
-        let Some(Goal::Frontier(_)) = self.get(at) else {
+        let Some(OpenBranch {
+            obligation: Obligation::Frontier(_),
+            ..
+        }) = self.get(at)
+        else {
             unreachable!("a frontier transition requires the addressed frontier goal");
         };
         self.replace_execution_at(at, facts, execution)
@@ -1068,9 +1080,9 @@ impl ProofGoals {
     /// goal is retained under the updated facts. This is the successor shape
     /// of a fact-adding rule whose new fact may exactly close a proposition
     /// goal.
-    fn discharged_if_at(&self, at: GoalId, complete: bool, facts: ProofFacts) -> Self {
+    fn discharged_if_at(&self, at: BranchId, complete: bool, facts: ProofFacts) -> Self {
         if complete {
-            self.discharge_at(at)
+            self.close_at(at)
         } else {
             self.with_facts_at(at, facts)
         }
@@ -1080,13 +1092,13 @@ impl ProofGoals {
     /// otherwise retains it under the updated facts and execution snapshot.
     fn discharged_if_or_execution_at(
         &self,
-        at: GoalId,
+        at: BranchId,
         complete: bool,
         facts: ProofFacts,
         execution: ExecutionProofState,
     ) -> Self {
         if complete {
-            self.discharge_at(at)
+            self.close_at(at)
         } else {
             self.replace_execution_at(at, facts, execution)
         }
@@ -1210,7 +1222,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// Kernel facts whose checked C-branch Surface spellings must survive a
     /// join for extraction and explicit historical premises.
     pub(in crate::lang::click::proof) branch_surface_facts: PersistentOrderedSet<Proposition>,
-    /// Decisions on the currently focused execution lineage. Forks append
+    /// Decisions on the currently focused branch execution lineage. Forks append
     /// one entry in constant time.
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
     /// Path-local provenance aligned with terminal execution candidates.
@@ -1387,20 +1399,24 @@ struct OutcomeProvenance {
     program_point_states: ProgramPointStates,
 }
 
-/// One unresolved judgment owned by a `Proof`.
-///
-/// A proposition goal can be discharged locally. An execution-frontier goal
-/// remains open while fact-producing point steps advance the enclosing C
-/// proof; later slices will add the frontier transition steps themselves.
+/// One open semantic branch of a `Proof`: what it must establish and the
+/// facts, unfolds, and execution snapshot local to that branch.
 #[derive(Clone)]
-enum Goal {
-    Proposition(PropositionGoal),
-    Frontier(FrontierGoal),
-    FunctionOutcome(OutcomeGoal),
+struct OpenBranch {
+    obligation: Obligation,
+    state: BranchState,
+}
+
+/// What one open branch currently has to establish.
+#[derive(Clone)]
+enum Obligation {
+    Proposition(PropositionObligation),
+    Frontier(FrontierObligation),
+    FunctionOutcome(OutcomeObligation),
 }
 
 /// The point-operation data a result-aware checker consumes, resolved from
-/// either a point proof's borrowed context or a focused function-outcome
+/// either a point proof's borrowed context or a focused branch function-outcome
 /// goal (see [`Proof::outcome_point_view`]).
 /// Which effect-availability context an outcome-goal point operation
 /// consumes; each migrated tactic matches its legacy drain input exactly.
@@ -1461,7 +1477,7 @@ impl<'p> PointOperationView<'p> {
 /// for lowering. Result and effect operations will consume these goals
 /// directly instead of converting through a mutable execution-context adapter.
 #[derive(Clone)]
-struct OutcomeGoal {
+struct OutcomeObligation {
     /// Zero-based position among the exit's checked paths, in the checked
     /// execution's deterministic order.
     path_index: usize,
@@ -1478,7 +1494,6 @@ struct OutcomeGoal {
     /// a checked operation that records new lowerings installs a fresh
     /// shared value atomically with its fact successor.
     point: Arc<OutcomePointData>,
-    context: GoalContext,
 }
 
 /// The result-aware data one function outcome supplies to point operations:
@@ -1509,13 +1524,13 @@ struct OutcomePointData {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
 }
 
-/// The path-local semantic context owned by one goal.
+/// The path-local semantic state owned by one open branch.
 ///
-/// Facts and any execution snapshot travel together: sibling goals produced
-/// by a split each own their path's context, sharing unchanged persistent
+/// Facts and any execution snapshot travel together: sibling branches produced
+/// by a split each own their path's state, sharing unchanged persistent
 /// structure with the ancestor. `ProofState` retains only lineage-wide data.
 #[derive(Clone)]
-struct GoalContext {
+struct BranchState {
     facts: ProofFacts,
     /// Predicate definitions activated by accepted proof-local unfold steps
     /// on this judgment's path. Inherited point/execution names remain in
@@ -1532,9 +1547,8 @@ struct GoalContext {
 /// splits produce them. The `Arc` makes forks and goal-preserving fact
 /// refinements share the unchanged snapshot by identity.
 #[derive(Clone)]
-struct FrontierGoal {
+struct FrontierObligation {
     selection: EffectGoalSelection,
-    context: GoalContext,
 }
 
 /// One proposition judgment keeps its checked kernel meaning and, when the
@@ -1542,18 +1556,13 @@ struct FrontierGoal {
 /// structural goals. Both values belong to the same immutable Proof state;
 /// smart search must not carry a second caller-owned description of its goal.
 #[derive(Clone)]
-struct PropositionGoal {
+struct PropositionObligation {
     kernel: Arc<Proposition>,
     surface: Option<Arc<ClickProposition>>,
     /// Surface names introduced while refining this exact proposition goal.
     /// Universal binders are goal-local: sibling goals share the persistent
     /// map root at a split, then refine independently without leaking names.
     surface_bindings: PersistentMap<String, ContractExpression>,
-    /// The judgment's path-local facts plus, when stated at an execution
-    /// point, the immutable snapshot borrowed by identity from the frontier
-    /// that stated it. A proposition goal can never publish a changed
-    /// frontier through this context.
-    context: GoalContext,
     /// Result-aware point data borrowed by identity from the function
     /// outcome this judgment was stated at, when it was. The judgment can
     /// read the outcome's result, state, and lowerings; it can never
@@ -1561,77 +1570,75 @@ struct PropositionGoal {
     outcome: Option<Arc<OutcomePointData>>,
 }
 
-impl Goal {
-    fn proposition_in(context: GoalContext, kernel: Proposition) -> Self {
-        Self::Proposition(PropositionGoal {
-            kernel: Arc::new(kernel),
-            surface: None,
-            surface_bindings: PersistentMap::default(),
-            context,
-            outcome: None,
-        })
+impl OpenBranch {
+    fn new(obligation: Obligation, state: BranchState) -> Self {
+        Self { obligation, state }
+    }
+
+    fn proposition_in(state: BranchState, kernel: Proposition) -> Self {
+        Self::new(
+            Obligation::Proposition(PropositionObligation {
+                kernel: Arc::new(kernel),
+                surface: None,
+                surface_bindings: PersistentMap::default(),
+                outcome: None,
+            }),
+            state,
+        )
+    }
+
+    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self {
+        Self::new(
+            Obligation::Frontier(FrontierObligation { selection }),
+            state,
+        )
+    }
+
+    fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self {
+        Self::new(Obligation::FunctionOutcome(obligation), state)
     }
 
     fn surface_proposition_in(
-        context: GoalContext,
+        state: BranchState,
         kernel: Proposition,
         surface: ClickProposition,
     ) -> Self {
-        Self::Proposition(PropositionGoal {
-            kernel: Arc::new(kernel),
-            surface: Some(Arc::new(surface)),
-            surface_bindings: PersistentMap::default(),
-            context,
-            outcome: None,
-        })
+        Self::new(
+            Obligation::Proposition(PropositionObligation {
+                kernel: Arc::new(kernel),
+                surface: Some(Arc::new(surface)),
+                surface_bindings: PersistentMap::default(),
+                outcome: None,
+            }),
+            state,
+        )
     }
 
     /// A surface proposition judgment stated at one function outcome,
     /// borrowing that outcome's result-aware point data by identity.
     fn surface_proposition_at_outcome(
-        context: GoalContext,
+        state: BranchState,
         outcome: Arc<OutcomePointData>,
         kernel: Proposition,
         surface: ClickProposition,
     ) -> Self {
-        Self::Proposition(PropositionGoal {
-            kernel: Arc::new(kernel),
-            surface: Some(Arc::new(surface)),
-            surface_bindings: PersistentMap::default(),
-            context,
-            outcome: Some(outcome),
-        })
+        Self::new(
+            Obligation::Proposition(PropositionObligation {
+                kernel: Arc::new(kernel),
+                surface: Some(Arc::new(surface)),
+                surface_bindings: PersistentMap::default(),
+                outcome: Some(outcome),
+            }),
+            state,
+        )
     }
 
-    fn context(&self) -> &GoalContext {
-        match self {
-            Self::Proposition(goal) => &goal.context,
-            Self::Frontier(goal) => &goal.context,
-            Self::FunctionOutcome(goal) => &goal.context,
-        }
+    fn with_obligation(&self, obligation: Obligation) -> Self {
+        Self::new(obligation, self.state.clone())
     }
 
-    fn with_context(&self, context: GoalContext) -> Self {
-        match self {
-            Self::Proposition(goal) => Self::Proposition(PropositionGoal {
-                kernel: goal.kernel.clone(),
-                surface: goal.surface.clone(),
-                surface_bindings: goal.surface_bindings.clone(),
-                context,
-                outcome: goal.outcome.clone(),
-            }),
-            Self::Frontier(goal) => Self::Frontier(FrontierGoal {
-                selection: goal.selection,
-                context,
-            }),
-            Self::FunctionOutcome(goal) => Self::FunctionOutcome(OutcomeGoal {
-                path_index: goal.path_index,
-                selection: goal.selection,
-                checked_effects: goal.checked_effects.clone(),
-                point: goal.point.clone(),
-                context,
-            }),
-        }
+    fn with_state(&self, state: BranchState) -> Self {
+        Self::new(self.obligation.clone(), state)
     }
 }
 
@@ -1692,7 +1699,7 @@ struct ProofNode {
     /// The goal the step advanced (or, for markers, introduced). Certificate
     /// extraction partitions an interleaved multi-goal derivation by this
     /// recorded attribution; it never infers ownership from final states.
-    focused: GoalId,
+    focused_branch: BranchId,
     depth: usize,
 }
 
@@ -1792,81 +1799,86 @@ fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickPropos
 }
 
 impl<'a> Proof<'a> {
-    /// The unique open goal, while every proof owns at most one. Readers
-    /// that can only interpret a single focused goal go through here so the
-    /// single-goal assumption stays in one place until splits arrive.
-    fn focused_goal(&self) -> Option<&Goal> {
-        self.state.goals.get(self.focused)
+    /// The open branch addressed by this handle. Focus is only a cursor;
+    /// sibling branches remain in the same immutable proof state.
+    fn focused_branch(&self) -> Option<&OpenBranch> {
+        self.state.open_branches.get(self.focused_branch)
+    }
+
+    fn focused_obligation(&self) -> Option<&Obligation> {
+        Some(&self.focused_branch()?.obligation)
     }
 
     /// Whether the obligation this handle addresses has been discharged. On
     /// a single-goal proof this coincides with completion; inside a sibling
-    /// split, only the focused obligation's discharge is an arm's success —
+    /// split, only the focused branch obligation's discharge is an arm's success —
     /// the sibling legitimately remains open.
     pub(super) fn focused_discharged(&self) -> bool {
-        self.state.goals.get(self.focused).is_none()
+        self.state.open_branches.get(self.focused_branch).is_none()
     }
 
-    /// The focused goal's path-local execution context, shared by identity
+    /// The focused branch branch's path-local execution state, shared by identity
     /// with the frontier that created it.
-    fn goal_execution(&self) -> Option<&Arc<ExecutionProofState>> {
-        self.focused_goal()?.context().execution.as_ref()
+    fn branch_execution(&self) -> Option<&Arc<ExecutionProofState>> {
+        self.focused_branch()?.state.execution.as_ref()
     }
 
-    /// The focused goal's path-local unfold delta.
-    fn focused_goal_unfolds(&self) -> &PersistentOrderedSet<String> {
+    /// The focused branch branch's path-local unfold delta.
+    fn focused_branch_unfolds(&self) -> &PersistentOrderedSet<String> {
         &self
-            .focused_goal()
+            .focused_branch()
             .expect("unfold queries require an open goal")
-            .context()
+            .state
             .unfolded_predicates
     }
 
-    /// The focused goal's path-local fact context. Every caller is a
+    /// The focused branch goal's path-local fact context. Every caller is a
     /// checked operation or search query on an open goal: `apply_step` and
     /// the structural operations reject discharged proofs first.
     fn facts(&self) -> &ProofFacts {
-        match self.focused_goal() {
-            Some(goal) => &goal.context().facts,
+        match self.focused_branch() {
+            Some(branch) => &branch.state.facts,
             None => unreachable!("fact queries require an open goal"),
         }
     }
 
-    /// The focused goal's context with updated facts, for refinement rules
+    /// The focused branch goal's context with updated facts, for refinement rules
     /// that change goal content and facts together.
-    fn refined_context(&self, facts: ProofFacts) -> GoalContext {
-        GoalContext {
+    fn refined_branch_state(&self, facts: ProofFacts) -> BranchState {
+        BranchState {
             facts,
-            unfolded_predicates: self.focused_goal_unfolds().clone(),
-            execution: self.goal_execution().cloned(),
+            unfolded_predicates: self.focused_branch_unfolds().clone(),
+            execution: self.branch_execution().cloned(),
         }
     }
 
-    /// Rebuilds the focused proposition judgment with new content under the
+    /// Rebuilds the focused branch proposition judgment with new content under the
     /// given context, preserving any outcome point data the judgment
     /// borrowed: a refinement changes what is claimed, never where it was
     /// stated.
     fn refined_proposition(
         &self,
-        context: GoalContext,
+        state: BranchState,
         kernel: Proposition,
         surface: Option<ClickProposition>,
-    ) -> Goal {
-        let outcome = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => goal.outcome.clone(),
-            Some(Goal::FunctionOutcome(goal)) => Some(goal.point.clone()),
+    ) -> OpenBranch {
+        let outcome = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => goal.outcome.clone(),
+            Some(Obligation::FunctionOutcome(goal)) => Some(goal.point.clone()),
             _ => None,
         };
-        Goal::Proposition(PropositionGoal {
-            kernel: Arc::new(kernel),
-            surface: surface.map(Arc::new),
-            surface_bindings: match self.focused_goal() {
-                Some(Goal::Proposition(goal)) => goal.surface_bindings.clone(),
-                _ => PersistentMap::default(),
-            },
-            context,
-            outcome,
-        })
+        OpenBranch::new(
+            Obligation::Proposition(PropositionObligation {
+                kernel: Arc::new(kernel),
+                surface: surface.map(Arc::new),
+                surface_bindings: match self.focused_obligation() {
+                    Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
+                    _ => PersistentMap::default(),
+                },
+                outcome,
+            }),
+            state,
+        )
     }
 
     /// The execution proof's per-proof context, when this is one.
@@ -1880,32 +1892,32 @@ impl<'a> Proof<'a> {
     }
 
     fn execution(&self) -> Option<&ExecutionProofState> {
-        self.goal_execution().map(Arc::as_ref)
+        self.branch_execution().map(Arc::as_ref)
     }
 
     #[cfg(test)]
-    fn goals_next_id(&self) -> u64 {
-        self.state.goals.next_id
+    fn branches_next_id(&self) -> u64 {
+        self.state.open_branches.next_id
     }
 
     #[cfg(test)]
     fn outcome_result(&self) -> Option<&CValue> {
-        match self.focused_goal()? {
-            Goal::FunctionOutcome(goal) => Some(goal.point.result.as_ref()),
+        match self.focused_obligation()? {
+            Obligation::FunctionOutcome(goal) => Some(goal.point.result.as_ref()),
             _ => None,
         }
     }
 
     pub(super) fn goal(&self) -> Option<&Proposition> {
-        match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => Some(&goal.kernel),
+        match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => Some(&goal.kernel),
             _ => None,
         }
     }
 
     fn surface_goal(&self) -> Option<&ClickProposition> {
-        match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => goal.surface.as_deref(),
+        match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => goal.surface.as_deref(),
             _ => None,
         }
     }
@@ -1914,7 +1926,9 @@ impl<'a> Proof<'a> {
     /// frontier without materializing their clauses.
     #[cfg(test)]
     fn effect_goal_count(&self) -> usize {
-        let Some(Goal::Frontier(FrontierGoal { selection, .. })) = self.focused_goal() else {
+        let Some(Obligation::Frontier(FrontierObligation { selection, .. })) =
+            self.focused_obligation()
+        else {
             return 0;
         };
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1948,18 +1962,17 @@ impl<'a> Proof<'a> {
         surface_goal: Option<ClickProposition>,
     ) -> Result<Self, ClickError> {
         let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
-            && matches!(self.focused_goal(), Some(Goal::Frontier(_)));
+            && matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         // A function-outcome goal is itself a result-aware point frontier:
-        // an externally owned obligation focused from it borrows the
+        // an externally owned obligation focused branch from it borrows the
         // outcome's point data by identity, exactly like a nested `have`.
-        let outcome = match self.focused_goal() {
-            Some(Goal::FunctionOutcome(outcome_goal)) => Some(outcome_goal.point.clone()),
+        let outcome = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(outcome_goal)) => Some(outcome_goal.point.clone()),
             _ => None,
         };
         if !point_frontier && outcome.is_none() {
-            return Err(
-                self.step_error("a proposition goal can be focused only from a point frontier")
-            );
+            return Err(self
+                .step_error("a proposition obligation can be focused only from a point frontier"));
         }
         // Resource compositions retain same-block separation compactly in
         // `PureFactContext`; materialize only the selected external
@@ -1972,25 +1985,27 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
 
-                goals: ProofGoals::root({
-                    let context = GoalContext {
+                open_branches: OpenBranches::root({
+                    let context = BranchState {
                         facts,
                         unfolded_predicates: match &outcome {
-                            Some(_) => self.focused_goal_unfolds().clone(),
+                            Some(_) => self.focused_branch_unfolds().clone(),
                             None => PersistentOrderedSet::default(),
                         },
                         execution: match &outcome {
-                            Some(_) => self.goal_execution().cloned(),
+                            Some(_) => self.branch_execution().cloned(),
                             None => None,
                         },
                     };
-                    Goal::Proposition(PropositionGoal {
-                        kernel: Arc::new(goal),
-                        surface: surface_goal.map(Arc::new),
-                        surface_bindings: PersistentMap::default(),
+                    OpenBranch::new(
+                        Obligation::Proposition(PropositionObligation {
+                            kernel: Arc::new(goal),
+                            surface: surface_goal.map(Arc::new),
+                            surface_bindings: PersistentMap::default(),
+                            outcome,
+                        }),
                         context,
-                        outcome,
-                    })
+                    )
                 }),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -1998,10 +2013,10 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         })
     }
 
@@ -2056,8 +2071,11 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("point obligation completion requires at least one goal"));
         }
         let point_frontier = matches!(self.context.as_ref(), ProofContext::Point(_))
-            && matches!(self.focused_goal(), Some(Goal::Frontier(_)));
-        let outcome_frontier = matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_)));
+            && matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
+        let outcome_frontier = matches!(
+            self.focused_obligation(),
+            Some(Obligation::FunctionOutcome(_))
+        );
         if !point_frontier && !outcome_frontier {
             return Err(self.step_error("point obligations require an open point frontier"));
         }
@@ -2075,7 +2093,7 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn is_complete(&self) -> bool {
-        self.state.goals.is_discharged()
+        self.state.open_branches.is_discharged()
     }
 
     fn active_unfolded_predicates(&self) -> Vec<String> {
@@ -2089,7 +2107,7 @@ impl<'a> Proof<'a> {
         };
         let mut names = inherited.to_vec();
         let mut seen = inherited.iter().cloned().collect::<BTreeSet<_>>();
-        for name in self.focused_goal_unfolds() {
+        for name in self.focused_branch_unfolds() {
             if seen.insert(name.clone()) {
                 names.push(name.clone());
             }
@@ -2156,7 +2174,7 @@ impl<'a> Proof<'a> {
     }
 
     fn require_execution_frontier(&self, operation: &str) -> Result<(), ClickError> {
-        (matches!(self.focused_goal(), Some(Goal::Frontier(_)))
+        (matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
             && !self.focused_loop_effect_closed())
         .then_some(())
         .ok_or_else(|| {
@@ -2170,7 +2188,7 @@ impl<'a> Proof<'a> {
     /// resource scopes unwind. It remains addressable for those audited
     /// representation transitions, but it is no longer an open semantic goal.
     fn focused_loop_effect_closed(&self) -> bool {
-        self.goal_execution()
+        self.branch_execution()
             .and_then(|execution| execution.loop_effect_goal.as_ref())
             .is_some_and(|goal| goal.closed)
     }
@@ -2179,7 +2197,7 @@ impl<'a> Proof<'a> {
         ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.discharge_at(self.focused),
+            open_branches: self.state.open_branches.close_at(self.focused_branch),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         }

@@ -124,60 +124,72 @@ the certificate. Extracting it after success must perform traversal and
 serialization only; it must not rerun the continuation or rediscover any
 step.
 
-### `Proof` must own a persistent typed goal collection
+### `Proof` owns persistent open branches
 
 Transactional orchestration alone is insufficient while execution exits and
 branches are exported as legacy `ProofCheckContext` values. `Proof` must be
 able to represent every unfinished judgment created by an accepted
 transition, including several simultaneous path-local judgments.
 
-The intended conceptual shape is:
+The implemented conceptual shape is:
 
 ```rust
 Proof {
-    open_goals: PersistentMap<GoalId, Goal>,
+    open_branches: OpenBranches,
+    focused_branch: BranchId,
     provenance: ProofNodeId,
 }
 
-enum Goal {
-    Proposition(PropositionGoal),
-    ExecutionFrontier(ExecutionGoal),
-    FunctionOutcome(OutcomeGoal),
-    Effect(EffectGoal),
-    // Additional explicit goal kinds as the audited semantics require.
+OpenBranches(PersistentMap<BranchId, OpenBranch>);
+
+struct OpenBranch {
+    obligation: Obligation,
+    state: BranchState,
+}
+
+enum Obligation {
+    Proposition(PropositionObligation),
+    Frontier(FrontierObligation),
+    FunctionOutcome(OutcomeObligation),
+}
+
+struct BranchState {
+    facts: ProofFacts,
+    unfolded_predicates: PersistentOrderedSet<String>,
+    execution: Option<Arc<ExecutionProofState>>,
 }
 ```
 
-This sketch is a capability model, not a mandate for these exact fields or
-variants. Goal identifiers must be stable within a proof lineage, and smart
-tactics may inspect goal views but not construct, replace, or close goals
-directly. Applying one simple step to a focused goal atomically replaces it
-with zero, one, or several checked successor goals and records the matching
-certificate node. The goal collection and all path-local semantic data use
-persistent structural sharing so candidate forks remain cheap.
+An open branch separates what remains to prove from the state available on
+that semantic path. Branch identifiers are stable within a proof lineage, and
+smart tactics may inspect branch views but not construct, replace, or close
+branches directly. Applying one simple step advances only the focused branch
+and records the matching certificate node. Rules that explicitly split or
+join a proof update several recorded branches. `OpenBranches`, `BranchState`,
+and their indexes use persistent structural sharing so candidate forks remain
+cheap.
 
-#### Goal and split identity rules
+#### Branch and split identity rules
 
-These rules are normative for the substrate implementation. `GoalId` and
+These rules are normative for the substrate implementation. `BranchId` and
 `SplitId` are plain integers allocated from a monotonic counter stored in the
 persistent proof state, so the counter forks with the proof and allocation is
 O(1).
 
-1. **A `GoalId` names one obligation for its lifetime.** The audited
-   operation that creates a goal allocates its id: root construction
-   allocates the root goal set, `apply_step` allocates ids for successor
-   goals it introduces, and `split` allocates its labeled children plus one
+1. **A `BranchId` names one obligation for its lifetime.** The audited
+   operation that creates a branch allocates its id: root construction
+   allocates the root branch, and a checked split allocates its labeled
+   children plus one
    `SplitId` for the split node itself. A focused refinement that evolves
    the same obligation — a statement advancing an execution frontier, an
-   `Intro` peeling a connective — preserves the focused goal's id. Discharge
-   retires the id. Whether a step rule preserves or replaces its focused
-   goal's id is a static, documented property of that rule, never a runtime
-   choice; a rule that changes the goal's kind or count (a return converting
-   a frontier into outcome goals, a branch splitting a frontier) retires the
-   parent id and records the fresh child ids on its structural node.
+   `Intro` peeling a connective — preserves the focused branch's id. Closure
+   retires the id. Whether a rule preserves or replaces its focused branch's
+   id is a static, documented property, never a runtime choice; a rule that
+   changes the branch count retires the parent id and records fresh child ids
+   on its structural node.
 2. **Fork preserves identity; nothing else does.** Cloning a `Proof`
-   preserves every open goal's id and content. Applying a step to one goal
-   leaves every other goal's id and content untouched. Retired ids are never
+   preserves every open branch's id and content. Applying a step to one branch
+   leaves every other branch's id and content untouched. Retired ids are never
    reused within the allocating lineage and never reappear.
 3. **Comparison is lineage-scoped.** Divergent forks each extend their own
    copy of the counter, so ids allocated after a fork may numerically
@@ -185,27 +197,27 @@ O(1).
    chain or among descendants of the recorded split/scope node whose ids
    they reference. Audited joins verify ancestry first (exact root and node
    identity, as the current containers do); id equality is evidence only
-   inside that verified scope. There is no global goal registry.
+   inside that verified scope. There is no global branch registry.
 4. **Join legality is expressed in recorded ids.** A split records its child
-   goal ids at creation. `join(split, interface)` is legal only for a proof
+   branch ids at creation. `join(split, interface)` is legal only for a proof
    that descends from the recorded split node and has discharged, or brought
    to the declared interface, exactly the recorded child ids. An id not
    recorded by that split can never satisfy its join.
 5. **Memoization ignores ids.** Memo keys use semantic proof-state identity
-   (facts, goal content, C state), never `GoalId` values or derivation
+   (facts, obligation content, C state), never `BranchId` values or derivation
    history. Two semantically identical states reached along different paths
    may carry different ids and must hit the same memo entry.
 6. **Certificate order is recorded order.** An operation introducing several
-   goals assigns their ids in the deterministic order fixed by its rule
+   branches assigns their ids in the deterministic order fixed by its rule
    (then-arm before else-arm, outcomes in source order) and records that
    order on its structural node. Certificate extraction renders the recorded
    order; it never sorts by id magnitude or discharge order.
 
 An execution step can therefore have these audited outcomes:
 
-- one successor execution-frontier goal for a linear statement;
-- several labeled frontier goals for a C branch;
-- one or more function-outcome goals when paths return; or
+- one successor execution-frontier branch for a linear statement;
+- several labeled frontier branches for a C branch;
+- one or more function-outcome branches when paths return; or
 - no successor for a proved non-returning path.
 
 A function-outcome goal owns its path-local result expression, facts, state,
@@ -2494,7 +2506,7 @@ verified grouped expansion.
 
 ### Progress (2026-08-18: substrate 1 — persistent typed goal collection)
 
-`ProofState` now owns `ProofGoals`: a persistent `GoalId`-keyed collection
+`ProofState` now owns `OpenBranches`: a persistent `BranchId`-keyed collection
 paired with the lineage-local id allocator, replacing the former single
 `goal`/`complete` pair. Roots allocate their obligation's id; goal-preserving
 refinement rules (`intro`, `witness`, `rewrite`, goal predicate unfold, and
@@ -2567,7 +2579,7 @@ rejection and that the genuine arms still join afterward.
 
 `ProofState` no longer owns an `execution` field. The C execution snapshot —
 frontier, check metadata, branch provenance, and per-step delta — lives on
-the goal that needs it: a `FrontierGoal` pairs the effect selection with its
+the goal that needs it: a `FrontierObligation` pairs the effect selection with its
 `Arc`-shared snapshot, and a proposition goal stated at an execution point
 borrows the same snapshot by identity as its lowering/theorem context,
 without any authority to republish a frontier. Ordinary execution successors
@@ -2588,7 +2600,7 @@ path-local judgments; splits producing sibling in-`Proof` goals come next.
 ### Progress (2026-08-18: goals own their complete path-local context)
 
 `ProofState` no longer owns a fact context either: each goal carries a
-`GoalContext` pairing its persistent `ProofFacts` with any borrowed or owned
+`BranchState` pairing its persistent `ProofFacts` with any borrowed or owned
 execution snapshot, so the complete path-local semantics of one judgment now
 live on that judgment. Successor helpers preserve goal identity while
 installing updated facts (`with_sole_facts`), an updated snapshot, or both;
@@ -2605,17 +2617,17 @@ sibling goals is the next slice.
 
 ### Progress (2026-08-18: the focus cursor addresses one goal per handle)
 
-A `Proof` handle now carries a `focused: GoalId` cursor naming the open goal
+A `Proof` handle carries a `focused_branch: BranchId` cursor naming the open branch
 it addresses, and every provenance node records which goal its step advanced.
 Focus is a cursor, not semantic state: two handles over one persistent state
 may address different judgments, checked operations advance exactly the
 focused goal, and certificate extraction will partition an interleaved
 multi-goal derivation by the recorded per-step attribution rather than
-inferring ownership from final states. The `ProofGoals` successors now take
-an explicit goal id (`replace_at`, `discharge_at`, `with_facts_at`,
+inferring ownership from final states. The `OpenBranches` successors now take
+an explicit branch id (`replace_at`, `close_at`, `with_facts_at`,
 `replace_frontier_at`, and friends), removing the sole-goal assumption from
 the collection layer entirely; the single-goal reading survives only in the
-`focused_goal` accessor. Two cursor propagation cases were caught by existing
+`focused_branch` accessor. Two cursor propagation cases were caught by existing
 regressions: a decided branch join and an `open` scope close both derive
 their successor state from an arm or body whose cursor moved, so the returned
 handle addresses that recorded goal id, not the root's. The identity
@@ -2625,7 +2637,7 @@ precondition for `Proof::split` producing sibling goals in one state.
 ### Progress (2026-08-18: typed function-outcome goals exist)
 
 `Goal::FunctionOutcome` is now a real variant, and
-`Proof::focus_function_outcomes` is the audited derivation that retires a
+`Proof::split_function_outcomes` is the audited derivation that retires a
 function-exit frontier goal (with its effect obligations already closed) and
 opens one outcome goal per checked returning path — the first genuinely
 multi-goal `Proof`. Each outcome goal owns its path's result value,
@@ -2717,11 +2729,11 @@ persistent proofs advancing through the drained tactics, with
 ### Progress (2026-08-18: the unfold delta is path-local goal state)
 
 The proof-local predicate-unfold delta moved from `ProofState` into
-`GoalContext`: sibling goals now unfold independently, which the outcome
+`BranchState`: sibling goals now unfold independently, which the outcome
 drain requires — each drained path evolves its own unfold history. Ordinary
 successors preserve the focused goal's delta; both unfold transitions
 install their updated delta atomically with their fact and snapshot
-successors (`with_context_at`); execution joins merge arm deltas into the
+successors (`with_branch_state_at`); execution joins merge arm deltas into the
 root goal's context through one frontier-checked context update; nested
 `have` bodies inherit the parent goal's delta; and outcome goals inherit the
 frontier's at derivation. `ProofState` now carries only locals, the goal
@@ -2820,7 +2832,7 @@ silently unapplied migration invisible to the gate.
 ### Progress (2026-08-18: outcome `have` scopes on the evolving proof)
 
 Post-execution `have` is the sixth drained tactic kind on the evolving
-outcome proof. `OutcomeGoal` now keeps its result-aware data behind one
+outcome proof. `OutcomeObligation` now keeps its result-aware data behind one
 shared `OutcomePointData`, and a proposition judgment stated at an outcome
 borrows that data by identity — it can read the outcome's result, state,
 and lowerings but can never publish a changed outcome. Refinement rules
@@ -3606,7 +3618,7 @@ the progress note below records that completed follow-up.
 
 ### Progress (2026-08-19: universal binders and selected instantiation stay on Proof)
 
-`PropositionGoal` now owns a persistent Surface-binding map. `intro` retains
+`PropositionObligation` now owns a persistent Surface-binding map. `intro` retains
 the exact kernel variable under the Surface universal name, refinements and
 nested `have` scopes inherit it, and sibling goals fork the map before either
 arm changes. A focused split regression pins that one arm's binder never

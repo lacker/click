@@ -1,4 +1,4 @@
-//! Goal focus, outcome snapshots, and exit queries.
+//! Obligation focus, outcome snapshots, and exit queries.
 
 use super::*;
 
@@ -12,7 +12,7 @@ impl<'a> Proof<'a> {
             .is_some_and(|execution| execution.frontier.is_at_function_exit())
     }
 
-    /// Whether the focused execution frontier still owns a function effect
+    /// Whether the focused branch execution frontier still owns a function effect
     /// goal: an effect-claim site's selected effect, or every effect of a
     /// grouped contract with effect clauses. A frame applied here is a
     /// checked step on that goal; without one, a frame is an ordered
@@ -22,8 +22,8 @@ impl<'a> Proof<'a> {
             return false;
         };
         let effect_count = context.function_block.effects().len();
-        match self.focused_goal() {
-            Some(Goal::Frontier(FrontierGoal { selection, .. })) => match selection {
+        match self.focused_obligation() {
+            Some(Obligation::Frontier(FrontierObligation { selection, .. })) => match selection {
                 EffectGoalSelection::None => false,
                 EffectGoalSelection::One(index) => *index < effect_count,
                 EffectGoalSelection::All => effect_count > 0,
@@ -32,7 +32,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    /// The focused execution rests at its bounded region's typed boundary:
+    /// The focused branch execution rests at its bounded region's typed boundary:
     /// its own statement tree is exhausted and no code lies beyond it.
     pub(in crate::lang::click::proof) fn is_at_region_boundary(&self) -> bool {
         self.execution()
@@ -41,23 +41,25 @@ impl<'a> Proof<'a> {
 
     /// Every open goal in this proof, in stable id order.
     #[cfg(test)]
-    pub(in crate::lang::click::proof) fn goals(&self) -> impl Iterator<Item = GoalId> + '_ {
-        self.state.goals.open.keys().copied()
+    pub(in crate::lang::click::proof) fn branches(&self) -> impl Iterator<Item = BranchId> + '_ {
+        self.state.open_branches.open.keys().copied()
     }
 
     /// The open function-outcome goal derived for one checked path, if this
     /// proof owns it. Path indices are the checked execution's deterministic
     /// path order, recorded on each goal at derivation.
-    pub(in crate::lang::click::proof) fn outcome_goal_for_path(
+    pub(in crate::lang::click::proof) fn outcome_branch_for_path(
         &self,
         path_index: usize,
-    ) -> Option<GoalId> {
+    ) -> Option<BranchId> {
         self.state
-            .goals
+            .open_branches
             .open
             .iter()
-            .find_map(|(id, goal)| match goal {
-                Goal::FunctionOutcome(outcome) if outcome.path_index == path_index => Some(*id),
+            .find_map(|(id, branch)| match &branch.obligation {
+                Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {
+                    Some(*id)
+                }
                 _ => None,
             })
     }
@@ -65,7 +67,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn focused_outcome_snapshot(
         &self,
     ) -> Result<CFunctionOutcome, ClickError> {
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
         };
         Ok(CFunctionOutcome::Return {
@@ -77,7 +79,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn checked_outcome_frame_authority(
         &self,
     ) -> Result<CheckedFrameAuthority, ClickError> {
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("frame authority requires a focused outcome goal"));
         };
         if !matches!(goal.selection, EffectGoalSelection::None) || goal.checked_effects.is_empty() {
@@ -86,7 +88,7 @@ impl<'a> Proof<'a> {
         Ok(CheckedFrameAuthority::new((*goal.checked_effects).clone()))
     }
 
-    /// Updates the focused outcome goal's immutable result/state snapshot
+    /// Updates the focused branch outcome goal's immutable result/state snapshot
     /// after a separately checked resource transition.
     pub(in crate::lang::click::proof) fn with_outcome_snapshot(
         &self,
@@ -95,9 +97,9 @@ impl<'a> Proof<'a> {
         let CFunctionOutcome::Return { value, state } = outcome else {
             return Err(self.step_error("an outcome snapshot requires a return outcome"));
         };
-        let point = match self.focused_goal() {
-            Some(Goal::FunctionOutcome(goal)) => goal.point.as_ref(),
-            Some(Goal::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
+        let point = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => goal.point.as_ref(),
+            Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
                 self.step_error("an outcome snapshot requires a result-aware proposition goal")
             })?,
             _ => {
@@ -116,20 +118,21 @@ impl<'a> Proof<'a> {
         point.state = state.clone().into();
         let point = Arc::new(point);
         let mut state = (*self.state).clone();
-        state.goals = match self.focused_goal() {
-            Some(Goal::FunctionOutcome(goal)) => {
+        state.open_branches = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.point = point;
-                state
-                    .goals
-                    .replace_at(self.focused, Goal::FunctionOutcome(updated))
+                state.open_branches.replace_obligation_at(
+                    self.focused_branch,
+                    Obligation::FunctionOutcome(updated),
+                )
             }
-            Some(Goal::Proposition(goal)) => {
+            Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(point);
                 state
-                    .goals
-                    .replace_at(self.focused, Goal::Proposition(updated))
+                    .open_branches
+                    .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
             }
             _ => unreachable!("the outcome point was selected above"),
         };
@@ -137,20 +140,20 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(state),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
-    /// Installs an already checked post-execution fact context on the focused
+    /// Installs an already checked post-execution fact context on the focused branch
     /// outcome goal while preserving retained Surface provenance for facts
     /// that survive the transition.
     pub(in crate::lang::click::proof) fn with_checked_outcome_facts(
         &self,
         facts: &[Proposition],
     ) -> Result<Self, ClickError> {
-        let point = match self.focused_goal() {
-            Some(Goal::FunctionOutcome(goal)) => goal.point.as_ref(),
-            Some(Goal::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
+        let point = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => goal.point.as_ref(),
+            Some(Obligation::Proposition(goal)) => goal.outcome.as_deref().ok_or_else(|| {
                 self.step_error("outcome facts require a result-aware proposition goal")
             })?,
             _ => return Err(self.step_error("outcome facts require a focused outcome goal")),
@@ -166,32 +169,33 @@ impl<'a> Proof<'a> {
         point.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let point = Arc::new(point);
         let mut state = (*self.state).clone();
-        state.goals = match self.focused_goal() {
-            Some(Goal::FunctionOutcome(goal)) => {
+        state.open_branches = match self.focused_obligation() {
+            Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.point = point;
-                state
-                    .goals
-                    .replace_at(self.focused, Goal::FunctionOutcome(updated))
+                state.open_branches.replace_obligation_at(
+                    self.focused_branch,
+                    Obligation::FunctionOutcome(updated),
+                )
             }
-            Some(Goal::Proposition(goal)) => {
+            Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(point);
                 state
-                    .goals
-                    .replace_at(self.focused, Goal::Proposition(updated))
+                    .open_branches
+                    .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
             }
             _ => unreachable!("the outcome point was selected above"),
         };
-        state.goals = state.goals.with_facts_at(
-            self.focused,
+        state.open_branches = state.open_branches.with_facts_at(
+            self.focused_branch,
             self.facts().resync_ordered_preserving_provenance(facts),
         );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(state),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -203,23 +207,26 @@ impl<'a> Proof<'a> {
     /// The single open goal's id, when exactly one goal remains. Split
     /// regressions use it to name the pre-split obligation.
     #[cfg(test)]
-    pub(super) fn sole_goal_id(&self) -> Option<GoalId> {
-        let mut ids = self.goals();
+    pub(super) fn sole_branch_id(&self) -> Option<BranchId> {
+        let mut ids = self.branches();
         let sole = ids.next()?;
         ids.next().is_none().then_some(sole)
     }
 
-    pub(in crate::lang::click::proof) fn focus(&self, goal: GoalId) -> Result<Self, ClickError> {
-        if self.state.goals.get(goal).is_none() {
+    pub(in crate::lang::click::proof) fn focus_branch(
+        &self,
+        goal: BranchId,
+    ) -> Result<Self, ClickError> {
+        if self.state.open_branches.get(goal).is_none() {
             return Err(self.step_error(format!("goal {goal:?} is not open in this proof")));
         }
-        let mut focused = self.clone();
-        focused.focused = goal;
-        Ok(focused)
+        let mut focused_branch = self.clone();
+        focused_branch.focused_branch = goal;
+        Ok(focused_branch)
     }
 
     /// Derives the typed function-outcome goal set from a function-exit
-    /// frontier: the successor retires the focused frontier goal and opens
+    /// frontier: the successor retires the focused branch frontier goal and opens
     /// one outcome goal per feasible checked returning path, in the checked
     /// execution's deterministic path order. Candidate paths whose exact
     /// facts contradict the enclosing proof facts contribute no goal.
@@ -231,11 +238,11 @@ impl<'a> Proof<'a> {
     /// returned handle addresses the first outcome goal; `focus` reaches its
     /// siblings. Result and effect continuations consume these goals
     /// directly rather than converting through a mutable execution-context adapter.
-    pub(in crate::lang::click::proof) fn focus_function_outcomes(
+    pub(in crate::lang::click::proof) fn split_function_outcomes(
         &self,
         requirement_facts: Arc<Vec<Proposition>>,
-    ) -> Result<(Self, Vec<GoalId>), ClickError> {
-        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+    ) -> Result<(Self, Vec<BranchId>), ClickError> {
+        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
             return Err(self.step_error("outcome goals require an open execution frontier"));
         };
         let effect_selection = frontier.selection;
@@ -245,8 +252,9 @@ impl<'a> Proof<'a> {
         let checked = execution.frontier.execution().ok_or_else(|| {
             self.step_error("outcome goals require execution to have reached function exit")
         })?;
-        let frontier_snapshot = frontier.context.execution.clone();
-        let frontier_unfolds = frontier.context.unfolded_predicates.clone();
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let frontier_snapshot = branch_state.execution.clone();
+        let frontier_unfolds = branch_state.unfolded_predicates.clone();
         let frontier_anchor = frontier_snapshot
             .as_ref()
             .and_then(|execution| frontier_premise_anchor(execution));
@@ -266,7 +274,7 @@ impl<'a> Proof<'a> {
             _ => PersistentMap::default(),
         };
         let requirement_surfaces = Arc::new(requirement_surfaces);
-        let mut goals = self.state.goals.discharge_at(self.focused);
+        let mut goals = self.state.open_branches.close_at(self.focused_branch);
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
             // One checked statement may produce several candidate outcomes.
@@ -302,32 +310,34 @@ impl<'a> Proof<'a> {
             }
             let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);
-            let id = GoalId(goals.next_id);
-            goals = ProofGoals {
+            let id = BranchId(goals.next_id);
+            goals = OpenBranches {
                 open: goals.open.with_inserted(
                     id,
-                    Goal::FunctionOutcome(OutcomeGoal {
-                        path_index,
-                        selection: effect_selection,
-                        checked_effects: Arc::new(Vec::new()),
-                        point: Arc::new(OutcomePointData {
-                            result: Arc::new(result),
-                            state: state.into(),
-                            surface_propositions: provenance.surface_propositions,
-                            program_point_states: provenance.program_point_states,
-                            effect_facts: Arc::new(execution_facts),
-                            execution_pure_facts: Arc::new(path.facts().to_vec()),
-                            premise_anchor: frontier_anchor.clone(),
-                            requirement_facts: requirement_facts.clone(),
-                            requirement_surfaces: requirement_surfaces.clone(),
-                            branch_decisions: provenance.branch_decisions,
-                        }),
-                        context: GoalContext {
+                    OpenBranch::function_outcome(
+                        OutcomeObligation {
+                            path_index,
+                            selection: effect_selection,
+                            checked_effects: Arc::new(Vec::new()),
+                            point: Arc::new(OutcomePointData {
+                                result: Arc::new(result),
+                                state: state.into(),
+                                surface_propositions: provenance.surface_propositions,
+                                program_point_states: provenance.program_point_states,
+                                effect_facts: Arc::new(execution_facts),
+                                execution_pure_facts: Arc::new(path.facts().to_vec()),
+                                premise_anchor: frontier_anchor.clone(),
+                                requirement_facts: requirement_facts.clone(),
+                                requirement_surfaces: requirement_surfaces.clone(),
+                                branch_decisions: provenance.branch_decisions,
+                            }),
+                        },
+                        BranchState {
                             facts,
                             unfolded_predicates: frontier_unfolds.clone(),
                             execution: frontier_snapshot.clone(),
                         },
-                    }),
+                    ),
                 ),
                 next_id: goals.next_id + 1,
             };
@@ -341,7 +351,7 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
 
-                goals,
+                open_branches: goals,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
@@ -351,10 +361,10 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth,
             }),
-            focused: outcome_ids[0],
+            focused_branch: outcome_ids[0],
         };
         Ok((successor, outcome_ids))
     }

@@ -1,6 +1,6 @@
 //! Where an execution proof begins and how its snapshot is edited: the
 //! root constructors from an entry execution state, derived roots for loop
-//! effects and post-execution tactics, and the in-place edit of the focused
+//! effects and post-execution tactics, and the in-place edit of the focused branch
 //! frontier's execution.
 
 use super::*;
@@ -96,24 +96,24 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
 
-                goals: ProofGoals::root(Goal::Frontier(FrontierGoal {
-                    selection: effect_goals,
-                    context: GoalContext {
+                open_branches: OpenBranches::root(OpenBranch::frontier(
+                    effect_goals,
+                    BranchState {
                         facts: ProofFacts::from_ordered(&pure_facts),
                         unfolded_predicates: PersistentOrderedSet::default(),
                         execution: Some(Arc::new(execution)),
                     },
-                })),
+                )),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         }
     }
 
@@ -121,7 +121,7 @@ impl<'a> Proof<'a> {
     /// preservation path. The new root shares the path's facts and execution
     /// snapshot; only the explicitly declared effect goal and its diagnostic
     /// source site are installed.
-    pub(in crate::lang::click::proof) fn start_loop_effect_goal<'b>(
+    pub(in crate::lang::click::proof) fn start_loop_effect_proof<'b>(
         &'b self,
         claim_label: &'b str,
         site: ProofSite,
@@ -162,24 +162,24 @@ impl<'a> Proof<'a> {
             })),
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
-                goals: ProofGoals::root(Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    context: GoalContext {
+                open_branches: OpenBranches::root(OpenBranch::frontier(
+                    EffectGoalSelection::None,
+                    BranchState {
                         facts: self.facts().clone(),
                         unfolded_predicates: PersistentOrderedSet::default(),
                         execution: Some(Arc::new(execution)),
                     },
-                })),
+                )),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         })
     }
 
@@ -197,7 +197,7 @@ impl<'a> Proof<'a> {
         state.checked_facts = Arc::new(Vec::new());
     }
 
-    /// Edits the focused frontier's execution snapshot in place and returns
+    /// Edits the focused branch frontier's execution snapshot in place and returns
     /// the edit's result alongside the updated proof.
     pub(in crate::lang::click::proof) fn edit_execution<R>(
         self,
@@ -206,14 +206,19 @@ impl<'a> Proof<'a> {
         self.edit_frontier_in_place(|_, execution, facts| edit(execution, facts))
     }
 
-    /// Edits the focused frontier goal's execution snapshot in place. The
+    /// Edits the focused branch frontier goal's execution snapshot in place. The
     /// proof is consumed so a uniquely owned snapshot is edited without a
     /// per-tactic clone; a shared snapshot is copied on write.
     fn edit_frontier_in_place<R>(
         self,
         edit: impl FnOnce(&mut ProofState, &mut ExecutionProofState, &ProofFacts) -> R,
     ) -> Result<(Self, R), ClickError> {
-        let Some(Goal::Frontier(goal)) = self.focused_goal().cloned() else {
+        let Some(goal) = self.focused_branch().cloned() else {
+            return Err(
+                self.step_error("construction cursor editing requires an execution frontier")
+            );
+        };
+        let Obligation::Frontier(frontier) = goal.obligation else {
             return Err(
                 self.step_error("construction cursor editing requires an execution frontier")
             );
@@ -223,46 +228,43 @@ impl<'a> Proof<'a> {
             context,
             state,
             node,
-            focused,
+            focused_branch,
         } = self;
         let mut proof_state = Arc::unwrap_or_clone(state);
         // Release the goal map's reference first so the execution snapshot
         // is unique whenever this proof was.
-        proof_state.goals = ProofGoals {
-            open: proof_state.goals.open.without_key(&focused),
-            next_id: proof_state.goals.next_id,
+        proof_state.open_branches = OpenBranches {
+            open: proof_state.open_branches.open.without_key(&focused_branch),
+            next_id: proof_state.open_branches.next_id,
         };
-        let FrontierGoal {
-            selection,
-            context: goal_context,
-        } = goal;
-        let GoalContext {
+        let selection = frontier.selection;
+        let BranchState {
             facts,
             unfolded_predicates,
             execution,
-        } = goal_context;
+        } = goal.state;
         let mut execution = Arc::unwrap_or_clone(execution.ok_or(missing)?);
         let result = edit(&mut proof_state, &mut execution, &facts);
-        proof_state.goals = ProofGoals {
-            open: proof_state.goals.open.with_inserted(
-                focused,
-                Goal::Frontier(FrontierGoal {
+        proof_state.open_branches = OpenBranches {
+            open: proof_state.open_branches.open.with_inserted(
+                focused_branch,
+                OpenBranch::frontier(
                     selection,
-                    context: GoalContext {
+                    BranchState {
                         facts,
                         unfolded_predicates,
                         execution: Some(Arc::new(execution)),
                     },
-                }),
+                ),
             ),
-            next_id: proof_state.goals.next_id,
+            next_id: proof_state.open_branches.next_id,
         };
         Ok((
             Self {
                 context,
                 state: Arc::new(proof_state),
                 node,
-                focused,
+                focused_branch,
             },
             result,
         ))
@@ -357,15 +359,16 @@ impl<'a> Proof<'a> {
         }
         execution.defer_post_execution(tactic_index, source_index, tactic);
         let mut state = (*self.state).clone();
-        state.goals =
-            state
-                .goals
-                .replace_execution_at(self.focused, self.facts().clone(), execution);
+        state.open_branches = state.open_branches.replace_execution_at(
+            self.focused_branch,
+            self.facts().clone(),
+            execution,
+        );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(state),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 

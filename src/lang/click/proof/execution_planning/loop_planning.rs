@@ -424,7 +424,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             let condition = surface_c_condition(&condition);
             let (split, ids) = proof.split_preservation_case(&condition, 0)?;
             for id in ids.into_iter().flatten() {
-                pending.push(preservation_smart_step(split.focus(id)?)?);
+                pending.push(preservation_smart_step(split.focus_branch(id)?)?);
             }
         } else {
             pending.push(preservation_smart_step(proof)?);
@@ -1156,7 +1156,7 @@ fn verify_structural_effect_proof(
             "`{claim_label}` uses a proof operation that is unavailable for a loop structural effect"
         )));
     }
-    let root = preservation.start_loop_effect_goal(&claim_label, site, before_state, check)?;
+    let root = preservation.start_loop_effect_proof(&claim_label, site, before_state, check)?;
     let checked = if smart_frame {
         root.try_smart_loop_effect_frame_at(body, 0, effect_source_index)?
             .ok_or_else(|| {

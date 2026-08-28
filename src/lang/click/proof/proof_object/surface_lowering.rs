@@ -3,7 +3,7 @@
 use super::*;
 
 impl<'a> Proof<'a> {
-    /// The certificate of the focused goal's own lineage. Steps in the
+    /// The certificate of the focused branch goal's own lineage. Steps in the
     /// derivation are attributed to the goal they advanced; on an unjoined
     /// case-split arm, sibling arms' steps interleave in the same chain and
     /// belong to other lineages. A step-less marker node records the goal
@@ -11,13 +11,13 @@ impl<'a> Proof<'a> {
     /// through markers follows the lineage to the root.
     pub(in crate::lang::click::proof) fn path_certificate(&self) -> ProofCertificate {
         let mut steps = Vec::new();
-        let mut goal = self.focused;
+        let mut goal = self.focused_branch;
         let mut node = Some(self.node.clone());
         while let Some(current) = node {
             match &current.step {
-                Some(step) if current.focused == goal => steps.push(step.as_ref().clone()),
+                Some(step) if current.focused_branch == goal => steps.push(step.as_ref().clone()),
                 Some(_) => {}
-                None => goal = current.focused,
+                None => goal = current.focused_branch,
             }
             node = current.parent.clone();
         }
@@ -301,8 +301,8 @@ impl<'a> Proof<'a> {
         &self,
         names: impl IntoIterator<Item = String>,
     ) -> BTreeMap<String, ContractExpression> {
-        let surface_bindings = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => Some(&goal.surface_bindings),
+        let surface_bindings = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => Some(&goal.surface_bindings),
             _ => None,
         };
         names
@@ -341,7 +341,7 @@ impl<'a> Proof<'a> {
         &self,
         proposition: &ClickProposition,
     ) -> Result<ClickProposition, ClickError> {
-        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
             return Ok(proposition.clone());
         };
         let mut names = BTreeSet::new();

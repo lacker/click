@@ -50,8 +50,8 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
         )?;
-        let goal = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => {
+        let goal = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => {
                 let surface = match &goal.surface {
                     Some(surface) => Some(
                         unfold_structural_invariant_proposition(
@@ -118,34 +118,38 @@ impl<'a> Proof<'a> {
                     .map_err(|message| self.step_error(message))?,
                 };
                 self.refined_proposition(
-                    self.refined_context(checked.facts.clone()),
+                    self.refined_branch_state(checked.facts.clone()),
                     kernel,
                     surface,
                 )
             }
-            Some(goal @ (Goal::Frontier(_) | Goal::FunctionOutcome(_))) => {
-                let mut unfolded = goal.context().unfolded_predicates.clone();
+            Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => {
+                let branch = self.focused_branch().expect("focused branch exists");
+                let mut unfolded = branch.state.unfolded_predicates.clone();
                 unfolded.insert(name.clone());
-                goal.with_context(GoalContext {
+                branch.with_state(BranchState {
                     facts: checked.facts.clone(),
                     unfolded_predicates: unfolded,
-                    execution: goal.context().execution.clone(),
+                    execution: branch.state.execution.clone(),
                 })
             }
             None => return Err(self.step_error("`unfold` requires an open goal")),
         };
         let goal = {
-            let mut unfolded = goal.context().unfolded_predicates.clone();
+            let mut unfolded = goal.state.unfolded_predicates.clone();
             unfolded.insert(name.clone());
-            goal.with_context(GoalContext {
-                facts: goal.context().facts.clone(),
+            goal.with_state(BranchState {
+                facts: goal.state.facts.clone(),
                 unfolded_predicates: unfolded,
-                execution: goal.context().execution.clone(),
+                execution: goal.state.execution.clone(),
             })
         };
         Ok(ProofState {
             locals: self.state.locals.clone(),
-            goals: self.state.goals.replace_at(self.focused, goal),
+            open_branches: self
+                .state
+                .open_branches
+                .replace_at(self.focused_branch, goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -160,12 +164,12 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let checked = check_unfold_predicate_facts(&mut execution, context, &self.facts(), name)?;
-        let mut unfolded_predicates = self.focused_goal_unfolds().clone();
+        let mut unfolded_predicates = self.focused_branch_unfolds().clone();
         for name in &checked.added_unfolded_predicates {
             unfolded_predicates.insert(name.clone());
         }
-        let refined_goal = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => {
+        let refined_goal = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => {
                 let surface = goal
                     .surface
                     .as_deref()
@@ -212,7 +216,7 @@ impl<'a> Proof<'a> {
             }
             _ => None,
         };
-        let goal_context = GoalContext {
+        let goal_context = BranchState {
             facts: checked.facts,
             unfolded_predicates,
             execution: Some(Arc::new(execution)),
@@ -220,9 +224,9 @@ impl<'a> Proof<'a> {
         let goal = match refined_goal {
             Some((kernel, surface)) => self.refined_proposition(goal_context, kernel, surface),
             None => self
-                .focused_goal()
+                .focused_branch()
                 .expect("execution unfold requires an open goal")
-                .with_context(goal_context),
+                .with_state(goal_context),
         };
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -230,7 +234,10 @@ impl<'a> Proof<'a> {
             // own goal through the same checked operation. Other execution
             // goals retain their kind while installing the updated snapshot
             // and unfold delta.
-            goals: self.state.goals.replace_at(self.focused, goal),
+            open_branches: self
+                .state
+                .open_branches
+                .replace_at(self.focused_branch, goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -272,10 +279,11 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .replace_frontier_at(self.focused, checked.facts, execution),
+            open_branches: self.state.open_branches.replace_frontier_at(
+                self.focused_branch,
+                checked.facts,
+                execution,
+            ),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -314,10 +322,11 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .replace_frontier_at(self.focused, checked.facts, execution),
+            open_branches: self.state.open_branches.replace_frontier_at(
+                self.focused_branch,
+                checked.facts,
+                execution,
+            ),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -361,16 +370,17 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .replace_frontier_at(self.focused, checked.facts, execution),
+            open_branches: self.state.open_branches.replace_frontier_at(
+                self.focused_branch,
+                checked.facts,
+                execution,
+            ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         })
     }
 
-    /// Applies one source-ordered composite fold to the focused typed outcome.
+    /// Applies one source-ordered composite fold to the focused branch typed outcome.
     /// The result/state snapshot and persistent fact root advance together in
     /// the returned Proof successor; no caller-owned outcome is mutated.
     pub(super) fn apply_outcome_resource_fold(
@@ -380,10 +390,11 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("outcome resource `fold` requires an execution proof"));
         };
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("outcome resource `fold` requires a focused outcome goal"));
         };
-        let execution = goal.context.execution.as_deref().ok_or_else(|| {
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let execution = branch_state.execution.as_deref().ok_or_else(|| {
             self.step_error("outcome resource `fold` lost its execution snapshot")
         })?;
         let pre_state = execution.frontier.execution_start_state(&execution.state);
@@ -415,13 +426,17 @@ impl<'a> Proof<'a> {
         point.state = state.into();
         let mut updated = goal.clone();
         updated.point = Arc::new(point);
-        updated.context.facts = checked.facts;
+        let state = BranchState {
+            facts: checked.facts,
+            unfolded_predicates: branch_state.unfolded_predicates.clone(),
+            execution: branch_state.execution.clone(),
+        };
         Ok(ProofState {
             locals: self.state.locals.clone(),
-            goals: self
-                .state
-                .goals
-                .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+            open_branches: self.state.open_branches.replace_at(
+                self.focused_branch,
+                OpenBranch::function_outcome(updated, state),
+            ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         })

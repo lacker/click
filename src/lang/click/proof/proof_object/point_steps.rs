@@ -18,7 +18,7 @@ impl<'a> Proof<'a> {
                 application,
                 surface_premises,
             ),
-            // A focused function-outcome goal applies theorems through the
+            // A focused branch function-outcome goal applies theorems through the
             // point checker, reading its data from the goal; the effect
             // context is the frontier-wide set required by theorem checking.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
@@ -90,10 +90,11 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .discharged_if_at(self.focused, complete, facts),
+            open_branches: self.state.open_branches.discharged_if_at(
+                self.focused_branch,
+                complete,
+                facts,
+            ),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
         })
@@ -130,10 +131,11 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .discharged_if_at(self.focused, complete, checked.facts),
+            open_branches: self.state.open_branches.discharged_if_at(
+                self.focused_branch,
+                complete,
+                checked.facts,
+            ),
             checked_facts: Arc::new(checked.added_facts.clone()),
             added_facts: Arc::new(checked.added_facts),
         })
@@ -195,8 +197,8 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.discharged_if_or_execution_at(
-                self.focused,
+            open_branches: self.state.open_branches.discharged_if_or_execution_at(
+                self.focused_branch,
                 complete,
                 checked.facts,
                 execution,
@@ -289,7 +291,10 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals,
 
-            goals: self.state.goals.with_facts_at(self.focused, facts),
+            open_branches: self
+                .state
+                .open_branches
+                .with_facts_at(self.focused_branch, facts),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(vec![chosen_fact]),
         })
@@ -417,8 +422,8 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.replace_at(self.focused, {
-                let context = self.refined_context(self.facts().clone());
+            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
+                let context = self.refined_branch_state(self.facts().clone());
                 self.refined_proposition(context, goal, surface_goal)
             }),
             added_facts: Arc::new(Vec::new()),
@@ -525,7 +530,10 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.with_facts_at(self.focused, facts),
+            open_branches: self
+                .state
+                .open_branches
+                .with_facts_at(self.focused_branch, facts),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
         })
@@ -677,8 +685,8 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.replace_at(self.focused, {
-                let context = self.refined_context(self.facts().clone());
+            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
+                let context = self.refined_branch_state(self.facts().clone());
                 self.refined_proposition(context, rewritten, surface_goal)
             }),
             added_facts: Arc::new(Vec::new()),
@@ -710,17 +718,18 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .discharged_if_at(self.focused, complete, facts),
+            open_branches: self.state.open_branches.discharged_if_at(
+                self.focused_branch,
+                complete,
+                facts,
+            ),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
         })
     }
 
     /// The point-operation data a result-aware checker consumes, resolved
-    /// either from a point proof's borrowed context or from a focused
+    /// either from a point proof's borrowed context or from a focused branch
     /// function-outcome goal on an execution proof. This is the goal-aware
     /// point view: outcome goals own their result, post-state, surface
     /// lowerings, and effect facts, and borrow the frontier snapshot for the
@@ -738,13 +747,13 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return None;
         };
-        let Goal::Proposition(goal) = self.focused_goal()? else {
+        let Obligation::Proposition(goal) = self.focused_obligation()? else {
             return None;
         };
         if goal.outcome.is_some() {
             return None;
         }
-        let execution = goal.context.execution.as_deref()?;
+        let execution = self.focused_branch()?.state.execution.as_deref()?;
         Some(PointOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
@@ -765,18 +774,18 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// The focused judgment's result-aware point data: a function-outcome
+    /// The focused branch judgment's result-aware point data: a function-outcome
     /// goal owns its data, and a proposition judgment stated at an outcome
     /// borrows that outcome's data by identity.
     pub(super) fn focused_outcome_point(&self) -> Option<&Arc<OutcomePointData>> {
-        match self.focused_goal()? {
-            Goal::FunctionOutcome(goal) => Some(&goal.point),
-            Goal::Proposition(goal) => goal.outcome.as_ref(),
-            Goal::Frontier(_) => None,
+        match self.focused_obligation()? {
+            Obligation::FunctionOutcome(goal) => Some(&goal.point),
+            Obligation::Proposition(goal) => goal.outcome.as_ref(),
+            Obligation::Frontier(_) => None,
         }
     }
 
-    /// Decides one explicit post-execution `if` from the focused outcome's
+    /// Decides one explicit post-execution `if` from the focused branch outcome's
     /// exact fact context. The syntax driver may use the returned polarity to
     /// choose which source arm to visit, but it cannot manufacture a fact or
     /// successor: both alternatives are lowered and the kernel assumptions
@@ -785,7 +794,10 @@ impl<'a> Proof<'a> {
         &self,
         condition: &ClickProposition,
     ) -> Result<bool, ClickError> {
-        if !matches!(self.focused_goal(), Some(Goal::FunctionOutcome(_))) {
+        if !matches!(
+            self.focused_obligation(),
+            Some(Obligation::FunctionOutcome(_))
+        ) {
             return Err(self.step_error("post-execution `if` requires a focused outcome goal"));
         }
         let point = self
@@ -830,7 +842,7 @@ impl<'a> Proof<'a> {
     /// Reports whether every checked execution path already decides a
     /// post-execution condition. Such an `if` is a cursor over an existing
     /// path partition and may be deferred until each outcome Proof is
-    /// focused. An undecided logical case split must stay with the general
+    /// focused branch. An undecided logical case split must stay with the general
     /// proof driver, which introduces the two assumptions explicitly.
     /// Forks every outcome path on which `condition` is undecided into two
     /// paths, one per polarity, each carrying the case fact and a recorded
@@ -953,15 +965,16 @@ impl<'a> Proof<'a> {
         };
         execution.outcome_provenance = Arc::new(outcome_provenance);
         let mut state = (*self.state).clone();
-        state.goals =
-            state
-                .goals
-                .replace_execution_at(self.focused, self.facts().clone(), execution);
+        state.open_branches = state.open_branches.replace_execution_at(
+            self.focused_branch,
+            self.facts().clone(),
+            execution,
+        );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(state),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -1013,8 +1026,7 @@ impl<'a> Proof<'a> {
             return None;
         };
         let point = self.focused_outcome_point()?;
-        let goal = self.focused_goal()?;
-        let execution = goal.context().execution.as_deref()?;
+        let execution = self.focused_branch()?.state.execution.as_deref()?;
         Some(PointOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
@@ -1051,7 +1063,7 @@ impl<'a> Proof<'a> {
                 premises,
                 &PointOperationView::from_point(context),
             ),
-            // A focused function-outcome goal transports result-aware facts
+            // A focused branch function-outcome goal transports result-aware facts
             // through the same point checker, reading its data from the goal.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
@@ -1124,10 +1136,10 @@ impl<'a> Proof<'a> {
         };
         let checked_facts = vec![checked.source, checked.target.clone()];
         facts = facts.with_fact(checked.target);
-        // A focused outcome goal records the checker-owned source and target
+        // A focused branch outcome goal records the checker-owned source and target
         // lowerings atomically with its fact successor; the drain no longer
         // has to re-record them into a caller-owned map for this path.
-        if let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() {
+        if let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() {
             let mut updated = goal.clone();
             let mut point = (*updated.point).clone();
             point
@@ -1137,17 +1149,18 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .record_lowering(&target, &checked_facts[1])?;
             updated.point = Arc::new(point);
-            updated.context = GoalContext {
+            let branch_state = &self.focused_branch().expect("focused branch exists").state;
+            let state = BranchState {
                 facts,
-                unfolded_predicates: goal.context.unfolded_predicates.clone(),
-                execution: goal.context.execution.clone(),
+                unfolded_predicates: branch_state.unfolded_predicates.clone(),
+                execution: branch_state.execution.clone(),
             };
             return Ok(ProofState {
                 locals: self.state.locals.clone(),
-                goals: self
-                    .state
-                    .goals
-                    .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+                open_branches: self.state.open_branches.replace_at(
+                    self.focused_branch,
+                    OpenBranch::function_outcome(updated, state),
+                ),
                 added_facts: Arc::new(added_facts),
                 checked_facts: Arc::new(checked_facts),
             });
@@ -1156,10 +1169,11 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self
-                .state
-                .goals
-                .discharged_if_at(self.focused, complete, facts),
+            open_branches: self.state.open_branches.discharged_if_at(
+                self.focused_branch,
+                complete,
+                facts,
+            ),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(checked_facts),
         })
@@ -1216,8 +1230,8 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.discharged_if_or_execution_at(
-                self.focused,
+            open_branches: self.state.open_branches.discharged_if_or_execution_at(
+                self.focused_branch,
                 complete,
                 facts,
                 execution,

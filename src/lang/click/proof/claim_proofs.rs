@@ -1051,7 +1051,7 @@ pub(super) fn finish_ordered_proof<'a>(
     let pure_facts = direct_view.facts.clone();
     let requirement_facts =
         Arc::new(pure_facts[..function_block.requires().len().min(pure_facts.len())].to_vec());
-    let outcome_substrate = proof.focus_function_outcomes(requirement_facts).ok();
+    let outcome_substrate = proof.split_function_outcomes(requirement_facts).ok();
     let (state, frontier, proof_execution, proof_context, branch_path) = (
         direct_view.state,
         direct_view.frontier,
@@ -1533,7 +1533,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             continue;
                         }
                         if outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
-                            substrate.outcome_goal_for_path(path_index).is_none()
+                            substrate.outcome_branch_for_path(path_index).is_none()
                         }) {
                             // The Proof-owned N-way outcome derivation rejected
                             // this candidate under an exact contradictory path
@@ -1870,8 +1870,8 @@ pub(super) fn finish_ordered_proof<'a>(
                     // imports because theirs are semantic supersets.
                     let mut outcome_proof =
                         outcome_substrate.as_ref().and_then(|(substrate, _)| {
-                            let goal = substrate.outcome_goal_for_path(path_index)?;
-                            let focused = substrate.focus(goal).ok()?;
+                            let goal = substrate.outcome_branch_for_path(path_index)?;
+                            let focused = substrate.focus_branch(goal).ok()?;
                             focused
                                 .with_outcome_snapshot(&outcome)
                                 .and_then(|proof| {

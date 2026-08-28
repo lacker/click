@@ -32,8 +32,8 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(false);
         };
-        if self.state.goals.is_discharged()
-            || !matches!(self.focused_goal(), Some(Goal::Frontier(_)))
+        if self.state.open_branches.is_discharged()
+            || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Ok(false);
         }
@@ -82,8 +82,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
-        if self.state.goals.is_discharged()
-            || !matches!(self.focused_goal(), Some(Goal::Frontier(_)))
+        if self.state.open_branches.is_discharged()
+            || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         }
@@ -267,7 +267,7 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Splits the focused execution frontier at a C `if` into sibling
+    /// Splits the focused branch execution frontier at a C `if` into sibling
     /// frontier goals inside this same proof state: the in-`Proof` form of
     /// the execution branch. Each kernel-feasible arm becomes one sibling
     /// goal owning its checked arm facts and snapshot; the returned record
@@ -869,7 +869,7 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         assertions: Vec<ProofAssertion>,
     ) -> Result<Self, ClickError> {
-        let sole_arm = match record.ids {
+        let sole_arm = match record.arm_branches {
             [Some(id), None] => Some((true, 0usize, id)),
             [None, Some(id)] => Some((false, 1, id)),
             _ => None,
@@ -1211,7 +1211,7 @@ impl<'a> Proof<'a> {
         // Preserve only the append-only suffix each checked arm added after
         // the split root, nested under the exact condition this audited join
         // retained in its `If` provenance. Ordered finalization later asks
-        // each focused outcome Proof to select one arm and apply those
+        // each focused branch outcome Proof to select one arm and apply those
         // ordinary operations; the joined execution frontier gains no facts,
         // C state, resources, or successor authority from this tree.
         let then_post_execution = arms[0]
@@ -1558,11 +1558,11 @@ impl<'a> Proof<'a> {
         record: &ExecutionProofCaseSplit<'a>,
     ) -> Result<Self, ClickError> {
         let [then_steps, else_steps] =
-            self.partition_steps_since(&record.marker, record.split, record.ids)?;
+            self.partition_steps_since(&record.marker, record.split, record.arm_branches)?;
         let (selection, then_view) = self.sibling_execution_arm_view_from_bases(
             "then",
             record.split,
-            record.ids[0],
+            record.arm_branches[0],
             then_steps,
             &record.base_facts[0],
             &record.common_facts,
@@ -1572,7 +1572,7 @@ impl<'a> Proof<'a> {
         let (_, else_view) = self.sibling_execution_arm_view_from_bases(
             "else",
             record.split,
-            record.ids[1],
+            record.arm_branches[1],
             else_steps,
             &record.base_facts[1],
             &record.common_facts,
@@ -1590,7 +1590,7 @@ impl<'a> Proof<'a> {
         )?;
         self.resume_parent_after_sibling_join_from_marker(
             &record.marker,
-            record.ids,
+            record.arm_branches,
             selection,
             parts,
         )
@@ -1608,13 +1608,13 @@ impl<'a> Proof<'a> {
         record: &'v ExecutionSplit<'a>,
     ) -> Result<
         (
-            [GoalId; 2],
+            [BranchId; 2],
             EffectGoalSelection,
             [CheckedExecutionJoinArm<'v>; 2],
         ),
         ClickError,
     > {
-        let [Some(then_id), Some(else_id)] = record.ids else {
+        let [Some(then_id), Some(else_id)] = record.arm_branches else {
             return Err(self.step_error(
                 "an execution `branch` with one feasible arm is a decided path, not a join",
             ));
@@ -1638,7 +1638,7 @@ impl<'a> Proof<'a> {
         record: &'v ExecutionSplit<'a>,
         name: &str,
         arm_index: usize,
-        id: GoalId,
+        id: BranchId,
         steps: Vec<SimpleProofStep>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
         let base_facts = record.base_facts[arm_index]
@@ -1667,19 +1667,24 @@ impl<'a> Proof<'a> {
         &'v self,
         name: &str,
         split: SplitId,
-        id: GoalId,
+        id: BranchId,
         steps: Vec<SimpleProofStep>,
         ancestry_facts: &'v ProofFacts,
         delta_facts: &'v ProofFacts,
         delta_execution: &'v ExecutionProofState,
         condition_theorem: Option<&'v Theorem>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
-        let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
+        let Some(branch) = self.state.open_branches.get(id) else {
             return Err(self.step_error(format!(
                 "cannot join `branch`: the {name} arm is not an open execution frontier"
             )));
         };
-        let execution = frontier.context.execution.as_deref().ok_or_else(|| {
+        let Obligation::Frontier(frontier) = &branch.obligation else {
+            return Err(self.step_error(format!(
+                "cannot join `branch`: the {name} arm is not an open execution frontier"
+            )));
+        };
+        let execution = branch.state.execution.as_deref().ok_or_else(|| {
             self.step_error(format!("{name} branch arm lost its execution state"))
         })?;
         let not_descended = || {
@@ -1695,16 +1700,16 @@ impl<'a> Proof<'a> {
         // stores below instead diff against the arm base, matching the
         // container's empty per-arm records. The base ancestry check keeps
         // the arm honest about deriving from this exact split.
-        if frontier
-            .context
+        if branch
+            .state
             .facts
             .introduced_since(ancestry_facts)
             .is_none()
         {
             return Err(not_descended());
         }
-        let introduced_facts = frontier
-            .context
+        let introduced_facts = branch
+            .state
             .facts
             .introduced_since(delta_facts)
             .ok_or_else(not_descended)?;
@@ -1740,7 +1745,7 @@ impl<'a> Proof<'a> {
             frontier.selection,
             CheckedExecutionJoinArm {
                 certificate: ProofCertificate::from_steps(steps),
-                facts: &frontier.context.facts,
+                facts: &branch.state.facts,
                 execution,
                 condition_theorem,
                 introduced_facts,
@@ -1766,7 +1771,7 @@ impl<'a> Proof<'a> {
         &self,
         record: &ExecutionSplit<'a>,
     ) -> Result<Self, ClickError> {
-        let (take_then, arm_index, id) = match record.ids {
+        let (take_then, arm_index, id) = match record.arm_branches {
             [Some(id), None] => (true, 0usize, id),
             [None, Some(id)] => (false, 1, id),
             _ => {
@@ -1816,7 +1821,7 @@ impl<'a> Proof<'a> {
     pub(super) fn resume_parent_after_sibling_join(
         &self,
         record: &ExecutionSplit<'a>,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
         selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
@@ -1826,38 +1831,38 @@ impl<'a> Proof<'a> {
     pub(super) fn resume_parent_after_sibling_join_from_marker(
         &self,
         marker: &ProofCheckpoint<'a>,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
         selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
-        let parent_goal = marker.node.focused;
+        let parent_goal = marker.node.focused_branch;
         let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
         let open = self
             .state
-            .goals
+            .open_branches
             .open
             .without_key(&ids[0])
             .without_key(&ids[1])
             .with_inserted(
                 parent_goal,
-                Goal::Frontier(FrontierGoal {
+                OpenBranch::frontier(
                     selection,
-                    context: GoalContext {
+                    BranchState {
                         facts: parts.facts,
                         unfolded_predicates: parts.unfolded_predicates,
                         execution: Some(Arc::new(parts.execution)),
                     },
-                }),
+                ),
             );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: ProofGoals {
+                open_branches: OpenBranches {
                     open,
-                    next_id: self.state.goals.next_id,
+                    next_id: self.state.open_branches.next_id,
                 },
                 added_facts: Arc::new(parts.common_added_facts.clone()),
                 checked_facts: Arc::new(parts.common_added_facts),
@@ -1865,17 +1870,17 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
                 step: Some(Arc::new(parts.step)),
-                focused: parent_goal,
+                focused_branch: parent_goal,
                 depth: parent_node.depth + 1,
             }),
-            focused: parent_goal,
+            focused_branch: parent_goal,
         })
     }
 
     /// Focuses one recorded sibling arm and installs that arm's split-time
     /// path facts as the proof's delta. The container gave each arm proof
     /// its own `added_facts`; with siblings sharing one proof, the cursor
-    /// move re-presents the delta that created the now-focused obligation
+    /// move re-presents the delta that created the now-focused branch obligation
     /// so smart premise selection sees the same candidates.
     pub(in crate::lang::click::proof) fn focus_split_arm(
         &self,
@@ -1883,27 +1888,27 @@ impl<'a> Proof<'a> {
         take_then: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_then);
-        let Some(id) = record.ids[arm_index] else {
+        let Some(id) = record.arm_branches[arm_index] else {
             return Err(self.step_error(format!(
                 "cannot focus the infeasible {} execution arm",
                 if take_then { "then" } else { "else" }
             )));
         };
-        let mut focused = self.focus(id)?;
+        let mut focused_branch = self.focus_branch(id)?;
         let path_facts = record.path_facts[arm_index]
             .clone()
             .expect("a recorded arm id has recorded path facts");
-        focused.state = Arc::new(ProofState {
-            locals: focused.state.locals.clone(),
-            goals: focused.state.goals.clone(),
+        focused_branch.state = Arc::new(ProofState {
+            locals: focused_branch.state.locals.clone(),
+            open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
             checked_facts: Arc::new(path_facts),
         });
-        Ok(focused)
+        Ok(focused_branch)
     }
 
     /// Focuses one proof-level execution case. No C transition is repeated;
-    /// the recorded polarity is re-presented only as the focused operation's
+    /// the recorded polarity is re-presented only as the focused branch operation's
     /// local delta.
     pub(in crate::lang::click::proof) fn focus_execution_if_arm(
         &self,
@@ -1911,20 +1916,20 @@ impl<'a> Proof<'a> {
         take_then: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_then);
-        let mut focused = self.focus(record.ids[arm_index])?;
+        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused.state = Arc::new(ProofState {
-            locals: focused.state.locals.clone(),
-            goals: focused.state.goals.clone(),
+        focused_branch.state = Arc::new(ProofState {
+            locals: focused_branch.state.locals.clone(),
+            open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
             checked_facts: Arc::new(path_facts),
         });
-        Ok(focused)
+        Ok(focused_branch)
     }
 
-    /// Runs the narrow statement selector on this focused frontier until it
+    /// Runs the narrow statement selector on this focused branch frontier until it
     /// reaches function exit. A nested C `if` recurses through an in-`Proof`
-    /// split whose arms are focused runs of this same search; any other
+    /// split whose arms are focused branch runs of this same search; any other
     /// structural frontier is a search miss.
     pub(in crate::lang::click::proof) fn try_focused_execute_to_exit(
         &self,
@@ -1989,7 +1994,7 @@ impl<'a> Proof<'a> {
     /// Terminal and decided branches render one structural branch-entry
     /// `step()` (two for an empty C arm). The split already performed
     /// those transitions, so this checks the exact Surface operations against
-    /// the C branch and applies only the remaining body steps to the focused
+    /// the C branch and applies only the remaining body steps to the focused branch
     /// sibling. No certificate is constructed or interpreted.
     pub(super) fn checked_expanded_execution_arm_entry_steps(
         &self,
@@ -2256,7 +2261,7 @@ impl<'a> Proof<'a> {
 
     /// Applies an already-expanded logical C branch as one audited structural
     /// Proof transition. Source syntax supplies only its condition and simple
-    /// arm operations; the split, entry validation, focused successors, and
+    /// arm operations; the split, entry validation, focused branch successors, and
     /// join remain owned by this Proof lineage.
     pub(in crate::lang::click::proof) fn apply_expanded_execution_if(
         &self,
@@ -2355,8 +2360,8 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: self.state.goals.replace_frontier_at(
-                    self.focused,
+                open_branches: self.state.open_branches.replace_frontier_at(
+                    self.focused_branch,
                     self.facts().clone(),
                     execution,
                 ),
@@ -2364,7 +2369,7 @@ impl<'a> Proof<'a> {
                 checked_facts: Arc::new(Vec::new()),
             }),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -2409,9 +2414,9 @@ impl<'a> Proof<'a> {
     ) -> bool {
         record.arm_id(take_then).is_some_and(|id| {
             self.state
-                .goals
+                .open_branches
                 .get(id)
-                .and_then(|goal| goal.context().execution.as_deref())
+                .and_then(|branch| branch.state.execution.as_deref())
                 .is_some_and(|execution| execution.frontier.is_at_function_exit())
         })
     }
@@ -2421,11 +2426,11 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
     ) -> bool {
         record.sole_feasible_arm().is_none()
-            && record.ids.iter().flatten().all(|id| {
+            && record.arm_branches.iter().flatten().all(|id| {
                 self.state
-                    .goals
+                    .open_branches
                     .get(*id)
-                    .and_then(|goal| goal.context().execution.as_deref())
+                    .and_then(|branch| branch.state.execution.as_deref())
                     .is_some_and(|execution| execution.frontier.is_at_function_exit())
             })
     }
@@ -2458,24 +2463,28 @@ impl<'a> Proof<'a> {
         &self,
     ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
         let prepared = self.prepare_execution_branch()?;
-        let Some(Goal::Frontier(parent)) = self.focused_goal() else {
+        let Some(Obligation::Frontier(parent)) = self.focused_obligation() else {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         };
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let selection = parent.selection;
-        let unfolds = parent.context.unfolded_predicates.clone();
-        let parent_facts = parent.context.facts.clone();
-        let parent_execution = parent
-            .context
+        let unfolds = branch_state.unfolded_predicates.clone();
+        let parent_facts = branch_state.facts.clone();
+        let parent_execution = branch_state
             .execution
             .clone()
             .expect("the preparation requires an execution frontier");
-        let split = SplitId(self.state.goals.next_id);
+        let split = SplitId(self.state.open_branches.next_id);
         let ids = [
-            GoalId(self.state.goals.next_id + 1),
-            GoalId(self.state.goals.next_id + 2),
+            BranchId(self.state.open_branches.next_id + 1),
+            BranchId(self.state.open_branches.next_id + 2),
         ];
-        let mut open = self.state.goals.open.without_key(&self.focused);
-        let mut arm_ids: [Option<GoalId>; 2] = [None, None];
+        let mut open = self
+            .state
+            .open_branches
+            .open
+            .without_key(&self.focused_branch);
+        let mut arm_ids: [Option<BranchId>; 2] = [None, None];
         let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
         let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
         let mut base_executions: [Option<Arc<ExecutionProofState>>; 2] = [None, None];
@@ -2492,17 +2501,17 @@ impl<'a> Proof<'a> {
             base_executions[arm_index] = Some(execution.clone());
             open = open.with_inserted(
                 ids[arm_index],
-                Goal::Frontier(FrontierGoal {
+                OpenBranch::frontier(
                     selection,
-                    context: GoalContext {
+                    BranchState {
                         facts: prepared_arm.facts,
                         unfolded_predicates: unfolds.clone(),
                         execution: Some(execution),
                     },
-                }),
+                ),
             );
         }
-        let focused = arm_ids
+        let focused_branch = arm_ids
             .iter()
             .flatten()
             .next()
@@ -2518,11 +2527,11 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: ProofGoals {
+                open_branches: OpenBranches {
                     open,
-                    next_id: self.state.goals.next_id + 3,
+                    next_id: self.state.open_branches.next_id + 3,
                 },
-                // The successor starts focused on the first feasible arm and
+                // The successor starts focused branch on the first feasible arm and
                 // carries that arm's path facts as its delta, exactly as the
                 // container's arm proof did; `focus_split_arm` installs the
                 // matching delta when the driver moves to the other arm.
@@ -2532,15 +2541,15 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth,
             }),
-            focused,
+            focused_branch,
         };
         let record = ExecutionSplit {
             marker: successor.checkpoint(),
             split,
-            ids: arm_ids,
+            arm_branches: arm_ids,
             condition_theorems,
             base_facts,
             base_executions,

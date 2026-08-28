@@ -490,10 +490,10 @@ impl<'a> ProofScope<'a> {
                     resource: resource.clone(),
                     proof: Box::new(body),
                 })),
-                focused: outer.root.focused,
+                focused_branch: outer.root.focused_branch,
                 depth: outer.root.node.depth + 1,
             }),
-            focused: outer.root.focused,
+            focused_branch: outer.root.focused_branch,
         })
     }
 
@@ -527,7 +527,7 @@ impl<'a> ProofScope<'a> {
         Ok(())
     }
 
-    /// Closes this open resource on the currently focused terminal branch
+    /// Closes this open resource on the currently focused branch terminal branch
     /// without yet retiring the branch goal. This is the per-arm half of
     /// a recursive loop-effect branch tree; logical joins are allowed only after
     /// both independently checked representations have closed.
@@ -552,7 +552,7 @@ impl<'a> ProofScope<'a> {
             ));
         }
         let mut execution = body
-            .goal_execution()
+            .branch_execution()
             .cloned()
             .map(Arc::unwrap_or_clone)
             .ok_or_else(|| {
@@ -592,19 +592,20 @@ impl<'a> ProofScope<'a> {
             execution.state = checked.state.into();
         }
         let mut state = Arc::unwrap_or_clone(body.state.clone());
-        state.goals = state
-            .goals
-            .replace_frontier_at(body.focused, facts, execution);
+        state.open_branches =
+            state
+                .open_branches
+                .replace_frontier_at(body.focused_branch, facts, execution);
         Ok(Proof {
             context: body.context.clone(),
             state: Arc::new(state),
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
-                focused: body.focused,
+                focused_branch: body.focused_branch,
                 depth: body.node.depth,
             }),
-            focused: body.focused,
+            focused_branch: body.focused_branch,
         })
     }
 
@@ -621,17 +622,17 @@ impl<'a> ProofScope<'a> {
                 .step_error("cannot discharge an unfinished loop-effect branch"));
         }
         let mut state = Arc::unwrap_or_clone(body.state.clone());
-        state.goals = state.goals.discharge_at(body.focused);
+        state.open_branches = state.open_branches.close_at(body.focused_branch);
         Ok(Proof {
             context: body.context.clone(),
             state: Arc::new(state),
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
-                focused: body.focused,
+                focused_branch: body.focused_branch,
                 depth: body.node.depth,
             }),
-            focused: body.focused,
+            focused_branch: body.focused_branch,
         })
     }
 
@@ -889,7 +890,7 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
-    /// Smart-only compatibility wrapper retained for focused regressions.
+    /// Smart-only compatibility wrapper retained for focused branch regressions.
     #[cfg(test)]
     pub(in crate::lang::click::proof) fn try_linear_smart_script(
         &self,
@@ -1001,16 +1002,16 @@ impl<'a> ProofScope<'a> {
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_fact(kernel.clone());
-                let mut goals = match (self.root.context.as_ref(), self.root.focused_goal()) {
+                let mut goals = match (self.root.context.as_ref(), self.root.focused_obligation()) {
                     // A `have` at an execution frontier publishes what the
                     // shared mid-execution law publishes: the proposition's
                     // lowering, its certificate fact, and any function-entry
                     // authority the checked fact or an explicit theorem
                     // application establishes for later statement checks.
-                    (ProofContext::Execution(context), Some(Goal::Frontier(_))) => {
+                    (ProofContext::Execution(context), Some(Obligation::Frontier(_))) => {
                         let mut execution = self
                             .root
-                            .goal_execution()
+                            .branch_execution()
                             .cloned()
                             .map(Arc::unwrap_or_clone)
                             .ok_or_else(|| {
@@ -1025,8 +1026,8 @@ impl<'a> ProofScope<'a> {
                             &kernel,
                             script.as_deref(),
                         )?;
-                        self.root.state.goals.replace_frontier_at(
-                            self.root.focused,
+                        self.root.state.open_branches.replace_frontier_at(
+                            self.root.focused_branch,
                             facts,
                             execution,
                         )
@@ -1034,10 +1035,11 @@ impl<'a> ProofScope<'a> {
                     _ => self
                         .root
                         .state
-                        .goals
-                        .with_facts_at(self.root.focused, facts),
+                        .open_branches
+                        .with_facts_at(self.root.focused_branch, facts),
                 };
-                if let Some(Goal::FunctionOutcome(outcome)) = goals.get(self.root.focused).cloned()
+                if let Some(Obligation::FunctionOutcome(outcome)) =
+                    goals.obligation(self.root.focused_branch).cloned()
                 {
                     let mut updated = outcome;
                     let mut point = (*updated.point).clone();
@@ -1045,13 +1047,16 @@ impl<'a> ProofScope<'a> {
                         .surface_propositions
                         .record_lowering(&proposition, &kernel)?;
                     updated.point = Arc::new(point);
-                    goals = goals.replace_at(self.root.focused, Goal::FunctionOutcome(updated));
+                    goals = goals.replace_obligation_at(
+                        self.root.focused_branch,
+                        Obligation::FunctionOutcome(updated),
+                    );
                 }
                 Ok(Proof {
                     context: self.root.context.clone(),
                     state: Arc::new(ProofState {
                         locals: self.root.state.locals.clone(),
-                        goals,
+                        open_branches: goals,
                         added_facts: Arc::new(vec![kernel.clone()]),
                         checked_facts: Arc::new(vec![kernel]),
                     }),
@@ -1061,10 +1066,10 @@ impl<'a> ProofScope<'a> {
                             proposition,
                             proof: Box::new(body),
                         })),
-                        focused: self.root.focused,
+                        focused_branch: self.root.focused_branch,
                         depth: self.root.node.depth + 1,
                     }),
-                    focused: self.root.focused,
+                    focused_branch: self.root.focused_branch,
                 })
             }
             ProofScopeStructure::Open {
@@ -1079,7 +1084,7 @@ impl<'a> ProofScope<'a> {
                 let loop_effect_closed = self.body.focused_loop_effect_closed();
                 let mut execution = self
                     .body
-                    .goal_execution()
+                    .branch_execution()
                     .cloned()
                     .map(Arc::unwrap_or_clone)
                     .ok_or_else(|| {
@@ -1119,17 +1124,19 @@ impl<'a> ProofScope<'a> {
                     facts = checked.facts;
                     execution.state = checked.state.into();
                 }
-                state.goals = state
-                    .goals
-                    .replace_frontier_at(self.body.focused, facts, execution);
+                state.open_branches = state.open_branches.replace_frontier_at(
+                    self.body.focused_branch,
+                    facts,
+                    execution,
+                );
                 if discharge_closed_loop_effect && loop_effect_closed {
-                    state.goals = state.goals.discharge_at(self.body.focused);
+                    state.open_branches = state.open_branches.close_at(self.body.focused_branch);
                 }
                 state.added_facts = Arc::new(self.introduced_facts.clone());
                 state.checked_facts = Arc::new(self.introduced_facts);
                 // The successor's goal map came from the scope body, whose
                 // cursor may have moved through a decided branch.
-                let focused = self.body.focused;
+                let focused_branch = self.body.focused_branch;
                 Ok(Proof {
                     context: self.root.context.clone(),
                     state: Arc::new(state),
@@ -1139,10 +1146,10 @@ impl<'a> ProofScope<'a> {
                             resource,
                             proof: Box::new(body),
                         })),
-                        focused,
+                        focused_branch,
                         depth: self.root.node.depth + 1,
                     }),
-                    focused,
+                    focused_branch,
                 })
             }
         }

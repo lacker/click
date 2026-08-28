@@ -25,7 +25,7 @@ impl<'a> Proof<'a> {
             )),
             state: self.state.clone(),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -60,7 +60,7 @@ impl<'a> Proof<'a> {
             context: ancestor.context.clone(),
             state: self.state.clone(),
             node: self.node.clone(),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -132,17 +132,21 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
 
-                goals: ProofGoals::root({
-                    let context = GoalContext {
+                open_branches: OpenBranches::root({
+                    let context = BranchState {
                         facts,
                         unfolded_predicates: PersistentOrderedSet::default(),
                         execution: None,
                     };
                     surface_goal
                         .map(|surface| {
-                            Goal::surface_proposition_in(context.clone(), goal.clone(), surface)
+                            OpenBranch::surface_proposition_in(
+                                context.clone(),
+                                goal.clone(),
+                                surface,
+                            )
                         })
-                        .unwrap_or_else(|| Goal::proposition_in(context, goal))
+                        .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
                 }),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -150,10 +154,10 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         }
     }
 
@@ -179,7 +183,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| Goal::proposition_in(context, goal),
+            |context| OpenBranch::proposition_in(context, goal),
             parameters,
             arguments,
             pre_state,
@@ -222,7 +226,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| Goal::surface_proposition_in(context, goal, surface_goal),
+            |context| OpenBranch::surface_proposition_in(context, goal, surface_goal),
             parameters,
             arguments,
             pre_state,
@@ -268,7 +272,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| Goal::proposition_in(context, goal),
+            |context| OpenBranch::proposition_in(context, goal),
             parameters,
             arguments,
             pre_state,
@@ -314,7 +318,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| Goal::surface_proposition_in(context, goal, surface_goal),
+            |context| OpenBranch::surface_proposition_in(context, goal, surface_goal),
             parameters,
             arguments,
             pre_state,
@@ -338,7 +342,7 @@ impl<'a> Proof<'a> {
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
-        goal: impl FnOnce(GoalContext) -> Goal,
+        goal: impl FnOnce(BranchState) -> OpenBranch,
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
         pre_state: &'a CState,
@@ -400,12 +404,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| {
-                Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    context,
-                })
-            },
+            |context| OpenBranch::frontier(EffectGoalSelection::None, context),
             parameters,
             arguments,
             pre_state,
@@ -447,12 +446,7 @@ impl<'a> Proof<'a> {
             claim_label,
             tactic_index,
             available,
-            |context| {
-                Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    context,
-                })
-            },
+            |context| OpenBranch::frontier(EffectGoalSelection::None, context),
             parameters,
             arguments,
             pre_state,
@@ -476,7 +470,7 @@ impl<'a> Proof<'a> {
         claim_label: &'a str,
         tactic_index: usize,
         available: &'a [Proposition],
-        goal: impl FnOnce(GoalContext) -> Goal,
+        goal: impl FnOnce(BranchState) -> OpenBranch,
         parameters: &'a [syntax::C0Parameter],
         arguments: &'a [CExpression],
         pre_state: &'a CState,
@@ -496,21 +490,21 @@ impl<'a> Proof<'a> {
         let facts = ProofFacts::from_ordered(available);
         let mut lowering_context = available.to_vec();
         append_resource_context_observable_facts(state.resources(), &mut lowering_context);
-        let goal = goal(GoalContext {
+        let goal = goal(BranchState {
             facts,
             unfolded_predicates: PersistentOrderedSet::default(),
             execution: None,
         });
-        let goal = match &goal {
-            Goal::Proposition(proposition) => goal.with_context(GoalContext {
-                facts: proposition
-                    .context
+        let goal = match &goal.obligation {
+            Obligation::Proposition(proposition) => goal.with_state(BranchState {
+                facts: goal
+                    .state
                     .facts
                     .with_selected_load_equality_bridge(&proposition.kernel),
-                unfolded_predicates: proposition.context.unfolded_predicates.clone(),
-                execution: proposition.context.execution.clone(),
+                unfolded_predicates: goal.state.unfolded_predicates.clone(),
+                execution: goal.state.execution.clone(),
             }),
-            Goal::Frontier(_) | Goal::FunctionOutcome(_) => goal.clone(),
+            Obligation::Frontier(_) | Obligation::FunctionOutcome(_) => goal.clone(),
         };
         Self {
             context: Arc::new(ProofContext::Point(PointProofContext {
@@ -537,17 +531,17 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: ProofLocals::default(),
 
-                goals: ProofGoals::root(goal),
+                open_branches: OpenBranches::root(goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         }
     }
 }

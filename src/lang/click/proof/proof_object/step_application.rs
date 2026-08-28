@@ -124,10 +124,10 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(step)),
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth + 1,
             }),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         })
     }
 
@@ -152,9 +152,9 @@ impl<'a> Proof<'a> {
         &self,
         context: &ExecutionProofContext<'_>,
     ) -> Result<Vec<usize>, ClickError> {
-        let selection = match self.focused_goal() {
-            Some(Goal::Frontier(FrontierGoal { selection, .. })) => *selection,
-            Some(Goal::FunctionOutcome(OutcomeGoal { selection, .. })) => *selection,
+        let selection = match self.focused_obligation() {
+            Some(Obligation::Frontier(FrontierObligation { selection, .. })) => *selection,
+            Some(Obligation::FunctionOutcome(OutcomeObligation { selection, .. })) => *selection,
             _ => {
                 return Err(self.step_error("`frame using` requires an execution effect goal"));
             }
@@ -229,13 +229,19 @@ impl<'a> Proof<'a> {
                 self.step_error("a result-aware `frame using` can close only the function effect")
             );
         }
-        let Some(Goal::FunctionOutcome(goal)) = self.focused_goal() else {
+        let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("result-aware `frame using` requires an outcome goal"));
         };
         let effect_indices = self.selected_effect_indices(context)?;
-        let execution = goal.context.execution.as_deref().ok_or_else(|| {
-            self.step_error("result-aware `frame using` lost its execution snapshot")
-        })?;
+        let execution = self
+            .focused_branch()
+            .expect("focused branch exists")
+            .state
+            .execution
+            .as_deref()
+            .ok_or_else(|| {
+                self.step_error("result-aware `frame using` lost its execution snapshot")
+            })?;
         let pre_state = execution.frontier.execution_start_state(&execution.state);
 
         let mut point = (*goal.point).clone();
@@ -364,10 +370,10 @@ impl<'a> Proof<'a> {
         updated.point = Arc::new(point);
         Ok(ProofState {
             locals: self.state.locals.clone(),
-            goals: self
+            open_branches: self
                 .state
-                .goals
-                .replace_at(self.focused, Goal::FunctionOutcome(updated)),
+                .open_branches
+                .replace_obligation_at(self.focused_branch, Obligation::FunctionOutcome(updated)),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(frame_facts),
         })
@@ -454,16 +460,18 @@ impl<'a> Proof<'a> {
                 .as_mut()
                 .expect("the checked loop effect goal remains present")
                 .closed = true;
-            let goals = if retain_closed_loop_effect_goal {
-                self.state
-                    .goals
-                    .replace_frontier_at(self.focused, self.facts().clone(), execution)
+            let open_branches = if retain_closed_loop_effect_goal {
+                self.state.open_branches.replace_frontier_at(
+                    self.focused_branch,
+                    self.facts().clone(),
+                    execution,
+                )
             } else {
-                self.state.goals.discharge_at(self.focused)
+                self.state.open_branches.close_at(self.focused_branch)
             };
             return Ok(ProofState {
                 locals: self.state.locals.clone(),
-                goals,
+                open_branches,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(frame_facts),
             });
@@ -509,8 +517,8 @@ impl<'a> Proof<'a> {
                 return Ok(ProofState {
                     locals: self.state.locals.clone(),
 
-                    goals: self.state.goals.replace_frontier_at(
-                        self.focused,
+                    open_branches: self.state.open_branches.replace_frontier_at(
+                        self.focused_branch,
                         self.facts().clone(),
                         execution,
                     ),
@@ -562,16 +570,16 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.replace_at(
-                self.focused,
-                Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    context: GoalContext {
+            open_branches: self.state.open_branches.replace_at(
+                self.focused_branch,
+                OpenBranch::frontier(
+                    EffectGoalSelection::None,
+                    BranchState {
                         facts: self.facts().clone(),
-                        unfolded_predicates: self.focused_goal_unfolds().clone(),
+                        unfolded_predicates: self.focused_branch_unfolds().clone(),
                         execution: Some(Arc::new(execution)),
                     },
-                }),
+                ),
             ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
@@ -828,8 +836,8 @@ impl<'a> Proof<'a> {
                 .map(Some);
         }
         if matches!(
-            self.focused_goal(),
-            Some(Goal::Frontier(FrontierGoal {
+            self.focused_obligation(),
+            Some(Obligation::Frontier(FrontierObligation {
                 selection: EffectGoalSelection::None,
                 ..
             }))
@@ -1069,7 +1077,7 @@ impl<'a> Proof<'a> {
             // materialized fact or a context-free tautology, never by
             // search.
             ProofContext::Execution(_)
-                if matches!(self.focused_goal(), Some(Goal::Proposition(_))) =>
+                if matches!(self.focused_obligation(), Some(Obligation::Proposition(_))) =>
             {
                 self.facts().materialization_available(goal)
                     || self
@@ -1103,8 +1111,8 @@ impl<'a> Proof<'a> {
         let goal = self
             .proposition_goal("`intro` requires a proposition goal")?
             .clone();
-        let mut surface_bindings = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => goal.surface_bindings.clone(),
+        let mut surface_bindings = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
             _ => PersistentMap::default(),
         };
         let (goal, introduced, surface_goal) = match goal {
@@ -1152,10 +1160,10 @@ impl<'a> Proof<'a> {
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
-            goals: self.state.goals.replace_at(self.focused, {
-                let context = self.refined_context(facts);
+            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
+                let context = self.refined_branch_state(facts);
                 let mut refined = self.refined_proposition(context, goal, surface_goal);
-                let Goal::Proposition(refined_goal) = &mut refined else {
+                let Obligation::Proposition(refined_goal) = &mut refined.obligation else {
                     unreachable!("intro always refines a proposition goal")
                 };
                 refined_goal.surface_bindings = surface_bindings;

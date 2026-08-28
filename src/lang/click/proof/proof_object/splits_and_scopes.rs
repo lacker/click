@@ -3,7 +3,7 @@
 use super::*;
 
 impl<'a> Proof<'a> {
-    /// Splits the focused proposition goal into two labeled sibling case
+    /// Splits the focused branch proposition goal into two labeled sibling case
     /// goals inside this same proof state.
     ///
     /// This is the in-`Proof` form of `cases`: the parent obligation's id is
@@ -15,13 +15,14 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn split_focused_cases(
         &self,
         disjunction: ClickProposition,
-    ) -> Result<(Self, SplitId, [GoalId; 2]), ClickError> {
-        if self.state.goals.is_discharged() {
+    ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
+        if self.state.open_branches.is_discharged() {
             return Err(self.step_error("`cases` follows a completed proof"));
         }
-        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
             return Err(self.step_error("`cases` requires a proposition goal"));
         };
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let kernel = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
         if !self.facts().contains(&kernel) {
             return Err(self.step_error(format!(
@@ -32,28 +33,30 @@ impl<'a> Proof<'a> {
             return Err(self.step_error(format!("`cases` requires a disjunction, got {kernel:?}")));
         };
         let arm = |disjunct: Proposition| {
-            Goal::Proposition(PropositionGoal {
-                kernel: goal.kernel.clone(),
-                surface: goal.surface.clone(),
-                surface_bindings: goal.surface_bindings.clone(),
-                context: GoalContext {
-                    facts: goal.context.facts.with_fact(disjunct),
-                    unfolded_predicates: goal.context.unfolded_predicates.clone(),
-                    execution: goal.context.execution.clone(),
+            OpenBranch::new(
+                Obligation::Proposition(PropositionObligation {
+                    kernel: goal.kernel.clone(),
+                    surface: goal.surface.clone(),
+                    surface_bindings: goal.surface_bindings.clone(),
+                    outcome: goal.outcome.clone(),
+                }),
+                BranchState {
+                    facts: branch_state.facts.with_fact(disjunct),
+                    unfolded_predicates: branch_state.unfolded_predicates.clone(),
+                    execution: branch_state.execution.clone(),
                 },
-                outcome: goal.outcome.clone(),
-            })
+            )
         };
-        let (split, ids, goals) = self
+        let (split, ids, open_branches) = self
             .state
-            .goals
-            .split_at(self.focused, [arm(*left), arm(*right)]);
+            .open_branches
+            .split_at(self.focused_branch, [arm(*left), arm(*right)]);
         Ok((
             Self {
                 context: self.context.clone(),
                 state: Arc::new(ProofState {
                     locals: self.state.locals.clone(),
-                    goals,
+                    open_branches,
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
                 }),
@@ -62,66 +65,69 @@ impl<'a> Proof<'a> {
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
                     step: None,
-                    focused: self.focused,
+                    focused_branch: self.focused_branch,
                     depth: self.node.depth,
                 }),
-                focused: ids[0],
+                focused_branch: ids[0],
             },
             split,
             ids,
         ))
     }
 
-    /// Splits the focused proposition goal under a condition and its exact
+    /// Splits the focused branch proposition goal under a condition and its exact
     /// surface negation inside this same proof state: the in-`Proof` form of
     /// proof `if`. Unlike `cases`, the condition need not be an available
     /// fact beforehand.
     pub(in crate::lang::click::proof) fn split_focused_if(
         &self,
         condition: ClickProposition,
-    ) -> Result<(Self, SplitId, [GoalId; 2]), ClickError> {
-        if self.state.goals.is_discharged() {
+    ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
+        if self.state.open_branches.is_discharged() {
             return Err(self.step_error("`if` follows a completed proof"));
         }
-        let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
             return Err(self.step_error("proof `if` requires a proposition goal"));
         };
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
         let else_surface = ClickProposition::Not(Box::new(condition.clone()));
         let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
         let arm = |fact: Proposition| {
-            Goal::Proposition(PropositionGoal {
-                kernel: goal.kernel.clone(),
-                surface: goal.surface.clone(),
-                surface_bindings: goal.surface_bindings.clone(),
-                context: GoalContext {
-                    facts: goal.context.facts.with_fact(fact),
-                    unfolded_predicates: goal.context.unfolded_predicates.clone(),
-                    execution: goal.context.execution.clone(),
+            OpenBranch::new(
+                Obligation::Proposition(PropositionObligation {
+                    kernel: goal.kernel.clone(),
+                    surface: goal.surface.clone(),
+                    surface_bindings: goal.surface_bindings.clone(),
+                    outcome: goal.outcome.clone(),
+                }),
+                BranchState {
+                    facts: branch_state.facts.with_fact(fact),
+                    unfolded_predicates: branch_state.unfolded_predicates.clone(),
+                    execution: branch_state.execution.clone(),
                 },
-                outcome: goal.outcome.clone(),
-            })
+            )
         };
-        let (split, ids, goals) = self
+        let (split, ids, open_branches) = self
             .state
-            .goals
-            .split_at(self.focused, [arm(then_fact), arm(else_fact)]);
+            .open_branches
+            .split_at(self.focused_branch, [arm(then_fact), arm(else_fact)]);
         Ok((
             Self {
                 context: self.context.clone(),
                 state: Arc::new(ProofState {
                     locals: self.state.locals.clone(),
-                    goals,
+                    open_branches,
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),
                 }),
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
                     step: None,
-                    focused: self.focused,
+                    focused_branch: self.focused_branch,
                     depth: self.node.depth,
                 }),
-                focused: ids[0],
+                focused_branch: ids[0],
             },
             split,
             ids,
@@ -130,7 +136,7 @@ impl<'a> Proof<'a> {
 
     /// Splits a proof path condition that exactly names the current C `if`
     /// and applies each arm's leading source step as a checked `Step` on
-    /// that focused Proof, which decides the C `if` from the assumed case. The returned arms remain
+    /// that focused branch Proof, which decides the C `if` from the assumed case. The returned arms remain
     /// proof cases, so their source scopes may continue through the C join;
     /// only the branch-entry transition is selected here.
     pub(in crate::lang::click::proof) fn try_split_source_successor_if(
@@ -195,11 +201,11 @@ impl<'a> Proof<'a> {
         condition: ClickProposition,
     ) -> Result<(Self, ExecutionProofCaseSplit<'a>), ClickError> {
         self.require_execution_frontier("proof `if`")?;
-        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
             unreachable!("the frontier requirement was checked above")
         };
-        let parent_execution = frontier
-            .context
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let parent_execution = branch_state
             .execution
             .clone()
             .expect("an execution frontier owns its checked state");
@@ -211,7 +217,7 @@ impl<'a> Proof<'a> {
         };
         let at_function_entry = parent_execution.frontier.is_at_function_entry();
         let arm = |surface_fact: ClickProposition, fact: Proposition, value: bool| {
-            let facts = frontier.context.facts.with_fact(fact.clone());
+            let facts = branch_state.facts.with_fact(fact.clone());
             let mut execution = (*parent_execution).clone();
             execution
                 .surface_propositions
@@ -224,14 +230,14 @@ impl<'a> Proof<'a> {
                 at_function_entry,
             });
             Ok((
-                Goal::Frontier(FrontierGoal {
-                    selection: frontier.selection,
-                    context: GoalContext {
+                OpenBranch::frontier(
+                    frontier.selection,
+                    BranchState {
                         facts: facts.clone(),
-                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                        unfolded_predicates: branch_state.unfolded_predicates.clone(),
                         execution: Some(Arc::new(execution.clone())),
                     },
-                }),
+                ),
                 facts,
                 vec![fact],
                 Arc::new(execution),
@@ -241,37 +247,37 @@ impl<'a> Proof<'a> {
             arm(condition.clone(), then_fact, true)?;
         let (else_goal, else_facts, else_path, else_execution) =
             arm(else_surface, else_fact, false)?;
-        let (split, ids, goals) = self
+        let (split, ids, open_branches) = self
             .state
-            .goals
-            .split_at(self.focused, [then_goal, else_goal]);
+            .open_branches
+            .split_at(self.focused_branch, [then_goal, else_goal]);
         let first_path = then_path.clone();
         let successor = Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals,
+                open_branches,
                 added_facts: Arc::new(first_path.clone()),
                 checked_facts: Arc::new(first_path),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth,
             }),
-            focused: ids[0],
+            focused_branch: ids[0],
         };
         let record = ExecutionProofCaseSplit {
             marker: successor.checkpoint(),
             split,
-            ids,
+            arm_branches: ids,
             surface_condition: condition,
             base_facts: [then_facts, else_facts],
             base_executions: [then_execution, else_execution],
             path_facts: [then_path, else_path],
-            common_facts: frontier.context.facts.clone(),
-            parent_unfolds: frontier.context.unfolded_predicates.clone(),
+            common_facts: branch_state.facts.clone(),
+            parent_unfolds: branch_state.unfolded_predicates.clone(),
             parent_execution: parent_execution.clone(),
             execution_start_state: parent_execution
                 .frontier
@@ -290,16 +296,16 @@ impl<'a> Proof<'a> {
         disjunction: ClickProposition,
     ) -> Result<(Self, ExecutionLogicalCasesSplit<'a>), ClickError> {
         self.require_execution_frontier("`cases`")?;
-        let Some(Goal::Frontier(frontier)) = self.focused_goal() else {
+        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
             unreachable!("the frontier requirement was checked above")
         };
-        let parent_execution = frontier
-            .context
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let parent_execution = branch_state
             .execution
             .clone()
             .expect("an execution frontier owns its checked state");
         let lowered = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
-        if !frontier.context.facts.contains(&lowered) {
+        if !branch_state.facts.contains(&lowered) {
             return Err(self.step_error(format!(
                 "`cases` requires its exact disjunction as an available fact: {lowered:?}"
             )));
@@ -308,52 +314,52 @@ impl<'a> Proof<'a> {
             return Err(self.step_error(format!("`cases` requires a disjunction, got {lowered:?}")));
         };
         let arm = |disjunct: Proposition| {
-            let facts = frontier.context.facts.with_fact(disjunct.clone());
+            let facts = branch_state.facts.with_fact(disjunct.clone());
             (
-                Goal::Frontier(FrontierGoal {
-                    selection: frontier.selection,
-                    context: GoalContext {
+                OpenBranch::frontier(
+                    frontier.selection,
+                    BranchState {
                         facts,
-                        unfolded_predicates: frontier.context.unfolded_predicates.clone(),
+                        unfolded_predicates: branch_state.unfolded_predicates.clone(),
                         execution: Some(parent_execution.clone()),
                     },
-                }),
+                ),
                 vec![disjunct],
             )
         };
         let (left_goal, left_path) = arm(*left);
         let (right_goal, right_path) = arm(*right);
-        let (split, ids, goals) = self
+        let (split, ids, open_branches) = self
             .state
-            .goals
-            .split_at(self.focused, [left_goal, right_goal]);
+            .open_branches
+            .split_at(self.focused_branch, [left_goal, right_goal]);
         let successor = Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals,
+                open_branches,
                 added_facts: Arc::new(left_path.clone()),
                 checked_facts: Arc::new(left_path.clone()),
             }),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth,
             }),
-            focused: ids[0],
+            focused_branch: ids[0],
         };
         let record = ExecutionLogicalCasesSplit {
             marker: successor.checkpoint(),
             split,
-            ids,
+            arm_branches: ids,
             path_facts: [left_path, right_path],
         };
         Ok((successor, record))
     }
 
     /// Focuses one arm of a logical execution-frontier `cases` split. The
-    /// arm's exact disjunct is re-presented only as this focused operation's
+    /// arm's exact disjunct is re-presented only as this focused branch operation's
     /// local fact delta.
     pub(in crate::lang::click::proof) fn focus_execution_cases_arm(
         &self,
@@ -361,15 +367,15 @@ impl<'a> Proof<'a> {
         take_left: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_left);
-        let mut focused = self.focus(record.ids[arm_index])?;
+        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused.state = Arc::new(ProofState {
-            locals: focused.state.locals.clone(),
-            goals: focused.state.goals.clone(),
+        focused_branch.state = Arc::new(ProofState {
+            locals: focused_branch.state.locals.clone(),
+            open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
             checked_facts: Arc::new(path_facts),
         });
-        Ok(focused)
+        Ok(focused_branch)
     }
 
     /// Applies one recursively driven logical `cases` operation over an
@@ -388,7 +394,12 @@ impl<'a> Proof<'a> {
         let (split, record) = self.split_focused_execution_cases(disjunction.clone())?;
         let left_done = apply_left(split.focus_execution_cases_arm(&record, true)?)?;
         let right_done = apply_right(left_done.focus_execution_cases_arm(&record, false)?)?;
-        right_done.join_focused_cases(&record.marker, record.split, record.ids, disjunction)
+        right_done.join_focused_cases(
+            &record.marker,
+            record.split,
+            record.arm_branches,
+            disjunction,
+        )
     }
 
     /// Applies one recursively driven proof-level execution `if` as an
@@ -409,7 +420,7 @@ impl<'a> Proof<'a> {
         let (split, record) = self.split_focused_execution_if(condition.clone())?;
         let then_done = apply_then(split.focus_execution_if_arm(&record, true)?)?;
         let else_done = apply_else(then_done.focus_execution_if_arm(&record, false)?)?;
-        else_done.join_focused_if(&record.marker, record.split, record.ids, condition)
+        else_done.join_focused_if(&record.marker, record.split, record.arm_branches, condition)
     }
 
     /// Joins a completed in-`Proof` `if` split with one structured `If`
@@ -418,7 +429,7 @@ impl<'a> Proof<'a> {
         &self,
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
         condition: ClickProposition,
     ) -> Result<Self, ClickError> {
         self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::If {
@@ -437,7 +448,7 @@ impl<'a> Proof<'a> {
         &self,
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
         disjunction: ClickProposition,
     ) -> Result<Self, ClickError> {
         self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::Cases {
@@ -457,7 +468,7 @@ impl<'a> Proof<'a> {
         &self,
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
     ) -> Result<[Vec<SimpleProofStep>; 2], ClickError> {
         let mut left_steps = Vec::new();
         let mut right_steps = Vec::new();
@@ -472,9 +483,9 @@ impl<'a> Proof<'a> {
                 break;
             }
             if let Some(step) = &current.step {
-                if current.focused == ids[0] {
+                if current.focused_branch == ids[0] {
                     left_steps.push(step.as_ref().clone());
-                } else if current.focused == ids[1] {
+                } else if current.focused_branch == ids[1] {
                     right_steps.push(step.as_ref().clone());
                 } else {
                     return Err(self.step_error(format!(
@@ -493,11 +504,11 @@ impl<'a> Proof<'a> {
         &self,
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
-        ids: [GoalId; 2],
+        ids: [BranchId; 2],
         step: impl FnOnce(ProofCertificate, ProofCertificate) -> SimpleProofStep,
     ) -> Result<Self, ClickError> {
         for (name, id) in [("left", ids[0]), ("right", ids[1])] {
-            if self.state.goals.get(id).is_some() {
+            if self.state.open_branches.get(id).is_some() {
                 return Err(
                     self.step_error(format!("cannot join `cases`: {name} arm is incomplete"))
                 );
@@ -511,7 +522,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: self.state.goals.clone(),
+                open_branches: self.state.open_branches.clone(),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
@@ -521,10 +532,10 @@ impl<'a> Proof<'a> {
                     ProofCertificate::from_steps(left_steps),
                     ProofCertificate::from_steps(right_steps),
                 ))),
-                focused: marker.node.focused,
+                focused_branch: marker.node.focused_branch,
                 depth: parent.depth + 1,
             }),
-            focused: marker.node.focused,
+            focused_branch: marker.node.focused_branch,
         })
     }
 
@@ -543,7 +554,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, OutcomeSplit<'a>), ClickError> {
-        if self.state.goals.is_discharged() {
+        if self.state.open_branches.is_discharged() {
             return Err(self.step_error("execution outcome `if` follows a completed proof"));
         }
         let ProofContext::Execution(_) = self.context.as_ref() else {
@@ -624,7 +635,7 @@ impl<'a> Proof<'a> {
         let arguments = checked.arguments().to_vec();
         let polarity_facts = [then_fact, else_fact];
         let polarity_surfaces = [condition.clone(), else_surface];
-        let Some(Goal::Frontier(parent)) = self.focused_goal() else {
+        let Some(Obligation::Frontier(parent)) = self.focused_obligation() else {
             unreachable!("the execution frontier requirement was checked above")
         };
         let ProofContext::Execution(execution_context) = self.context.as_ref() else {
@@ -632,19 +643,23 @@ impl<'a> Proof<'a> {
         };
         let expected_effects = self.selected_effect_indices(execution_context)?;
         let selection = parent.selection;
-        let parent_facts = parent.context.facts.clone();
-        let parent_unfolds = parent.context.unfolded_predicates.clone();
-        let parent_execution = parent
-            .context
+        let branch_state = &self.focused_branch().expect("focused branch exists").state;
+        let parent_facts = branch_state.facts.clone();
+        let parent_unfolds = branch_state.unfolded_predicates.clone();
+        let parent_execution = branch_state
             .execution
             .clone()
             .expect("the execution frontier owns its semantic state");
-        let split = SplitId(self.state.goals.next_id);
+        let split = SplitId(self.state.open_branches.next_id);
         let ids = [
-            GoalId(self.state.goals.next_id + 1),
-            GoalId(self.state.goals.next_id + 2),
+            BranchId(self.state.open_branches.next_id + 1),
+            BranchId(self.state.open_branches.next_id + 2),
         ];
-        let mut open = self.state.goals.open.without_key(&self.focused);
+        let mut open = self
+            .state
+            .open_branches
+            .open
+            .without_key(&self.focused_branch);
         let mut path_facts: [Vec<Proposition>; 2] = [Vec::new(), Vec::new()];
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
@@ -674,23 +689,23 @@ impl<'a> Proof<'a> {
             path_facts[arm_index] = added_facts;
             open = open.with_inserted(
                 ids[arm_index],
-                Goal::Frontier(FrontierGoal {
+                OpenBranch::frontier(
                     selection,
-                    context: GoalContext {
+                    BranchState {
                         facts,
                         unfolded_predicates: parent_unfolds.clone(),
                         execution: Some(Arc::new(execution)),
                     },
-                }),
+                ),
             );
         }
         let successor = Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: ProofGoals {
+                open_branches: OpenBranches {
                     open,
-                    next_id: self.state.goals.next_id + 3,
+                    next_id: self.state.open_branches.next_id + 3,
                 },
                 added_facts: Arc::new(path_facts[0].clone()),
                 checked_facts: Arc::new(path_facts[0].clone()),
@@ -698,15 +713,15 @@ impl<'a> Proof<'a> {
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: self.node.depth,
             }),
-            focused: ids[0],
+            focused_branch: ids[0],
         };
         let record = OutcomeSplit {
             marker: successor.checkpoint(),
             split,
-            ids,
+            arm_branches: ids,
             condition,
             expected_effects,
             path_facts,
@@ -726,15 +741,15 @@ impl<'a> Proof<'a> {
         record: &OutcomeSplit<'a>,
         arm_index: usize,
     ) -> Result<Self, ClickError> {
-        let mut focused = self.focus(record.ids[arm_index])?;
+        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let delta = record.path_facts[arm_index].clone();
-        focused.state = Arc::new(ProofState {
-            locals: focused.state.locals.clone(),
-            goals: focused.state.goals.clone(),
+        focused_branch.state = Arc::new(ProofState {
+            locals: focused_branch.state.locals.clone(),
+            open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(delta.clone()),
             checked_facts: Arc::new(delta),
         });
-        Ok(focused)
+        Ok(focused_branch)
     }
 
     /// Joins two exhaustive terminal outcome partitions after both sibling
@@ -748,14 +763,22 @@ impl<'a> Proof<'a> {
         record: &OutcomeSplit<'a>,
     ) -> Result<Self, ClickError> {
         let [then_steps, else_steps] =
-            self.partition_steps_since(&record.marker, record.split, record.ids)?;
+            self.partition_steps_since(&record.marker, record.split, record.arm_branches)?;
         let arm_certificates = [
             ProofCertificate::from_steps(then_steps),
             ProofCertificate::from_steps(else_steps),
         ];
         let mut checked_deferrals = Vec::with_capacity(2);
-        for (name, id) in [("then", record.ids[0]), ("else", record.ids[1])] {
-            let Some(Goal::Frontier(frontier)) = self.state.goals.get(id) else {
+        for (name, id) in [
+            ("then", record.arm_branches[0]),
+            ("else", record.arm_branches[1]),
+        ] {
+            let Some(branch) = self.state.open_branches.get(id) else {
+                return Err(self.step_error(format!(
+                    "execution outcome {name} arm is not an open execution frontier"
+                )));
+            };
+            let Obligation::Frontier(frontier) = &branch.obligation else {
                 return Err(self.step_error(format!(
                     "execution outcome {name} arm is not an open execution frontier"
                 )));
@@ -765,7 +788,7 @@ impl<'a> Proof<'a> {
                     "execution outcome {name} arm did not close its effect goal"
                 )));
             }
-            let execution = frontier.context.execution.as_deref().ok_or_else(|| {
+            let execution = branch.state.execution.as_deref().ok_or_else(|| {
                 self.step_error(format!(
                     "execution outcome {name} arm lost its semantic frontier"
                 ))
@@ -822,35 +845,35 @@ impl<'a> Proof<'a> {
                 surface_tactics: None,
             },
         );
-        let parent_goal = record.marker.node.focused;
+        let parent_goal = record.marker.node.focused_branch;
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join outcome `if`: the split marker lost its root")
         })?;
         let open = self
             .state
-            .goals
+            .open_branches
             .open
-            .without_key(&record.ids[0])
-            .without_key(&record.ids[1])
+            .without_key(&record.arm_branches[0])
+            .without_key(&record.arm_branches[1])
             .with_inserted(
                 parent_goal,
-                Goal::Frontier(FrontierGoal {
-                    selection: EffectGoalSelection::None,
-                    context: GoalContext {
+                OpenBranch::frontier(
+                    EffectGoalSelection::None,
+                    BranchState {
                         facts: record.parent_facts.clone(),
                         unfolded_predicates: record.parent_unfolds.clone(),
                         execution: Some(Arc::new(execution)),
                     },
-                }),
+                ),
             );
         let [then_certificate, else_certificate] = arm_certificates;
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                goals: ProofGoals {
+                open_branches: OpenBranches {
                     open,
-                    next_id: self.state.goals.next_id,
+                    next_id: self.state.open_branches.next_id,
                 },
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
@@ -862,10 +885,10 @@ impl<'a> Proof<'a> {
                     then_proof: Box::new(then_certificate),
                     else_proof: Box::new(else_certificate),
                 })),
-                focused: parent_goal,
+                focused_branch: parent_goal,
                 depth: parent_node.depth + 1,
             }),
-            focused: parent_goal,
+            focused_branch: parent_goal,
         })
     }
 
@@ -882,12 +905,15 @@ impl<'a> Proof<'a> {
         &self,
         proposition: ClickProposition,
     ) -> Result<ProofScope<'a>, ClickError> {
-        if self.state.goals.is_discharged() {
+        if self.state.open_branches.is_discharged() {
             return Err(self.step_error("`have` follows a completed proof"));
         }
-        match (self.focused_goal(), self.context.as_ref()) {
-            (Some(Goal::Proposition(_) | Goal::FunctionOutcome(_)), _) => {}
-            (Some(Goal::Frontier(_)), ProofContext::Point(_) | ProofContext::Execution(_)) => {}
+        match (self.focused_obligation(), self.context.as_ref()) {
+            (Some(Obligation::Proposition(_) | Obligation::FunctionOutcome(_)), _) => {}
+            (
+                Some(Obligation::Frontier(_)),
+                ProofContext::Point(_) | ProofContext::Execution(_),
+            ) => {}
             _ => {
                 return Err(self.step_error("`have` requires a proposition or point context"));
             }
@@ -901,14 +927,14 @@ impl<'a> Proof<'a> {
         // enclosing Have step.
         let structural_proposition = if let ClickProposition::PredicateCall { name, .. } =
             &proposition
-            && self.focused_goal_unfolds().contains(name)
+            && self.focused_branch_unfolds().contains(name)
         {
             let predicate_environment = match self.context.as_ref() {
                 ProofContext::Pure(context) => context.predicate_environment,
                 ProofContext::Point(context) => context.predicate_environment,
                 ProofContext::Execution(context) => context.predicate_environment,
             };
-            let active_unfolds = self.focused_goal_unfolds().to_vec();
+            let active_unfolds = self.focused_branch_unfolds().to_vec();
             unfold_structural_invariant_proposition(
                 predicate_environment,
                 &proposition,
@@ -929,7 +955,7 @@ impl<'a> Proof<'a> {
         // frontier's facts alone; the selected-separation materialization
         // below serves outcome and point judgments, whose separation goals
         // are read from retained resources rather than derived in the body.
-        let at_frontier = matches!(self.focused_goal(), Some(Goal::Frontier(_)));
+        let at_frontier = matches!(self.focused_obligation(), Some(Obligation::Frontier(_)));
         let mut body_facts = if at_frontier {
             self.facts().clone()
         } else {
@@ -958,7 +984,7 @@ impl<'a> Proof<'a> {
         {
             body_facts = body_facts.with_fact(body_kernel.clone());
         }
-        for name in self.focused_goal_unfolds().iter() {
+        for name in self.focused_branch_unfolds().iter() {
             let recorded_bodies = match self.context.as_ref() {
                 ProofContext::Pure(context) => context
                     .theorem_context
@@ -986,10 +1012,10 @@ impl<'a> Proof<'a> {
                 }
             }
         }
-        let body_context = GoalContext {
+        let body_context = BranchState {
             facts: body_facts,
-            unfolded_predicates: self.focused_goal_unfolds().clone(),
-            execution: self.goal_execution().cloned(),
+            unfolded_predicates: self.focused_branch_unfolds().clone(),
+            execution: self.branch_execution().cloned(),
         };
         // An execution `have` borrows the current immutable frontier solely
         // as its proposition-lowering/theorem context, shared by identity on
@@ -998,16 +1024,20 @@ impl<'a> Proof<'a> {
         // cannot publish a changed frontier or outcome: `join` restores the
         // exact root state and exposes only the stated proposition.
         let mut body_goal = match self.focused_outcome_point() {
-            Some(point) => Goal::surface_proposition_at_outcome(
+            Some(point) => OpenBranch::surface_proposition_at_outcome(
                 body_context,
                 point.clone(),
                 body_kernel.clone(),
                 structural_proposition,
             ),
-            None => Goal::surface_proposition_in(body_context, body_kernel, structural_proposition),
+            None => OpenBranch::surface_proposition_in(
+                body_context,
+                body_kernel,
+                structural_proposition,
+            ),
         };
-        if let (Some(Goal::Proposition(parent)), Goal::Proposition(body)) =
-            (self.focused_goal(), &mut body_goal)
+        if let (Some(Obligation::Proposition(parent)), Obligation::Proposition(body)) =
+            (self.focused_obligation(), &mut body_goal.obligation)
         {
             body.surface_bindings = parent.surface_bindings.clone();
         }
@@ -1016,17 +1046,17 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
 
-                goals: ProofGoals::root(body_goal),
+                open_branches: OpenBranches::root(body_goal),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: GoalId::ROOT,
+                focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused: GoalId::ROOT,
+            focused_branch: BranchId::ROOT,
         };
         Ok(ProofScope {
             root: self.clone(),
@@ -1080,20 +1110,21 @@ impl<'a> Proof<'a> {
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
 
-                goals: self
-                    .state
-                    .goals
-                    .replace_frontier_at(self.focused, checked.facts, execution),
+                open_branches: self.state.open_branches.replace_frontier_at(
+                    self.focused_branch,
+                    checked.facts,
+                    execution,
+                ),
                 added_facts: Arc::new(checked.added_facts.clone()),
                 checked_facts: Arc::new(checked.added_facts),
             }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused: self.focused,
+                focused_branch: self.focused_branch,
                 depth: 0,
             }),
-            focused: self.focused,
+            focused_branch: self.focused_branch,
         };
         Ok(ProofScope {
             root: self.clone(),

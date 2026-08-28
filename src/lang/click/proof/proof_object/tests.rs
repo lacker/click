@@ -86,16 +86,86 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
         );
         assert_eq!(root.effect_goal_count(), expected);
         assert!(
-            matches!(root.focused_goal(), Some(Goal::Frontier(FrontierGoal { selection: actual, .. })) if *actual == selection)
+            matches!(root.focused_obligation(), Some(Obligation::Frontier(FrontierObligation { selection: actual, .. })) if *actual == selection)
         );
         let marked = root
             .apply_step(SimpleProofStep::Mark("selected".to_string()))
             .expect("an ordinary frontier step should preserve its effect goals");
         assert_eq!(marked.effect_goal_count(), expected);
         assert!(
-            matches!(marked.focused_goal(), Some(Goal::Frontier(FrontierGoal { selection: actual, .. })) if *actual == selection)
+            matches!(marked.focused_obligation(), Some(Obligation::Frontier(FrontierObligation { selection: actual, .. })) if *actual == selection)
         );
     }
+}
+
+#[test]
+fn loop_effect_derivation_starts_a_separate_root_branch() {
+    let click_file = crate::lang::click::parse(
+        r#"
+            verifying "identity.c";
+            int32 identity(int32 x) {
+                immutable;
+                ensures result == x;
+            } by {
+                execute();
+                frame();
+                simp();
+            }
+        "#,
+    )
+    .expect("the loop-effect fixture should parse");
+    let function_block = &click_file.function_blocks()[0];
+    let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
+        .expect("the loop-effect C function should parse");
+    let function = parsed_function.to_kernel_function();
+    let arguments = vec![CExpression::Value(int32(7))];
+    let function_environment = CExecutionEnvironment::new();
+    let resource_environment = ResourceEnvironment::new(&[]);
+    let predicate_environment = PredicateEnvironment::new(&[]);
+    let click_function_environment = ClickFunctionEnvironment::new(&[]);
+    let theorem_environment = TheoremEnvironment::new(&[]);
+    let before_state = CState::new();
+    let preservation = Proof::for_execution_frontier(
+        "loop preservation",
+        0,
+        ExecutionProofState::at_entry(
+            before_state.clone(),
+            ExecutionFrontier::default(),
+            ProgramPointStates::new(),
+            SurfacePropositionMap::default(),
+            PersistentSequence::default(),
+        ),
+        Vec::new(),
+        ExecutionProofConstants::default(),
+        function_block,
+        &function,
+        &parsed_function,
+        &arguments,
+        &function_environment,
+        &resource_environment,
+        &predicate_environment,
+        &click_function_environment,
+        &theorem_environment,
+    );
+    let preservation_branch = preservation.sole_branch_id();
+    let effect = preservation
+        .start_loop_effect_proof(
+            "loop effect",
+            ProofSite::LoopPhase {
+                function_name: "identity".to_string(),
+                loop_index: 0,
+                phase: "effect",
+            },
+            &before_state,
+            &CLoopEffectCheck::new(CLoopEffect::Immutable, None),
+        )
+        .expect("a loop effect should derive a separate proof");
+
+    assert_eq!(preservation.branches().count(), 1);
+    assert_eq!(preservation.sole_branch_id(), preservation_branch);
+    assert_eq!(effect.branches().count(), 1);
+    assert_eq!(effect.sole_branch_id(), Some(BranchId::ROOT));
+    assert!(!Arc::ptr_eq(&preservation.state, &effect.state));
 }
 
 fn pure_identity_fixture() -> PureTheoremContext {
@@ -251,24 +321,24 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
 
     // The split retires the parent id and opens both sibling goals in
     // one state, each carrying its own disjunct in its own context.
-    let root_goal = root.sole_goal_id().expect("the root owns its goal");
+    let root_goal = root.sole_branch_id().expect("the root owns its goal");
     let (split_proof, split, ids) = root
         .split_focused_cases(disjunction.clone())
         .expect("the exact disjunction splits in-proof");
-    assert_eq!(split_proof.goals().collect::<Vec<_>>(), ids);
-    assert!(split_proof.state.goals.get(root_goal).is_none());
+    assert_eq!(split_proof.branches().collect::<Vec<_>>(), ids);
+    assert!(split_proof.state.open_branches.get(root_goal).is_none());
     let marker = split_proof.checkpoint();
 
     // Arms are proven by focusing each recorded id on one lineage; the
     // interleaved steps carry their goal attribution.
     let left_closed = split_proof
-        .focus(ids[0])
+        .focus_branch(ids[0])
         .expect("the left sibling is open")
         .apply_step(SimpleProofStep::Assumption)
         .expect("the shared disjunction fact closes the left claim");
-    assert!(left_closed.state.goals.get(ids[1]).is_some());
+    assert!(left_closed.state.open_branches.get(ids[1]).is_some());
     let both_closed = left_closed
-        .focus(ids[1])
+        .focus_branch(ids[1])
         .expect("the right sibling is still open")
         .apply_step(SimpleProofStep::Assumption)
         .expect("the shared disjunction fact closes the right claim");
@@ -315,7 +385,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
             && right_proof.steps() == [SimpleProofStep::Assumption]
     ));
     assert!(root.certificate().steps().is_empty());
-    assert_eq!(root.sole_goal_id(), Some(root_goal));
+    assert_eq!(root.sole_branch_id(), Some(root_goal));
 
     // An incomplete sibling refuses the join transactionally.
     assert!(
@@ -326,12 +396,14 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     );
 
     // A rejected arm candidate leaves the split state untouched.
-    let focused = split_proof.focus(ids[0]).expect("the left sibling is open");
+    let focused_branch = split_proof
+        .focus_branch(ids[0])
+        .expect("the left sibling is open");
     assert!(
-        focused.apply_step(SimpleProofStep::Intro).is_err(),
+        focused_branch.apply_step(SimpleProofStep::Intro).is_err(),
         "an atomic claim rejects `intro`"
     );
-    assert_eq!(split_proof.goals().collect::<Vec<_>>(), ids);
+    assert_eq!(split_proof.branches().collect::<Vec<_>>(), ids);
     assert!(
         split_proof
             .certificate_since(&marker)
@@ -428,7 +500,7 @@ fn proof_failure_preserves_ancestor_and_selected_provenance() {
 }
 
 #[test]
-fn goal_identity_is_stable_across_fork_refinement_and_discharge() {
+fn branch_identity_is_stable_across_fork_refinement_and_closure() {
     let fact = indexed_fact(7);
     let goal = Proposition::Implies(Box::new(fact.clone()), Box::new(fact));
     let theorem_context = PureTheoremContext {
@@ -453,10 +525,10 @@ fn goal_identity_is_stable_across_fork_refinement_and_discharge() {
 
     // Forking preserves every open goal's identity and allocates nothing.
     let root_id = root
-        .sole_goal_id()
+        .sole_branch_id()
         .expect("a fresh proof owns its root goal");
     let fork = root.clone();
-    assert_eq!(fork.sole_goal_id(), Some(root_id));
+    assert_eq!(fork.sole_branch_id(), Some(root_id));
 
     // A goal-preserving refinement rule changes the obligation's content
     // but keeps its id and allocates no new identifier. The persistent
@@ -467,13 +539,13 @@ fn goal_identity_is_stable_across_fork_refinement_and_discharge() {
     let introduced = root
         .apply_step(SimpleProofStep::Intro)
         .expect("intro should refine the implication goal");
-    assert_eq!(introduced.sole_goal_id(), Some(root_id));
-    assert_eq!(introduced.goals_next_id(), root.goals_next_id());
+    assert_eq!(introduced.sole_branch_id(), Some(root_id));
+    assert_eq!(introduced.branches_next_id(), root.branches_next_id());
     // Provenance records which goal each step advanced: certificate
     // extraction partitions interleaved multi-goal derivations by this
     // attribution rather than inferring ownership from final states.
-    assert_eq!(introduced.node.focused, root_id);
-    assert_eq!(introduced.focused, root_id);
+    assert_eq!(introduced.node.focused_branch, root_id);
+    assert_eq!(introduced.focused_branch, root_id);
     assert!(
         fact_node_allocations() - before_refinement <= 24,
         "refining the sole goal must touch only constant persistent state"
@@ -485,12 +557,12 @@ fn goal_identity_is_stable_across_fork_refinement_and_discharge() {
         .apply_step(SimpleProofStep::Assumption)
         .expect("the introduced fact should close the consequent");
     assert!(complete.is_complete());
-    assert_eq!(complete.sole_goal_id(), None);
-    assert_eq!(complete.goals_next_id(), introduced.goals_next_id());
+    assert_eq!(complete.sole_branch_id(), None);
+    assert_eq!(complete.branches_next_id(), introduced.branches_next_id());
 
     // Retiring the goal in one descendant leaves the forked sibling's
     // obligation open under the same identity.
-    assert_eq!(fork.sole_goal_id(), Some(root_id));
+    assert_eq!(fork.sole_branch_id(), Some(root_id));
     assert!(!fork.is_complete());
     assert!(!introduced.is_complete());
 }
@@ -1140,7 +1212,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
         assert_eq!(unfolded.surface_goal(), Some(&goal_surface));
         assert!(
             unfolded
-                .focused_goal_unfolds()
+                .focused_branch_unfolds()
                 .contains(&"selected".to_string())
         );
         let complete = unfolded
@@ -1324,7 +1396,7 @@ fn point_proof_root_borrows_inherited_unfold_history_without_reindexing_it() {
         "creating a point Proof must not rebuild inherited unfold history \
          ({allocations} persistent nodes allocated)"
     );
-    assert_eq!(root.focused_goal_unfolds().len(), 0);
+    assert_eq!(root.focused_branch_unfolds().len(), 0);
     assert_eq!(root.active_unfolded_predicates(), inherited);
 }
 
@@ -1361,26 +1433,30 @@ fn result_aware_point_goal_focus_shares_facts_and_checks_assumption() {
             &[],
         );
         let before = fact_node_allocations();
-        let focused = root
+        let focused_branch = root
             .focus_point_goal(goal.clone())
             .expect("an initial point frontier should focus one ensure goal");
-        // The one permitted node stores the focused root goal in the
+        // The one permitted node stores the focused branch root goal in the
         // fresh proof's goal collection; every fact index stays shared.
         assert!(
             fact_node_allocations() - before <= 1,
             "focusing a goal must share every persistent fact index"
         );
-        assert!(root.facts().exact.shares_root_with(&focused.facts().exact));
-        let retained_focused = focused.clone();
+        assert!(
+            root.facts()
+                .exact
+                .shares_root_with(&focused_branch.facts().exact)
+        );
+        let retained_focused = focused_branch.clone();
         assert!(
             root.focus_point_goal(missing.clone())
                 .expect("focusing does not prove the selected goal")
                 .apply_step(SimpleProofStep::Assumption)
                 .is_err()
         );
-        assert!(Arc::ptr_eq(&focused.state, &retained_focused.state));
+        assert!(Arc::ptr_eq(&focused_branch.state, &retained_focused.state));
 
-        let complete = focused
+        let complete = focused_branch
             .apply_step(SimpleProofStep::Assumption)
             .expect("the focused exact goal should close through Proof");
         assert!(complete.is_complete());
@@ -1583,7 +1659,7 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
         let joined = split_proof
             .apply_step(SimpleProofStep::Left)
             .expect("the condition closes the then arm")
-            .focus(ids[1])
+            .focus_branch(ids[1])
             .expect("the else sibling remains open")
             .apply_step(SimpleProofStep::Right)
             .expect("the exact negation closes the else arm")
@@ -1753,7 +1829,7 @@ fn point_witness_refines_existential_transactionally_with_constant_local_work() 
 }
 
 #[test]
-fn universal_intro_binding_is_local_to_its_focused_sibling_goal() {
+fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
     let parsed_function =
         syntax::parse_function("void noop() {}").expect("test function should parse");
     let state = CState::new();
@@ -1826,13 +1902,13 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_goal() {
         .split_focused_cases(disjunction)
         .expect("the exact disjunction should open sibling goals");
     let introduced = split
-        .focus(ids[0])
+        .focus_branch(ids[0])
         .expect("the first sibling should be focusable")
         .apply_step(SimpleProofStep::Intro)
         .expect("the universal binder should refine the first sibling");
 
-    let binding_count = |id| match introduced.state.goals.get(id) {
-        Some(Goal::Proposition(goal)) => goal.surface_bindings.len(),
+    let binding_count = |id| match introduced.state.open_branches.obligation(id) {
+        Some(Obligation::Proposition(goal)) => goal.surface_bindings.len(),
         _ => panic!("the split should retain proposition siblings"),
     };
     assert_eq!(binding_count(ids[0]), 1);
@@ -2606,9 +2682,9 @@ fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
 
         let mut indexed_root = root.clone();
         let mut indexed_state = Arc::unwrap_or_clone(indexed_root.state);
-        indexed_state.goals = indexed_state
-            .goals
-            .with_facts_at(indexed_root.focused, unfolded_facts);
+        indexed_state.open_branches = indexed_state
+            .open_branches
+            .with_facts_at(indexed_root.focused_branch, unfolded_facts);
         indexed_root.state = Arc::new(indexed_state);
         let before = fact_node_allocations();
         let selected = indexed_root
@@ -3239,7 +3315,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         // snapshot by identity. The ancestor keeps its single frontier.
         let before_outcomes = fact_node_allocations();
         let (outcomes, outcome_ids) = framed
-            .focus_function_outcomes(Arc::new(Vec::new()))
+            .split_function_outcomes(Arc::new(Vec::new()))
             .expect("the framed terminal execution should expose typed outcome goals");
         outcome_samples.push((
             size,
@@ -3247,14 +3323,14 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             fact_node_allocations() - before_outcomes,
         ));
         assert_eq!(outcome_ids.len(), 2);
-        assert_eq!(outcomes.goals().collect::<Vec<_>>(), outcome_ids);
+        assert_eq!(outcomes.branches().collect::<Vec<_>>(), outcome_ids);
         assert!(!outcomes.is_complete());
-        assert_eq!(framed.goals().count(), 1);
+        assert_eq!(framed.branches().count(), 1);
         let then_outcome = outcomes
-            .focus(outcome_ids[0])
+            .focus_branch(outcome_ids[0])
             .expect("the first outcome goal is open");
         let else_outcome = outcomes
-            .focus(outcome_ids[1])
+            .focus_branch(outcome_ids[1])
             .expect("the second outcome goal is open");
         assert_ne!(
             then_outcome.outcome_result(),
@@ -3264,16 +3340,16 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         for outcome in [&then_outcome, &else_outcome] {
             assert!(Arc::ptr_eq(
                 outcome
-                    .goal_execution()
+                    .branch_execution()
                     .expect("each outcome borrows the frontier snapshot"),
                 framed
-                    .goal_execution()
+                    .branch_execution()
                     .expect("the framed frontier owns its snapshot"),
             ));
         }
         assert!(
             outcomes
-                .focus_function_outcomes(Arc::new(Vec::new()))
+                .split_function_outcomes(Arc::new(Vec::new()))
                 .is_err(),
             "an outcome goal is not a frontier and cannot derive again"
         );
@@ -6416,7 +6492,7 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 &[],
             );
             let retained_root = root.clone();
-            let Some(Goal::Proposition(root_goal)) = root.focused_goal() else {
+            let Some(Obligation::Proposition(root_goal)) = root.focused_obligation() else {
                 unreachable!("the structural regression owns a proposition goal")
             };
             let root_surface = root_goal
@@ -6427,8 +6503,10 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 .split_focused_if(branch_condition.clone())
                 .expect("an unrelated condition should fork the structural goal");
             for id in ids {
-                let arm = split_proof.focus(id).expect("both siblings are open");
-                let Some(Goal::Proposition(arm_goal)) = arm.focused_goal() else {
+                let arm = split_proof
+                    .focus_branch(id)
+                    .expect("both siblings are open");
+                let Some(Obligation::Proposition(arm_goal)) = arm.focused_obligation() else {
                     unreachable!("a pure proof branch retains its proposition goal")
                 };
                 assert!(Arc::ptr_eq(
@@ -8740,10 +8818,10 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         assert!(Arc::ptr_eq(
             scope
                 .body
-                .goal_execution()
+                .branch_execution()
                 .expect("the nested goal borrows its lowering context"),
             applied
-                .goal_execution()
+                .branch_execution()
                 .expect("the joined frontier owns its snapshot"),
         ));
         let refined = scope
@@ -8801,11 +8879,11 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         // record fails marker identity, and the genuine join partitions
         // the interleaved sibling steps by attribution and resumes the
         // parent obligation under its original id.
-        let parent_id = root.focused;
+        let parent_id = root.focused_branch;
         let (split_proof, record) = root
             .split_focused_execution_branch()
             .expect("the symbolic condition should split in-proof");
-        let sibling_ids: Vec<GoalId> = split_proof.goals().collect();
+        let sibling_ids: Vec<BranchId> = split_proof.branches().collect();
         assert_eq!(sibling_ids.len(), 2);
         let premature = split_proof
             .join_focused_execution_branch(&record)
@@ -8821,14 +8899,14 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             .apply_step(SimpleProofStep::Step)
             .expect("the then sibling advances in place");
         let both_stepped = then_stepped
-            .focus(sibling_ids[1])
+            .focus_branch(sibling_ids[1])
             .expect("the else sibling is open")
             .apply_step(SimpleProofStep::Step)
             .expect("the else sibling advances in place");
         let (_, foreign_record) = root
             .split_focused_execution_branch()
             .expect("a second split of the same root should open both arms");
-        assert_eq!(foreign_record.ids, record.ids);
+        assert_eq!(foreign_record.arm_branches, record.arm_branches);
         let foreign = both_stepped
             .join_focused_execution_branch(&foreign_record)
             .err()
@@ -8840,8 +8918,8 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let sibling_joined = both_stepped
             .join_focused_execution_branch(&record)
             .expect("both siblings reached the shared continuation");
-        assert_eq!(sibling_joined.focused, parent_id);
-        let continuation_ids: Vec<GoalId> = sibling_joined.goals().collect();
+        assert_eq!(sibling_joined.focused_branch, parent_id);
+        let continuation_ids: Vec<BranchId> = sibling_joined.branches().collect();
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(
             sibling_joined.certificate().steps(),
@@ -8863,8 +8941,20 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 .is_at_function_exit()
         );
         // The failed foreign join left the sibling state untouched.
-        assert!(both_stepped.state.goals.get(sibling_ids[0]).is_some());
-        assert!(both_stepped.state.goals.get(sibling_ids[1]).is_some());
+        assert!(
+            both_stepped
+                .state
+                .open_branches
+                .get(sibling_ids[0])
+                .is_some()
+        );
+        assert!(
+            both_stepped
+                .state
+                .open_branches
+                .get(sibling_ids[1])
+                .is_some()
+        );
     }
     let (_, base_height, base_allocations) = allocation_samples[0];
     for (size, height, allocations) in allocation_samples {
@@ -9048,21 +9138,32 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let (split_proof, record) = root
         .split_focused_execution_branch()
         .expect("the symbolic condition should split in-proof");
-    let sibling_ids: Vec<GoalId> = split_proof.goals().collect();
+    let sibling_ids: Vec<BranchId> = split_proof.branches().collect();
     assert_eq!(sibling_ids.len(), 2);
-    assert_eq!(record.ids, [Some(sibling_ids[0]), Some(sibling_ids[1])]);
+    assert_eq!(
+        record.arm_branches,
+        [Some(sibling_ids[0]), Some(sibling_ids[1])]
+    );
     assert!(record.condition_theorems.iter().all(Option::is_some));
     let then_stepped = split_proof
         .apply_step(SimpleProofStep::Step)
         .expect("the then sibling advances in place");
-    assert!(then_stepped.state.goals.get(sibling_ids[1]).is_some());
+    assert!(
+        then_stepped
+            .state
+            .open_branches
+            .get(sibling_ids[1])
+            .is_some()
+    );
     let both_stepped = then_stepped
-        .focus(sibling_ids[1])
+        .focus_branch(sibling_ids[1])
         .expect("the else sibling is open")
         .apply_step(SimpleProofStep::Step)
         .expect("the else sibling advances in place");
     for (index, id) in sibling_ids.iter().enumerate() {
-        let arm = both_stepped.focus(*id).expect("both siblings remain open");
+        let arm = both_stepped
+            .focus_branch(*id)
+            .expect("both siblings remain open");
         let base = record.base_facts[index]
             .as_ref()
             .expect("both feasible arms recorded their bases");
@@ -9072,19 +9173,19 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         );
     }
     assert!(root.certificate().steps().is_empty());
-    assert_eq!(root.goals().count(), 1);
+    assert_eq!(root.branches().count(), 1);
 
     // The in-`Proof` interface join: both siblings advance on one
     // lineage with distinct concrete states, abstract through the same
     // explicit interface, and resume the parent obligation with the
     // agreed abstract continuation.
-    let parent_id = root.focused;
+    let parent_id = root.focused_branch;
     let interface = vec![ProofAssertion::Fact(nonnegative.clone())];
     let joined = both_stepped
         .join_focused_execution_interface(&record, interface.clone())
         .expect("both siblings should abstract through the shared interface");
-    assert_eq!(joined.focused, parent_id);
-    let joined_ids: Vec<GoalId> = joined.goals().collect();
+    assert_eq!(joined.focused_branch, parent_id);
+    let joined_ids: Vec<BranchId> = joined.branches().collect();
     assert_eq!(joined_ids, [parent_id]);
     assert!(matches!(
         joined.certificate().steps(),
@@ -9123,8 +9224,20 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         failed.message().contains("did not establish fact"),
         "{failed:?}"
     );
-    assert!(both_stepped.state.goals.get(sibling_ids[0]).is_some());
-    assert!(both_stepped.state.goals.get(sibling_ids[1]).is_some());
+    assert!(
+        both_stepped
+            .state
+            .open_branches
+            .get(sibling_ids[0])
+            .is_some()
+    );
+    assert!(
+        both_stepped
+            .state
+            .open_branches
+            .get(sibling_ids[1])
+            .is_some()
+    );
 
     let marker_clause = ResourceClause::Declared {
         access: ResourceAccessMode::Own,
@@ -9220,11 +9333,14 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             .expect("else arm should independently fold its ready resource");
         let arm_execution = |take_then: bool| {
             let id = record.arm_id(take_then).expect("both arms are feasible");
-            let Some(Goal::Frontier(frontier)) = branches.state.goals.get(id) else {
+            let Some(branch) = branches.state.open_branches.get(id) else {
                 panic!("both arms should remain open execution frontiers");
             };
-            frontier
-                .context
+            let Obligation::Frontier(_) = &branch.obligation else {
+                panic!("both arms should remain open execution frontiers");
+            };
+            branch
+                .state
                 .execution
                 .as_deref()
                 .expect("both arms should retain execution")
@@ -9685,12 +9801,12 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     // resumes under its original id. Two feasible siblings refuse the
     // decided finish.
     let root = make_root(vec![selecting_fact.clone()]);
-    let parent_id = root.focused;
+    let parent_id = root.focused_branch;
     let (split_proof, record) = root
         .split_focused_execution_branch()
         .expect("the selecting fact should split to the sole then sibling");
-    assert!(record.ids[0].is_some() && record.ids[1].is_none());
-    assert_eq!(split_proof.goals().count(), 1);
+    assert!(record.arm_branches[0].is_some() && record.arm_branches[1].is_none());
+    assert_eq!(split_proof.branches().count(), 1);
     let advanced = split_proof
         .try_statement_step()
         .expect("sole-sibling selection should remain bounded")
@@ -9698,8 +9814,8 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let decided = advanced
         .finish_focused_execution_decided(&record)
         .expect("the sole checked sibling should form a decided path");
-    assert_eq!(decided.focused, parent_id);
-    let decided_ids: Vec<GoalId> = decided.goals().collect();
+    assert_eq!(decided.focused_branch, parent_id);
+    let decided_ids: Vec<BranchId> = decided.branches().collect();
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
         decided.certificate().steps(),
@@ -9736,7 +9852,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     // sole sibling records `Branch { ensuring, .. }` with the empty
     // impossible arm and resumes the parent id.
     let root = make_root(vec![selecting_fact.clone()]);
-    let parent_id = root.focused;
+    let parent_id = root.focused_branch;
     let (split_proof, record) = root
         .split_focused_execution_branch()
         .expect("the selecting fact should split to the sole then sibling");
@@ -9747,8 +9863,8 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let decided = advanced
         .join_focused_execution_interface(&record, Vec::new())
         .expect("the sole checked sibling should finish through the interface");
-    assert_eq!(decided.focused, parent_id);
-    let decided_ids: Vec<GoalId> = decided.goals().collect();
+    assert_eq!(decided.focused_branch, parent_id);
+    let decided_ids: Vec<BranchId> = decided.branches().collect();
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
         decided.certificate().steps(),
@@ -9905,11 +10021,11 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         // own lineage and rejoin as a logical `If` whose outcome paths
         // stay separate, resuming the parent obligation at function
         // exit under its original id.
-        let parent_id = root.focused;
+        let parent_id = root.focused_branch;
         let (split_proof, record) = root
             .split_focused_execution_branch()
             .expect("the symbolic condition should split in-proof");
-        let sibling_ids: Vec<GoalId> = split_proof.goals().collect();
+        let sibling_ids: Vec<BranchId> = split_proof.branches().collect();
         assert_eq!(sibling_ids.len(), 2);
         let premature = split_proof
             .join_focused_execution_terminal(&record)
@@ -9924,15 +10040,15 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let both_returned = split_proof
             .apply_step(SimpleProofStep::Step)
             .expect("the then sibling returns in place")
-            .focus(sibling_ids[1])
+            .focus_branch(sibling_ids[1])
             .expect("the else sibling is open")
             .apply_step(SimpleProofStep::Step)
             .expect("the else sibling returns in place");
         let sibling_joined = both_returned
             .join_focused_execution_terminal(&record)
             .expect("both returned siblings form a terminal logical case split");
-        assert_eq!(sibling_joined.focused, parent_id);
-        let continuation_ids: Vec<GoalId> = sibling_joined.goals().collect();
+        assert_eq!(sibling_joined.focused_branch, parent_id);
+        let continuation_ids: Vec<BranchId> = sibling_joined.branches().collect();
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(
             sibling_joined.certificate().steps(),

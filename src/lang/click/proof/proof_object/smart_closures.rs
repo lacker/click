@@ -278,7 +278,7 @@ impl<'a> Proof<'a> {
         None
     }
 
-    /// Tries the focused outcome goal itself as one explicit fact transport
+    /// Tries the focused branch outcome goal itself as one explicit fact transport
     /// from a recorded program point. The candidate space is the execution's
     /// program-point index, not the ambient fact set; every accepted source
     /// and target is checked by `TransportUsing` on this immutable Proof.
@@ -330,7 +330,7 @@ impl<'a> Proof<'a> {
 
     /// Refines the Proof-owned Surface goal through audited scopes and steps.
     /// The caller cannot supply a second description of the judgment: this
-    /// syntax is the view paired with the kernel goal in `PropositionGoal`.
+    /// syntax is the view paired with the kernel goal in `PropositionObligation`.
     pub(super) fn try_structural_simp_closure(
         &self,
         surface_goal: &ClickProposition,
@@ -427,7 +427,7 @@ impl<'a> Proof<'a> {
             // unfolds are refused so recursive predicate bodies cannot loop
             // the search.
             (ClickProposition::PredicateCall { name, .. }, _)
-                if !self.focused_goal_unfolds().contains(name) =>
+                if !self.focused_branch_unfolds().contains(name) =>
             {
                 match attempt::candidate_outcome(
                     self.apply_step(SimpleProofStep::UnfoldPredicate(name.clone())),
@@ -701,7 +701,7 @@ impl<'a> Proof<'a> {
     /// back to that same kernel proposition when the selected simple step is
     /// checked. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
-    /// The point data a premise lookup spells against: the focused outcome
+    /// The point data a premise lookup spells against: the focused branch outcome
     /// point, or the frontier's own point view for a judgment stated
     /// mid-execution.
     fn premise_point_view(&self) -> Option<PointOperationView<'_>> {
@@ -1002,7 +1002,7 @@ impl<'a> Proof<'a> {
                 // Rewriting is directional even when its admitted premise is
                 // a symmetric equality. Keep the selected fact fixed, but
                 // try both Surface orientations so the side occurring in the
-                // focused goal can be replaced.
+                // focused branch goal can be replaced.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
                     let Ok(rewritten) = proof.apply_step(SimpleProofStep::Rewrite(oriented)) else {
@@ -1348,20 +1348,24 @@ impl<'a> Proof<'a> {
             let mut proof = split_proof;
             let mut complete = true;
             for (id, assumed_surface) in ids.into_iter().zip(branch_surfaces) {
-                let Ok(focused) = proof.focus(id) else {
+                let Ok(focused_branch) = proof.focus_branch(id) else {
                     complete = false;
                     break;
                 };
-                let selected = focused.try_simp_closure().ok().flatten().or_else(|| {
-                    let rewritten = focused
-                        .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
-                        .ok()?;
-                    rewritten
-                        .try_direct_logical_closure()
-                        .ok()
-                        .flatten()
-                        .or_else(|| rewritten.try_typed_atomic_simp_closure())
-                });
+                let selected = focused_branch
+                    .try_simp_closure()
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        let rewritten = focused_branch
+                            .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
+                            .ok()?;
+                        rewritten
+                            .try_direct_logical_closure()
+                            .ok()
+                            .flatten()
+                            .or_else(|| rewritten.try_typed_atomic_simp_closure())
+                    });
                 let Some(selected) = selected else {
                     complete = false;
                     break;
@@ -1425,8 +1429,8 @@ impl<'a> Proof<'a> {
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
             .then(|| self.outcome_point_view())
             .flatten();
-        let bound_variable_names = match self.focused_goal() {
-            Some(Goal::Proposition(goal)) => goal
+        let bound_variable_names = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => goal
                 .surface_bindings
                 .iter()
                 .filter_map(|(name, binding)| match binding {
@@ -1483,7 +1487,7 @@ impl<'a> Proof<'a> {
         for quantified in self.facts().predicate_unfolded_universal_facts.iter() {
             // Reject shape-incompatible universals before Surface lookup or
             // synthesis. Candidate extraction is structural and bounded by
-            // this one indexed fact and the focused goal; the expensive
+            // this one indexed fact and the focused branch goal; the expensive
             // form work is reserved for a specialization that can
             // actually mention the goal's concrete argument.
             let candidate_values =
@@ -1567,7 +1571,7 @@ impl<'a> Proof<'a> {
                     ProofContext::Point(context) => context.click_function_environment,
                     ProofContext::Execution(context) => context.click_function_environment,
                 };
-                for name in self.focused_goal_unfolds().iter() {
+                for name in self.focused_branch_unfolds().iter() {
                     for opaque in self.facts().mentioning_predicate(name) {
                         let opaque_surfaces = match self.context.as_ref() {
                             ProofContext::Pure(context) => context
@@ -1626,7 +1630,8 @@ impl<'a> Proof<'a> {
                             CExpression::Value(CValue::Int32(Bitvector32Term::Constant(*bits))),
                         )),
                         Bitvector32Term::Variable(variable) => {
-                            let Some(Goal::Proposition(goal)) = self.focused_goal() else {
+                            let Some(Obligation::Proposition(goal)) = self.focused_obligation()
+                            else {
                                 continue;
                             };
                             goal.surface_bindings.iter().find_map(|(name, binding)| {
@@ -2330,7 +2335,7 @@ impl<'a> Proof<'a> {
         proof.is_complete().then_some(proof)
     }
 
-    /// Runs one branch arm of the linear script driver on the focused sibling
+    /// Runs one branch arm of the linear script driver on the focused branch sibling
     /// goal. Both smart and explicit bodies apply their operations directly to
     /// this `Proof`; ordinary source interpretation does not first construct a
     /// certificate.
@@ -2480,15 +2485,13 @@ impl<'a> Proof<'a> {
                     let (split_proof, split, ids) =
                         proof.split_focused_if(proof_if.condition.clone())?;
                     let marker = split_proof.checkpoint();
-                    let Some(then_done) = split_proof.focus(ids[0])?.try_focused_script_arm(
-                        &proof_if.then_tactics,
-                        authoritative,
-                        generated,
-                    )?
+                    let Some(then_done) = split_proof
+                        .focus_branch(ids[0])?
+                        .try_focused_script_arm(&proof_if.then_tactics, authoritative, generated)?
                     else {
                         return Ok(None);
                     };
-                    let Some(both_done) = then_done.focus(ids[1])?.try_focused_script_arm(
+                    let Some(both_done) = then_done.focus_branch(ids[1])?.try_focused_script_arm(
                         &proof_if.else_tactics,
                         authoritative,
                         generated,
@@ -2507,15 +2510,16 @@ impl<'a> Proof<'a> {
                     let (split_proof, split, ids) =
                         proof.split_focused_cases(proof_cases.disjunction.clone())?;
                     let marker = split_proof.checkpoint();
-                    let Some(left_done) = split_proof.focus(ids[0])?.try_focused_script_arm(
-                        &proof_cases.left_tactics,
-                        authoritative,
-                        generated,
-                    )?
+                    let Some(left_done) =
+                        split_proof.focus_branch(ids[0])?.try_focused_script_arm(
+                            &proof_cases.left_tactics,
+                            authoritative,
+                            generated,
+                        )?
                     else {
                         return Ok(None);
                     };
-                    let Some(both_done) = left_done.focus(ids[1])?.try_focused_script_arm(
+                    let Some(both_done) = left_done.focus_branch(ids[1])?.try_focused_script_arm(
                         &proof_cases.right_tactics,
                         authoritative,
                         generated,
@@ -2541,7 +2545,7 @@ impl<'a> Proof<'a> {
         Ok(proof.focused_discharged().then_some(proof))
     }
 
-    /// Smart-only compatibility wrapper retained for focused regressions.
+    /// Smart-only compatibility wrapper retained for focused branch regressions.
     #[cfg(test)]
     pub(in crate::lang::click::proof) fn try_linear_smart_script(
         &self,

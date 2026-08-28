@@ -1556,7 +1556,7 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                 let Some(id) = ids[usize::from(!value)] else {
                     continue;
                 };
-                let focused = advanced.focus(id)?;
+                let focused = advanced.focus_branch(id)?;
                 advanced = advance_preservation_region(
                     focused,
                     arm,

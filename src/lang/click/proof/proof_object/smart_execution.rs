@@ -345,7 +345,7 @@ impl<'a> Proof<'a> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.select_pure_theorem_application_step(application),
             ProofContext::Point(_) => self.select_point_theorem_application_step(application),
-            // A focused function-outcome goal is one result-sensitive point
+            // A focused branch function-outcome goal is one result-sensitive point
             // context: selection reads the goal-aware view directly.
             ProofContext::Execution(_) if self.focused_outcome_point().is_some() => {
                 let view = self
@@ -368,7 +368,7 @@ impl<'a> Proof<'a> {
             ProofContext::Execution(_) if !self.is_at_function_exit() => {
                 self.select_execution_theorem_application_step(application)
             }
-            // A function-exit execution Proof not focused on one outcome
+            // A function-exit execution Proof not focused branch on one outcome
             // still owns several result-sensitive point contexts; ordered
             // finalization keeps that seam until its paths derive goals.
             ProofContext::Execution(_) => return Ok(None),
