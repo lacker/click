@@ -2140,7 +2140,8 @@ impl<'a> Proof<'a> {
             || (!self.facts().contains(&negated)
                 && !opposite_condition
                     .as_ref()
-                    .is_some_and(|opposite| self.facts().contains(opposite)))
+                    .is_some_and(|opposite| self.facts().contains(opposite))
+                && !normalizes_context_free(&negated))
         {
             return Err(self.step_error(format!(
                 "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"

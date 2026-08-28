@@ -246,7 +246,8 @@ fn apply_logical_goal_tactic(
                 || (!available.contains(&negated)
                     && !opposite_condition
                         .as_ref()
-                        .is_some_and(|opposite| available.contains(opposite)))
+                        .is_some_and(|opposite| available.contains(opposite))
+                    && !normalizes_context_free(&negated))
             {
                 return Err(format!(
                     "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"

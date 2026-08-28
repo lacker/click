@@ -26,6 +26,33 @@ fn verifies_simple_postcondition_with_proof_tactics() {
 }
 
 #[test]
+fn contradiction_closes_an_impossible_concrete_outcome() {
+    let c_source = r#"
+            int32 always_zero(int32* data) {
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "always_zero.c";
+
+            int32 always_zero(int32* data) {
+                ensures result == 1 implies data[0] == 2;
+            } by {
+                step();
+                have result == 1 implies data[0] == 2 by {
+                    intro();
+                    contradiction(result == 1);
+                }
+                assumption();
+            }
+        "#;
+
+    verify_c0_sources(click_source, &[("always_zero.c", c_source)]).expect(
+        "a concrete-false outcome guard should avoid lowering its unavailable memory consequent",
+    );
+}
+
+#[test]
 fn flat_function_proof_stays_on_proof_through_claim_acceptance() {
     let c_source = r#"
             int32 identity(int32 x) {
