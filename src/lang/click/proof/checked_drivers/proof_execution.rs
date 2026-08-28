@@ -21,58 +21,55 @@ pub(in crate::lang::click::proof) fn take_driver_declines()
     DRIVER_DECLINES.with(|declines| std::mem::take(&mut *declines.borrow_mut()))
 }
 
-/// A simple step written in an execution arm. A source `step()` is the bare
-/// statement step; the other simple statement forms map as themselves.
-fn arm_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+/// The explicit proof step written by a simple tactic in an execution arm. A
+/// source `step()` is the bare statement step; the other simple tactic forms
+/// map as themselves.
+fn arm_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
-        ProofTactic::Step => Some(SimpleProofStep::Step),
-        tactic => linear_execution_simple_step(tactic),
+        ProofTactic::Step => Some(ProofStep::Step),
+        tactic => linear_execution_proof_step(tactic),
     }
 }
 
-fn linear_execution_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
-        ProofTactic::Mark(name) => Some(SimpleProofStep::Mark(name.clone())),
-        ProofTactic::Step => Some(SimpleProofStep::Step),
+        ProofTactic::Mark(name) => Some(ProofStep::Mark(name.clone())),
+        ProofTactic::Step => Some(ProofStep::Step),
         ProofTactic::TransportUsing {
             source,
             target,
             premises,
-        } => Some(SimpleProofStep::TransportUsing {
+        } => Some(ProofStep::TransportUsing {
             source: source.clone(),
             target: target.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::UnfoldPredicate(name) => Some(SimpleProofStep::UnfoldPredicate(name.clone())),
-        ProofTactic::UnfoldResource(resource) => {
-            Some(SimpleProofStep::UnfoldResource(resource.clone()))
-        }
-        ProofTactic::FoldResource(resource) => {
-            Some(SimpleProofStep::FoldResource(resource.clone()))
-        }
+        ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::UnfoldResource(resource) => Some(ProofStep::UnfoldResource(resource.clone())),
+        ProofTactic::FoldResource(resource) => Some(ProofStep::FoldResource(resource.clone())),
         ProofTactic::ObserveResource(resource) => {
-            Some(SimpleProofStep::ObserveResource(resource.clone()))
+            Some(ProofStep::ObserveResource(resource.clone()))
         }
         ProofTactic::ApplyTheoremUsing {
             application,
             premises,
-        } => Some(SimpleProofStep::ApplyTheoremUsing {
+        } => Some(ProofStep::ApplyTheoremUsing {
             application: application.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::FrameUsing { region, premises } => Some(SimpleProofStep::FrameUsing {
+        ProofTactic::FrameUsing { region, premises } => Some(ProofStep::FrameUsing {
             region: region.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::CloseInvariants => Some(SimpleProofStep::CloseInvariants),
+        ProofTactic::CloseInvariants => Some(ProofStep::CloseInvariants),
         _ => None,
     }
 }
 
-fn expanded_execution_arm_supported(steps: &[SimpleProofStep]) -> bool {
+fn expanded_execution_arm_supported(steps: &[ProofStep]) -> bool {
     steps.is_empty()
-        || (matches!(steps.first(), Some(SimpleProofStep::Step))
-            && matches!(steps.last(), Some(SimpleProofStep::Step)))
+        || (matches!(steps.first(), Some(ProofStep::Step))
+            && matches!(steps.last(), Some(ProofStep::Step)))
 }
 
 fn linear_execution_tactics(node: &InternalProofNode) -> Option<&[IndexedTactic]> {
@@ -140,7 +137,7 @@ fn checked_execution_arm_tactics_end(
             may_exit = true;
             continue;
         }
-        if linear_execution_simple_step(&indexed.tactic).is_none()
+        if linear_execution_proof_step(&indexed.tactic).is_none()
             && !matches!(
                 indexed.tactic,
                 ProofTactic::ApplyTheorem(_) | ProofTactic::Transport { .. } | ProofTactic::Have(_)
@@ -375,7 +372,7 @@ fn internal_proof_contains_frame(node: &InternalProofNode) -> bool {
 }
 
 fn checked_linear_continuation_tactic(tactic: &ProofTactic) -> bool {
-    linear_execution_simple_step(tactic).is_some()
+    linear_execution_proof_step(tactic).is_some()
         || matches!(
             tactic,
             ProofTactic::Step
@@ -603,7 +600,7 @@ fn advance_checked_linear_continuation<'a>(
             )
         });
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step_at(step, indexed.index, indexed.source_index)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             let Some(applied) = proof.try_theorem_application(application)? else {
@@ -1358,7 +1355,7 @@ pub(super) fn solve_nested_have<'a>(
             nested.try_simp_closure()?
         }
         SourceProof::Script(body) => {
-            // An explicit script is checked by its simple steps alone: a
+            // An explicit script is checked by its proof steps alone: a
             // step that fails is an error, never a miss for search to
             // rescue. A script containing smart tactics may decline to the
             // shared law.
@@ -1489,7 +1486,7 @@ pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
                 match &indexed.tactic {
                     ProofTactic::Step => {
                         let checkpoint = proof.checkpoint();
-                        proof = proof.apply_step(SimpleProofStep::Step)?;
+                        proof = proof.apply_step(ProofStep::Step)?;
                         if indexed.source_index != owning_source_index
                             && let Some(site) = proof_site
                             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
@@ -1733,7 +1730,7 @@ fn advance_focused_execution_arm<'a>(
             continue;
         }
         let checkpoint = proof.checkpoint();
-        let next = if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
+        let next = if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
             proof.apply_step(step)?
         } else if let ProofTactic::ApplyTheorem(application) = &indexed.tactic {
             if proof.is_at_function_exit() {
@@ -1840,7 +1837,7 @@ fn record_source_successor_smart_expansions(
             && selected_tactic_index_for_site(expansion_capture.as_deref(), site)
                 == Some(*source_index)
         {
-            let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Step]);
+            let certificate = ProofCertificate::from_steps(vec![ProofStep::Step]);
             record_proof_site_tactic_expansion(
                 expansion_capture.as_deref_mut(),
                 site,
@@ -2353,17 +2350,17 @@ fn advance_checked_branch_arms<'a>(
     }))
 }
 
-fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<SimpleProofStep>> {
+fn linear_execution_steps(node: &InternalProofNode) -> Option<Vec<ProofStep>> {
     linear_execution_tactics(node)?
         .iter()
-        .map(|indexed| arm_simple_step(&indexed.tactic))
+        .map(|indexed| arm_proof_step(&indexed.tactic))
         .collect()
 }
 
 fn expanded_execution_if_steps(
     then_branch: &InternalProofNode,
     else_branch: &InternalProofNode,
-) -> Option<(Vec<SimpleProofStep>, Vec<SimpleProofStep>)> {
+) -> Option<(Vec<ProofStep>, Vec<ProofStep>)> {
     let then_steps = linear_execution_steps(then_branch)?;
     let else_steps = linear_execution_steps(else_branch)?;
     (expanded_execution_arm_supported(&then_steps)
@@ -2382,8 +2379,8 @@ fn advance_linear_open_scope<'a>(
     owning_source_index: usize,
 ) -> Result<Option<ProofScope<'a>>, ClickError> {
     for indexed in tactics {
-        if let Some(step) = linear_execution_simple_step(&indexed.tactic) {
-            scope = if let SimpleProofStep::FrameUsing { region, premises } = &step {
+        if let Some(step) = linear_execution_proof_step(&indexed.tactic) {
+            scope = if let ProofStep::FrameUsing { region, premises } = &step {
                 if scope.is_at_function_exit()
                     && !scope.supports_checked_frame_using(region.as_ref(), premises)?
                 {

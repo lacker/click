@@ -607,7 +607,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
         )));
     }
     let body = proof.certificate();
-    let certificate = ProofCertificate::from_steps(vec![SimpleProofStep::Have {
+    let certificate = ProofCertificate::from_steps(vec![ProofStep::Have {
         proposition: have.proposition.clone(),
         proof: Box::new(body),
     }]);

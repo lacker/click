@@ -236,7 +236,7 @@ impl ProofFacts {
     /// Availability of a proposition to the explicit pure `assumption`
     /// judgment used inside point proofs. This deliberately excludes
     /// cross-effect snapshot transport: such a transport needs its own
-    /// retained simple step before a later assumption may consume it.
+    /// retained proof step before a later assumption may consume it.
     pub(in crate::lang::click::proof) fn pure_assumption_available(
         &self,
         required: &Proposition,

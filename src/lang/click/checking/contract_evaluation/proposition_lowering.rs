@@ -61,7 +61,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition(
 }
 
 /// Lowers an outcome proposition against an already-indexed assumption
-/// context. Proof-object transitions use this entry point so one simple step
+/// context. Proof-object transitions use this entry point so one proof step
 /// does not rebuild the complete ambient fact context merely to lower its
 /// explicit surface proposition.
 #[allow(clippy::too_many_arguments)]

@@ -977,7 +977,7 @@ pub(super) fn lower_certified_frame_path_tactics(
 ///
 /// Premises are written against the builder's construction-visible
 /// `certificate_facts`, not the planning executor's own fact set.
-pub(super) fn construct_simple_step_for_planned_operation(
+pub(super) fn construct_proof_step_for_planned_operation(
     execution: &mut ExecutionProofState,
     proof_context: &ExecutionProofContext<'_>,
     sink: &mut ProofCertificateBuilder,
@@ -996,7 +996,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
         // diagnostic here.
         let mut context =
             ProofCertificateConstructionContext::new(execution, proof_context, sink, &[]);
-        append_simple_proof_step_for_operation(
+        append_proof_step_for_operation(
             &mut context,
             state,
             &available_facts,
@@ -1014,7 +1014,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn append_simple_proof_step_for_operation(
+pub(super) fn append_proof_step_for_operation(
     construction: &mut ProofCertificateConstructionContext<'_>,
     state: &CState,
     available: &[Proposition],
@@ -1054,7 +1054,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             construction
                 .proof_certificate_builder
                 .lowering_planned_transition = true;
-            append_simple_proof_step_for_operation(
+            append_proof_step_for_operation(
                 construction,
                 state,
                 available,
@@ -1193,7 +1193,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             construction
                 .proof_certificate_builder
                 .lowering_planned_transition = true;
-            append_simple_proof_step_for_operation(
+            append_proof_step_for_operation(
                 construction,
                 state,
                 available,
@@ -1221,7 +1221,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             });
             construction
                 .proof_certificate_builder
-                .push_step(SimpleProofStep::Step);
+                .push_step(ProofStep::Step);
         }
         (
             None,
@@ -1341,7 +1341,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                     construction
                         .proof_certificate_builder
-                        .push_step(SimpleProofStep::UnfoldPredicate(name));
+                        .push_step(ProofStep::UnfoldPredicate(name));
                 }
                 let current_loadable_haves = surface_available
                     .iter()
@@ -1798,7 +1798,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         click_function_environment,
                     ) {
                         Ok(premises) => {
-                            construction.proof_certificate_builder.push_step(SimpleProofStep::TransportUsing {
+                            construction.proof_certificate_builder.push_step(ProofStep::TransportUsing {
                                 source: surface_source,
                                 target: surface_target.clone(),
                                 premises,
@@ -1826,7 +1826,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 .iter_mut()
                                 .rev()
                                 .find_map(|step| match step {
-                                    SimpleProofStep::Step => Some(false),
+                                    ProofStep::Step => Some(false),
                                     _ => None,
                                 })
                                 .unwrap_or(false);

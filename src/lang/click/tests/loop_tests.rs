@@ -2767,7 +2767,7 @@ fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
                     premises,
                 } if premises.is_empty()
             )),
-        "the Proof-owned region frame must retain its exact simple step"
+        "the Proof-owned region frame must retain its exact proof step"
     );
 
     let expanded = expand_c0_claim_source(

@@ -1,6 +1,6 @@
 # Expansion
 
-Expansion replaces a smart proof site with the checked simple operations that
+Expansion replaces a smart proof site with the checked explicit operations that
 produced its successful proof state. It turns a heuristic proof request into an
 explicit proof script without changing the claim being proved.
 
@@ -8,7 +8,7 @@ The workflow is:
 
 1. Verify the target and retain the checked transition history attributed to
    the selected smart proof site.
-2. Extract the surface-expressible simple operations from that history.
+2. Extract the surface-expressible explicit operations from that history.
 3. Render the operations as Surface Click.
 4. Replace the selected proof site in output or in place.
 5. Verify the complete rewritten source through the ordinary verification

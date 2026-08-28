@@ -107,7 +107,7 @@ impl<'a> ProofScope<'a> {
     /// candidates leave the enclosing scope value unchanged.
     pub(in crate::lang::click::proof) fn apply_step(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
     ) -> Result<Self, ClickError> {
         let mut next = self.clone();
         let body = self.body.apply_step_with_origin_mode(
@@ -220,8 +220,8 @@ impl<'a> ProofScope<'a> {
     pub(in crate::lang::click::proof) fn apply_expanded_execution_if(
         &self,
         condition: &ClickProposition,
-        then_steps: &[SimpleProofStep],
-        else_steps: &[SimpleProofStep],
+        then_steps: &[ProofStep],
+        else_steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
         let body = self
             .body
@@ -294,11 +294,11 @@ impl<'a> ProofScope<'a> {
         Ok(Some(next))
     }
 
-    /// Applies a source-owned simple step inside the scope. Terminal steps use
+    /// Applies a source-owned proof step inside the scope. Terminal steps use
     /// the site only to schedule already-checked ordered outcome work.
     pub(in crate::lang::click::proof) fn apply_step_at(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Self, ClickError> {
@@ -461,7 +461,7 @@ impl<'a> ProofScope<'a> {
                 unreachable!("the scope kinds were checked above")
             };
             let mut steps = scope.root.certificate().steps().to_vec();
-            steps.push(SimpleProofStep::Open {
+            steps.push(ProofStep::Open {
                 resource: resource.clone(),
                 proof: Box::new(body),
             });
@@ -486,7 +486,7 @@ impl<'a> ProofScope<'a> {
             state: Arc::new(state),
             node: Arc::new(ProofNode {
                 parent: Some(outer.root.node.clone()),
-                step: Some(Arc::new(SimpleProofStep::Open {
+                step: Some(Arc::new(ProofStep::Open {
                     resource: resource.clone(),
                     proof: Box::new(body),
                 })),
@@ -669,7 +669,7 @@ impl<'a> ProofScope<'a> {
         let candidate = body.certificate_since(&checkpoint)?;
         let mut next = self.clone();
         for step in candidate.steps() {
-            if let SimpleProofStep::Have { proposition, .. } = step {
+            if let ProofStep::Have { proposition, .. } = step {
                 let fact = body.lower_surface_proposition(
                     proposition,
                     "smart frame intermediate proposition",
@@ -835,7 +835,7 @@ impl<'a> ProofScope<'a> {
         let mid_execution = matches!(self.body.context.as_ref(), ProofContext::Execution(_))
             && self.body.focused_outcome_point().is_none();
         if body.node.depth == 1
-            && matches!(body.node.step.as_deref(), Some(SimpleProofStep::Assumption))
+            && matches!(body.node.step.as_deref(), Some(ProofStep::Assumption))
             && !mid_execution
             && let Some(checkable) = self.body.try_simp_closure_after_direct(true)?
         {
@@ -1062,7 +1062,7 @@ impl<'a> ProofScope<'a> {
                     }),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
-                        step: Some(Arc::new(SimpleProofStep::Have {
+                        step: Some(Arc::new(ProofStep::Have {
                             proposition,
                             proof: Box::new(body),
                         })),
@@ -1142,7 +1142,7 @@ impl<'a> ProofScope<'a> {
                     state: Arc::new(state),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
-                        step: Some(Arc::new(SimpleProofStep::Open {
+                        step: Some(Arc::new(ProofStep::Open {
                             resource,
                             proof: Box::new(body),
                         })),

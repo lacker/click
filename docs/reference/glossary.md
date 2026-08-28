@@ -156,15 +156,15 @@ therefore the same load variable.
 
 A surface-expressible explicit proof used as independently checkable output,
 most notably by expansion. Internally, `ProofCertificate` is a structured
-serialization of simple operations; it carries no semantic authority and need
+serialization of explicit operations; it carries no semantic authority and need
 not be materialized during ordinary verification.
 
 ### Certificate step
 
-One surface-expressible simple operation in the internal certificate
-serialization. `SimpleProofStep` is the main implementation type. The
-corresponding checked transition, not the serialized step by itself, advances
-the proof state.
+One explicit surface-expressible operation in the internal certificate
+serialization. `ProofStep` is the implementation type; it has no smart-tactic
+variant. The corresponding checked transition, not the serialized step by
+itself, advances the proof state.
 
 ### Certification
 
@@ -726,7 +726,7 @@ are pure proofs.
 ### Round-trip validation
 
 Checking generated proof text through the ordinary verification entry point.
-This confirms that a smart tactic's serialized simple steps express the checked
+This confirms that a smart tactic's serialized proof steps express the checked
 result. It is a validation boundary, not a separate phase or proof engine:
 explicit and smart tactics advance the same checked proof object directly.
 

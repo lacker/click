@@ -409,7 +409,7 @@ impl<'a> Proof<'a> {
             facts,
             common_added_facts: added_facts,
             unfolded_predicates,
-            step: SimpleProofStep::Branch {
+            step: ProofStep::Branch {
                 ensuring: Some(assertions),
                 then_proof: Box::new(then_proof),
                 else_proof: Box::new(else_proof),
@@ -430,7 +430,7 @@ impl<'a> Proof<'a> {
         statement_index: usize,
         take_then: bool,
         arm: &CheckedExecutionJoinArm<'_>,
-    ) -> Result<SimpleProofStep, ClickError> {
+    ) -> Result<ProofStep, ClickError> {
         if !arm.execution.frontier.is_at_region_boundary()
             && !arm.execution.frontier.is_at_function_exit()
         {
@@ -483,8 +483,8 @@ impl<'a> Proof<'a> {
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
         let mut selected_steps = Vec::with_capacity(entry_steps + arm.certificate.steps().len());
-        selected_steps.push(SimpleProofStep::Step);
-        selected_steps.resize_with(entry_steps, || SimpleProofStep::Step);
+        selected_steps.push(ProofStep::Step);
+        selected_steps.resize_with(entry_steps, || ProofStep::Step);
         selected_steps.extend_from_slice(arm.certificate.steps());
         let selected = ProofCertificate::from_steps(selected_steps);
         let empty = ProofCertificate::from_steps(Vec::new());
@@ -493,7 +493,7 @@ impl<'a> Proof<'a> {
         } else {
             (empty, selected)
         };
-        Ok(SimpleProofStep::If {
+        Ok(ProofStep::If {
             condition: surface_condition,
             then_proof: Box::new(then_proof),
             else_proof: Box::new(else_proof),
@@ -844,7 +844,7 @@ impl<'a> Proof<'a> {
         CHECKED_EXECUTION_INTERFACE_JOINS.with(|count| count.set(count.get() + 1));
 
         let [then_view, else_view] = arms;
-        let step = SimpleProofStep::Branch {
+        let step = ProofStep::Branch {
             ensuring: Some(assertions),
             then_proof: Box::new(then_view.certificate),
             else_proof: Box::new(else_view.certificate),
@@ -1017,8 +1017,8 @@ impl<'a> Proof<'a> {
         let terminal_certificate = |body: &ProofCertificate, empty_source_arm: bool| {
             let entry_steps = 1 + usize::from(empty_source_arm);
             let mut steps = Vec::with_capacity(entry_steps + body.steps().len());
-            steps.push(SimpleProofStep::Step);
-            steps.resize_with(entry_steps, || SimpleProofStep::Step);
+            steps.push(ProofStep::Step);
+            steps.resize_with(entry_steps, || ProofStep::Step);
             steps.extend_from_slice(body.steps());
             ProofCertificate::from_steps(steps)
         };
@@ -1282,7 +1282,7 @@ impl<'a> Proof<'a> {
         {
             unfolded_predicates.insert(name.clone());
         }
-        let step = SimpleProofStep::If {
+        let step = ProofStep::If {
             condition: surface_condition,
             then_proof: Box::new(then_proof),
             else_proof: Box::new(else_proof),
@@ -1479,7 +1479,7 @@ impl<'a> Proof<'a> {
             unfolded_predicates.insert(name.clone());
         }
         let [then_arm, else_arm] = arms;
-        let step = SimpleProofStep::Branch {
+        let step = ProofStep::Branch {
             ensuring: None,
             then_proof: Box::new(then_arm.certificate),
             else_proof: Box::new(else_arm.certificate),
@@ -1639,7 +1639,7 @@ impl<'a> Proof<'a> {
         name: &str,
         arm_index: usize,
         id: BranchId,
-        steps: Vec<SimpleProofStep>,
+        steps: Vec<ProofStep>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
         let base_facts = record.base_facts[arm_index]
             .as_ref()
@@ -1668,7 +1668,7 @@ impl<'a> Proof<'a> {
         name: &str,
         split: SplitId,
         id: BranchId,
-        steps: Vec<SimpleProofStep>,
+        steps: Vec<ProofStep>,
         ancestry_facts: &'v ProofFacts,
         delta_facts: &'v ProofFacts,
         delta_execution: &'v ExecutionProofState,
@@ -2001,7 +2001,7 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         take_then: bool,
         surface_condition: Option<&ClickProposition>,
-    ) -> Result<Vec<SimpleProofStep>, ClickError> {
+    ) -> Result<Vec<ProofStep>, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
@@ -2042,8 +2042,8 @@ impl<'a> Proof<'a> {
             else_branch.as_ref()
         };
         let entry_steps = 1 + usize::from(matches!(source_arm, CStatement::Skip));
-        let mut expected = vec![SimpleProofStep::Step];
-        expected.resize_with(entry_steps, || SimpleProofStep::Step);
+        let mut expected = vec![ProofStep::Step];
+        expected.resize_with(entry_steps, || ProofStep::Step);
         Ok(expected)
     }
 
@@ -2052,7 +2052,7 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         take_then: bool,
         surface_condition: &ClickProposition,
-        steps: &[SimpleProofStep],
+        steps: &[ProofStep],
     ) -> Result<Option<(Self, usize)>, ClickError> {
         let expected = self.checked_expanded_execution_arm_entry_steps(
             record,
@@ -2091,7 +2091,7 @@ impl<'a> Proof<'a> {
         record: &ExecutionSplit<'a>,
         take_then: bool,
         surface_condition: &ClickProposition,
-        steps: &[SimpleProofStep],
+        steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
         let Some((proof, entry_steps)) =
             self.focus_expanded_execution_arm_entry(record, take_then, surface_condition, steps)?
@@ -2101,13 +2101,13 @@ impl<'a> Proof<'a> {
         proof.apply_execution_steps_in_arm(record, &steps[entry_steps..], true)
     }
 
-    pub(super) fn planned_execution_step_is_supported(step: &SimpleProofStep) -> bool {
+    pub(super) fn planned_execution_step_is_supported(step: &ProofStep) -> bool {
         match step {
-            SimpleProofStep::Have { .. }
-            | SimpleProofStep::UnfoldPredicate(_)
-            | SimpleProofStep::TransportUsing { .. }
-            | SimpleProofStep::Step => true,
-            SimpleProofStep::If {
+            ProofStep::Have { .. }
+            | ProofStep::UnfoldPredicate(_)
+            | ProofStep::TransportUsing { .. }
+            | ProofStep::Step => true,
+            ProofStep::If {
                 then_proof,
                 else_proof,
                 ..
@@ -2127,10 +2127,10 @@ impl<'a> Proof<'a> {
         }
     }
 
-    pub(super) fn planned_execution_steps_contain_transition(steps: &[SimpleProofStep]) -> bool {
+    pub(super) fn planned_execution_steps_contain_transition(steps: &[ProofStep]) -> bool {
         steps.iter().any(|step| match step {
-            SimpleProofStep::Step => true,
-            SimpleProofStep::If {
+            ProofStep::Step => true,
+            ProofStep::If {
                 then_proof,
                 else_proof,
                 ..
@@ -2149,21 +2149,21 @@ impl<'a> Proof<'a> {
     fn apply_execution_steps_in_arm(
         &self,
         record: &ExecutionSplit<'a>,
-        steps: &[SimpleProofStep],
+        steps: &[ProofStep],
         expanded: bool,
     ) -> Result<Self, ClickError> {
         let mut proof = self.clone();
         let mut escaped = false;
         for step in steps {
             if !escaped
-                && matches!(step, SimpleProofStep::Step | SimpleProofStep::If { .. })
+                && matches!(step, ProofStep::Step | ProofStep::If { .. })
                 && proof.is_at_region_boundary()
             {
                 proof = proof.continue_arm_into_parent_frontier(record)?;
                 escaped = true;
             }
             proof = match step {
-                SimpleProofStep::If {
+                ProofStep::If {
                     condition,
                     then_proof,
                     else_proof,
@@ -2172,7 +2172,7 @@ impl<'a> Proof<'a> {
                     then_proof.steps(),
                     else_proof.steps(),
                 )?,
-                SimpleProofStep::If {
+                ProofStep::If {
                     condition,
                     then_proof,
                     else_proof,
@@ -2189,12 +2189,12 @@ impl<'a> Proof<'a> {
 
     pub(super) fn apply_planned_execution_steps_inner(
         &self,
-        steps: &[SimpleProofStep],
+        steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
         let mut proof = self.clone();
         for step in steps {
             proof = match step {
-                SimpleProofStep::If {
+                ProofStep::If {
                     condition,
                     then_proof,
                     else_proof,
@@ -2215,7 +2215,7 @@ impl<'a> Proof<'a> {
     /// result only when the checked execution has reached function exit.
     pub(in crate::lang::click::proof) fn try_planned_execution_steps(
         &self,
-        steps: &[SimpleProofStep],
+        steps: &[ProofStep],
     ) -> Result<Option<Self>, ClickError> {
         if steps.is_empty()
             || !steps.iter().all(Self::planned_execution_step_is_supported)
@@ -2230,8 +2230,8 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_planned_execution_if(
         &self,
         _condition: &ClickProposition,
-        then_steps: &[SimpleProofStep],
-        else_steps: &[SimpleProofStep],
+        then_steps: &[ProofStep],
+        else_steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
         let (split, record) = self.split_focused_execution_branch()?;
         let mut advanced = split;
@@ -2245,7 +2245,7 @@ impl<'a> Proof<'a> {
             if steps.len() < entry_steps
                 || !steps[..entry_steps]
                     .iter()
-                    .all(|step| matches!(step, SimpleProofStep::Step))
+                    .all(|step| matches!(step, ProofStep::Step))
             {
                 return Err(self.step_error(format!(
                     "planned execution {} arm does not begin with its {entry_steps} C branch-entry step(s)",
@@ -2266,8 +2266,8 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn apply_expanded_execution_if(
         &self,
         condition: &ClickProposition,
-        then_steps: &[SimpleProofStep],
-        else_steps: &[SimpleProofStep],
+        then_steps: &[ProofStep],
+        else_steps: &[ProofStep],
     ) -> Result<Self, ClickError> {
         let (split, record) = self.split_focused_execution_branch()?;
         let mut advanced = split;
@@ -2281,10 +2281,7 @@ impl<'a> Proof<'a> {
                 }
                 continue;
             }
-            if !matches!(
-                steps.last(),
-                Some(SimpleProofStep::Step | SimpleProofStep::If { .. })
-            ) {
+            if !matches!(steps.last(), Some(ProofStep::Step | ProofStep::If { .. })) {
                 return Err(self.step_error(format!(
                     "expanded execution {} arm does not end in a checked C step",
                     if take_then { "then" } else { "else" },
@@ -2567,7 +2564,7 @@ impl<'a> Proof<'a> {
 }
 
 /// Whether an arm's leading steps are its checked branch-entry steps.
-fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]) -> bool {
+fn arm_entry_steps_match(steps: &[ProofStep], expected: &[ProofStep]) -> bool {
     steps.len() >= expected.len()
         && steps
             .iter()

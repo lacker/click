@@ -2039,7 +2039,7 @@ int32 set_cell(int32 p[], int32 value) {
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                 if matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
-        "the qualified smart frame must apply its selected simple step once through Proof: {events:#?}"
+        "the qualified smart frame must apply its selected proof step once through Proof: {events:#?}"
     );
     let selected_offset = click_source
         .find("frame(function)")

@@ -4,7 +4,7 @@
 > migration history; it is no longer an open issue.
 >
 > Statement execution has since consolidated on the premise-free
-> `SimpleProofStep::Step`. Historical progress notes use that current name;
+> `ProofStep::Step`. Historical progress notes use that current name;
 > any description of statement-premise selection is superseded by the
 > whole-context rule in the completion audit.
 
@@ -38,7 +38,7 @@ Click needs one immutable checked proof object as the boundary between the
 megakernel and smart tactics. A smart tactic may inspect, cheaply clone, and
 search over `Proof` values, but it must not advance a proof through private
 semantic operations. The only way to obtain a successor is to apply an
-explicit [`SimpleProofStep`] through `Proof::apply_step`, or to use an
+explicit [`ProofStep`] through `Proof::apply_step`, or to use an
 equally explicit audited structural operation for branching and scopes.
 
 Every successful successor therefore retains the exact structured simple
@@ -85,7 +85,7 @@ adapter merely to increase the number of tactics that partially use `Proof`.
 ### Transactional continuation is untrusted orchestration
 
 The needed transaction is not a new kernel rule, a compound
-`SimpleProofStep`, or a second proof representation. `Proof` is immutable, so
+`ProofStep`, or a second proof representation. `Proof` is immutable, so
 speculation is already naturally transactional:
 
 1. retain the unchanged root;
@@ -163,7 +163,7 @@ struct BranchState {
 An open branch separates what remains to prove from the state available on
 that semantic path. Branch identifiers are stable within a proof lineage, and
 smart tactics may inspect branch views but not construct, replace, or close
-branches directly. Applying one simple step advances only the focused branch
+branches directly. Applying one proof step advances only the focused branch
 and records the matching certificate node. Rules that explicitly split or
 join a proof update several recorded branches. `OpenBranches`, `BranchState`,
 and their indexes use persistent structural sharing so candidate forks remain
@@ -222,7 +222,7 @@ An execution step can therefore have these audited outcomes:
 
 A function-outcome goal owns its path-local result expression, facts, state,
 resources, snapshots, and remaining postcondition/effect obligations. A later
-`simp`, `have`, `frame`, or explicit simple step focuses those goals directly.
+`simp`, `have`, `frame`, or explicit proof step focuses those goals directly.
 It must not first convert them into mutable check contexts or re-lower the
 semantic aftermath into a new certificate.
 
@@ -264,7 +264,7 @@ shared structurally rather than copied once per outcome.
 
 The continuation substrate must not introduce:
 
-- a `RunContinuation` or other opaque compound simple step;
+- a `RunContinuation` or other opaque compound proof step;
 - a trusted callback whose internal state changes are accepted without
   individual proof nodes;
 - a second mutable `ProofTransaction` representation that is lowered into
@@ -336,8 +336,8 @@ legacy fallback—realistic.
 The intended invariant is:
 
 > A smart tactic can inspect and fork proof objects, but it cannot advance one
-> except by applying and retaining a `SimpleProofStep`. Every resulting proof
-> object can expose the complete structured simple-step derivation from its
+> except by applying and retaining a `ProofStep`. Every resulting proof
+> object can expose the complete structured proof-step derivation from its
 > root to its current open goals.
 
 The current implementation does not enforce that invariant. Semantic proof
@@ -352,7 +352,7 @@ accurately.
 That architecture double-implements proof operations:
 
 1. a smart path discovers and performs an internal operation;
-2. certificate construction tries to infer the corresponding simple steps;
+2. certificate construction tries to infer the corresponding proof steps;
 3. independent verification performs the operation again through the simple path.
 
 It is a recurring source of missing premises, snapshot-spelling failures,
@@ -362,7 +362,7 @@ instance: the prover returns a conclusion and premises but discards the rule
 steps it used, so certificate construction searches again. The quarantined
 owned-vector smart `step()` is another: planning constructs and executes a
 transition, then expansion validation times out while executing the generated
-`step()` a second time even though that explicit simple step is fast
+`step()` a second time even though that explicit proof step is fast
 when used directly.
 
 ## Canonical vocabulary
@@ -376,13 +376,12 @@ discussion:
 - **`Goal`**: one unresolved judgment inside a `Proof`. Pure propositions, C
   execution frontiers, resource obligations, and loop effects may be distinct
   goal variants.
-- **`SimpleProofStep`**: one explicit deterministic certificate operation
-  checked by the megakernel. A step may be powerful and C-specific; "simple"
-  means that it names its rule and evidence, not that its implementation is
-  small.
-- **`ProofCertificate`**: the structured simple-step derivation exposed by a
+- **`ProofStep`**: one explicit deterministic certificate operation checked
+  by the megakernel. It is the checked output selected by either an explicit
+  simple tactic or an untrusted smart tactic; there is no `SmartProofStep`.
+- **`ProofCertificate`**: the structured proof-step derivation exposed by a
   `Proof` and rendered by expansion. It contains sequence, branch, and scope
-  structure whose leaves are `SimpleProofStep` values.
+  structure whose leaves are `ProofStep` values.
 - **`ProofNode`**: a private persistent-DAG storage node. It is an
   implementation detail, never the name of the smart-tactic API object.
 - **`SmartTactic`**: an untrusted, budgeted search procedure over `Proof`
@@ -400,7 +399,8 @@ than giving them overlapping definitions:
 
 - the parsed-source enum is `SourceProof`;
 - the exportable certificate structure is `ProofCertificate`;
-- keep `SimpleProofStep` for deterministic certificate instructions;
+- use `ProofStep` for deterministic certificate instructions; “simple” names
+  the surface tactic class, not a second kind of proof step;
 - retire `ProofCheckContext` as a smart-tactic interface rather than
   relabeling its mixed mutable contents as `Proof`;
 - keep certificate builders and DAG nodes private; smart tactics never mutate
@@ -428,7 +428,7 @@ impl Proof {
     pub fn apply_step(
         &self,
         goal: GoalRef,
-        step: SimpleProofStep,
+        step: ProofStep,
     ) -> Result<Proof, StepError>;
 
     // Structural split: replaces one goal with labeled child goals and
@@ -462,7 +462,7 @@ smart tactic choose a step, but they do not return authority to mutate state
 or close a goal.
 
 In particular, a query that discovers that a proposition is provable must
-return candidate `SimpleProofStep` values (or a `ProofCertificate` composed of
+return candidate `ProofStep` values (or a `ProofCertificate` composed of
 them), not a bare Boolean, anonymous theorem, premise set, or internal
 transition that lets search bypass `apply_step`.
 
@@ -576,7 +576,7 @@ Current smart tactics fit this model:
 - `frame()` searches for a region and premises, then applies `FrameUsing`;
 - `auto` orchestrates the same proof-object operations.
 
-If a smart tactic needs a semantic operation that no `SimpleProofStep` can
+If a smart tactic needs a semantic operation that no `ProofStep` can
 express, that is a missing certificate-language operation. Add a deterministic
 explicit step backed by the megakernel; do not add a private tactic escape
 hatch.
@@ -584,7 +584,7 @@ hatch.
 ## Megakernel boundary
 
 This design preserves the megakernel philosophy. Click may have many powerful
-`SimpleProofStep` variants for C execution, checked arithmetic, memory,
+`ProofStep` variants for C execution, checked arithmetic, memory,
 resources, contracts, function calls, loops, and domain-specific theorem
 schemas. One step may perform substantial specialized work.
 
@@ -670,7 +670,7 @@ transactionally rejected on an execution-frontier proof.
 The fourth checkpoint extracts mid-execution `TransportUsing` into one
 audited `check_point_fact_transport_using` operation shared by explicit source
 check and `Proof::apply_step`. Bare mid-execution `transport` now searches for
-premises, applies the selected simple step once through `Proof`, incorporates
+premises, applies the selected proof step once through `Proof`, incorporates
 its checked target delta, and retains its source/target spellings and
 certificate directly. The former `complete_smart_tactic` construction check
 is gone for this path; snapshot/resource/effect semantics remain centralized
@@ -705,7 +705,7 @@ its exact negation or opposite condition polarity must both be present in the
 persistent fact index before the goal closes.
 
 Statement execution now has one checked operation, `check_statement_step`.
-`SimpleProofStep::Step` carries no premise payload: it executes the next C
+`ProofStep::Step` carries no premise payload: it executes the next C
 statement in the complete Proof context and retains the resulting frontier and
 output-sized fact delta. Smart `step()`, `execute()`, and `execute_until()` all
 advance only through this operation; rejected candidates leave their root
@@ -736,7 +736,7 @@ The first audited structural branch is `cases`. `Proof::begin_cases` requires
 an exact available disjunction and creates an immutable `ProofBranches` value
 whose arms receive only their respective disjunct. Arm steps still go through
 `Proof::apply_step`; `join` refuses incomplete arms and embeds each arm's exact
-checkpoint suffix in one `SimpleProofStep::Cases`. Explicit pure `cases`
+checkpoint suffix in one `ProofStep::Cases`. Explicit pure `cases`
 scripts using the migrated simple vocabulary now check through this path, and
 regressions cover transactional failed candidates, arm isolation, exact-root
 identity, structured certificate output, and expansion through the ordinary
@@ -753,7 +753,7 @@ The first audited nested scope is pure `have`. `begin_have` creates a fresh
 body `Proof` that shares immutable facts and checking context but owns its own
 provenance root. Closing an incomplete body is rejected; closing a complete
 body publishes exactly its checked proposition and retains its exact nested
-certificate in one `SimpleProofStep::Have`. Explicit pure `have` scripts now
+certificate in one `ProofStep::Have`. Explicit pure `have` scripts now
 use this path. A smart `have ... by simp/auto` whose body closes through the
 direct logical vocabulary searches inside that body `Proof` and retains the
 successful steps directly, rather than constructing and ordinarily checking
@@ -857,7 +857,7 @@ two C frontiers without creating detached certificate-builder evidence.
 `join_empty` requires both checked descendants at the exact shared
 continuation and equal C states, then derives common check metadata from the
 shared root and source branch structure rather than selecting one arm's
-metadata. It records one `SimpleProofStep::Branch` atomically. Ordinary source
+metadata. It records one `ProofStep::Branch` atomically. Ordinary source
 verification and selected-source expansion use this path for unqualified
 empty and linear-simple `branch` arms. Structured nodes retain their source
 offset, so expansion capture records the exact checked branch delta and then
@@ -908,7 +908,7 @@ reintroduce a hidden uniqueness requirement.
 
 Explicit `mark` is also a checked execution `Proof` transition now. It records
 the named program point only in the returned successor, retains
-`SimpleProofStep::Mark`, and rejects a duplicate transactionally without
+`ProofStep::Mark`, and rejects a duplicate transactionally without
 changing the accepted descendant or its ancestor. The old direct check-state
 mutation has been removed.
 
@@ -942,7 +942,7 @@ by `Proof`.
 `Extract` was deliberately not moved unchanged in the witness slice. Its
 deleted interpreter scans the complete available context to find proper
 conjunctions and again for every antecedent of a discharged implication.
-Since `extract` is a simple step, that implementation violates the efficiency
+Since `extract` is a proof step, that implementation violates the efficiency
 contract. `ProofFacts` now persistently indexes every strict conjunction
 subtree, and `Proof::apply_step(Extract)` uses that index for the exact
 proper-conjunct case. Failed extraction is transactional; successful
@@ -993,10 +993,10 @@ same path, and a deterministic 16-through-4096 regression holds one rewrite
 fixed while growing unrelated facts and records zero persistent fact-node
 updates.
 
-The simple-step dispatcher now returns one shared `Result<ProofState, _>` and
+The proof-step dispatcher now returns one shared `Result<ProofState, _>` and
 applies `?` after the match, with large logical and rewrite rules in outlined
 helpers. Previously every arm's internal `?` reserved a distinct, large
-return temporary, so admitting one more simple step grew the dispatcher stack
+return temporary, so admitting one more proof step grew the dispatcher stack
 frame and made an existing nested expansion overflow. Structured certificate
 checking and recursive proposition rewriting use explicit work stacks, so
 certificate nesting and proposition depth do not consume the process stack.
@@ -1004,7 +1004,7 @@ certificate nesting and proposition depth do not consume the process stack.
 Execution `CloseInvariants` is now an atomic `Proof::apply_step` transition.
 It checks the loop-region capability, rejects a duplicate transactionally,
 sets only the successor's invariant-closure intent, and retains the exact
-simple step. Source-position data used solely to attribute the later kernel
+proof step. Source-position data used solely to attribute the later kernel
 bundle check remains attached at the deleted interpreter's export boundary rather
 than becoming proof authority. A 16-through-4096 regression holds the step
 fixed while growing unrelated facts and records no persistent fact updates.
@@ -1276,7 +1276,7 @@ Post-execution predicate unfolding now uses the same result-aware point
 frontier instead of mutating the outcome fact vector and separately recording
 an `UnfoldPredicate` tactic. The proposition-level unfold transition accepts
 an execution-frontier goal as a facts-only refinement, updates only the
-predicate-indexed `ProofFacts` delta, retains the exact simple step, and
+predicate-indexed `ProofFacts` delta, retains the exact proof step, and
 leaves proposition goals' existing goal-unfolding behavior unchanged. The
 outcome drain consumes that checked delta and certificate, while its inherited
 unfold-name list remains surface bookkeeping rather than proof authority. A
@@ -1289,7 +1289,7 @@ Grouped post-execution proposition goals now share one immutable result-aware
 point-frontier `Proof` context. An audited `focus_point_goal` root operation
 selects each externally owned contract goal without rebuilding its persistent
 fact indexes or inheriting another goal's provenance. Outcome `assumption` and
-`normalize` apply their existing simple steps to those focused roots and retain
+`normalize` apply their existing proof steps to those focused roots and retain
 the checked certificates immediately; failed candidates leave the shared root
 unchanged. A deterministic 16-through-4096-fact regression pins fact-index
 sharing and logarithmic local lookup, while a grouped contract regression
@@ -1297,7 +1297,7 @@ requires the two closers to discharge different postconditions without an
 ordinary surface-certificate validation.
 
 Outcome `rewrite` now uses those same focused proposition roots. Each open
-postcondition submits the named equality as `SimpleProofStep::Rewrite`; only
+postcondition submits the named equality as `ProofStep::Rewrite`; only
 the accepted successor's rewritten goal is returned to grouped finalization,
 and the retained certificate supplies the serialized tactic. The former path
 lowered an equality and called the rewrite kernel directly outside `Proof`.
@@ -1552,7 +1552,7 @@ The existing execution branch container now consumes that merge for two
 checked terminal arms. Each returned execution path carries only the facts
 introduced in its own arm, while common inherited facts remain shared in the
 enclosing `Proof`; joining therefore does not copy the ambient proof context
-per outcome. The join retains a logical `SimpleProofStep::If`, including the
+per outcome. The join retains a logical `ProofStep::If`, including the
 explicit branch-entry steps that independently check the structural C
 transition, and reconstructs the function-exit frontier from the exact shared
 root plus audited arm-local metadata. Automatic `execute()` selects this join
@@ -1601,7 +1601,7 @@ the checked `Proof` path reuses `ProofFacts`' persistent exact index and
 `PureFactContext`, while the remaining legacy resource paths adapt their
 ordered vectors at an explicit boundary. Lowering an observation witness no
 longer rebuilds assumptions from every ambient fact. One accepted
-`SimpleProofStep::ObserveResource` atomically retains the surface step, updated
+`ProofStep::ObserveResource` atomically retains the surface step, updated
 C/resource state, projected pure facts and surface lowerings, and any
 resource-count theorem/prerequisite evidence. Ordinary verification routes
 the source tactic through this transition; certificate extraction does not
@@ -1609,12 +1609,12 @@ rediscover or check the observation. A 16-through-4096 unrelated-fact
 regression bounds successful observation work logarithmically and checks
 exact certificate identity, ancestor isolation, and failed-step
 transactionality. Existing expansion/resource examples independently check
-the serialized simple step.
+the serialized proof step.
 
 `unfold(resource)` now uses the same indexed seam. Its checked transition
 selects the active composite body, removes the folded representation, lowers
 and records body facts, materializes the body resources, and retains the exact
-`SimpleProofStep::UnfoldResource` atomically. The structural `open` operation
+`ProofStep::UnfoldResource` atomically. The structural `open` operation
 continues to use the same semantic checker through its legacy scope adapter;
 there is still only one implementation of the resource law. A separate
 16-through-4096 curve checks local persistent work, exact certificate
@@ -1629,7 +1629,7 @@ that seam. The checked transition selects the active body from the persistent
 assumption context, verifies each declared pure body fact through indexed
 exact/snapshot availability or the maintained kernel context, consumes the
 contained resource representation, restores the abstract resource, and
-retains exactly one `SimpleProofStep::FoldResource`. Its success path neither
+retains exactly one `ProofStep::FoldResource`. Its success path neither
 clones nor scans the complete ambient pure-fact sequence; materialization is
 reserved for diagnostics and the explicit legacy outcome boundary. A
 16-through-4096 unrelated-fact curve checks logarithmic allocation, exact
@@ -1644,7 +1644,7 @@ all-simple bodies. Scope entry uses the same persistent unfold law in `Open`
 mode without serializing a fictitious nested `unfold`; every body operation
 advances the child `Proof`; and join either closes the representation at the
 current frontier or records the existing deferred close when the child has
-returned. The enclosing successor retains exactly one `SimpleProofStep::Open`
+returned. The enclosing successor retains exactly one `ProofStep::Open`
 whose child certificate is the path that was checked. A 16-through-4096
 regression covers entry/body/close allocation, ancestor isolation, failed
 entry transactionality, exact nested certificate identity, and both immediate
@@ -1673,7 +1673,7 @@ and a rejected C-step attempt inside the proposition proof.
 
 The first branch-aware open body now composes the existing audited containers
 directly. `ProofScope::begin_execution_branch` opens the C frontier owned by
-the scope body, the arm search applies only checked simple steps, and
+the scope body, the arm search applies only checked proof steps, and
 `join_execution_branch` accepts the result only when its root is the current
 body's exact context and provenance node. The outer scope therefore embeds
 one retained `Branch` child and later one retained `Open`; it does not infer
@@ -1732,7 +1732,7 @@ frame, and deferred resource-scope close in that order, observes neither
 round-trip validation nor the legacy exact-effect-check phase, pins the nested
 certificate, and independently verifies expansion. Empty-premise mutable
 frames deliberately remain on the legacy path because their current meaning
-is “scan all ambient facts,” which is not an acceptable simple-step contract.
+is “scan all ambient facts,” which is not an acceptable proof-step contract.
 Premise-free smart `frame()` now inspects the typed goal, selects an empty
 `FrameUsing`, and submits that candidate directly to this operation. This
 covers immutable effects and mutable footprints that check exactly from their
@@ -1774,7 +1774,7 @@ caller. The selected theorem applications advance only through `apply_step`;
 unsupported smart derivations still leave the original check context
 untouched and retain their existing diagnostics. A signed-order regression
 requires a composed theorem path, observes no ordinary certificate validation,
-pins the expanded `have` as explicit simple steps, and independently verifies
+pins the expanded `have` as explicit proof steps, and independently verifies
 that expansion.
 
 The path-specific regression keeps the original dynamic store
@@ -1811,7 +1811,7 @@ nested `If` before one common exact frame, and independently verifies the
 expanded proof. Expanded execution-branch certificates are also re-derived
 through `ExecutionProofBranches`: the checker validates and consumes the
 synthetic branch-entry steps, applies only the retained arm deltas through
-simple operations, and compares the resulting condition and arm certificate
+explicit operations, and compares the resulting condition and arm certificate
 exactly before proceeding to a later outcome partition. Structured `if` and
 `branch` nodes now retain their source index, so this checked path does not
 borrow provenance from either leaf.
@@ -1820,7 +1820,7 @@ The first explicit `branch ensuring` join now belongs to the same structural
 API. `ExecutionProofBranches::join_with_interface` checks and abstracts every
 continuing arm independently against the declared pure/resource interface,
 requires the abstract successor states and exported fact sequence to agree
-exactly, and installs the resulting `SimpleProofStep::Branch` atomically. Pure,
+exactly, and installs the resulting `ProofStep::Branch` atomically. Pure,
 non-owning `views`, and exact ownership interfaces cross this seam. The checker
 consumes the persistent `ProofFacts` assumption index directly, so it
 does not clone or rebuild the ambient fact context. When both arms retain the
@@ -1938,7 +1938,7 @@ one logical `If` and does not reconstruct either arm from returned contexts.
 The source selector deliberately requires the symmetric terminal shape:
 mixed return/continuation arms still need a typed multi-outcome join and stay
 on the legacy driver. The checked branch successor now also owns its supported
-linear continuation prefix. Explicit simple operations and contextual smart
+linear continuation prefix. Explicit explicit operations and contextual smart
 `step()` each advance the returned two-arm join `Proof`; a following immutable
 effect `frame()` stays on that descendant rather than receiving exported
 outcomes. Mutable smart frames remain on the compatibility path until their
@@ -2068,7 +2068,7 @@ deep-term work.
 Each migrated vertical slice needs all of these checks:
 
 1. **Provenance by construction:** advancing through a step changes semantic
-   state and appends that same `SimpleProofStep`; there is no test-only or
+   state and appends that same `ProofStep`; there is no test-only or
    smart-only successor constructor.
 2. **Failure transactionality:** a rejected step leaves the ancestor `Proof`
    unchanged and produces no certificate node.
@@ -2087,7 +2087,7 @@ Each migrated vertical slice needs all of these checks:
    provenance except through the public proof-object operations.
 
 For smart `step()`, retain the owned-vector isolation: the exact generated
-`step()` is a fast simple step, and migrated ordinary verification must
+`step()` is a fast proof step, and migrated ordinary verification must
 perform that successful semantic transition once. A separate explicit
 expansion check must still reject a corrupted printed certificate.
 
@@ -2223,7 +2223,7 @@ The theorem-application seam now retains a two-rule arithmetic composition
 for a post-execution claim. From exact `lower < value` and `value < upper`
 facts, smart `simp` first applies `int32_lt_implies_le`, then applies
 `int32_increment_strict_greater_lower_bound` on the resulting Proof. The
-second simple step consumes the checked fact added by the first; ordinary
+second proof step consumes the checked fact added by the first; ordinary
 verification neither rebuilds nor independently checks the sequence.
 
 Outcome facts that mention a C local after it leaves scope use the Proof's
@@ -2281,7 +2281,7 @@ while proving an atomic claim. The proposition derivation records ordinary
 disjunction elimination for arbitrary conclusions, and `Proof` opens the
 selected Surface spelling with `begin_cases`, proves each branch on its owned
 immutable descendant, and joins the retained bodies as one
-`SimpleProofStep::Cases`. The grouped outcome certifier accepts that checked
+`ProofStep::Cases`. The grouped outcome certifier accepts that checked
 point `have` directly; it no longer requires a flat legacy certificate before
 the Proof search can run, nor independently checks the already-checked body.
 
@@ -2341,7 +2341,7 @@ regression.
 `Goal::Proposition` now pairs the checked kernel proposition with an optional
 shared Surface Click view inside the immutable `Proof` state. Structural smart
 search no longer accepts a caller-supplied goal spelling: it reads the syntax
-owned by the same proof whose simple steps it applies. `begin_have` creates a
+owned by the same proof whose proof steps it applies. `begin_have` creates a
 paired child goal, proposition branches share the complete Surface view by
 identity, and `Intro` advances the kernel implication and Surface consequent
 together. Goal-changing operations such as rewrite, witness selection, and
@@ -2390,7 +2390,7 @@ the three retained rewrites and structural join.
 ### Progress (2026-08-17: qualified frame transition on Proof)
 
 An explicit smart `frame(loop(N))` or labeled loop frame now advances through
-one checked `SimpleProofStep::FrameUsing` on the immutable `Proof`. The step
+one checked `ProofStep::FrameUsing` on the immutable `Proof`. The step
 binds the frontier loop clauses already checked by the enclosing loop proof,
 uses the shared structural region validator, and schedules the existing
 audited `FrameRegion` outcome operation. It retains its exact simple node at
@@ -2405,7 +2405,7 @@ and independently verifies the expansion. Label resolution and the missing
 loop-effect diagnostic remain covered by their existing regressions. Qualified
 frames with explicit `using` premises were initially left on the compatibility
 surface; the smart syntax migrated here constructed the exact premise-free
-simple step.
+proof step.
 
 Top-level premise-bearing qualified frames now cross the same boundary. The
 source `FrameUsing { region: Loop(_), premises }` is submitted directly to
@@ -3906,7 +3906,7 @@ retirement is the one remaining proof-object migration leaf.
 - Smart tactics receive `Proof` values with private construction and mutation;
   no smart tactic advances `ProofCheckContext`, `CState`, facts, resources,
   frontiers, goals, or certificate builders directly.
-- Every semantic successor is produced by an accepted `SimpleProofStep` or a
+- Every semantic successor is produced by an accepted `ProofStep` or a
   named audited structural operation that records its certificate node
   atomically.
 - Every successful smart tactic exposes a structured `ProofCertificate`
@@ -3915,7 +3915,7 @@ retirement is the one remaining proof-object migration leaf.
 - Branching, scopes, joins, and completion are first-class proof-object
   operations shared by tactics rather than reconstructed from final contexts.
 - Ordinary verification does not independently re-execute a smart tactic's
-  successful simple-step path. Explicit source verification, `click expand`,
+  successful proof-step path. Explicit source verification, `click expand`,
   and `click audit` continue to check separately supplied or serialized
   certificates.
 - All current smart tactic families are migrated or explicitly blocked from
@@ -3927,4 +3927,4 @@ retirement is the one remaining proof-object migration leaf.
 - The full repository gate is green, and the owned-vector smart-step failure
   no longer reports or performs an ordinary per-tactic independent verification.
 
-[`SimpleProofStep`]: ../src/lang/click.rs
+[`ProofStep`]: ../src/lang/click.rs

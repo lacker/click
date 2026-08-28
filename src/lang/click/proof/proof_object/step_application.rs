@@ -3,14 +3,14 @@
 use super::*;
 
 impl<'a> Proof<'a> {
-    /// Checks one explicit simple step and atomically returns the checked
+    /// Checks one explicit proof step and atomically returns the checked
     /// successor with that exact step retained as provenance.
     ///
     /// Failure allocates no reachable successor: `self` and all of its other
     /// descendants continue to share the unchanged ancestor state.
     pub(in crate::lang::click::proof) fn apply_step(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
     ) -> Result<Self, ClickError> {
         self.apply_step_with_origin(step, None)
     }
@@ -18,10 +18,10 @@ impl<'a> Proof<'a> {
     /// Applies a step while retaining its source occurrence for any ordered
     /// terminal work the checked transition has to schedule. The source site
     /// affects diagnostics and finalization order only; the certificate node
-    /// remains exactly the supplied `SimpleProofStep`.
+    /// remains exactly the supplied `ProofStep`.
     pub(super) fn apply_step_with_origin(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
         origin: Option<ProofStepOrigin>,
     ) -> Result<Self, ClickError> {
         self.apply_step_with_origin_mode(step, origin, false)
@@ -33,74 +33,72 @@ impl<'a> Proof<'a> {
     /// it, and the outermost resource join retires the goal.
     pub(super) fn apply_step_with_origin_mode(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
         origin: Option<ProofStepOrigin>,
         retain_closed_loop_effect_goal: bool,
     ) -> Result<Self, ClickError> {
         if self.focused_discharged() {
             return Err(self.step_error(format!(
                 "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
-                simple_step_source_name(&step)
+                proof_step_source_name(&step)
             )));
         }
         if self.focused_loop_effect_closed() {
             return Err(self.step_error(format!(
                 "the goal was already proved by the previous step, so this `{}` has nothing left to prove; you can delete this line",
-                simple_step_source_name(&step)
+                proof_step_source_name(&step)
             )));
         }
 
-        if let SimpleProofStep::Have { proposition, proof } = &step {
+        if let ProofStep::Have { proposition, proof } = &step {
             return self.apply_have_step(proposition, proof);
         }
-        if let SimpleProofStep::Step = &step {
+        if let ProofStep::Step = &step {
             return self.apply_execution_statement_step(step);
         }
 
         let next_state = match &step {
-            SimpleProofStep::Mark(name) => self.apply_execution_mark(name),
-            SimpleProofStep::ApplyTheoremUsing {
+            ProofStep::Mark(name) => self.apply_execution_mark(name),
+            ProofStep::ApplyTheoremUsing {
                 application,
                 premises,
             } => self.apply_theorem_using(application, premises),
-            SimpleProofStep::TransportUsing {
+            ProofStep::TransportUsing {
                 source,
                 target,
                 premises,
             } => self.apply_transport_using(source, target, premises),
-            SimpleProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
-            SimpleProofStep::UnfoldResource(resource) => {
-                self.apply_execution_resource_unfold(resource)
-            }
-            SimpleProofStep::FoldResource(resource) => {
+            ProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
+            ProofStep::UnfoldResource(resource) => self.apply_execution_resource_unfold(resource),
+            ProofStep::FoldResource(resource) => {
                 if self.focused_outcome_point().is_some() {
                     self.apply_outcome_resource_fold(resource)
                 } else {
                     self.apply_execution_resource_fold(resource)
                 }
             }
-            SimpleProofStep::ObserveResource(resource) => {
+            ProofStep::ObserveResource(resource) => {
                 self.apply_execution_resource_observation(resource)
             }
-            SimpleProofStep::Choose(choice) => self.apply_point_choose(choice),
-            SimpleProofStep::Witness(witness) => self.apply_point_witness(witness),
-            SimpleProofStep::InstantiateUsing {
+            ProofStep::Choose(choice) => self.apply_point_choose(choice),
+            ProofStep::Witness(witness) => self.apply_point_witness(witness),
+            ProofStep::InstantiateUsing {
                 quantified,
                 argument,
                 premises,
             } => self.apply_point_instantiate_using(quantified, argument, premises),
-            SimpleProofStep::Extract(proposition) => self.apply_extract(proposition),
-            SimpleProofStep::Rewrite(equality) => self.apply_rewrite(equality),
-            SimpleProofStep::Assumption => self.apply_assumption(),
-            SimpleProofStep::Normalize => self.apply_normalize(),
-            SimpleProofStep::Intro => self.apply_intro(),
-            SimpleProofStep::Split => self.apply_split(),
-            SimpleProofStep::Left => self.apply_left(),
-            SimpleProofStep::Right => self.apply_right(),
-            SimpleProofStep::Enumerate => self.apply_enumerate(),
-            SimpleProofStep::Contradiction(surface) => self.apply_contradiction(surface),
-            SimpleProofStep::CloseInvariants => self.apply_close_invariants(),
-            SimpleProofStep::FrameUsing { region, premises } => {
+            ProofStep::Extract(proposition) => self.apply_extract(proposition),
+            ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
+            ProofStep::Assumption => self.apply_assumption(),
+            ProofStep::Normalize => self.apply_normalize(),
+            ProofStep::Intro => self.apply_intro(),
+            ProofStep::Split => self.apply_split(),
+            ProofStep::Left => self.apply_left(),
+            ProofStep::Right => self.apply_right(),
+            ProofStep::Enumerate => self.apply_enumerate(),
+            ProofStep::Contradiction(surface) => self.apply_contradiction(surface),
+            ProofStep::CloseInvariants => self.apply_close_invariants(),
+            ProofStep::FrameUsing { region, premises } => {
                 if self.focused_outcome_point().is_some() {
                     self.apply_outcome_frame_using(region.as_ref(), premises)
                 } else {
@@ -114,7 +112,7 @@ impl<'a> Proof<'a> {
             }
             _ => {
                 Err(self
-                    .step_error("this simple step has not yet migrated to the checked `Proof` API"))
+                    .step_error("this proof step has not yet migrated to the checked `Proof` API"))
             }
         }?;
 
@@ -213,7 +211,7 @@ impl<'a> Proof<'a> {
     /// Checks one explicit function-level frame step exactly once and records
     /// private authority for the ordered outcome finalizer. Keep this rule
     /// outlined so its execution-state locals do not enlarge the common
-    /// simple-step dispatcher frame; the expansion small-stack test pins that
+    /// proof-step dispatcher frame; the expansion small-stack test pins that
     /// dispatch budget.
     #[inline(never)]
     pub(super) fn apply_outcome_frame_using(
@@ -630,7 +628,7 @@ impl<'a> Proof<'a> {
             checked = scope.join()?;
         }
         checked.apply_step_with_origin(
-            SimpleProofStep::FrameUsing {
+            ProofStep::FrameUsing {
                 region: None,
                 premises: plan.premises.clone(),
             },
@@ -645,7 +643,7 @@ impl<'a> Proof<'a> {
         let mut node = Some(self.node.as_ref());
         while let Some(current) = node {
             if let Some(step) = current.step.as_deref() {
-                if matches!(step, SimpleProofStep::If { .. }) {
+                if matches!(step, ProofStep::If { .. }) {
                     return ContextualFrameSkeleton::from_steps(std::slice::from_ref(step));
                 }
             }
@@ -798,12 +796,12 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Applies one source-attributed simple step to this Proof. The source
+    /// Applies one source-attributed proof step to this Proof. The source
     /// coordinates schedule already-checked ordered outcome work; they grant
     /// no additional semantic authority.
     pub(in crate::lang::click::proof) fn apply_step_at(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
         tactic_index: usize,
         source_index: usize,
     ) -> Result<Self, ClickError> {
@@ -827,7 +825,7 @@ impl<'a> Proof<'a> {
         source_index: usize,
     ) -> Result<Option<Self>, ClickError> {
         if let Some(region) = region {
-            let step = SimpleProofStep::FrameUsing {
+            let step = ProofStep::FrameUsing {
                 region: Some(region.clone()),
                 premises: Vec::new(),
             };
@@ -844,7 +842,7 @@ impl<'a> Proof<'a> {
         ) {
             return Ok(None);
         }
-        let step = SimpleProofStep::FrameUsing {
+        let step = ProofStep::FrameUsing {
             region: None,
             premises: Vec::new(),
         };
@@ -978,7 +976,7 @@ impl<'a> Proof<'a> {
                 premises.push(surface);
             }
         }
-        let selected = SimpleProofStep::FrameUsing {
+        let selected = ProofStep::FrameUsing {
             region: None,
             premises,
         };

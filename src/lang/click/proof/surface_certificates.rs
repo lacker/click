@@ -1430,7 +1430,7 @@ fn contract_expression_for_instantiation_value(
 /// universal premise, specialized at an explicit constant, proves the goal
 /// after its guards discharge from the remaining listed premises. The named
 /// `instantiate ... using` step adds the specialized fact and `assumption`
-/// closes the exact goal, matching independent simple-step check.
+/// closes the exact goal, matching independent proof-step check.
 pub(super) fn plan_explicit_forall_instantiation(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],

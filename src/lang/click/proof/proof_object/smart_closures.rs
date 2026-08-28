@@ -22,17 +22,17 @@ impl<'a> Proof<'a> {
                 &proof,
                 &mut budget,
                 [
-                    SimpleProofStep::Normalize,
-                    SimpleProofStep::Assumption,
-                    SimpleProofStep::Split,
-                    SimpleProofStep::Left,
-                    SimpleProofStep::Right,
-                    SimpleProofStep::Enumerate,
+                    ProofStep::Normalize,
+                    ProofStep::Assumption,
+                    ProofStep::Split,
+                    ProofStep::Left,
+                    ProofStep::Right,
+                    ProofStep::Enumerate,
                 ],
             )? {
                 return Ok(Some(closed));
             }
-            match attempt::candidate_outcome(proof.apply_step(SimpleProofStep::Intro))? {
+            match attempt::candidate_outcome(proof.apply_step(ProofStep::Intro))? {
                 Some(introduced) => proof = introduced,
                 None => return Ok(None),
             }
@@ -46,7 +46,7 @@ impl<'a> Proof<'a> {
     /// is translated into a candidate made only of checked theorem
     /// applications, rewrites, and nested `have` scopes. The candidate
     /// advances this same `Proof`; no semantic result is produced before
-    /// those simple steps have been accepted.
+    /// those proof steps have been accepted.
     pub(in crate::lang::click::proof) fn try_simp_closure(
         &self,
     ) -> Result<Option<Self>, ClickError> {
@@ -165,7 +165,7 @@ impl<'a> Proof<'a> {
                     if middle != second_middle {
                         continue;
                     }
-                    let theorem = SimpleProofStep::ApplyTheoremUsing {
+                    let theorem = ProofStep::ApplyTheoremUsing {
                         application: TheoremApplication {
                             name: "int32_ge_transitive".to_string(),
                             arguments: vec![last.clone(), middle.clone(), first.clone()],
@@ -232,7 +232,7 @@ impl<'a> Proof<'a> {
                     if lower_value != upper_value {
                         continue;
                     }
-                    let theorem = SimpleProofStep::ApplyTheoremUsing {
+                    let theorem = ProofStep::ApplyTheoremUsing {
                         application: TheoremApplication {
                             name: "int32_increment_preserves_order".to_string(),
                             arguments: vec![
@@ -262,7 +262,7 @@ impl<'a> Proof<'a> {
                         ),
                     };
                     if let Some(closed) = applied
-                        .apply_step(SimpleProofStep::TransportUsing {
+                        .apply_step(ProofStep::TransportUsing {
                             source: theorem_conclusion,
                             target: surface_goal.clone(),
                             premises: Vec::new(),
@@ -343,14 +343,14 @@ impl<'a> Proof<'a> {
                 if let Some(enumerated) = self.try_finite_forall_enumeration(surface_goal)? {
                     return Ok(Some(enumerated));
                 }
-                match attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))? {
+                match attempt::candidate_outcome(self.apply_step(ProofStep::Intro))? {
                     Some(introduced) => introduced.try_simp_closure(),
                     None => Ok(None),
                 }
             }
             (ClickProposition::Implies(surface_antecedent, _), Proposition::Implies(_, _)) => {
                 let Some(mut introduced) =
-                    attempt::candidate_outcome(self.apply_step(SimpleProofStep::Intro))?
+                    attempt::candidate_outcome(self.apply_step(ProofStep::Intro))?
                 else {
                     return Ok(None);
                 };
@@ -369,7 +369,7 @@ impl<'a> Proof<'a> {
                 }
                 for conjunct in &conjuncts {
                     let Some(extracted) = attempt::candidate_outcome(
-                        introduced.apply_step(SimpleProofStep::Extract(conjunct.clone())),
+                        introduced.apply_step(ProofStep::Extract(conjunct.clone())),
                     )?
                     else {
                         return Ok(None);
@@ -420,7 +420,7 @@ impl<'a> Proof<'a> {
                 let Some(joined) = attempt::candidate_outcome(right.join())? else {
                     return Ok(None);
                 };
-                attempt::candidate_outcome(joined.apply_step(SimpleProofStep::Split))
+                attempt::candidate_outcome(joined.apply_step(ProofStep::Split))
             }
             // A predicate-call goal unfolds to its body, which the
             // structural arms and logical closers then work over. Repeat
@@ -430,7 +430,7 @@ impl<'a> Proof<'a> {
                 if !self.focused_branch_unfolds().contains(name) =>
             {
                 match attempt::candidate_outcome(
-                    self.apply_step(SimpleProofStep::UnfoldPredicate(name.clone())),
+                    self.apply_step(ProofStep::UnfoldPredicate(name.clone())),
                 )? {
                     Some(unfolded) => unfolded.try_simp_closure(),
                     None => Ok(None),
@@ -438,8 +438,8 @@ impl<'a> Proof<'a> {
             }
             (ClickProposition::Or(surface_left, surface_right), Proposition::Or(_, _)) => {
                 for (surface, closer) in [
-                    (surface_left.as_ref(), SimpleProofStep::Left),
-                    (surface_right.as_ref(), SimpleProofStep::Right),
+                    (surface_left.as_ref(), ProofStep::Left),
+                    (surface_right.as_ref(), ProofStep::Right),
                 ] {
                     let selected = (|| {
                         let Some(scope) =
@@ -531,7 +531,7 @@ impl<'a> Proof<'a> {
             };
             proof = joined;
         }
-        attempt::candidate_outcome(proof.apply_step(SimpleProofStep::Enumerate))
+        attempt::candidate_outcome(proof.apply_step(ProofStep::Enumerate))
     }
 
     /// Closes from the just-introduced antecedent and one exact indexed
@@ -555,7 +555,7 @@ impl<'a> Proof<'a> {
             return Ok(None);
         }
         if let Some(closed) = attempt::candidate_outcome(
-            self.apply_step(SimpleProofStep::Contradiction(surface_antecedent.clone())),
+            self.apply_step(ProofStep::Contradiction(surface_antecedent.clone())),
         )? {
             return Ok(Some(closed));
         }
@@ -579,9 +579,9 @@ impl<'a> Proof<'a> {
                 .collect::<Vec<_>>(),
         };
         for surface in surfaces {
-            if let Some(closed) = attempt::candidate_outcome(
-                self.apply_step(SimpleProofStep::Contradiction(surface)),
-            )? {
+            if let Some(closed) =
+                attempt::candidate_outcome(self.apply_step(ProofStep::Contradiction(surface)))?
+            {
                 return Ok(Some(closed));
             }
         }
@@ -698,7 +698,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Resolves one exact retained fact to a surface form that will lower
-    /// back to that same kernel proposition when the selected simple step is
+    /// back to that same kernel proposition when the selected proof step is
     /// checked. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
     /// The point data a premise lookup spells against: the focused branch outcome
@@ -1005,7 +1005,7 @@ impl<'a> Proof<'a> {
                 // focused branch goal can be replaced.
                 let reverse = reverse_surface_equality(&surface);
                 for oriented in std::iter::once(surface).chain(reverse) {
-                    let Ok(rewritten) = proof.apply_step(SimpleProofStep::Rewrite(oriented)) else {
+                    let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) else {
                         continue;
                     };
                     if let Some(closed) = rewritten
@@ -1052,7 +1052,7 @@ impl<'a> Proof<'a> {
                 for oriented in
                     std::iter::once(surface.clone()).chain(reverse_surface_equality(surface))
                 {
-                    if let Ok(rewritten) = proof.apply_step(SimpleProofStep::Rewrite(oriented)) {
+                    if let Ok(rewritten) = proof.apply_step(ProofStep::Rewrite(oriented)) {
                         selected = Some((index, rewritten));
                         break;
                     }
@@ -1175,7 +1175,7 @@ impl<'a> Proof<'a> {
             let Ok(proof) = scope.join() else {
                 continue;
             };
-            let theorem = SimpleProofStep::ApplyTheoremUsing {
+            let theorem = ProofStep::ApplyTheoremUsing {
                 application: TheoremApplication {
                     name: if lower_bound {
                         "int32_ge_transitive".to_string()
@@ -1269,14 +1269,14 @@ impl<'a> Proof<'a> {
             }
             for equality in orientations {
                 let scope = self.begin_have(nonnegative_surface.clone()).ok()?;
-                let Ok(scope) = scope.apply_step(SimpleProofStep::Rewrite(equality)) else {
+                let Ok(scope) = scope.apply_step(ProofStep::Rewrite(equality)) else {
                     continue;
                 };
                 let Some(scope) = scope.try_direct_logical_closure().ok().flatten() else {
                     continue;
                 };
                 let joined = scope.join().ok()?;
-                let theorem = SimpleProofStep::ApplyTheoremUsing {
+                let theorem = ProofStep::ApplyTheoremUsing {
                     application: TheoremApplication {
                         name: "int32_nonnegative_predecessor_upper_bound".to_string(),
                         arguments: vec![surface_value.clone(), surface_upper.clone()],
@@ -1358,7 +1358,7 @@ impl<'a> Proof<'a> {
                     .flatten()
                     .or_else(|| {
                         let rewritten = focused_branch
-                            .apply_step(SimpleProofStep::Rewrite(assumed_surface.clone()))
+                            .apply_step(ProofStep::Rewrite(assumed_surface.clone()))
                             .ok()?;
                         rewritten
                             .try_direct_logical_closure()
@@ -1702,23 +1702,20 @@ impl<'a> Proof<'a> {
                     if !guards_available {
                         continue;
                     }
-                    let instantiated_proof =
-                        match self.apply_step(SimpleProofStep::InstantiateUsing {
-                            quantified: surface.clone(),
-                            argument: argument.clone(),
-                            premises: guard_facts
-                                .iter()
-                                .map(|(_, surface)| surface.clone())
-                                .collect(),
-                        }) {
-                            Ok(proof) => proof,
-                            Err(_) => continue,
-                        };
+                    let instantiated_proof = match self.apply_step(ProofStep::InstantiateUsing {
+                        quantified: surface.clone(),
+                        argument: argument.clone(),
+                        premises: guard_facts
+                            .iter()
+                            .map(|(_, surface)| surface.clone())
+                            .collect(),
+                    }) {
+                        Ok(proof) => proof,
+                        Err(_) => continue,
+                    };
                     let conclusion = current.clone();
                     if &conclusion == goal || conclusion.clone() == goal.clone() {
-                        if let Ok(closed) =
-                            instantiated_proof.apply_step(SimpleProofStep::Assumption)
-                        {
+                        if let Ok(closed) = instantiated_proof.apply_step(ProofStep::Assumption) {
                             return Some(closed);
                         }
                         continue;
@@ -1828,7 +1825,7 @@ impl<'a> Proof<'a> {
         let mut proof = self.clone();
         let mut introduced_forall = false;
         while let ClickProposition::ForAll { body, .. } = cursor {
-            proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+            proof = proof.apply_step(ProofStep::Intro).ok()?;
             cursor = body;
             introduced_forall = true;
         }
@@ -1838,13 +1835,11 @@ impl<'a> Proof<'a> {
         let ClickProposition::Implies(antecedent, _) = cursor else {
             return None;
         };
-        proof = proof.apply_step(SimpleProofStep::Intro).ok()?;
+        proof = proof.apply_step(ProofStep::Intro).ok()?;
         let mut guard_surfaces = Vec::new();
         collect_surface_conjunct_leaves(antecedent, &mut guard_surfaces);
         for guard in &guard_surfaces {
-            proof = proof
-                .apply_step(SimpleProofStep::Extract(guard.clone()))
-                .ok()?;
+            proof = proof.apply_step(ProofStep::Extract(guard.clone())).ok()?;
         }
         let target = proof.surface_goal()?.clone();
         let source = old_reflexive_transport_source(&target)?;
@@ -1971,9 +1966,7 @@ impl<'a> Proof<'a> {
                 && !normalizes_context_free(&kernel)
                 && proof.facts().contains_proper_conjunct(&kernel)
             {
-                proof = proof
-                    .apply_step(SimpleProofStep::Extract(surface.clone()))
-                    .ok()?;
+                proof = proof.apply_step(ProofStep::Extract(surface.clone())).ok()?;
                 if proof.is_complete() {
                     return Some(proof);
                 }
@@ -2592,7 +2585,7 @@ impl<'a> Proof<'a> {
         if matches!(statement, CStatement::If { .. }) {
             // A C `if` the context decides is one step into that arm; one it
             // cannot decide is a fork for the driver's branch handling.
-            return match self.apply_step(SimpleProofStep::Step) {
+            return match self.apply_step(ProofStep::Step) {
                 Ok(proof) => Ok(Some(proof)),
                 Err(_) => {
                     check_verification_deadline()?;
@@ -2603,7 +2596,7 @@ impl<'a> Proof<'a> {
         // The statement runs in the whole proof context; nothing can supply
         // more than the step already sees, so its failure is the answer,
         // with the step's diagnostic.
-        self.apply_step(SimpleProofStep::Step).map(Some)
+        self.apply_step(ProofStep::Step).map(Some)
     }
 }
 

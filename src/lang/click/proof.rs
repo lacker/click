@@ -91,7 +91,7 @@ use timing::TacticTiming;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 
 /// Checked kernel evidence used as the input to constructing one
-/// [`SimpleProofStep`]. Evidence never forms an ordered checkable program of
+/// [`ProofStep`]. Evidence never forms an ordered checkable program of
 /// its own: search consumes it transiently to write the surface step, and the
 /// resulting operation is checked by `Proof`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1443,7 +1443,7 @@ mod certificate_tests {
         .expect("opposite path certificates should merge");
 
         let [
-            SimpleProofStep::If {
+            ProofStep::If {
                 condition: merged_condition,
                 then_proof,
                 else_proof,

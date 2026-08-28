@@ -462,7 +462,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         });
     if let Some(construction) = construction.as_mut() {
         let environments = construction.environments;
-        construct_simple_step_for_planned_operation(
+        construct_proof_step_for_planned_operation(
             execution,
             proof_context,
             construction.sink,
@@ -568,7 +568,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         return;
     };
     let environments = construction.environments;
-    construct_simple_step_for_planned_operation(
+    construct_proof_step_for_planned_operation(
         execution,
         proof_context,
         construction.sink,

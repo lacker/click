@@ -23,7 +23,7 @@
 
 use super::proof_object::Proof;
 use crate::lang::click::ClickError;
-use crate::lang::click::SimpleProofStep;
+use crate::lang::click::ProofStep;
 
 /// Deterministic candidate budget for one bounded search.
 ///
@@ -118,7 +118,7 @@ pub(super) fn first_success<'a, C>(
 pub(super) fn try_steps<'a>(
     root: &Proof<'a>,
     budget: &mut AttemptBudget,
-    steps: impl IntoIterator<Item = SimpleProofStep>,
+    steps: impl IntoIterator<Item = ProofStep>,
 ) -> Result<Option<Proof<'a>>, ClickError> {
     first_success(root, budget, steps, |root, step| {
         candidate_outcome(root.apply_step(step))
@@ -133,7 +133,7 @@ pub(super) fn try_steps<'a>(
 pub(super) fn try_sequence<'a>(
     root: &Proof<'a>,
     budget: &mut AttemptBudget,
-    steps: &[SimpleProofStep],
+    steps: &[ProofStep],
 ) -> Result<Option<Proof<'a>>, ClickError> {
     if !budget.admit() {
         return Ok(None);

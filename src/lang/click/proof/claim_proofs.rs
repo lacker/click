@@ -848,13 +848,13 @@ fn begin_outcome_existence_proof<'a>(
         .with_checked_outcome_facts(path_requirements)?;
     let mut proof = root.focus_point_surface_goal(&surface_goal)?;
     for equality in &rewrite_claim_equalities[claim_index] {
-        proof = proof.apply_step(SimpleProofStep::Rewrite(equality.clone()))?;
+        proof = proof.apply_step(ProofStep::Rewrite(equality.clone()))?;
     }
     // These steps make the retained nested body independently surface
     // checkable. An unfold already inherited by the outcome is harmlessly
     // skipped, matching the former checked-scope behavior.
     for name in unfolded_predicates {
-        match proof.apply_step(SimpleProofStep::UnfoldPredicate(name.clone())) {
+        match proof.apply_step(ProofStep::UnfoldPredicate(name.clone())) {
             Ok(next) => proof = next,
             Err(_) => check_verification_deadline()?,
         }
@@ -871,11 +871,11 @@ fn outcome_existence_surface_certificate(
     completed: &Proof<'_>,
 ) -> ProofCertificate {
     ProofCertificate::from_steps(vec![
-        SimpleProofStep::Have {
+        ProofStep::Have {
             proposition: surface_goal,
             proof: Box::new(completed.certificate()),
         },
-        SimpleProofStep::Assumption,
+        ProofStep::Assumption,
     ])
 }
 
@@ -907,7 +907,7 @@ pub(in crate::lang::click) fn clear_independent_execution_cache() {
 /// branch so the rewritten source can reach the corresponding frontier before
 /// applying it. This is a structural serialization of retained provenance,
 /// not a semantic search or reconstruction.
-fn surface_steps_from_checked_proof(proof: &Proof<'_>) -> Result<Vec<SimpleProofStep>, ClickError> {
+fn surface_steps_from_checked_proof(proof: &Proof<'_>) -> Result<Vec<ProofStep>, ClickError> {
     fn append_retained_tactics_to_leaves(tactics: &mut Vec<ProofTactic>, suffix: &[ProofTactic]) {
         if let Some(ProofTactic::If(proof_if)) = tactics.last_mut() {
             append_retained_tactics_to_leaves(&mut proof_if.then_tactics, suffix);
@@ -1970,7 +1970,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 };
                                 let before = evolving.checkpoint();
                                 let folded = evolving
-                                    .apply_step(SimpleProofStep::FoldResource(resource.clone()))?;
+                                    .apply_step(ProofStep::FoldResource(resource.clone()))?;
                                 outcome = folded.focused_outcome_snapshot()?;
                                 let surface_tactics =
                                     folded.certificate_since(&before)?.to_proof_tactics();
@@ -2050,9 +2050,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     // this path's one evolving outcome proof
                                     // and retains its checked step directly.
                                     let before = evolving.checkpoint();
-                                    let unfolded = evolving.apply_step(
-                                        SimpleProofStep::UnfoldPredicate(name.clone()),
-                                    )?;
+                                    let unfolded = evolving
+                                        .apply_step(ProofStep::UnfoldPredicate(name.clone()))?;
                                     let added_facts = unfolded.added_facts().to_vec();
                                     let certificate = unfolded.certificate_since(&before)?;
                                     outcome_proof = Some(unfolded);
@@ -2162,12 +2161,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     // The migrated explicit case: the checked
                                     // application advances this path's
                                     // evolving outcome proof directly.
-                                    let applied = evolving.apply_step(
-                                        SimpleProofStep::ApplyTheoremUsing {
+                                    let applied =
+                                        evolving.apply_step(ProofStep::ApplyTheoremUsing {
                                             application: application.clone(),
                                             premises: premises.clone(),
-                                        },
-                                    )?;
+                                        })?;
                                     let added_facts = applied.added_facts().to_vec();
                                     outcome_proof = Some(applied);
                                     added_facts
@@ -2414,7 +2412,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         .with_checked_outcome_facts(&transport_available)?;
                                     let before = resynced.checkpoint();
                                     let transported = if let Some(premises) = premises {
-                                        resynced.apply_step(SimpleProofStep::TransportUsing {
+                                        resynced.apply_step(ProofStep::TransportUsing {
                                             source: source.clone(),
                                             target: target.clone(),
                                             premises: premises.clone(),
@@ -2491,7 +2489,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     };
                                 let proof = proof
                                     .with_outcome_snapshot(&outcome)?
-                                    .apply_step(SimpleProofStep::Choose(choice.clone()))?;
+                                    .apply_step(ProofStep::Choose(choice.clone()))?;
                                 existence_proof = Some((claim_index, surface_goal, proof));
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
@@ -2523,7 +2521,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     };
                                 let proof = proof
                                     .with_outcome_snapshot(&outcome)?
-                                    .apply_step(SimpleProofStep::Witness(witness.clone()))?;
+                                    .apply_step(ProofStep::Witness(witness.clone()))?;
                                 existence_proof = Some((claim_index, surface_goal, proof));
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
@@ -2641,7 +2639,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     };
                                     match point_root
                                         .focus_point_goal(goal)?
-                                        .apply_step(SimpleProofStep::Assumption)
+                                        .apply_step(ProofStep::Assumption)
                                     {
                                         Ok(proof) => {
                                             retained_certificate = Some(proof.certificate());
@@ -2757,7 +2755,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     };
                                     match point_root
                                         .focus_point_goal(goal)?
-                                        .apply_step(SimpleProofStep::Normalize)
+                                        .apply_step(ProofStep::Normalize)
                                     {
                                         Ok(proof) => {
                                             retained_certificate
@@ -2858,9 +2856,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                             ))
                                         })?,
                                     };
-                                    match point_root.focus_point_goal(goal)?.apply_step(
-                                        SimpleProofStep::Rewrite(surface_equality.clone()),
-                                    ) {
+                                    match point_root
+                                        .focus_point_goal(goal)?
+                                        .apply_step(ProofStep::Rewrite(surface_equality.clone()))
+                                    {
                                         Ok(proof) => {
                                             let rewritten = proof.goal().cloned().ok_or_else(|| {
                                                 ClickError::new(format!(
@@ -3011,7 +3010,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 };
                                 let before = evolving.checkpoint();
                                 let framed = evolving.apply_step_at(
-                                    SimpleProofStep::FrameUsing {
+                                    ProofStep::FrameUsing {
                                         region: region.clone(),
                                         premises: premises.clone(),
                                     },
@@ -3426,7 +3425,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 continue;
                                             }
                                             match direct_proof.apply_step(
-                                                SimpleProofStep::UnfoldPredicate(name.clone()),
+                                                ProofStep::UnfoldPredicate(name.clone()),
                                             ) {
                                                 Ok(unfolded) => direct_proof = unfolded,
                                                 Err(_) => {
@@ -3465,7 +3464,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             };
                                             let mut rewrites_applied = true;
                                             for equality in equalities {
-                                                match scope.apply_step(SimpleProofStep::Rewrite(
+                                                match scope.apply_step(ProofStep::Rewrite(
                                                     equality.clone(),
                                                 )) {
                                                     Ok(next) => scope = next,
@@ -3973,15 +3972,14 @@ pub(super) fn finish_ordered_proof<'a>(
         // where cross-context synthesis will place the surface `if`.
         // Appending them by execution-branch leaf would graft one case's
         // closers onto execution paths the case excluded.
-        let append_surface_tactics = |steps: &mut Vec<SimpleProofStep>,
-                                      path_tactics: &[Vec<ProofTactic>]|
-         -> Result<(), String> {
-            if retained_surface.path_choices.is_empty() {
-                append_surface_tactics_by_leaf(steps, path_tactics)
-            } else {
-                append_surface_tactics_flat(steps, path_tactics)
-            }
-        };
+        let append_surface_tactics =
+            |steps: &mut Vec<ProofStep>, path_tactics: &[Vec<ProofTactic>]| -> Result<(), String> {
+                if retained_surface.path_choices.is_empty() {
+                    append_surface_tactics_by_leaf(steps, path_tactics)
+                } else {
+                    append_surface_tactics_flat(steps, path_tactics)
+                }
+            };
         if proof_context.constants.grouped_contract {
             let mut expanded = retained_surface.clone();
             if surface_post_tactics_by_path

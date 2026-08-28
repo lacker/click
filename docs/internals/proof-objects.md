@@ -27,7 +27,7 @@ and expansion.
 
 `Proof` provenance retains the surface-expressible operation that produced each
 checked successor. `ProofCertificate` is the current structured serialization
-of those operations as `SimpleProofStep` values, including nested scopes and
+of those operations as `ProofStep` values, including nested scopes and
 branches. It can be rendered back to surface tactics for expansion. The
 serialization carries no semantic authority of its own and need not exist
 during ordinary verification in the intended architecture.
@@ -77,7 +77,7 @@ accepted merely because the planner labels it successful; success is a
 completed checked descendant.
 
 A checked `simp` derivation is added only for a common, bounded,
-checkable shape: it must emit simple steps the kernel checks one at a
+checkable shape: it must emit proof steps the kernel checks one at a
 time and a certificate can encode. That the search-based `simp` decision
 procedure could decide a goal is not a criterion; it is a diagnostic, not
 an authority.

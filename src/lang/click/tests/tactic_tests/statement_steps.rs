@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn simple_step_supports_explicit_fact_transport() {
+fn proof_step_supports_explicit_fact_transport() {
     let c_source = r#"
             int32 set_second_return_first(int32 p[2]) {
                 p[1] = 9;

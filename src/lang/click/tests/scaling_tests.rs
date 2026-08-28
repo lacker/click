@@ -490,7 +490,7 @@ fn targeted_certification_keeps_an_explicit_theorem_dependency() {
 }
 
 #[test]
-fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
+fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
     for snapshot_claim in [false, true] {
         let samples = [8, 16, 32, 64]
             .into_iter()
@@ -508,7 +508,7 @@ fn straight_line_simple_steps_scale_near_linearly_with_retained_snapshots() {
                 sample
             })
             .collect::<Vec<_>>();
-        assert_near_linear_scaling("straight-line simple steps", &samples);
+        assert_near_linear_scaling("straight-line proof steps", &samples);
     }
 }
 

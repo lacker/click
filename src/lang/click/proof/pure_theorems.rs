@@ -610,13 +610,13 @@ fn verify_theorem_ensure(
         .or_else(|| {
             let steps = certificate.steps();
             let (rewrite_steps, closer) = steps.split_at(steps.len().saturating_sub(1));
-            if !matches!(closer, [SimpleProofStep::Normalize]) {
+            if !matches!(closer, [ProofStep::Normalize]) {
                 return None;
             }
             let rewrites = rewrite_steps
                 .iter()
                 .map(|step| match step {
-                    SimpleProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
+                    ProofStep::Rewrite(surface) => lower_pure_theorem_proposition(
                         claim_label,
                         surface,
                         &context.values,
@@ -649,7 +649,7 @@ fn verify_theorem_ensure(
     })
 }
 
-/// Lets direct smart pure proofs search by applying checked simple steps.
+/// Lets direct smart pure proofs search by applying checked proof steps.
 ///
 /// Failed descendants are simply discarded. A successful descendant already
 /// owns both the semantic successor and the exact simple certificate that
@@ -887,23 +887,23 @@ fn verify_kernel_standard_theorem_axiom(
 /// Fully explicit proposition scripts advance directly through
 /// `Proof::apply_step`. Linear scripts may interleave those checked steps with
 /// bare theorem application and a final `simp`; both smart operations select
-/// simple steps against the current `Proof`. Explicit `cases` certificates use
+/// proof steps against the current `Proof`. Explicit `cases` certificates use
 /// the audited branch/open/join operations recursively.
 fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
     certificate.steps().iter().all(|step| match step {
-        SimpleProofStep::ApplyTheoremUsing { .. }
-        | SimpleProofStep::UnfoldPredicate(_)
-        | SimpleProofStep::Assumption
-        | SimpleProofStep::Normalize
-        | SimpleProofStep::Intro
-        | SimpleProofStep::Split
-        | SimpleProofStep::Left
-        | SimpleProofStep::Right
-        | SimpleProofStep::Enumerate
-        | SimpleProofStep::Rewrite(_)
-        | SimpleProofStep::Extract(_)
-        | SimpleProofStep::Contradiction(_) => true,
-        SimpleProofStep::Cases {
+        ProofStep::ApplyTheoremUsing { .. }
+        | ProofStep::UnfoldPredicate(_)
+        | ProofStep::Assumption
+        | ProofStep::Normalize
+        | ProofStep::Intro
+        | ProofStep::Split
+        | ProofStep::Left
+        | ProofStep::Right
+        | ProofStep::Enumerate
+        | ProofStep::Rewrite(_)
+        | ProofStep::Extract(_)
+        | ProofStep::Contradiction(_) => true,
+        ProofStep::Cases {
             left_proof,
             right_proof,
             ..
@@ -911,7 +911,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
             proof_supports_pure_certificate(left_proof)
                 && proof_supports_pure_certificate(right_proof)
         }
-        SimpleProofStep::If {
+        ProofStep::If {
             then_proof,
             else_proof,
             ..
@@ -919,7 +919,7 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
             proof_supports_pure_certificate(then_proof)
                 && proof_supports_pure_certificate(else_proof)
         }
-        SimpleProofStep::Have { proof, .. } => proof_supports_pure_certificate(proof),
+        ProofStep::Have { proof, .. } => proof_supports_pure_certificate(proof),
         _ => false,
     })
 }

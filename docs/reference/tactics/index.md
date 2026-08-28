@@ -24,7 +24,7 @@ rather than a recommended first draft.
 Smart tactics are deliberately incomplete heuristics. A prompt failure means
 that this search did not find a proof within its budget, not that Click's
 engine is broken. Split a broad tactic into smaller operations or write the
-relevant simple steps explicitly. Improve shared search only for a general,
+relevant proof steps explicitly. Improve shared search only for a general,
 measured proof pattern; do not tune it around each difficult proof. In
 contrast, a smart success that cannot expand into normally verifiable source, a
 missed deadline, or a proposition that cannot be expressed with simple tactics
@@ -74,7 +74,7 @@ remains migration compatibility and should not be used in new proofs.
 
 | Surface form | Class | Valid state and transition | Failure, checking, and tools | Verified success |
 | --- | --- | --- | --- | --- |
-| `simp()` | smart | On a proposition goal, search ambient pure facts and bounded rules for a simple proof. It never executes C. | A bounded miss leaves the goal open and reports the target. Click checks the chosen operations; expansion prints its simple steps, and profiling reports search plus leaves. | [`simp_postconditions.md`](https://github.com/lacker/click/blob/master/mdtests/simp_postconditions.md) |
+| `simp()` | smart | On a proposition goal, search ambient pure facts and bounded rules for a simple proof. It never executes C. | A bounded miss leaves the goal open and reports the target. Click checks the chosen operations; expansion prints its proof steps, and profiling reports search plus leaves. | [`simp_postconditions.md`](https://github.com/lacker/click/blob/master/mdtests/simp_postconditions.md) |
 | `simp() using { P; ... }` | smart | On a proposition goal, search using exactly the listed proposition facts. | A missing fact or missing simple rule fails. Click uses the generated explicit proof rather than repeating search; expansion emits the named steps or reports the rule gap, and profiling reports the restricted site. | [`condition_search_explicit_decomposition.md`](https://github.com/lacker/click/blob/master/mdtests/condition_search_explicit_decomposition.md) |
 | `assumption()` | simple | Close the current goal when an exact equal fact is available. | A merely derivable or differently spelled fact fails. Click performs exact lookup; expansion leaves the step unchanged, and profiling charges one simple leaf. | [`simple_tactics.md`](https://github.com/lacker/click/blob/master/mdtests/simple_tactics.md) |
 | `extract(P)` | simple | Add `P` from an exact conjunction, or by bounded modus ponens from an available implication chain and exact antecedents. | A noncomponent or missing antecedent fails. Click follows the exact structural derivation with no search; expansion is unchanged, and profiling charges that derivation. | [`logical_tactics.rs`](https://github.com/lacker/click/blob/master/src/lang/click/tests/tactic_tests/logical_tactics.rs) |

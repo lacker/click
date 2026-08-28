@@ -175,5 +175,5 @@ documented for that tactic. The exhaustive surface-spelling inventory is in
 Omitting a proof and writing `by auto` request smart proof construction. Smart
 search can advance proof state only through checked operations. Use
 [`click expand`](../cli/expand.md) to replace expandable smart proof sites with
-the corresponding explicit simple steps; Click verifies the complete rewritten
+the corresponding explicit proof steps; Click verifies the complete rewritten
 source.

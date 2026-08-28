@@ -225,7 +225,7 @@ struct CheckedExecutionJoinParts {
     facts: ProofFacts,
     common_added_facts: Vec<Proposition>,
     unfolded_predicates: PersistentOrderedSet<String>,
-    step: SimpleProofStep,
+    step: ProofStep,
 }
 
 impl<'a> ExecutionSplit<'a> {
@@ -377,35 +377,35 @@ enum ProofScopeStructure {
     },
 }
 
-fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
+fn explicit_linear_step(tactic: &ProofTactic) -> Option<ProofStep> {
     match tactic {
         ProofTactic::ApplyTheoremUsing {
             application,
             premises,
-        } => Some(SimpleProofStep::ApplyTheoremUsing {
+        } => Some(ProofStep::ApplyTheoremUsing {
             application: application.clone(),
             premises: premises.clone(),
         }),
-        ProofTactic::UnfoldPredicate(name) => Some(SimpleProofStep::UnfoldPredicate(name.clone())),
-        ProofTactic::Witness(witness) => Some(SimpleProofStep::Witness(witness.clone())),
-        ProofTactic::Choose(choice) => Some(SimpleProofStep::Choose(choice.clone())),
-        ProofTactic::Assumption => Some(SimpleProofStep::Assumption),
-        ProofTactic::Extract(proposition) => Some(SimpleProofStep::Extract(proposition.clone())),
-        ProofTactic::Normalize => Some(SimpleProofStep::Normalize),
-        ProofTactic::Intro => Some(SimpleProofStep::Intro),
-        ProofTactic::Split => Some(SimpleProofStep::Split),
-        ProofTactic::Left => Some(SimpleProofStep::Left),
-        ProofTactic::Right => Some(SimpleProofStep::Right),
-        ProofTactic::Enumerate => Some(SimpleProofStep::Enumerate),
+        ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::Witness(witness) => Some(ProofStep::Witness(witness.clone())),
+        ProofTactic::Choose(choice) => Some(ProofStep::Choose(choice.clone())),
+        ProofTactic::Assumption => Some(ProofStep::Assumption),
+        ProofTactic::Extract(proposition) => Some(ProofStep::Extract(proposition.clone())),
+        ProofTactic::Normalize => Some(ProofStep::Normalize),
+        ProofTactic::Intro => Some(ProofStep::Intro),
+        ProofTactic::Split => Some(ProofStep::Split),
+        ProofTactic::Left => Some(ProofStep::Left),
+        ProofTactic::Right => Some(ProofStep::Right),
+        ProofTactic::Enumerate => Some(ProofStep::Enumerate),
         ProofTactic::Contradiction(proposition) => {
-            Some(SimpleProofStep::Contradiction(proposition.clone()))
+            Some(ProofStep::Contradiction(proposition.clone()))
         }
-        ProofTactic::Rewrite(proposition) => Some(SimpleProofStep::Rewrite(proposition.clone())),
+        ProofTactic::Rewrite(proposition) => Some(ProofStep::Rewrite(proposition.clone())),
         ProofTactic::TransportUsing {
             source,
             target,
             premises,
-        } => Some(SimpleProofStep::TransportUsing {
+        } => Some(ProofStep::TransportUsing {
             source: source.clone(),
             target: target.clone(),
             premises: premises.clone(),
@@ -414,7 +414,7 @@ fn explicit_linear_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
             quantified,
             argument,
             premises,
-        } => Some(SimpleProofStep::InstantiateUsing {
+        } => Some(ProofStep::InstantiateUsing {
             quantified: quantified.clone(),
             argument: argument.clone(),
             premises: premises.clone(),
@@ -619,10 +619,10 @@ enum ContextualFrameSkeleton {
 }
 
 impl ContextualFrameSkeleton {
-    fn from_steps(steps: &[SimpleProofStep]) -> Self {
+    fn from_steps(steps: &[ProofStep]) -> Self {
         let Some((condition, then_proof, else_proof)) =
             steps.iter().rev().find_map(|step| match step {
-                SimpleProofStep::If {
+                ProofStep::If {
                     condition,
                     then_proof,
                     else_proof,
@@ -1695,7 +1695,7 @@ struct ProofStepOrigin {
 /// that produced it.
 struct ProofNode {
     parent: Option<Arc<ProofNode>>,
-    step: Option<Arc<SimpleProofStep>>,
+    step: Option<Arc<ProofStep>>,
     /// The goal the step advanced (or, for markers, introduced). Certificate
     /// extraction partitions an interleaved multi-goal derivation by this
     /// recorded attribution; it never infers ownership from final states.
@@ -1705,7 +1705,7 @@ struct ProofNode {
 
 /// Persistent semantic fact state shared by every `Proof` kind.
 ///
-/// The exact index serves local simple-step queries and `assumptions` retains
+/// The exact index serves local proof-step queries and `assumptions` retains
 /// the kernel's incrementally updated reasoning context. Forking shares both;
 /// adding one fact copies only logarithmic index/context paths.
 #[derive(Clone, Default)]
@@ -2086,7 +2086,7 @@ impl<'a> Proof<'a> {
         for goal in goals {
             let closer = self
                 .focus_point_surface_goal(goal)?
-                .apply_step(SimpleProofStep::Assumption)?;
+                .apply_step(ProofStep::Assumption)?;
             steps.extend_from_slice(closer.certificate().steps());
         }
         Ok(ProofCertificate::from_steps(steps))
@@ -2218,33 +2218,33 @@ impl<'a> Proof<'a> {
     }
 }
 
-/// The source-level form of one simple step, for diagnostics that point
-/// at a line the user wrote.
-fn simple_step_source_name(step: &SimpleProofStep) -> &'static str {
+/// The source-level form of one proof step, for diagnostics that point at a
+/// line the user wrote.
+fn proof_step_source_name(step: &ProofStep) -> &'static str {
     match step {
-        SimpleProofStep::Assumption => "assumption()",
-        SimpleProofStep::Normalize => "normalize()",
-        SimpleProofStep::Intro => "intro()",
-        SimpleProofStep::Split => "split()",
-        SimpleProofStep::Left => "left()",
-        SimpleProofStep::Right => "right()",
-        SimpleProofStep::Enumerate => "enumerate()",
-        SimpleProofStep::Step => "step",
-        SimpleProofStep::ApplyTheoremUsing { .. } => "apply",
-        SimpleProofStep::TransportUsing { .. } => "transport",
-        SimpleProofStep::InstantiateUsing { .. } => "instantiate",
-        SimpleProofStep::Have { .. } => "have",
-        SimpleProofStep::Rewrite(_) => "rewrite",
-        SimpleProofStep::Extract(_) => "extract",
-        SimpleProofStep::Contradiction(_) => "contradiction",
-        SimpleProofStep::Witness(_) => "witness",
-        SimpleProofStep::Choose(_) => "choose",
-        SimpleProofStep::UnfoldPredicate(_) | SimpleProofStep::UnfoldResource(_) => "unfold",
-        SimpleProofStep::FoldResource(_) => "fold",
-        SimpleProofStep::ObserveResource(_) => "observe",
-        SimpleProofStep::FrameUsing { .. } => "frame",
-        SimpleProofStep::CloseInvariants => "close_invariants()",
-        SimpleProofStep::Mark(_) => "mark",
+        ProofStep::Assumption => "assumption()",
+        ProofStep::Normalize => "normalize()",
+        ProofStep::Intro => "intro()",
+        ProofStep::Split => "split()",
+        ProofStep::Left => "left()",
+        ProofStep::Right => "right()",
+        ProofStep::Enumerate => "enumerate()",
+        ProofStep::Step => "step",
+        ProofStep::ApplyTheoremUsing { .. } => "apply",
+        ProofStep::TransportUsing { .. } => "transport",
+        ProofStep::InstantiateUsing { .. } => "instantiate",
+        ProofStep::Have { .. } => "have",
+        ProofStep::Rewrite(_) => "rewrite",
+        ProofStep::Extract(_) => "extract",
+        ProofStep::Contradiction(_) => "contradiction",
+        ProofStep::Witness(_) => "witness",
+        ProofStep::Choose(_) => "choose",
+        ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
+        ProofStep::FoldResource(_) => "fold",
+        ProofStep::ObserveResource(_) => "observe",
+        ProofStep::FrameUsing { .. } => "frame",
+        ProofStep::CloseInvariants => "close_invariants()",
+        ProofStep::Mark(_) => "mark",
         _ => "tactic",
     }
 }

@@ -5,7 +5,7 @@ use super::*;
 impl<'a> Proof<'a> {
     pub(super) fn apply_execution_statement_step(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
     ) -> Result<Self, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`step` requires an execution-frontier proof"));
@@ -191,7 +191,7 @@ impl<'a> Proof<'a> {
         if execution.region_invariants_closed {
             Ok(self.clone())
         } else {
-            self.apply_step(SimpleProofStep::CloseInvariants)
+            self.apply_step(ProofStep::CloseInvariants)
         }
     }
 
@@ -391,16 +391,16 @@ impl<'a> Proof<'a> {
             && construction.steps.iter().all(|step| {
                 matches!(
                     step,
-                    SimpleProofStep::Have { .. }
-                        | SimpleProofStep::UnfoldPredicate(_)
-                        | SimpleProofStep::TransportUsing { .. }
-                        | SimpleProofStep::Step
+                    ProofStep::Have { .. }
+                        | ProofStep::UnfoldPredicate(_)
+                        | ProofStep::TransportUsing { .. }
+                        | ProofStep::Step
                 )
             })
             && construction
                 .steps
                 .iter()
-                .any(|step| matches!(step, SimpleProofStep::Step))
+                .any(|step| matches!(step, ProofStep::Step))
         {
             let mut proof = self.clone();
             for step in &construction.steps {
@@ -545,7 +545,7 @@ impl<'a> Proof<'a> {
                 ))
             })?
         };
-        self.apply_step(SimpleProofStep::TransportUsing {
+        self.apply_step(ProofStep::TransportUsing {
             source: surface_source.clone(),
             target: surface_target.clone(),
             premises,
@@ -612,16 +612,16 @@ impl<'a> Proof<'a> {
             && construction.steps.iter().all(|step| {
                 matches!(
                     step,
-                    SimpleProofStep::Have { .. }
-                        | SimpleProofStep::UnfoldPredicate(_)
-                        | SimpleProofStep::TransportUsing { .. }
-                        | SimpleProofStep::Step
+                    ProofStep::Have { .. }
+                        | ProofStep::UnfoldPredicate(_)
+                        | ProofStep::TransportUsing { .. }
+                        | ProofStep::Step
                 )
             })
             && construction
                 .steps
                 .iter()
-                .any(|step| matches!(step, SimpleProofStep::Step))
+                .any(|step| matches!(step, ProofStep::Step))
         {
             let mut executed = self.clone();
             for step in &construction.steps {
@@ -717,15 +717,15 @@ impl<'a> Proof<'a> {
         let linear_supported = construction.steps.iter().all(|step| {
             matches!(
                 step,
-                SimpleProofStep::Have { .. }
-                    | SimpleProofStep::UnfoldPredicate(_)
-                    | SimpleProofStep::TransportUsing { .. }
-                    | SimpleProofStep::Step
+                ProofStep::Have { .. }
+                    | ProofStep::UnfoldPredicate(_)
+                    | ProofStep::TransportUsing { .. }
+                    | ProofStep::Step
             )
         }) && construction
             .steps
             .iter()
-            .any(|step| matches!(step, SimpleProofStep::Step));
+            .any(|step| matches!(step, ProofStep::Step));
         let applied = if linear_supported {
             let mut proof = self.clone();
             for step in &construction.steps {
@@ -735,7 +735,7 @@ impl<'a> Proof<'a> {
         } else if construction
             .steps
             .iter()
-            .any(|step| matches!(step, SimpleProofStep::If { .. }))
+            .any(|step| matches!(step, ProofStep::If { .. }))
         {
             self.try_planned_execution_steps(&construction.steps)?
         } else {
@@ -819,13 +819,13 @@ impl<'a> Proof<'a> {
             // The law's surface certificate is already the complete checked
             // form, including the `have` wrapper when it selected one.
             (Some(certificate), _) => match certificate.steps() {
-                [step @ SimpleProofStep::Have { .. }] => step.clone(),
-                _ => SimpleProofStep::Have {
+                [step @ ProofStep::Have { .. }] => step.clone(),
+                _ => ProofStep::Have {
                     proposition: have.proposition.clone(),
                     proof: Box::new(certificate),
                 },
             },
-            (None, SourceProof::Script(tactics)) => SimpleProofStep::Have {
+            (None, SourceProof::Script(tactics)) => ProofStep::Have {
                 proposition: have.proposition.clone(),
                 proof: Box::new(ProofCertificate::from_proof_tactics(tactics).map_err(
                     |error| {
@@ -835,7 +835,7 @@ impl<'a> Proof<'a> {
                     },
                 )?),
             },
-            (None, _) => SimpleProofStep::Have {
+            (None, _) => ProofStep::Have {
                 proposition: have.proposition.clone(),
                 proof: Box::new(
                     ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption])
@@ -988,7 +988,7 @@ impl<'a> Proof<'a> {
                 steps: ProofCertificate::from_proof_tactics(std::slice::from_ref(
                     &ProofTactic::Loop(expanded_loop.clone()),
                 ))
-                .expect("an expanded loop is one simple proof step")
+                .expect("an expanded loop is one proof step")
                 .steps()
                 .to_vec(),
                 ..ProofCertificateBuilder::default()

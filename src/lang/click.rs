@@ -2107,14 +2107,17 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
 /// back to ordinary `.click` syntax.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofCertificate {
-    steps: Vec<SimpleProofStep>,
+    steps: Vec<ProofStep>,
 }
 
-/// One surface-expressible step in a [`ProofCertificate`]. Structured tactics own
-/// recursively simple child proofs, so simplicity is enforced by the Rust
-/// type rather than recovered later from [`ProofTactic::class`].
+/// One explicit, surface-expressible step in a [`ProofCertificate`].
+///
+/// Unlike [`ProofTactic`], this representation has no smart-tactic variants.
+/// Structured steps own recursively explicit child certificates, so a
+/// certificate's checkable shape is enforced by the Rust type rather than
+/// recovered later from [`ProofTactic::class`].
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum SimpleProofStep {
+pub enum ProofStep {
     Mark(String),
     Step,
     UnfoldPredicate(String),
@@ -2184,25 +2187,25 @@ pub enum SimpleProofStep {
         then_proof: Box<ProofCertificate>,
         else_proof: Box<ProofCertificate>,
     },
-    Loop(SimpleStructuralClause),
+    Loop(CertificateStructuralClause),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SimpleStructuralClause {
+pub struct CertificateStructuralClause {
     region: CodeRegion,
     label: Option<String>,
     decreases: Option<ContractExpression>,
-    items: Vec<SimpleStructuralItem>,
+    items: Vec<CertificateStructuralItem>,
     initialize_proof: Option<Box<ProofCertificate>>,
     preserve_proof: Option<Box<ProofCertificate>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SimpleStructuralItem {
+struct CertificateStructuralItem {
     kind: StructuralItemKind,
     claim: StructuralItemClaim,
     /// Invariants are declarations whose initialize/preserve proofs live on
-    /// the enclosing loop. Effect items contain their own simple proof.
+    /// the enclosing loop. Effect items contain their own explicit proof.
     effect_proof: Option<Box<ProofCertificate>>,
 }
 
@@ -2232,24 +2235,21 @@ impl ProofCertificate {
         Ok(Self {
             steps: tactics
                 .iter()
-                .map(SimpleProofStep::from_validated_tactic)
+                .map(ProofStep::from_validated_tactic)
                 .collect(),
         })
     }
 
-    pub fn steps(&self) -> &[SimpleProofStep] {
+    pub fn steps(&self) -> &[ProofStep] {
         &self.steps
     }
 
-    pub(crate) fn from_steps(steps: Vec<SimpleProofStep>) -> Self {
+    pub(crate) fn from_steps(steps: Vec<ProofStep>) -> Self {
         Self { steps }
     }
 
     pub fn to_proof_tactics(&self) -> Vec<ProofTactic> {
-        self.steps
-            .iter()
-            .map(SimpleProofStep::to_proof_tactic)
-            .collect()
+        self.steps.iter().map(ProofStep::to_proof_tactic).collect()
     }
 
     fn from_validated_proof(proof: &SourceProof) -> Self {
@@ -2259,7 +2259,7 @@ impl ProofCertificate {
         Self {
             steps: tactics
                 .iter()
-                .map(SimpleProofStep::from_validated_tactic)
+                .map(ProofStep::from_validated_tactic)
                 .collect(),
         }
     }
@@ -2269,7 +2269,7 @@ impl ProofCertificate {
     }
 }
 
-impl SimpleProofStep {
+impl ProofStep {
     fn from_validated_tactic(tactic: &ProofTactic) -> Self {
         match tactic {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
@@ -2400,14 +2400,14 @@ impl SimpleProofStep {
                         .collect(),
                 }),
             },
-            ProofTactic::Loop(clause) => Self::Loop(SimpleStructuralClause {
+            ProofTactic::Loop(clause) => Self::Loop(CertificateStructuralClause {
                 region: clause.region,
                 label: clause.label.clone(),
                 decreases: clause.decreases.clone(),
                 items: clause
                     .items
                     .iter()
-                    .map(|item| SimpleStructuralItem {
+                    .map(|item| CertificateStructuralItem {
                         kind: item.kind,
                         claim: item.claim.clone(),
                         effect_proof: item

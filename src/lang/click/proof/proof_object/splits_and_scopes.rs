@@ -187,7 +187,7 @@ impl<'a> Proof<'a> {
             let (tactic_index, source_index) = arm_steps[arm_index];
             advanced = advanced
                 .focus_execution_if_arm(&record, take_then)?
-                .apply_step_at(SimpleProofStep::Step, tactic_index, source_index)?;
+                .apply_step_at(ProofStep::Step, tactic_index, source_index)?;
         }
         Ok(Some((advanced, record)))
     }
@@ -432,7 +432,7 @@ impl<'a> Proof<'a> {
         ids: [BranchId; 2],
         condition: ClickProposition,
     ) -> Result<Self, ClickError> {
-        self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::If {
+        self.join_focused_branch(marker, split, ids, |left, right| ProofStep::If {
             condition,
             then_proof: Box::new(left),
             else_proof: Box::new(right),
@@ -451,7 +451,7 @@ impl<'a> Proof<'a> {
         ids: [BranchId; 2],
         disjunction: ClickProposition,
     ) -> Result<Self, ClickError> {
-        self.join_focused_branch(marker, split, ids, |left, right| SimpleProofStep::Cases {
+        self.join_focused_branch(marker, split, ids, |left, right| ProofStep::Cases {
             disjunction,
             left_proof: Box::new(left),
             right_proof: Box::new(right),
@@ -469,7 +469,7 @@ impl<'a> Proof<'a> {
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
         ids: [BranchId; 2],
-    ) -> Result<[Vec<SimpleProofStep>; 2], ClickError> {
+    ) -> Result<[Vec<ProofStep>; 2], ClickError> {
         let mut left_steps = Vec::new();
         let mut right_steps = Vec::new();
         let mut node = Some(self.node.clone());
@@ -505,7 +505,7 @@ impl<'a> Proof<'a> {
         marker: &ProofCheckpoint<'a>,
         split: SplitId,
         ids: [BranchId; 2],
-        step: impl FnOnce(ProofCertificate, ProofCertificate) -> SimpleProofStep,
+        step: impl FnOnce(ProofCertificate, ProofCertificate) -> ProofStep,
     ) -> Result<Self, ClickError> {
         for (name, id) in [("left", ids[0]), ("right", ids[1])] {
             if self.state.open_branches.get(id).is_some() {
@@ -548,7 +548,7 @@ impl<'a> Proof<'a> {
     /// copied into both arms or silently discarded. Unlike a proposition
     /// sibling split, the arms retain execution-frontier goals owning
     /// disjoint subsets of the checked execution, so branch-local facts
-    /// justify terminal simple steps without being exposed to incompatible
+    /// justify terminal proof steps without being exposed to incompatible
     /// outcomes.
     pub(super) fn split_focused_outcome_if(
         &self,
@@ -880,7 +880,7 @@ impl<'a> Proof<'a> {
             }),
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
-                step: Some(Arc::new(SimpleProofStep::If {
+                step: Some(Arc::new(ProofStep::If {
                     condition: record.condition.clone(),
                     then_proof: Box::new(then_certificate),
                     else_proof: Box::new(else_certificate),
@@ -922,7 +922,7 @@ impl<'a> Proof<'a> {
         // A post-execution unfold lets a predicate-call `have` prove the
         // predicate through its structural body. Pair that body kernel with
         // the same unfolded Surface view so `intro` retains binder names and
-        // subsequent simple steps serialize an independently checkable
+        // subsequent proof steps serialize an independently checkable
         // proof. Joining still publishes the opaque `kernel` named by the
         // enclosing Have step.
         let structural_proposition = if let ClickProposition::PredicateCall { name, .. } =

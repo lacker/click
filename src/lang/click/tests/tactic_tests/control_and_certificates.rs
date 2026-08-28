@@ -724,9 +724,9 @@ fn proof_certificate_round_trips_nested_surface_steps() {
     assert!(matches!(
         proof.steps(),
         [
-            SimpleProofStep::Mark(_),
-            SimpleProofStep::Have { .. },
-            SimpleProofStep::Branch { .. }
+            ProofStep::Mark(_),
+            ProofStep::Have { .. },
+            ProofStep::Branch { .. }
         ]
     ));
 }
@@ -734,7 +734,7 @@ fn proof_certificate_round_trips_nested_surface_steps() {
 #[test]
 fn proof_certificate_has_no_smart_step_variant() {
     let smart = ProofCertificate::from_proof_tactics(&[ProofTactic::Simp])
-        .expect_err("smart tactics are not simple proof steps");
+        .expect_err("smart tactics cannot appear in a proof certificate");
     assert_eq!(
         smart.tactic_class(),
         TacticClass::Smart(SmartTacticKind::Simp)

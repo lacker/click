@@ -106,7 +106,7 @@ impl<'a> Proof<'a> {
 
     /// Searches explicit premise forms for one point fact transport.
     ///
-    /// Every candidate is checked by applying the corresponding simple step
+    /// Every candidate is checked by applying the corresponding proof step
     /// to this immutable root. Failed descendants are discarded; the
     /// returned `Proof` is the already-checked, deletion-minimized success,
     /// so callers never reconstruct or check the selected certificate.
@@ -177,7 +177,7 @@ impl<'a> Proof<'a> {
         description: &str,
     ) -> Result<Self, ClickError> {
         let apply = |premises: Vec<ClickProposition>| {
-            self.apply_step(SimpleProofStep::TransportUsing {
+            self.apply_step(ProofStep::TransportUsing {
                 source: source.clone(),
                 target: target.clone(),
                 premises,
@@ -244,13 +244,13 @@ impl<'a> Proof<'a> {
     /// candidate on a point proof.
     ///
     /// Requirement selection probes the current persistent fact indexes. It
-    /// returns only a `SimpleProofStep`; theorem conclusions and provenance
+    /// returns only a `ProofStep`; theorem conclusions and provenance
     /// are created later, if and only if the caller submits that step to
     /// `apply_step` on this same proof.
     pub(in crate::lang::click::proof) fn select_point_theorem_application_step(
         &self,
         application: &TheoremApplication,
-    ) -> Result<SimpleProofStep, ClickError> {
+    ) -> Result<ProofStep, ClickError> {
         let ProofContext::Point(context) = self.context.as_ref() else {
             return Err(self.step_error("point theorem-application search requires a point proof"));
         };
@@ -276,7 +276,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn select_execution_theorem_application_step(
         &self,
         application: &TheoremApplication,
-    ) -> Result<SimpleProofStep, ClickError> {
+    ) -> Result<ProofStep, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error(
                 "execution theorem-application search requires an execution-frontier proof",
@@ -341,7 +341,7 @@ impl<'a> Proof<'a> {
     pub(super) fn select_theorem_application_step(
         &self,
         application: &TheoremApplication,
-    ) -> Result<Option<SimpleProofStep>, ClickError> {
+    ) -> Result<Option<ProofStep>, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.select_pure_theorem_application_step(application),
             ProofContext::Point(_) => self.select_point_theorem_application_step(application),
@@ -378,7 +378,7 @@ impl<'a> Proof<'a> {
 
     pub(super) fn apply_selected_theorem_application(
         &self,
-        step: SimpleProofStep,
+        step: ProofStep,
     ) -> Result<Self, ClickError> {
         self.apply_step(step).map_err(|error| {
             self.step_error(format!(
@@ -402,7 +402,7 @@ impl<'a> Proof<'a> {
         predicate_environment: &PredicateEnvironment,
         click_function_environment: &ClickFunctionEnvironment,
         theorem_environment: &TheoremEnvironment,
-    ) -> Result<SimpleProofStep, ClickError> {
+    ) -> Result<ProofStep, ClickError> {
         let values = parameter_values(parameters, arguments).map_err(|error| {
             self.step_error(format!(
                 "could not bind theorem arguments: {}",
@@ -553,7 +553,7 @@ impl<'a> Proof<'a> {
             }
         }
 
-        Ok(SimpleProofStep::ApplyTheoremUsing {
+        Ok(ProofStep::ApplyTheoremUsing {
             application: application.clone(),
             premises,
         })
@@ -566,7 +566,7 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn select_pure_theorem_application_step(
         &self,
         application: &TheoremApplication,
-    ) -> Result<SimpleProofStep, ClickError> {
+    ) -> Result<ProofStep, ClickError> {
         let ProofContext::Pure(context) = self.context.as_ref() else {
             return Err(
                 self.step_error("pure theorem-application search requires a proposition goal")
@@ -631,7 +631,7 @@ impl<'a> Proof<'a> {
                 premises.push(surface);
             }
         }
-        Ok(SimpleProofStep::ApplyTheoremUsing {
+        Ok(ProofStep::ApplyTheoremUsing {
             application: application.clone(),
             premises,
         })

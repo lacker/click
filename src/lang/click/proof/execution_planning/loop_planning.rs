@@ -457,50 +457,48 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     merge_path_aligned_certificates(&claim_label, paths)
 }
 
-fn loop_effect_linear_step_supported(step: &SimpleProofStep) -> bool {
+fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
     match step {
-        SimpleProofStep::Mark(_)
-        | SimpleProofStep::Step
-        | SimpleProofStep::ApplyTheoremUsing { .. }
-        | SimpleProofStep::TransportUsing { .. }
-        | SimpleProofStep::UnfoldPredicate(_)
-        | SimpleProofStep::UnfoldResource(_)
-        | SimpleProofStep::FoldResource(_)
-        | SimpleProofStep::ObserveResource(_)
-        | SimpleProofStep::Choose(_)
-        | SimpleProofStep::Witness(_)
-        | SimpleProofStep::InstantiateUsing { .. }
-        | SimpleProofStep::Extract(_)
-        | SimpleProofStep::Rewrite(_)
-        | SimpleProofStep::Assumption
-        | SimpleProofStep::Normalize
-        | SimpleProofStep::Intro
-        | SimpleProofStep::Split
-        | SimpleProofStep::Left
-        | SimpleProofStep::Right
-        | SimpleProofStep::Enumerate
-        | SimpleProofStep::Contradiction(_)
-        | SimpleProofStep::CloseInvariants
-        | SimpleProofStep::FrameUsing { .. } => true,
-        SimpleProofStep::Have { proof, .. } => {
+        ProofStep::Mark(_)
+        | ProofStep::Step
+        | ProofStep::ApplyTheoremUsing { .. }
+        | ProofStep::TransportUsing { .. }
+        | ProofStep::UnfoldPredicate(_)
+        | ProofStep::UnfoldResource(_)
+        | ProofStep::FoldResource(_)
+        | ProofStep::ObserveResource(_)
+        | ProofStep::Choose(_)
+        | ProofStep::Witness(_)
+        | ProofStep::InstantiateUsing { .. }
+        | ProofStep::Extract(_)
+        | ProofStep::Rewrite(_)
+        | ProofStep::Assumption
+        | ProofStep::Normalize
+        | ProofStep::Intro
+        | ProofStep::Split
+        | ProofStep::Left
+        | ProofStep::Right
+        | ProofStep::Enumerate
+        | ProofStep::Contradiction(_)
+        | ProofStep::CloseInvariants
+        | ProofStep::FrameUsing { .. } => true,
+        ProofStep::Have { proof, .. } => {
             Proof::supports_linear_source(&SourceProof::Script(proof.to_proof_tactics()))
         }
-        SimpleProofStep::Induct { .. }
-        | SimpleProofStep::ApplyInduction { .. }
-        | SimpleProofStep::CloseInduction
-        | SimpleProofStep::Open { .. }
-        | SimpleProofStep::If { .. }
-        | SimpleProofStep::Cases { .. }
-        | SimpleProofStep::Branch { .. }
-        | SimpleProofStep::Loop(_) => false,
+        ProofStep::Induct { .. }
+        | ProofStep::ApplyInduction { .. }
+        | ProofStep::CloseInduction
+        | ProofStep::Open { .. }
+        | ProofStep::If { .. }
+        | ProofStep::Cases { .. }
+        | ProofStep::Branch { .. }
+        | ProofStep::Loop(_) => false,
     }
 }
 
-fn loop_effect_scope_step_supported(step: &SimpleProofStep) -> bool {
+fn loop_effect_scope_step_supported(step: &ProofStep) -> bool {
     match step {
-        SimpleProofStep::Open { proof, .. } => {
-            proof.steps().iter().all(loop_effect_scope_step_supported)
-        }
+        ProofStep::Open { proof, .. } => proof.steps().iter().all(loop_effect_scope_step_supported),
         step => loop_effect_linear_step_supported(step),
     }
 }
@@ -522,12 +520,12 @@ fn loop_effect_open_body_analysis(certificate: &ProofCertificate) -> Option<bool
             // remainder of every enclosing scope. Nested execution branches
             // recurse through this same typed tree driver; logical branches
             // inside `have` use the proposition driver.
-            SimpleProofStep::If {
+            ProofStep::If {
                 then_proof,
                 else_proof,
                 ..
             }
-            | SimpleProofStep::Cases {
+            | ProofStep::Cases {
                 left_proof: then_proof,
                 right_proof: else_proof,
                 ..
@@ -540,7 +538,7 @@ fn loop_effect_open_body_analysis(certificate: &ProofCertificate) -> Option<bool
                 }
                 true
             }
-            SimpleProofStep::Open { proof, .. } => {
+            ProofStep::Open { proof, .. } => {
                 let nested_contains_branch = loop_effect_open_body_analysis(proof)?;
                 if nested_contains_branch && index + 1 != certificate.steps().len() {
                     return None;
@@ -570,11 +568,11 @@ fn loop_effect_open_branch_path_into(
 ) -> bool {
     for (index, step) in certificate.steps().iter().enumerate() {
         match step {
-            SimpleProofStep::If { .. } | SimpleProofStep::Cases { .. } => {
+            ProofStep::If { .. } | ProofStep::Cases { .. } => {
                 path.push(index);
                 return true;
             }
-            SimpleProofStep::Open { proof, .. } => {
+            ProofStep::Open { proof, .. } => {
                 path.push(index);
                 if loop_effect_open_branch_path_into(proof, path) {
                     return true;
@@ -587,19 +585,19 @@ fn loop_effect_open_branch_path_into(
     false
 }
 
-fn loop_effect_step_source_width(step: &SimpleProofStep) -> usize {
+fn loop_effect_step_source_width(step: &ProofStep) -> usize {
     match step {
         // Resource scopes participate in the outer source-index sequence;
         // proposition-scope bodies have their own proof site and therefore,
         // like `source_tactic_width`, count only the enclosing `have` here.
-        SimpleProofStep::Open { proof, .. } => {
+        ProofStep::Open { proof, .. } => {
             1 + proof
                 .steps()
                 .iter()
                 .map(loop_effect_step_source_width)
                 .sum::<usize>()
         }
-        SimpleProofStep::If {
+        ProofStep::If {
             then_proof,
             else_proof,
             ..
@@ -615,7 +613,7 @@ fn loop_effect_step_source_width(step: &SimpleProofStep) -> usize {
                     .map(loop_effect_step_source_width)
                     .sum::<usize>()
         }
-        SimpleProofStep::Cases {
+        ProofStep::Cases {
             left_proof,
             right_proof,
             ..
@@ -673,7 +671,7 @@ fn apply_loop_effect_scope_certificate_at<'a>(
     for (local_index, step) in certificate.steps().iter().enumerate() {
         let tactic_index = tactic_index_offset + local_index;
         match step {
-            SimpleProofStep::Open { resource, proof } => {
+            ProofStep::Open { resource, proof } => {
                 let nested = scope.begin_open(resource.clone(), source_index)?;
                 let nested = apply_loop_effect_scope_certificate_at(
                     nested,
@@ -683,7 +681,7 @@ fn apply_loop_effect_scope_certificate_at<'a>(
                 )?;
                 scope = scope.join_nested(nested)?;
             }
-            SimpleProofStep::Have {
+            ProofStep::Have {
                 proposition,
                 proof: body,
             } => {
@@ -749,7 +747,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
     for (local_index, step) in certificate.steps().iter().enumerate() {
         let tactic_index = tactic_index_offset + local_index;
         match step {
-            SimpleProofStep::If {
+            ProofStep::If {
                 condition,
                 then_proof,
                 else_proof,
@@ -798,7 +796,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                 )?;
                 return ProofScope::retain_loop_effect_open_scopes(&scopes, wrap_from, joined);
             }
-            SimpleProofStep::Cases {
+            ProofStep::Cases {
                 disjunction,
                 left_proof,
                 right_proof,
@@ -847,7 +845,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                 )?;
                 return ProofScope::retain_loop_effect_open_scopes(&scopes, wrap_from, joined);
             }
-            SimpleProofStep::Open { resource, proof } => {
+            ProofStep::Open { resource, proof } => {
                 let current = scopes
                     .last()
                     .expect("an open-chain driver owns a leading scope")
@@ -880,7 +878,7 @@ fn apply_loop_effect_open_chain_certificate_at<'a>(
                     .expect("an open-chain driver owns a leading scope") =
                     current.join_nested(nested)?;
             }
-            SimpleProofStep::Have {
+            ProofStep::Have {
                 proposition,
                 proof: body,
             } => {
@@ -960,7 +958,7 @@ fn apply_loop_effect_certificate_at<'a>(
     for (local_index, step) in certificate.steps().iter().enumerate() {
         let tactic_index = tactic_index_offset + local_index;
         match step {
-            SimpleProofStep::If {
+            ProofStep::If {
                 condition,
                 then_proof,
                 else_proof,
@@ -997,7 +995,7 @@ fn apply_loop_effect_certificate_at<'a>(
                     },
                 );
             }
-            SimpleProofStep::Cases {
+            ProofStep::Cases {
                 disjunction,
                 left_proof,
                 right_proof,
@@ -1034,7 +1032,7 @@ fn apply_loop_effect_certificate_at<'a>(
                     },
                 );
             }
-            SimpleProofStep::Open {
+            ProofStep::Open {
                 resource,
                 proof: body,
             } => {
@@ -1046,7 +1044,7 @@ fn apply_loop_effect_certificate_at<'a>(
                     source_index + 1,
                 )?;
             }
-            SimpleProofStep::Have {
+            ProofStep::Have {
                 proposition,
                 proof: body,
             } => {

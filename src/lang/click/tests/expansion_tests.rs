@@ -5809,7 +5809,7 @@ fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
 }
 
 #[test]
-fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
+fn smart_immutable_frame_inside_open_selects_a_checked_proof_step() {
     let c_source = r#"
         int32 identity(int32 x) {
             return x;
@@ -6657,7 +6657,7 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
-        .expect("the contextual frame should retain its selected simple steps");
+        .expect("the contextual frame should retain its selected proof steps");
     let Some(ProofTactic::Open(open)) = tactics.first() else {
         panic!("{tactics:#?}");
     };
@@ -9434,7 +9434,7 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "selected_branch.contract" && name == "generated certificate validation"
         )),
-        "the scoped decided branch must retain its searched simple steps directly: {events:#?}"
+        "the scoped decided branch must retain its searched proof steps directly: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -9653,7 +9653,7 @@ fn point_smart_have_retains_a_checked_theorem_application() {
         "first",
         CProofClaim::Grouped,
     )
-    .expect("the theorem-backed have should expand into simple steps");
+    .expect("the theorem-backed have should expand into proof steps");
     assert!(!expanded.contains("have x < z by simp"), "{expanded}");
     assert!(expanded.contains("have x < z by {"), "{expanded}");
     assert!(expanded.contains("apply"), "{expanded}");
@@ -9686,7 +9686,7 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
     let (verified, certificate_checks) = proof::count_source_certificate_checks(|| {
         verify_c0_sources(click_source, &[("identity.c", c_source)])
     });
-    verified.expect("explicit point have should advance through its checked simple step");
+    verified.expect("explicit point have should advance through its checked proof step");
     assert_eq!(
         certificate_checks, 0,
         "the admitted explicit point have should apply directly to Proof"

@@ -89,7 +89,7 @@ fn execution_frontier_owns_compact_selected_effect_goals() {
             matches!(root.focused_obligation(), Some(Obligation::Frontier(FrontierObligation { selection: actual, .. })) if *actual == selection)
         );
         let marked = root
-            .apply_step(SimpleProofStep::Mark("selected".to_string()))
+            .apply_step(ProofStep::Mark("selected".to_string()))
             .expect("an ordinary frontier step should preserve its effect goals");
         assert_eq!(marked.effect_goal_count(), expected);
         assert!(
@@ -201,10 +201,10 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
     // expansion is published.
     let mut budget = attempt::AttemptBudget::unbounded();
     let missed = attempt::attempt(&root, &mut budget, |candidate| {
-        let prefix = attempt::candidate_outcome(candidate.apply_step(SimpleProofStep::Intro))?
+        let prefix = attempt::candidate_outcome(candidate.apply_step(ProofStep::Intro))?
             .expect("intro is locally valid on the implication goal");
         // The continuation demands a step the prefix cannot support.
-        attempt::candidate_outcome(prefix.apply_step(SimpleProofStep::Split))
+        attempt::candidate_outcome(prefix.apply_step(ProofStep::Split))
     })
     .expect("a rejected continuation is a miss, not a tooling failure");
     assert!(missed.is_none());
@@ -215,7 +215,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
     // checks: every attempt starts from the same prefix state, which was
     // produced by exactly one accepted `Intro`.
     let prefix = root
-        .apply_step(SimpleProofStep::Intro)
+        .apply_step(ProofStep::Intro)
         .expect("intro should refine the implication goal");
     let mut attempts = 0usize;
     let mut budget = attempt::AttemptBudget::unbounded();
@@ -223,10 +223,10 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
         &prefix,
         &mut budget,
         [
-            SimpleProofStep::Split,
-            SimpleProofStep::Left,
-            SimpleProofStep::Right,
-            SimpleProofStep::Assumption,
+            ProofStep::Split,
+            ProofStep::Left,
+            ProofStep::Right,
+            ProofStep::Assumption,
         ],
         |shared, step| {
             attempts += 1;
@@ -240,7 +240,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
     assert!(selected.is_complete());
     assert_eq!(
         selected.certificate().steps(),
-        &[SimpleProofStep::Intro, SimpleProofStep::Assumption],
+        &[ProofStep::Intro, ProofStep::Assumption],
         "the retained certificate contains only the accepted path"
     );
 
@@ -250,11 +250,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
     let bounded = attempt::first_success(
         &prefix,
         &mut budget,
-        [
-            SimpleProofStep::Split,
-            SimpleProofStep::Assumption,
-            SimpleProofStep::Left,
-        ],
+        [ProofStep::Split, ProofStep::Assumption, ProofStep::Left],
         |shared, step| {
             attempts += 1;
             attempt::candidate_outcome(shared.apply_step(step))
@@ -266,24 +262,20 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
 
     // An all-or-nothing sequence discards its partial descendant.
     let mut budget = attempt::AttemptBudget::unbounded();
-    let sequence = attempt::try_sequence(
-        &root,
-        &mut budget,
-        &[SimpleProofStep::Intro, SimpleProofStep::Split],
-    )
-    .expect("a rejected sequence tail is a miss");
+    let sequence = attempt::try_sequence(&root, &mut budget, &[ProofStep::Intro, ProofStep::Split])
+        .expect("a rejected sequence tail is a miss");
     assert!(sequence.is_none());
     let mut budget = attempt::AttemptBudget::unbounded();
     let sequence = attempt::try_sequence(
         &root,
         &mut budget,
-        &[SimpleProofStep::Intro, SimpleProofStep::Assumption],
+        &[ProofStep::Intro, ProofStep::Assumption],
     )
     .expect("an accepted sequence is not an error")
     .expect("the checked sequence should close the goal");
     assert_eq!(
         sequence.certificate().steps(),
-        &[SimpleProofStep::Intro, SimpleProofStep::Assumption]
+        &[ProofStep::Intro, ProofStep::Assumption]
     );
 }
 
@@ -334,13 +326,13 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     let left_closed = split_proof
         .focus_branch(ids[0])
         .expect("the left sibling is open")
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the shared disjunction fact closes the left claim");
     assert!(left_closed.state.open_branches.get(ids[1]).is_some());
     let both_closed = left_closed
         .focus_branch(ids[1])
         .expect("the right sibling is still open")
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the shared disjunction fact closes the right claim");
     assert!(both_closed.is_complete());
 
@@ -377,12 +369,12 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
     assert!(joined.is_complete());
     assert!(matches!(
         joined.certificate().steps(),
-        [SimpleProofStep::Cases {
+        [ProofStep::Cases {
             left_proof,
             right_proof,
             ..
-        }] if left_proof.steps() == [SimpleProofStep::Assumption]
-            && right_proof.steps() == [SimpleProofStep::Assumption]
+        }] if left_proof.steps() == [ProofStep::Assumption]
+            && right_proof.steps() == [ProofStep::Assumption]
     ));
     assert!(root.certificate().steps().is_empty());
     assert_eq!(root.sole_branch_id(), Some(root_goal));
@@ -400,7 +392,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         .focus_branch(ids[0])
         .expect("the left sibling is open");
     assert!(
-        focused_branch.apply_step(SimpleProofStep::Intro).is_err(),
+        focused_branch.apply_step(ProofStep::Intro).is_err(),
         "an atomic claim rejects `intro`"
     );
     assert_eq!(split_proof.branches().collect::<Vec<_>>(), ids);
@@ -430,7 +422,7 @@ fn attempt_reports_deadline_failure_instead_of_a_rejection() {
 
     // Without a deadline the unprovable candidate is an ordinary miss.
     let mut budget = attempt::AttemptBudget::unbounded();
-    let missed = attempt::try_steps(&root, &mut budget, [SimpleProofStep::Assumption])
+    let missed = attempt::try_steps(&root, &mut budget, [ProofStep::Assumption])
         .expect("a rejected candidate is a miss");
     assert!(missed.is_none());
 
@@ -439,7 +431,7 @@ fn attempt_reports_deadline_failure_instead_of_a_rejection() {
     // one more rejected candidate and continuing.
     let aborted = crate::instrumentation::with_deadline(std::time::Duration::ZERO, || {
         let mut budget = attempt::AttemptBudget::unbounded();
-        attempt::try_steps(&root, &mut budget, [SimpleProofStep::Assumption])
+        attempt::try_steps(&root, &mut budget, [ProofStep::Assumption])
     });
     assert!(
         aborted.is_err(),
@@ -481,20 +473,17 @@ fn proof_failure_preserves_ancestor_and_selected_provenance() {
     assert!(Arc::ptr_eq(&root.node, &fork.node));
 
     assert!(
-        fork.apply_step(SimpleProofStep::Normalize).is_err(),
+        fork.apply_step(ProofStep::Normalize).is_err(),
         "a symbolic comparison must not normalize to true"
     );
     assert!(!root.is_complete());
     assert!(root.certificate().steps().is_empty());
 
     let complete = root
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the exact root fact should close the goal");
     assert!(complete.is_complete());
-    assert_eq!(
-        complete.certificate().steps(),
-        &[SimpleProofStep::Assumption]
-    );
+    assert_eq!(complete.certificate().steps(), &[ProofStep::Assumption]);
     assert!(!root.is_complete());
     assert!(root.certificate().steps().is_empty());
 }
@@ -537,7 +526,7 @@ fn branch_identity_is_stable_across_fork_refinement_and_closure() {
     // it must stay a small constant, not scale with proof size.
     let before_refinement = fact_node_allocations();
     let introduced = root
-        .apply_step(SimpleProofStep::Intro)
+        .apply_step(ProofStep::Intro)
         .expect("intro should refine the implication goal");
     assert_eq!(introduced.sole_branch_id(), Some(root_id));
     assert_eq!(introduced.branches_next_id(), root.branches_next_id());
@@ -554,7 +543,7 @@ fn branch_identity_is_stable_across_fork_refinement_and_closure() {
     // Discharge retires the id: the collection is empty and the allocator
     // never reuses the retired identifier.
     let complete = introduced
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the introduced fact should close the consequent");
     assert!(complete.is_complete());
     assert_eq!(complete.sole_branch_id(), None);
@@ -592,11 +581,11 @@ fn certificate_suffix_requires_an_exact_shared_ancestor() {
     );
     let root_checkpoint = root.checkpoint();
     let introduced = root
-        .apply_step(SimpleProofStep::Intro)
+        .apply_step(ProofStep::Intro)
         .expect("intro should create the exact antecedent fact");
     let introduced_checkpoint = introduced.checkpoint();
     let complete = introduced
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the introduced fact should close the consequent");
 
     assert_eq!(
@@ -604,14 +593,14 @@ fn certificate_suffix_requires_an_exact_shared_ancestor() {
             .certificate_since(&root_checkpoint)
             .expect("root is an ancestor")
             .steps(),
-        &[SimpleProofStep::Intro, SimpleProofStep::Assumption]
+        &[ProofStep::Intro, ProofStep::Assumption]
     );
     assert_eq!(
         complete
             .certificate_since(&introduced_checkpoint)
             .expect("introduced proof is an ancestor")
             .steps(),
-        &[SimpleProofStep::Assumption]
+        &[ProofStep::Assumption]
     );
     assert!(
         root.certificate_since(&introduced_checkpoint).is_err(),
@@ -673,36 +662,34 @@ fn have_scope_publishes_only_a_completed_checked_body() {
         .begin_have(proposition.clone())
         .expect("have should open a nested proposition proof");
     assert!(scope.clone().join().is_err());
-    assert!(scope.apply_step(SimpleProofStep::Intro).is_err());
+    assert!(scope.apply_step(ProofStep::Intro).is_err());
     assert!(scope.body().certificate().steps().is_empty());
 
     let scope = scope
-        .apply_step(SimpleProofStep::Normalize)
+        .apply_step(ProofStep::Normalize)
         .expect("constant equality should normalize inside the body");
     let enclosing = scope.join().expect("completed body should close the scope");
     assert!(!enclosing.is_complete());
     assert_eq!(enclosing.added_facts().len(), 1);
     let complete = enclosing
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("published have fact should close the enclosing goal");
     assert_eq!(
         complete.certificate().steps(),
         &[
-            SimpleProofStep::Have {
+            ProofStep::Have {
                 proposition: proposition.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::Normalize,
-                ])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
             },
-            SimpleProofStep::Assumption,
+            ProofStep::Assumption,
         ]
     );
     assert!(!root.is_complete());
     assert!(root.certificate().steps().is_empty());
     assert!(
-        root.apply_step(SimpleProofStep::Have {
+        root.apply_step(ProofStep::Have {
             proposition: proposition.clone(),
-            proof: Box::new(ProofCertificate::from_steps(vec![SimpleProofStep::Intro])),
+            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Intro])),
         })
         .is_err(),
         "an invalid explicit Have body must be rejected"
@@ -713,26 +700,22 @@ fn have_scope_publishes_only_a_completed_checked_body() {
     );
 
     let checked_have = root
-        .apply_step(SimpleProofStep::Have {
+        .apply_step(ProofStep::Have {
             proposition: proposition.clone(),
-            proof: Box::new(ProofCertificate::from_steps(vec![
-                SimpleProofStep::Normalize,
-            ])),
+            proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
         })
         .expect("an explicit Have step should use the owned checked scope");
     let complete = checked_have
-        .apply_step(SimpleProofStep::Assumption)
+        .apply_step(ProofStep::Assumption)
         .expect("the checked Have step should publish its proposition");
     assert_eq!(
         complete.certificate().steps(),
         &[
-            SimpleProofStep::Have {
+            ProofStep::Have {
                 proposition,
-                proof: Box::new(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::Normalize,
-                ])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
             },
-            SimpleProofStep::Assumption,
+            ProofStep::Assumption,
         ]
     );
 }
@@ -806,7 +789,7 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
             .join()
             .expect("the completed nested proof should join");
         let complete = enclosing
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the published have fact should close the outer goal");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -818,26 +801,22 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         assert_eq!(
             complete.certificate().steps(),
             &[
-                SimpleProofStep::Have {
+                ProofStep::Have {
                     proposition: proposition.clone(),
-                    proof: Box::new(ProofCertificate::from_steps(vec![
-                        SimpleProofStep::Normalize,
-                    ])),
+                    proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
                 },
-                SimpleProofStep::Assumption,
+                ProofStep::Assumption,
             ]
         );
 
         let before = fact_node_allocations();
         let complete = root
-            .apply_step(SimpleProofStep::Have {
+            .apply_step(ProofStep::Have {
                 proposition: proposition.clone(),
-                proof: Box::new(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::Normalize,
-                ])),
+                proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize])),
             })
             .expect("the explicit Have should check through its owned scope")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the explicit Have should publish its proposition");
         let allocations = fact_node_allocations() - before;
         assert!(
@@ -847,13 +826,11 @@ fn smart_have_scope_and_explicit_step_scale_with_local_output() {
         assert_eq!(
             complete.certificate().steps(),
             &[
-                SimpleProofStep::Have {
+                ProofStep::Have {
                     proposition: proposition.clone(),
-                    proof: Box::new(ProofCertificate::from_steps(vec![
-                        SimpleProofStep::Normalize,
-                    ])),
+                    proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Normalize,])),
                 },
-                SimpleProofStep::Assumption,
+                ProofStep::Assumption,
             ]
         );
         assert!(root.certificate().steps().is_empty());
@@ -896,7 +873,7 @@ fn persistent_fact_lookup_scales_logarithmically() {
         );
 
         let complete = shared
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("fixed local step should succeed");
         assert!(complete.is_complete());
         assert!(Arc::ptr_eq(
@@ -1188,14 +1165,14 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
             "unrelated facts must not enter the selected predicate bucket"
         );
         assert!(
-            root.apply_step(SimpleProofStep::UnfoldPredicate("missing".to_string()))
+            root.apply_step(ProofStep::UnfoldPredicate("missing".to_string()))
                 .is_err(),
             "an unknown predicate must reject transactionally"
         );
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
-        let unfold = SimpleProofStep::UnfoldPredicate("selected".to_string());
+        let unfold = ProofStep::UnfoldPredicate("selected".to_string());
         let before = fact_node_allocations();
         let unfolded = root
             .apply_step(unfold.clone())
@@ -1216,16 +1193,15 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
                 .contains(&"selected".to_string())
         );
         let complete = unfolded
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the unfolded predicate fact should close the unfolded goal");
         assert!(complete.is_complete());
         assert_eq!(
             complete.certificate().steps(),
-            &[unfold.clone(), SimpleProofStep::Assumption]
+            &[unfold.clone(), ProofStep::Assumption]
         );
 
-        let certificate =
-            ProofCertificate::from_steps(vec![unfold.clone(), SimpleProofStep::Assumption]);
+        let certificate = ProofCertificate::from_steps(vec![unfold.clone(), ProofStep::Assumption]);
         let checked = root
             .try_planned_linear_script(&certificate.to_proof_tactics())
             .expect("the explicit proposition unfold script should apply through Proof")
@@ -1301,8 +1277,8 @@ fn point_proposition_unfold_checks_the_same_retained_step() {
         &[],
     );
     let certificate = ProofCertificate::from_steps(vec![
-        SimpleProofStep::UnfoldPredicate("selected".to_string()),
-        SimpleProofStep::Assumption,
+        ProofStep::UnfoldPredicate("selected".to_string()),
+        ProofStep::Assumption,
     ]);
     let checked = root
         .try_planned_linear_script(&certificate.to_proof_tactics())
@@ -1335,12 +1311,12 @@ fn point_proposition_unfold_checks_the_same_retained_step() {
         );
         let retained_root = root.clone();
         assert!(
-            root.apply_step(SimpleProofStep::UnfoldPredicate("missing".to_string()))
+            root.apply_step(ProofStep::UnfoldPredicate("missing".to_string()))
                 .is_err()
         );
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
 
-        let step = SimpleProofStep::UnfoldPredicate("selected".to_string());
+        let step = ProofStep::UnfoldPredicate("selected".to_string());
         let before = fact_node_allocations();
         let unfolded = root
             .apply_step(step.clone())
@@ -1451,19 +1427,16 @@ fn result_aware_point_goal_focus_shares_facts_and_checks_assumption() {
         assert!(
             root.focus_point_goal(missing.clone())
                 .expect("focusing does not prove the selected goal")
-                .apply_step(SimpleProofStep::Assumption)
+                .apply_step(ProofStep::Assumption)
                 .is_err()
         );
         assert!(Arc::ptr_eq(&focused_branch.state, &retained_focused.state));
 
         let complete = focused_branch
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the focused exact goal should close through Proof");
         assert!(complete.is_complete());
-        assert_eq!(
-            complete.certificate().steps(),
-            &[SimpleProofStep::Assumption]
-        );
+        assert_eq!(complete.certificate().steps(), &[ProofStep::Assumption]);
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -1510,14 +1483,14 @@ fn point_frontier_have_publishes_checked_fact_for_later_scope() {
         let first = root
             .begin_have(proposition.clone())
             .expect("a point frontier should open a checked have scope")
-            .apply_step(SimpleProofStep::Normalize)
+            .apply_step(ProofStep::Normalize)
             .expect("the first scope should prove the concrete equality")
             .join()
             .expect("a completed point-frontier scope should publish its fact");
         let second = first
             .begin_have(proposition.clone())
             .expect("the checked successor should open a dependent scope")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the later scope should see the first checked fact")
             .join()
             .expect("the dependent scope should publish its retained proof");
@@ -1531,10 +1504,10 @@ fn point_frontier_have_publishes_checked_fact_for_later_scope() {
         assert!(matches!(
             second.certificate().steps(),
             [
-                SimpleProofStep::Have { proof: first, .. },
-                SimpleProofStep::Have { proof: second, .. }
-            ] if first.steps() == [SimpleProofStep::Normalize]
-                && second.steps() == [SimpleProofStep::Assumption]
+                ProofStep::Have { proof: first, .. },
+                ProofStep::Have { proof: second, .. }
+            ] if first.steps() == [ProofStep::Normalize]
+                && second.steps() == [ProofStep::Assumption]
         ));
         let completed = second
             .complete_point_obligations(std::slice::from_ref(&proposition))
@@ -1542,9 +1515,9 @@ fn point_frontier_have_publishes_checked_fact_for_later_scope() {
         assert!(matches!(
             completed.steps(),
             [
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::Assumption
+                ProofStep::Have { .. },
+                ProofStep::Have { .. },
+                ProofStep::Assumption
             ]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -1594,7 +1567,7 @@ fn point_frontier_have_goal_does_not_reuse_an_older_surface_lowering() {
         .begin_have(surface)
         .expect("the current point goal should lower independently");
     assert!(
-        scope.apply_step(SimpleProofStep::Assumption).is_err(),
+        scope.apply_step(ProofStep::Assumption).is_err(),
         "an older fact with the same surface form must not close the current goal"
     );
     assert!(root.certificate().steps().is_empty());
@@ -1657,11 +1630,11 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
 
         let marker = split_proof.checkpoint();
         let joined = split_proof
-            .apply_step(SimpleProofStep::Left)
+            .apply_step(ProofStep::Left)
             .expect("the condition closes the then arm")
             .focus_branch(ids[1])
             .expect("the else sibling remains open")
-            .apply_step(SimpleProofStep::Right)
+            .apply_step(ProofStep::Right)
             .expect("the exact negation closes the else arm")
             .join_focused_if(&marker, split, ids, condition.clone())
             .expect("both discharged siblings should join");
@@ -1669,9 +1642,9 @@ fn proof_if_fork_and_join_work_is_logarithmic_in_unrelated_facts() {
         assert_eq!(joined.certificate().steps().len(), 1);
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::If { then_proof, else_proof, .. }]
-                if then_proof.steps() == [SimpleProofStep::Left]
-                    && else_proof.steps() == [SimpleProofStep::Right]
+            [ProofStep::If { then_proof, else_proof, .. }]
+                if then_proof.steps() == [ProofStep::Left]
+                    && else_proof.steps() == [ProofStep::Right]
         ));
         assert!(root.certificate().steps().is_empty());
     }
@@ -1706,7 +1679,7 @@ fn execution_frontier_rejects_proposition_closers_transactionally() {
     assert!(root.goal().is_none());
     assert!(Arc::ptr_eq(&root.state, &fork.state));
     assert!(Arc::ptr_eq(&root.node, &fork.node));
-    for closer in [SimpleProofStep::Assumption, SimpleProofStep::Normalize] {
+    for closer in [ProofStep::Assumption, ProofStep::Normalize] {
         let error = fork
             .apply_step(closer)
             .err()
@@ -1781,7 +1754,7 @@ fn point_witness_refines_existential_transactionally_with_constant_local_work() 
             &[],
         );
         let retained_root = root.clone();
-        let wrong_name = SimpleProofStep::Witness(ProofWitness {
+        let wrong_name = ProofStep::Witness(ProofWitness {
             name: "other".to_string(),
             value: ContractExpression::CFragment(CExpression::Value(int32(7))),
         });
@@ -1795,7 +1768,7 @@ fn point_witness_refines_existential_transactionally_with_constant_local_work() 
 
         let before = fact_node_allocations();
         let refined = root
-            .apply_step(SimpleProofStep::Witness(witness.clone()))
+            .apply_step(ProofStep::Witness(witness.clone()))
             .expect("the named int32 witness should refine the existential");
         let allocations = fact_node_allocations() - before;
         // The one permitted node rewrites the sole entry of the goal
@@ -1808,21 +1781,18 @@ fn point_witness_refines_existential_transactionally_with_constant_local_work() 
         );
         assert_eq!(
             refined.certificate().steps(),
-            &[SimpleProofStep::Witness(witness.clone())]
+            &[ProofStep::Witness(witness.clone())]
         );
         assert_eq!(refined.surface_goal(), Some(&instantiated_surface));
         assert!(refined.added_facts().is_empty());
         assert!(!refined.is_complete());
         let completed = refined
-            .apply_step(SimpleProofStep::Normalize)
+            .apply_step(ProofStep::Normalize)
             .expect("the instantiated constant equality should normalize");
         assert!(completed.is_complete());
         assert_eq!(
             completed.certificate().steps(),
-            &[
-                SimpleProofStep::Witness(witness.clone()),
-                SimpleProofStep::Normalize,
-            ]
+            &[ProofStep::Witness(witness.clone()), ProofStep::Normalize,]
         );
         assert!(root.certificate().steps().is_empty());
     }
@@ -1904,7 +1874,7 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
     let introduced = split
         .focus_branch(ids[0])
         .expect("the first sibling should be focusable")
-        .apply_step(SimpleProofStep::Intro)
+        .apply_step(ProofStep::Intro)
         .expect("the universal binder should refine the first sibling");
 
     let binding_count = |id| match introduced.state.open_branches.obligation(id) {
@@ -1996,7 +1966,7 @@ fn point_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         );
         let retained_root = root.clone();
         let missing = root
-            .apply_step(SimpleProofStep::Choose(ProofChoice {
+            .apply_step(ProofStep::Choose(ProofChoice {
                 name: "candidate".to_string(),
                 source: ProofFactSource::RequirementLabel("missing".to_string()),
             }))
@@ -2011,7 +1981,7 @@ fn point_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         };
         let before = fact_node_allocations();
         let chosen = root
-            .apply_step(SimpleProofStep::Choose(choice.clone()))
+            .apply_step(ProofStep::Choose(choice.clone()))
             .expect("the indexed existential requirement should introduce one local");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -2022,38 +1992,35 @@ fn point_choose_uses_indexed_requirement_and_persistent_local_bindings() {
         );
         assert_eq!(
             chosen.certificate().steps(),
-            &[SimpleProofStep::Choose(choice.clone())]
+            &[ProofStep::Choose(choice.clone())]
         );
         assert_eq!(chosen.state.locals.values.len(), 1);
         assert!(root.state.locals.values.is_empty());
 
         let duplicate = chosen
-            .apply_step(SimpleProofStep::Choose(choice.clone()))
+            .apply_step(ProofStep::Choose(choice.clone()))
             .err()
             .expect("a duplicate local name must reject transactionally");
         assert!(duplicate.message().contains("already in scope"));
-        assert_eq!(
-            chosen.certificate().steps(),
-            &[SimpleProofStep::Choose(choice)]
-        );
+        assert_eq!(chosen.certificate().steps(), &[ProofStep::Choose(choice)]);
 
         let completed = chosen
-            .apply_step(SimpleProofStep::Witness(ProofWitness {
+            .apply_step(ProofStep::Witness(ProofWitness {
                 name: "witness".to_string(),
                 value: ContractExpression::CFragment(CExpression::Variable(
                     "candidate".to_string(),
                 )),
             }))
             .expect("witness should resolve the one referenced proof local")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the chosen existential fact should close the refined goal");
         assert!(completed.is_complete());
         assert!(matches!(
             completed.certificate().steps(),
             [
-                SimpleProofStep::Choose(_),
-                SimpleProofStep::Witness(_),
-                SimpleProofStep::Assumption
+                ProofStep::Choose(_),
+                ProofStep::Witness(_),
+                ProofStep::Assumption
             ]
         ));
         assert!(root.certificate().steps().is_empty());
@@ -2123,7 +2090,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
         );
         let retained_root = root.clone();
         let error = root
-            .apply_step(SimpleProofStep::Rewrite(unavailable.clone()))
+            .apply_step(ProofStep::Rewrite(unavailable.clone()))
             .err()
             .expect("an unavailable equality must reject the candidate");
         assert!(
@@ -2133,7 +2100,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
-        let step = SimpleProofStep::Rewrite(equality.clone());
+        let step = ProofStep::Rewrite(equality.clone());
         let before = fact_node_allocations();
         let rewritten = root
             .apply_step(step.clone())
@@ -2155,12 +2122,12 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
         assert!(rewritten.added_facts().is_empty());
         assert!(!rewritten.is_complete());
         let complete = rewritten
-            .apply_step(SimpleProofStep::Normalize)
+            .apply_step(ProofStep::Normalize)
             .expect("the rewritten constant equality should normalize");
         assert!(complete.is_complete());
         assert_eq!(
             complete.certificate().steps(),
-            &[step.clone(), SimpleProofStep::Normalize]
+            &[step.clone(), ProofStep::Normalize]
         );
         let alternative = root
             .apply_step(step)
@@ -2287,7 +2254,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let rewritten = root
-            .apply_step(SimpleProofStep::Rewrite(equality.clone()))
+            .apply_step(ProofStep::Rewrite(equality.clone()))
             .expect("the exact equality should produce a checked rewrite successor");
         let closed = rewritten
             .try_simp_closure()
@@ -2306,13 +2273,13 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::Rewrite(root_equality),
-                SimpleProofStep::Have { proof: left, .. },
-                SimpleProofStep::Have { proof: right, .. },
-                SimpleProofStep::Split,
+                ProofStep::Rewrite(root_equality),
+                ProofStep::Have { proof: left, .. },
+                ProofStep::Have { proof: right, .. },
+                ProofStep::Split,
             ] if root_equality == &equality
-                && matches!(left.steps(), [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize])
-                && matches!(right.steps(), [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize])
+                && matches!(left.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
+                && matches!(right.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
@@ -2365,7 +2332,7 @@ fn point_extract_uses_persistent_proper_conjunct_membership() {
     );
     assert!(
         merely_top_level
-            .apply_step(SimpleProofStep::Extract(surface.clone()))
+            .apply_step(ProofStep::Extract(surface.clone()))
             .is_err(),
         "an independently available fact is not extractable unless it is also a proper conjunct"
     );
@@ -2397,7 +2364,7 @@ fn point_extract_uses_persistent_proper_conjunct_membership() {
             &[],
         );
         let retained_root = root.clone();
-        let step = SimpleProofStep::Extract(surface.clone());
+        let step = ProofStep::Extract(surface.clone());
         let before = fact_node_allocations();
         let extracted = root
             .apply_step(step.clone())
@@ -2507,7 +2474,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             1
         );
 
-        let step = SimpleProofStep::Extract(target_surface.clone());
+        let step = ProofStep::Extract(target_surface.clone());
         let before = fact_node_allocations();
         let extracted = root
             .apply_step(step.clone())
@@ -2536,7 +2503,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
         );
         assert!(
             missing_antecedent
-                .apply_step(SimpleProofStep::Extract(target_surface.clone()))
+                .apply_step(ProofStep::Extract(target_surface.clone()))
                 .is_err(),
             "an indexed consequent does not bypass its antecedent"
         );
@@ -2653,10 +2620,7 @@ fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
             assert!(selected.is_complete());
             assert!(matches!(
                 selected.certificate().steps(),
-                [
-                    SimpleProofStep::InstantiateUsing { .. },
-                    SimpleProofStep::Assumption
-                ]
+                [ProofStep::InstantiateUsing { .. }, ProofStep::Assumption]
             ));
         }
         let retained_root = root.clone();
@@ -2700,18 +2664,15 @@ fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
         assert!(selected.is_complete());
         assert!(matches!(
             selected.certificate().steps(),
-            [
-                SimpleProofStep::InstantiateUsing { .. },
-                SimpleProofStep::Assumption
-            ]
+            [ProofStep::InstantiateUsing { .. }, ProofStep::Assumption]
         ));
 
-        let step = SimpleProofStep::InstantiateUsing {
+        let step = ProofStep::InstantiateUsing {
             quantified: quantified_surface.clone(),
             argument: value(7),
             premises: vec![premise.clone()],
         };
-        let omitted = SimpleProofStep::InstantiateUsing {
+        let omitted = ProofStep::InstantiateUsing {
             quantified: quantified_surface.clone(),
             argument: value(7),
             premises: Vec::new(),
@@ -2741,12 +2702,12 @@ fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
             std::slice::from_ref(&kernel_goal)
         );
         let completed = instantiated
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the specialized exact fact should close by assumption");
         assert!(completed.is_complete());
         assert_eq!(
             completed.certificate().steps(),
-            &[step, SimpleProofStep::Assumption]
+            &[step, ProofStep::Assumption]
         );
         assert!(root.certificate().steps().is_empty());
     }
@@ -2872,13 +2833,13 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
         );
         assert_eq!(
             selected,
-            SimpleProofStep::ApplyTheoremUsing {
+            ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: vec![premise.clone()],
             }
         );
         let omitted = root
-            .apply_step(SimpleProofStep::ApplyTheoremUsing {
+            .apply_step(ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: Vec::new(),
             })
@@ -3186,7 +3147,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         for steps in &arm_steps {
             assert!(matches!(
                 steps.as_slice(),
-                [SimpleProofStep::ApplyTheoremUsing {
+                [ProofStep::ApplyTheoremUsing {
                     application: retained,
                     premises,
                 }] if retained == &application && premises == std::slice::from_ref(&premise)
@@ -3204,7 +3165,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             .expect("the then sibling is open")
             .begin_have(premise.clone())
             .expect("the then arm should open a proposition proof")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the root premise should close the then-arm proof")
             .join()
             .expect("the completed proof should advance the then arm")
@@ -3212,7 +3173,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             .expect("the else sibling is open")
             .begin_have(premise.clone())
             .expect("the else arm should open a proposition proof")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the root premise should close the else-arm proof")
             .join()
             .expect("the completed proof should advance the else arm");
@@ -3227,11 +3188,11 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         for steps in &nested_steps {
             assert!(matches!(
                 steps.as_slice(),
-                [SimpleProofStep::Have {
+                [ProofStep::Have {
                     proposition: retained,
                     proof,
                 }] if retained == &premise
-                    && proof.steps() == [SimpleProofStep::Assumption]
+                    && proof.steps() == [ProofStep::Assumption]
             ));
         }
 
@@ -3254,7 +3215,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             assert!(
                 matches!(
                     steps.as_slice(),
-                    [SimpleProofStep::Step] | [SimpleProofStep::Step, SimpleProofStep::Step]
+                    [ProofStep::Step] | [ProofStep::Step, ProofStep::Step]
                 ),
                 "{steps:#?}"
             );
@@ -3264,7 +3225,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             .expect("the two checked return arms should join as terminal outcomes");
         assert!(matches!(
             terminal.certificate().steps(),
-            [SimpleProofStep::If {
+            [ProofStep::If {
                 then_proof,
                 else_proof,
                 ..
@@ -3275,7 +3236,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
             assert!(
                 terminal
                     .apply_step_at(
-                        SimpleProofStep::FrameUsing {
+                        ProofStep::FrameUsing {
                             region: None,
                             premises: vec![unavailable_frame_premise.clone()],
                         },
@@ -3300,8 +3261,8 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
         assert!(matches!(
             framed.certificate().steps(),
             [
-                SimpleProofStep::If { .. },
-                SimpleProofStep::FrameUsing {
+                ProofStep::If { .. },
+                ProofStep::FrameUsing {
                     region: None,
                     premises,
                 },
@@ -3492,7 +3453,7 @@ fn point_apply_search_uses_indexes_and_retains_its_checked_successor() {
         );
         let retained_root = root.clone();
         let extracted = root
-            .apply_step(SimpleProofStep::Extract(premise.clone()))
+            .apply_step(ProofStep::Extract(premise.clone()))
             .expect("a checked predecessor should promote the indexed conjunct");
         assert!(
             extracted
@@ -3512,7 +3473,7 @@ fn point_apply_search_uses_indexes_and_retains_its_checked_successor() {
         );
         assert_eq!(
             step,
-            SimpleProofStep::ApplyTheoremUsing {
+            ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: vec![premise.clone()],
             }
@@ -3537,7 +3498,7 @@ fn point_apply_search_uses_indexes_and_retains_its_checked_successor() {
         assert!(complete.is_complete());
         assert_eq!(
             complete.certificate().steps().first(),
-            Some(&SimpleProofStep::Extract(premise.clone()))
+            Some(&ProofStep::Extract(premise.clone()))
         );
         assert_eq!(complete.certificate().steps().get(1), Some(&step));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -3647,7 +3608,7 @@ fn result_aware_point_apply_scales_with_unrelated_facts() {
         assert!(complete.is_complete());
         assert!(matches!(
             complete.certificate().steps().first(),
-            Some(SimpleProofStep::ApplyTheoremUsing { application, premises })
+            Some(ProofStep::ApplyTheoremUsing { application, premises })
                 if application.name == "result_reflexive" && premises.is_empty()
         ));
         assert!(root.certificate().steps().is_empty());
@@ -3740,7 +3701,7 @@ fn result_aware_point_frontier_apply_is_indexed_and_transactional() {
         );
         let retained_root = root.clone();
         let missing = root
-            .apply_step(SimpleProofStep::ApplyTheoremUsing {
+            .apply_step(ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: Vec::new(),
             })
@@ -3757,7 +3718,7 @@ fn result_aware_point_frontier_apply_is_indexed_and_transactional() {
         assert_eq!(fact_node_allocations() - before_query, 0);
         assert_eq!(
             step,
-            SimpleProofStep::ApplyTheoremUsing {
+            ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: vec![surface_premise.clone()],
             }
@@ -3864,10 +3825,10 @@ fn point_transport_can_follow_another_checked_step() {
             &[],
         );
         let refined = root
-            .apply_step(SimpleProofStep::Extract(extracted.clone()))
+            .apply_step(ProofStep::Extract(extracted.clone()))
             .expect("the predecessor should advance the proof");
         let retained_refined = refined.clone();
-        let rejected = refined.apply_step(SimpleProofStep::TransportUsing {
+        let rejected = refined.apply_step(ProofStep::TransportUsing {
             source: source.clone(),
             target: missing.clone(),
             premises: Vec::new(),
@@ -3875,7 +3836,7 @@ fn point_transport_can_follow_another_checked_step() {
         assert!(rejected.is_err());
         assert!(Arc::ptr_eq(&refined.state, &retained_refined.state));
 
-        let transport = SimpleProofStep::TransportUsing {
+        let transport = ProofStep::TransportUsing {
             source: source.clone(),
             target: source.clone(),
             premises: Vec::new(),
@@ -3893,7 +3854,7 @@ fn point_transport_can_follow_another_checked_step() {
         );
         assert_eq!(
             transported.certificate().steps(),
-            &[SimpleProofStep::Extract(extracted.clone()), transport,]
+            &[ProofStep::Extract(extracted.clone()), transport,]
         );
         assert_eq!(transported.added_facts(), &[]);
         assert_eq!(root.certificate().steps(), &[]);
@@ -3986,10 +3947,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::ApplyTheoremUsing { .. },
-            ]
+            [ProofStep::Have { .. }, ProofStep::ApplyTheoremUsing { .. },]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
@@ -4033,10 +3991,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
         assert!(selected.body().is_complete());
         assert!(matches!(
             selected.body().certificate().steps(),
-            [
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::ApplyTheoremUsing { .. },
-            ]
+            [ProofStep::Have { .. }, ProofStep::ApplyTheoremUsing { .. },]
         ));
         assert!(exact_root.certificate().steps().is_empty());
     }
@@ -4123,7 +4078,7 @@ fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_upda
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
+            [ProofStep::Rewrite(_), ProofStep::Normalize]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
@@ -4228,7 +4183,7 @@ fn goal_term_equality_rewrite_ignores_unrelated_equality_buckets() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::Rewrite(_), SimpleProofStep::Normalize]
+            [ProofStep::Rewrite(_), ProofStep::Normalize]
         ));
     }
 }
@@ -4342,9 +4297,9 @@ fn goal_term_equality_rewrite_chain_shrinks_independently_of_unrelated_buckets()
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Normalize
+                ProofStep::Rewrite(_),
+                ProofStep::Rewrite(_),
+                ProofStep::Normalize
             ]
         ));
     }
@@ -4450,10 +4405,7 @@ fn point_predecessor_simp_builds_checked_scope_with_logarithmic_local_updates() 
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::ApplyTheoremUsing { .. }
-            ]
+            [ProofStep::Have { .. }, ProofStep::ApplyTheoremUsing { .. }]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
@@ -4551,10 +4503,10 @@ fn point_equality_simp_builds_its_recorded_path_with_logarithmic_local_updates()
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Normalize,
+                ProofStep::Rewrite(_),
+                ProofStep::Rewrite(_),
+                ProofStep::Rewrite(_),
+                ProofStep::Normalize,
             ]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -4655,9 +4607,9 @@ fn point_arithmetic_rewrite_paths_ignore_unrelated_facts() {
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Rewrite(_),
-                SimpleProofStep::Normalize,
+                ProofStep::Rewrite(_),
+                ProofStep::Rewrite(_),
+                ProofStep::Normalize,
             ]
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -4760,11 +4712,11 @@ fn point_order_simp_builds_its_theorem_path_with_logarithmic_local_updates() {
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::Have { proof, .. },
-                SimpleProofStep::ApplyTheoremUsing { .. },
+                ProofStep::Have { proof, .. },
+                ProofStep::ApplyTheoremUsing { .. },
             ] if matches!(
                 proof.steps(),
-                [SimpleProofStep::ApplyTheoremUsing { .. }]
+                [ProofStep::ApplyTheoremUsing { .. }]
             )
         ));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -5101,7 +5053,7 @@ fn point_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                 ArithmeticProofShape::Direct => assert!(
                     matches!(
                         closed.certificate().steps(),
-                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        [ProofStep::ApplyTheoremUsing { application, premises }]
                             if application.name == theorem_name
                                 && premises == std::slice::from_ref(surface_premise)
                     ),
@@ -5111,25 +5063,25 @@ fn point_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                 ArithmeticProofShape::ComposedNegatedSuccessor => assert!(matches!(
                     closed.certificate().steps(),
                     [
-                        SimpleProofStep::Have { proof: first, .. },
-                        SimpleProofStep::Have { proof: second, .. },
-                        SimpleProofStep::ApplyTheoremUsing { application, .. },
+                        ProofStep::Have { proof: first, .. },
+                        ProofStep::Have { proof: second, .. },
+                        ProofStep::ApplyTheoremUsing { application, .. },
                     ] if matches!(
                         first.steps(),
-                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        [ProofStep::ApplyTheoremUsing { application, premises }]
                             if application.name == "int32_not_lt_implies_ge"
                                 && premises == std::slice::from_ref(surface_premise)
-                    ) && matches!(second.steps(), [SimpleProofStep::Normalize])
+                    ) && matches!(second.steps(), [ProofStep::Normalize])
                         && application.name == theorem_name
                 )),
                 ArithmeticProofShape::ChainedIncrementUpper => assert!(matches!(
                     closed.certificate().steps(),
                     [
-                        SimpleProofStep::ApplyTheoremUsing {
+                        ProofStep::ApplyTheoremUsing {
                             application: first,
                             premises: first_premises,
                         },
-                        SimpleProofStep::ApplyTheoremUsing {
+                        ProofStep::ApplyTheoremUsing {
                             application: second,
                             premises: second_premises,
                         },
@@ -5180,32 +5132,32 @@ fn point_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
             match shape {
                 ArithmeticProofShape::Direct => assert!(matches!(
                     pure_closed.certificate().steps(),
-                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    [ProofStep::ApplyTheoremUsing { application, premises }]
                         if application.name == theorem_name
                         && premises == std::slice::from_ref(surface_premise)
                 )),
                 ArithmeticProofShape::ComposedNegatedSuccessor => assert!(matches!(
                     pure_closed.certificate().steps(),
                     [
-                        SimpleProofStep::Have { proof: first, .. },
-                        SimpleProofStep::Have { proof: second, .. },
-                        SimpleProofStep::ApplyTheoremUsing { application, .. },
+                        ProofStep::Have { proof: first, .. },
+                        ProofStep::Have { proof: second, .. },
+                        ProofStep::ApplyTheoremUsing { application, .. },
                     ] if matches!(
                         first.steps(),
-                        [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                        [ProofStep::ApplyTheoremUsing { application, premises }]
                             if application.name == "int32_not_lt_implies_ge"
                             && premises == std::slice::from_ref(surface_premise)
-                    ) && matches!(second.steps(), [SimpleProofStep::Normalize])
+                    ) && matches!(second.steps(), [ProofStep::Normalize])
                         && application.name == theorem_name
                 )),
                 ArithmeticProofShape::ChainedIncrementUpper => assert!(matches!(
                     pure_closed.certificate().steps(),
                     [
-                        SimpleProofStep::ApplyTheoremUsing {
+                        ProofStep::ApplyTheoremUsing {
                             application: first,
                             premises: first_premises,
                         },
-                        SimpleProofStep::ApplyTheoremUsing {
+                        ProofStep::ApplyTheoremUsing {
                             application: second,
                             premises: second_premises,
                         },
@@ -5323,7 +5275,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+            [ProofStep::ApplyTheoremUsing { application, premises }]
                 if application.name == "int32_increment_strict_greater_lower_bound"
                     && premises.as_slice() == expected_premises
         ));
@@ -5473,7 +5425,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             assert!(closed.is_complete());
             assert!(matches!(
                 closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }]
                     if application.name == *theorem_name
                         && premises.as_slice() == selected_premises
             ));
@@ -5519,7 +5471,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             assert!(pure_closed.is_complete());
             assert!(matches!(
                 pure_closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }]
                     if application.name == *theorem_name
                     && premises.as_slice() == selected_premises
             ));
@@ -5586,8 +5538,8 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
         assert!(matches!(
             closed.certificate().steps(),
             [
-                SimpleProofStep::ApplyTheoremUsing { application: first, premises: first_premises },
-                SimpleProofStep::ApplyTheoremUsing { application: second, premises: second_premises },
+                ProofStep::ApplyTheoremUsing { application: first, premises: first_premises },
+                ProofStep::ApplyTheoremUsing { application: second, premises: second_premises },
             ] if first.name == "int32_lt_implies_le"
                 && first_premises == std::slice::from_ref(&strict_lower_premise)
                 && second.name == "int32_increment_strict_greater_lower_bound"
@@ -5634,8 +5586,8 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
         assert!(matches!(
             pure_closed.certificate().steps(),
             [
-                SimpleProofStep::ApplyTheoremUsing { application: first, .. },
-                SimpleProofStep::ApplyTheoremUsing { application: second, .. },
+                ProofStep::ApplyTheoremUsing { application: first, .. },
+                ProofStep::ApplyTheoremUsing { application: second, .. },
             ] if first.name == "int32_lt_implies_le"
                 && second.name == "int32_increment_strict_greater_lower_bound"
         ));
@@ -5741,7 +5693,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+            [ProofStep::ApplyTheoremUsing { application, premises }]
                 if application.name == "int32_le_and_not_lt_implies_eq"
                     && premises.as_slice() == selected
         ));
@@ -5836,7 +5788,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
             .expect("restricted simp should retain the checked equality theorem");
         assert!(matches!(
             pure_closed.certificate().steps(),
-            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+            [ProofStep::ApplyTheoremUsing { application, premises }]
                 if application.name == "int32_le_and_not_lt_implies_eq"
                 && premises.as_slice() == selected
         ));
@@ -5944,7 +5896,7 @@ fn ge_and_not_gt_equality_simp_retains_one_indexed_theorem_application() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+            [ProofStep::ApplyTheoremUsing { application, premises }]
                 if application.name == "int32_ge_and_not_gt_implies_eq"
                     && premises.as_slice() == selected
         ));
@@ -6050,7 +6002,7 @@ fn le_and_neq_strict_simp_retains_one_indexed_theorem_application() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+            [ProofStep::ApplyTheoremUsing { application, premises }]
                 if application.name == "int32_le_and_neq_implies_lt"
                     && premises.as_slice() == selected
         ));
@@ -6193,7 +6145,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             assert!(closed.is_complete());
             assert!(matches!(
                 closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }]
                         if application.name == *theorem_name
                             && premises.as_slice() == selected
             ));
@@ -6235,7 +6187,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
             );
             assert!(matches!(
                 pure_closed.certificate().steps(),
-                [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                [ProofStep::ApplyTheoremUsing { application, premises }]
                     if application.name == *theorem_name
                         && premises.as_slice() == selected
             ));
@@ -6343,19 +6295,19 @@ fn selected_disjunction_simp_retains_checked_cases_and_scales() {
         assert!(closed.is_complete());
         assert!(matches!(
             closed.certificate().steps(),
-            [SimpleProofStep::Cases {
+            [ProofStep::Cases {
                 disjunction: retained,
                 left_proof,
                 right_proof,
             }] if retained == &disjunction
                 && matches!(
                     left_proof.steps(),
-                    [SimpleProofStep::Rewrite(equality), SimpleProofStep::Normalize]
+                    [ProofStep::Rewrite(equality), ProofStep::Normalize]
                         if equality == &equal_zero
                 )
                 && matches!(
                     right_proof.steps(),
-                    [SimpleProofStep::Rewrite(equality), SimpleProofStep::Normalize]
+                    [ProofStep::Rewrite(equality), ProofStep::Normalize]
                         if equality == &equal_one
                 )
         ));
@@ -6534,15 +6486,15 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                     matches!(
                         retained_steps.steps(),
                         [
-                            SimpleProofStep::Have { proof: left, .. },
-                            SimpleProofStep::Have { proof: right, .. },
-                            SimpleProofStep::Split,
+                            ProofStep::Have { proof: left, .. },
+                            ProofStep::Have { proof: right, .. },
+                            ProofStep::Split,
                         ] if matches!(
                             left.steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            [ProofStep::ApplyTheoremUsing { .. }]
                         ) && matches!(
                             right.steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            [ProofStep::ApplyTheoremUsing { .. }]
                         )
                     ),
                     "{retained_steps:#?}"
@@ -6551,11 +6503,11 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                     matches!(
                         retained_steps.steps(),
                         [
-                            SimpleProofStep::Have { proof, .. },
-                            SimpleProofStep::Left,
+                            ProofStep::Have { proof, .. },
+                            ProofStep::Left,
                         ] if matches!(
                             proof.steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { .. }]
+                            [ProofStep::ApplyTheoremUsing { .. }]
                         )
                     ),
                     "{retained_steps:#?}"
@@ -6563,7 +6515,7 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 "implication" => assert!(
                     matches!(
                         retained_steps.steps(),
-                        [SimpleProofStep::Intro, SimpleProofStep::Assumption,]
+                        [ProofStep::Intro, ProofStep::Assumption,]
                     ),
                     "{retained_steps:#?}"
                 ),
@@ -6753,13 +6705,13 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                 assert!(matches!(
                     closed.certificate().steps(),
                     [
-                        SimpleProofStep::Have { proof, .. },
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        ProofStep::Have { proof, .. },
+                        ProofStep::ApplyTheoremUsing { application, premises },
                     ] if application.name == *theorem_name
                         && premises.len() == 1
                         && matches!(
                             proof.steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            [ProofStep::ApplyTheoremUsing { application, premises }]
                                 if application.name == "int32_successor_le_implies_lt"
                                 && premises == selected
                         )
@@ -6767,7 +6719,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
             } else {
                 assert!(matches!(
                     closed.certificate().steps(),
-                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    [ProofStep::ApplyTheoremUsing { application, premises }]
                         if application.name == *theorem_name && premises == selected
                 ));
             }
@@ -6818,13 +6770,13 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                 assert!(matches!(
                     pure_closed.certificate().steps(),
                     [
-                        SimpleProofStep::Have { proof, .. },
-                        SimpleProofStep::ApplyTheoremUsing { application, premises },
+                        ProofStep::Have { proof, .. },
+                        ProofStep::ApplyTheoremUsing { application, premises },
                     ] if application.name == *theorem_name
                         && premises.len() == 1
                         && matches!(
                             proof.steps(),
-                            [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                            [ProofStep::ApplyTheoremUsing { application, premises }]
                                 if application.name == "int32_successor_le_implies_lt"
                                 && premises == selected
                         )
@@ -6832,7 +6784,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
             } else {
                 assert!(matches!(
                     pure_closed.certificate().steps(),
-                    [SimpleProofStep::ApplyTheoremUsing { application, premises }]
+                    [ProofStep::ApplyTheoremUsing { application, premises }]
                         if application.name == *theorem_name && premises == selected
                 ));
             }
@@ -6944,7 +6896,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         );
         assert_eq!(
             step,
-            SimpleProofStep::ApplyTheoremUsing {
+            ProofStep::ApplyTheoremUsing {
                 application: application.clone(),
                 premises: vec![premise.clone()],
             }
@@ -7039,7 +6991,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let successor = root
-            .apply_step(SimpleProofStep::UnfoldPredicate("selected".to_string()))
+            .apply_step(ProofStep::UnfoldPredicate("selected".to_string()))
             .expect("the exact selected predicate should unfold");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -7054,7 +7006,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         assert_eq!(root.certificate().steps(), &[]);
         assert_eq!(
             successor.certificate().steps(),
-            &[SimpleProofStep::UnfoldPredicate("selected".to_string())]
+            &[ProofStep::UnfoldPredicate("selected".to_string())]
         );
         assert!(successor.facts().to_vec().len() > root.facts().to_vec().len());
         let root_execution = root.execution().expect("root execution state");
@@ -7157,7 +7109,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let observed = root
-            .apply_step(SimpleProofStep::ObserveResource(resource.clone()))
+            .apply_step(ProofStep::ObserveResource(resource.clone()))
             .expect("the held marker view should be observable");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -7168,7 +7120,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
         );
         assert_eq!(
             observed.certificate().steps(),
-            &[SimpleProofStep::ObserveResource(resource.clone())]
+            &[ProofStep::ObserveResource(resource.clone())]
         );
         assert!(!observed.added_facts().is_empty());
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -7180,7 +7132,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
         };
         *name = "missing_marker".to_string();
         assert!(
-            root.apply_step(SimpleProofStep::ObserveResource(missing))
+            root.apply_step(ProofStep::ObserveResource(missing))
                 .is_err()
         );
         assert!(root.certificate().steps().is_empty());
@@ -7264,7 +7216,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let unfolded = root
-            .apply_step(SimpleProofStep::UnfoldResource(resource.clone()))
+            .apply_step(ProofStep::UnfoldResource(resource.clone()))
             .expect("the owned marker resource should unfold");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -7275,7 +7227,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
         );
         assert_eq!(
             unfolded.certificate().steps(),
-            &[SimpleProofStep::UnfoldResource(resource.clone())]
+            &[ProofStep::UnfoldResource(resource.clone())]
         );
         assert!(!unfolded.added_facts().is_empty());
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
@@ -7286,10 +7238,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             panic!("the marker resource should be declared");
         };
         *name = "missing_marker".to_string();
-        assert!(
-            root.apply_step(SimpleProofStep::UnfoldResource(missing))
-                .is_err()
-        );
+        assert!(root.apply_step(ProofStep::UnfoldResource(missing)).is_err());
         assert!(root.certificate().steps().is_empty());
         assert_eq!(root.facts().to_vec().len(), size as usize);
     }
@@ -7370,12 +7319,12 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             &theorem_environment,
         );
         let unfolded = root
-            .apply_step(SimpleProofStep::UnfoldResource(resource.clone()))
+            .apply_step(ProofStep::UnfoldResource(resource.clone()))
             .expect("the owned marker resource should unfold before folding");
         let retained_unfolded = unfolded.clone();
         let before = fact_node_allocations();
         let folded = unfolded
-            .apply_step(SimpleProofStep::FoldResource(resource.clone()))
+            .apply_step(ProofStep::FoldResource(resource.clone()))
             .expect("the exposed marker body should fold");
         let allocations = fact_node_allocations() - before;
         let logarithmic_height = (u32::BITS - size.leading_zeros()) as usize;
@@ -7387,8 +7336,8 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
         assert_eq!(
             folded.certificate().steps(),
             &[
-                SimpleProofStep::UnfoldResource(resource.clone()),
-                SimpleProofStep::FoldResource(resource.clone()),
+                ProofStep::UnfoldResource(resource.clone()),
+                ProofStep::FoldResource(resource.clone()),
             ]
         );
         assert!(folded.added_facts().is_empty());
@@ -7401,12 +7350,12 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
         *name = "missing_marker".to_string();
         assert!(
             unfolded
-                .apply_step(SimpleProofStep::FoldResource(missing))
+                .apply_step(ProofStep::FoldResource(missing))
                 .is_err()
         );
         assert_eq!(
             unfolded.certificate().steps(),
-            &[SimpleProofStep::UnfoldResource(resource.clone())]
+            &[ProofStep::UnfoldResource(resource.clone())]
         );
     }
 }
@@ -7505,18 +7454,18 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let rejected = scope
             .begin_have(reflexive.clone())
             .expect("the open scope should begin a rejected proposition subproof");
-        assert!(rejected.apply_step(SimpleProofStep::Step).is_err());
+        assert!(rejected.apply_step(ProofStep::Step).is_err());
         assert!(rejected.body().certificate().steps().is_empty());
         let nested = scope
             .begin_have(reflexive.clone())
             .expect("the open scope should begin a proposition subproof")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the exposed marker fact should close the nested proof");
         let scope = scope
             .join_nested(nested)
             .expect("the checked have should advance the open scope");
         let scope = scope
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the owned resource scope should retain its checked statement step");
         let closed = scope.join().expect("the marker body should close");
         let allocations = fact_node_allocations() - before;
@@ -7528,16 +7477,14 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         );
         assert_eq!(
             closed.certificate().steps(),
-            &[SimpleProofStep::Open {
+            &[ProofStep::Open {
                 resource: resource.clone(),
                 proof: Box::new(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::Have {
+                    ProofStep::Have {
                         proposition: reflexive.clone(),
-                        proof: Box::new(ProofCertificate::from_steps(vec![
-                            SimpleProofStep::Assumption,
-                        ])),
+                        proof: Box::new(ProofCertificate::from_steps(vec![ProofStep::Assumption,])),
                     },
-                    SimpleProofStep::Step,
+                    ProofStep::Step,
                 ])),
             }]
         );
@@ -7549,7 +7496,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let sibling_nested = sibling_scope
             .begin_have(reflexive.clone())
             .expect("the sibling should begin its own nested proof")
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the sibling nested proof should close");
         let unrelated_scope = root
             .begin_open(resource.clone(), 0)
@@ -7573,9 +7520,9 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let terminal = root
             .begin_open(resource.clone(), 0)
             .expect("the retained root should open an alternate scope")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the terminal scope should cross its assignment")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the terminal scope should cross its return")
             .join()
             .expect("an exit-reaching open should defer its close");
@@ -7586,11 +7533,11 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         assert_eq!(terminal_execution.post_execution_tactics.len(), 1);
         assert_eq!(
             terminal.certificate().steps(),
-            &[SimpleProofStep::Open {
+            &[ProofStep::Open {
                 resource: resource.clone(),
                 proof: Box::new(ProofCertificate::from_steps(vec![
-                    SimpleProofStep::Step,
-                    SimpleProofStep::Step,
+                    ProofStep::Step,
+                    ProofStep::Step,
                 ])),
             }]
         );
@@ -7668,7 +7615,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             &theorem_environment,
         );
         let retained_root = root.clone();
-        let step = SimpleProofStep::TransportUsing {
+        let step = ProofStep::TransportUsing {
             source: surface.clone(),
             target: surface.clone(),
             premises: vec![surface.clone()],
@@ -7789,7 +7736,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             &theorem_environment,
         );
         let progressed = root
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the meaningful assignment should advance the execution Proof");
         if size == 16 {
             let retained = progressed.clone();
@@ -7803,7 +7750,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
             assert!(Arc::ptr_eq(&progressed.state, &retained.state));
             assert!(matches!(
                 progressed.certificate().steps(),
-                [SimpleProofStep::Step]
+                [ProofStep::Step]
             ));
         }
 
@@ -7820,8 +7767,8 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
         assert!(matches!(
             transported.certificate().steps(),
             [
-                SimpleProofStep::Step,
-                SimpleProofStep::TransportUsing {
+                ProofStep::Step,
+                ProofStep::TransportUsing {
                     source: retained_source,
                     target,
                     premises,
@@ -7906,10 +7853,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
 
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
-        assert!(matches!(
-            stepped.certificate().steps(),
-            [SimpleProofStep::Step]
-        ));
+        assert!(matches!(stepped.certificate().steps(), [ProofStep::Step]));
         assert_eq!(stepped.facts().to_vec(), root.facts().to_vec());
         assert!(
             !stepped
@@ -8029,7 +7973,7 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
         let certificate = stepped.certificate();
         // A bare `step()` names no premise: the statement runs in the
         // whole context and selection cannot leak an unrelated fact.
-        let [SimpleProofStep::Step] = certificate.steps() else {
+        let [ProofStep::Step] = certificate.steps() else {
             panic!(
                 "the selected store should retain one bare statement step: {:#?}",
                 certificate.steps()
@@ -8103,31 +8047,28 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             .try_statement_step()
             .expect("the bare statement step should remain available")
             .expect("unrelated ambient facts must not block the bare step");
-        assert!(matches!(
-            stepped.certificate().steps(),
-            [SimpleProofStep::Step]
-        ));
+        assert!(matches!(stepped.certificate().steps(), [ProofStep::Step]));
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
         let marked = root
-            .apply_step(SimpleProofStep::Mark("candidate".to_string()))
+            .apply_step(ProofStep::Mark("candidate".to_string()))
             .expect("a fresh proof mark should produce a checked descendant");
         assert!(matches!(
             marked.certificate().steps(),
-            [SimpleProofStep::Mark(name)] if name == "candidate"
+            [ProofStep::Mark(name)] if name == "candidate"
         ));
         let duplicate = marked
-            .apply_step(SimpleProofStep::Mark("candidate".to_string()))
+            .apply_step(ProofStep::Mark("candidate".to_string()))
             .err()
             .expect("a duplicate mark must reject the candidate");
         assert!(duplicate.message().contains("duplicate proof mark"));
         assert!(matches!(
             marked.certificate().steps(),
-            [SimpleProofStep::Mark(name)] if name == "candidate"
+            [ProofStep::Mark(name)] if name == "candidate"
         ));
         let before = fact_node_allocations();
         let completed = root
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("an explicit return step should certify");
         let allocations = fact_node_allocations() - before;
         samples.push((
@@ -8142,12 +8083,9 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
                 .frontier
                 .is_at_function_exit()
         );
-        assert!(matches!(
-            completed.certificate().steps(),
-            [SimpleProofStep::Step]
-        ));
+        assert!(matches!(completed.certificate().steps(), [ProofStep::Step]));
         let alternative = root
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the retained ancestor should support another checked descendant");
         assert_eq!(alternative.certificate(), completed.certificate());
         let root_execution = root.execution().expect("root execution state");
@@ -8161,10 +8099,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             "a return step should not copy unchanged memory, resources, or populations"
         );
         assert!(completed.is_at_function_exit());
-        assert!(matches!(
-            completed.certificate().steps(),
-            [SimpleProofStep::Step]
-        ));
+        assert!(matches!(completed.certificate().steps(), [ProofStep::Step]));
     }
 
     let (_, base_height, base_allocations) = samples[0];
@@ -8231,9 +8166,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
 
         let outside_loop = make_root(false);
         assert!(
-            outside_loop
-                .apply_step(SimpleProofStep::CloseInvariants)
-                .is_err(),
+            outside_loop.apply_step(ProofStep::CloseInvariants).is_err(),
             "the step is restricted to loop-region proofs"
         );
         assert!(outside_loop.certificate().steps().is_empty());
@@ -8242,7 +8175,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         let retained_root = root.clone();
         let before = fact_node_allocations();
         let closed = root
-            .apply_step(SimpleProofStep::CloseInvariants)
+            .apply_step(ProofStep::CloseInvariants)
             .expect("the first close should produce a checked descendant");
         // The one permitted node rewrites the sole goal's execution
         // snapshot in the persistent goal collection; the bound stays
@@ -8250,10 +8183,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         assert!(fact_node_allocations() - before <= 1);
         assert!(Arc::ptr_eq(&root.state, &retained_root.state));
         assert!(root.certificate().steps().is_empty());
-        assert_eq!(
-            closed.certificate().steps(),
-            &[SimpleProofStep::CloseInvariants]
-        );
+        assert_eq!(closed.certificate().steps(), &[ProofStep::CloseInvariants]);
         let execution = closed
             .execution()
             .expect("the successor retains execution state");
@@ -8262,11 +8192,8 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             execution.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the check adapter boundary"
         );
-        assert!(closed.apply_step(SimpleProofStep::CloseInvariants).is_err());
-        assert_eq!(
-            closed.certificate().steps(),
-            &[SimpleProofStep::CloseInvariants]
-        );
+        assert!(closed.apply_step(ProofStep::CloseInvariants).is_err());
+        assert_eq!(closed.certificate().steps(), &[ProofStep::CloseInvariants]);
     }
 }
 
@@ -8386,7 +8313,7 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
             &click_function_environment,
             &theorem_environment,
         )
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("the declaration prefix should execute before the proof split");
         let before = fact_node_allocations();
         let (split, record) = root
@@ -8402,22 +8329,22 @@ fn execution_proof_if_split_is_logarithmic_in_unrelated_facts() {
         let completed = split
             .focus_execution_if_arm(&record, true)
             .expect("the then sibling should remain open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the then assignment should check")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the then return should check")
             .focus_execution_if_arm(&record, false)
             .expect("the else sibling should remain open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the else assignment should check")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the else return should check")
             .join_focused_execution_if_terminal(&record)
             .expect("the two terminal proof cases should join");
         assert!(completed.is_at_function_exit());
         assert!(matches!(
             completed.certificate().steps().last(),
-            Some(SimpleProofStep::If { .. })
+            Some(ProofStep::If { .. })
         ));
     }
     let (_, base_height, base_allocations) = samples[0];
@@ -8615,7 +8542,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         ));
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: None,
                 then_proof,
                 else_proof,
@@ -8636,7 +8563,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         );
         assert_eq!(execution.branch_path.len(), 0);
         let completed = joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the joined continuation should execute its return");
         assert!(
             completed
@@ -8750,13 +8677,13 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("else assignment should check");
-        let overshoot_step = SimpleProofStep::Step;
+        let overshoot_step = ProofStep::Step;
         let then_arm = branches
             .focus_split_arm(&record, true)
             .expect("the then sibling stays open until the join");
@@ -8775,12 +8702,12 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             .expect("identical checked assignment arms should rejoin");
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: None,
                 then_proof,
                 else_proof,
-            }] if matches!(then_proof.steps(), [SimpleProofStep::Step])
-                && matches!(else_proof.steps(), [SimpleProofStep::Step])
+            }] if matches!(then_proof.steps(), [ProofStep::Step])
+                && matches!(else_proof.steps(), [ProofStep::Step])
         ));
         if size == 16 {
             assert!(
@@ -8792,7 +8719,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             );
             assert!(matches!(
                 joined.certificate().steps(),
-                [SimpleProofStep::Branch { .. }]
+                [ProofStep::Branch { .. }]
             ));
         }
         let applied = joined
@@ -8802,8 +8729,8 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         assert!(matches!(
             applied.certificate().steps(),
             [
-                SimpleProofStep::Branch { .. },
-                SimpleProofStep::ApplyTheoremUsing {
+                ProofStep::Branch { .. },
+                ProofStep::ApplyTheoremUsing {
                     application: retained,
                     premises,
                 },
@@ -8825,24 +8752,24 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
                 .expect("the joined frontier owns its snapshot"),
         ));
         let refined = scope
-            .apply_step(SimpleProofStep::Assumption)
+            .apply_step(ProofStep::Assumption)
             .expect("the theorem conclusion should close the nested proposition")
             .join()
             .expect("the completed nested proposition should rejoin its root Proof");
         assert!(matches!(
             refined.certificate().steps(),
             [
-                SimpleProofStep::Branch { .. },
-                SimpleProofStep::ApplyTheoremUsing { .. },
-                SimpleProofStep::Have {
+                ProofStep::Branch { .. },
+                ProofStep::ApplyTheoremUsing { .. },
+                ProofStep::Have {
                     proposition,
                     proof,
                 },
             ] if proposition == &reflexive
-                && proof.steps() == [SimpleProofStep::Assumption]
+                && proof.steps() == [ProofStep::Assumption]
         ));
         let completed = refined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the joined continuation should execute its return");
         assert!(
             completed
@@ -8863,11 +8790,11 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         assert!(matches!(
             framed.certificate().steps(),
             [
-                SimpleProofStep::Branch { .. },
-                SimpleProofStep::ApplyTheoremUsing { .. },
-                SimpleProofStep::Have { .. },
-                SimpleProofStep::Step,
-                SimpleProofStep::FrameUsing {
+                ProofStep::Branch { .. },
+                ProofStep::ApplyTheoremUsing { .. },
+                ProofStep::Have { .. },
+                ProofStep::Step,
+                ProofStep::FrameUsing {
                     region: None,
                     premises,
                 },
@@ -8896,12 +8823,12 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             "{premature:?}"
         );
         let then_stepped = split_proof
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the then sibling advances in place");
         let both_stepped = then_stepped
             .focus_branch(sibling_ids[1])
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the else sibling advances in place");
         let (_, foreign_record) = root
             .split_focused_execution_branch()
@@ -8923,15 +8850,15 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(
             sibling_joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: None,
                 then_proof,
                 else_proof,
-            }] if matches!(then_proof.steps(), [SimpleProofStep::Step])
-                && matches!(else_proof.steps(), [SimpleProofStep::Step])
+            }] if matches!(then_proof.steps(), [ProofStep::Step])
+                && matches!(else_proof.steps(), [ProofStep::Step])
         ));
         let sibling_completed = sibling_joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the joined sibling frontier should execute its return");
         assert!(
             sibling_completed
@@ -9050,11 +8977,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("else assignment should check");
         let before = fact_node_allocations();
         let joined = branches
@@ -9070,13 +8997,13 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         ));
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: Some(assertions),
                 then_proof,
                 else_proof,
             }] if assertions == std::slice::from_ref(&ProofAssertion::Fact(nonnegative.clone()))
-                && matches!(then_proof.steps(), [SimpleProofStep::Step])
-                && matches!(else_proof.steps(), [SimpleProofStep::Step])
+                && matches!(then_proof.steps(), [ProofStep::Step])
+                && matches!(else_proof.steps(), [ProofStep::Step])
         ));
         assert!(
             joined
@@ -9086,7 +9013,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             "the interface node must not copy ambient facts into its delta"
         );
         let completed = joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the abstract joined frontier should execute its return");
         assert!(
             completed
@@ -9113,11 +9040,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let error = split
         .focus_split_arm(&record, true)
         .expect("the then sibling is open")
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("then assignment should check")
         .focus_split_arm(&record, false)
         .expect("the else sibling is open")
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("else assignment should check")
         .join_focused_execution_interface(&record, vec![ProofAssertion::Fact(negative)])
         .err()
@@ -9146,7 +9073,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     );
     assert!(record.condition_theorems.iter().all(Option::is_some));
     let then_stepped = split_proof
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("the then sibling advances in place");
     assert!(
         then_stepped
@@ -9158,7 +9085,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let both_stepped = then_stepped
         .focus_branch(sibling_ids[1])
         .expect("the else sibling is open")
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("the else sibling advances in place");
     for (index, id) in sibling_ids.iter().enumerate() {
         let arm = both_stepped
@@ -9189,16 +9116,16 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     assert_eq!(joined_ids, [parent_id]);
     assert!(matches!(
         joined.certificate().steps(),
-        [SimpleProofStep::Branch {
+        [ProofStep::Branch {
             ensuring: Some(retained),
             then_proof,
             else_proof,
         }] if retained == interface.as_slice()
-            && matches!(then_proof.steps(), [SimpleProofStep::Step])
-            && matches!(else_proof.steps(), [SimpleProofStep::Step])
+            && matches!(then_proof.steps(), [ProofStep::Step])
+            && matches!(else_proof.steps(), [ProofStep::Step])
     ));
     let completed = joined
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("the abstract sibling continuation should execute its return");
     assert!(
         completed
@@ -9260,11 +9187,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("owned-interface then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("owned-interface else assignment should check");
         let assertions = vec![ProofAssertion::Resource(marker_clause.clone())];
         let before = fact_node_allocations();
@@ -9278,13 +9205,13 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         ));
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: Some(retained),
                 ..
             }] if retained == assertions.as_slice()
         ));
         joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the exact owned interface should retain its return frontier");
     }
     let (_, base_height, base_allocations) = ownership_samples[0];
@@ -9321,15 +9248,15 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("transformed-interface then assignment should check")
-            .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
+            .apply_step(ProofStep::FoldResource(ready_clause.clone()))
             .expect("then arm should fold its ready resource")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("transformed-interface else assignment should check")
-            .apply_step(SimpleProofStep::FoldResource(ready_clause.clone()))
+            .apply_step(ProofStep::FoldResource(ready_clause.clone()))
             .expect("else arm should independently fold its ready resource");
         let arm_execution = |take_then: bool| {
             let id = record.arm_id(take_then).expect("both arms are feasible");
@@ -9364,20 +9291,20 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         ));
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 then_proof,
                 else_proof,
                 ..
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::FoldResource(_)]
+                [ProofStep::Step, ProofStep::FoldResource(_)]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::FoldResource(_)]
+                [ProofStep::Step, ProofStep::FoldResource(_)]
             )
         ));
         joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the transformed owned interface should retain its return frontier");
     }
     let (_, base_height, base_allocations) = changed_snapshot_samples[0];
@@ -9409,11 +9336,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         let branches = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("normalized-ownership then assignment should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("normalized-ownership else assignment should check");
         let before = fact_node_allocations();
         let normalized_join = branches
@@ -9458,11 +9385,11 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     let invalid_branches = invalid_split
         .focus_split_arm(&invalid_record, true)
         .expect("the then sibling is open")
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("rejected quantity then assignment should check")
         .focus_split_arm(&invalid_record, false)
         .expect("the else sibling is open")
-        .apply_step(SimpleProofStep::Step)
+        .apply_step(ProofStep::Step)
         .expect("rejected quantity else assignment should check");
     let quantity_three = ResourceClause::Quantified {
         quantity: ContractExpression::CFragment(CExpression::Value(int32(3))),
@@ -9555,11 +9482,11 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
         let nested = nested_split
             .focus_split_arm(&nested_record, true)
             .expect("the nested then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("nested then assignment should check")
             .focus_split_arm(&nested_record, false)
             .expect("the nested else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("nested else assignment should check");
         let nested_statement = nested_record.statement_index;
         assert!(nested_record.continuation_remaining.is_none());
@@ -9597,13 +9524,13 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             .expect("the outer split record derives the enclosing continuation");
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::Branch {
+            [ProofStep::Branch {
                 ensuring: Some(assertions),
                 ..
             }] if assertions == std::slice::from_ref(&ProofAssertion::Fact(nonnegative.clone()))
         ));
         let completed = joined
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("derived enclosing continuation should execute the return");
         assert!(
             completed
@@ -9720,13 +9647,13 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         ));
         assert!(matches!(
             decided.certificate().steps(),
-            [SimpleProofStep::If {
+            [ProofStep::If {
                 then_proof,
                 else_proof,
                 ..
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             ) && else_proof.steps().is_empty()
         ));
         assert_eq!(
@@ -9782,14 +9709,14 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     assert!(
         matches!(
         certificate.steps(),
-        [SimpleProofStep::If {
+        [ProofStep::If {
             condition,
             then_proof,
             else_proof,
         }] if then_proof.steps().is_empty()
             && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             )
         ),
         "{certificate:#?}"
@@ -9819,13 +9746,13 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
         decided.certificate().steps(),
-        [SimpleProofStep::If {
+        [ProofStep::If {
             then_proof,
             else_proof,
             ..
         }] if matches!(
             then_proof.steps(),
-            [SimpleProofStep::Step, SimpleProofStep::Step]
+            [ProofStep::Step, ProofStep::Step]
         ) && else_proof.steps().is_empty()
     ));
     assert_eq!(
@@ -9868,12 +9795,12 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
         decided.certificate().steps(),
-        [SimpleProofStep::Branch {
+        [ProofStep::Branch {
             ensuring: Some(retained),
             then_proof,
             else_proof,
         }] if retained.is_empty()
-            && matches!(then_proof.steps(), [SimpleProofStep::Step])
+            && matches!(then_proof.steps(), [ProofStep::Step])
             && else_proof.steps().is_empty()
     ));
 
@@ -9951,11 +9878,11 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let advanced = split
             .focus_split_arm(&record, true)
             .expect("the then sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("then return should check")
             .focus_split_arm(&record, false)
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("else return should check");
         assert!(advanced.split_arms_at_function_exit(&record));
         let before = fact_node_allocations();
@@ -9969,16 +9896,16 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         ));
         assert!(matches!(
             joined.certificate().steps(),
-            [SimpleProofStep::If {
+            [ProofStep::If {
                 condition,
                 then_proof,
                 else_proof,
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             )
         ));
         assert!(root.certificate().steps().is_empty());
@@ -10038,11 +9965,11 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             "{premature:?}"
         );
         let both_returned = split_proof
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the then sibling returns in place")
             .focus_branch(sibling_ids[1])
             .expect("the else sibling is open")
-            .apply_step(SimpleProofStep::Step)
+            .apply_step(ProofStep::Step)
             .expect("the else sibling returns in place");
         let sibling_joined = both_returned
             .join_focused_execution_terminal(&record)
@@ -10052,16 +9979,16 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(
             sibling_joined.certificate().steps(),
-            [SimpleProofStep::If {
+            [ProofStep::If {
                 condition,
                 then_proof,
                 else_proof,
             }] if matches!(
                 then_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             ) && matches!(
                 else_proof.steps(),
-                [SimpleProofStep::Step, SimpleProofStep::Step]
+                [ProofStep::Step, ProofStep::Step]
             )
         ));
         let sibling_execution = sibling_joined

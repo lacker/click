@@ -382,7 +382,7 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
 
 #[derive(Clone, Default)]
 pub(super) struct ProofCertificateBuilder {
-    pub(super) steps: Vec<SimpleProofStep>,
+    pub(super) steps: Vec<ProofStep>,
     pub(super) blocker: Option<String>,
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
@@ -448,7 +448,7 @@ impl ProofFactStore {
     }
 }
 
-/// Environments a planning executor needs to construct the [`SimpleProofStep`]
+/// Environments a planning executor needs to construct the [`ProofStep`]
 /// for each committed search move at the moment the move is made. Passing
 /// `None` runs the executor without surface-certificate construction.
 /// The path's surface record: what the constructed certificate's own check
@@ -759,7 +759,7 @@ pub(super) struct SurfacePathChoice {
 }
 
 impl ProofCertificateBuilder {
-    pub(super) fn push_step(&mut self, step: SimpleProofStep) {
+    pub(super) fn push_step(&mut self, step: ProofStep) {
         if self.blocker.is_none() {
             append_surface_step_to_leaves(&mut self.steps, step);
         }
@@ -772,7 +772,7 @@ impl ProofCertificateBuilder {
         match ProofCertificate::from_proof_tactics(std::slice::from_ref(&tactic)) {
             Ok(proof) => {
                 let [step] = proof.steps.as_slice() else {
-                    unreachable!("one surface tactic must produce one simple proof step")
+                    unreachable!("one surface tactic must produce one proof step")
                 };
                 self.push_step(step.clone());
             }
@@ -790,7 +790,7 @@ impl ProofCertificateBuilder {
             return;
         };
         match ProofCertificate::from_proof_tactics(&tactics) {
-            Ok(proof) => self.push_step(SimpleProofStep::Have {
+            Ok(proof) => self.push_step(ProofStep::Have {
                 proposition,
                 proof: Box::new(proof),
             }),
@@ -833,11 +833,8 @@ pub(super) fn record_post_execution_surface_tactic(
     path_tactics.push(tactic);
 }
 
-pub(super) fn append_surface_step_to_leaves(
-    steps: &mut Vec<SimpleProofStep>,
-    step: SimpleProofStep,
-) {
-    if let Some(SimpleProofStep::If {
+pub(super) fn append_surface_step_to_leaves(steps: &mut Vec<ProofStep>, step: ProofStep) {
+    if let Some(ProofStep::If {
         then_proof,
         else_proof,
         ..
@@ -851,7 +848,7 @@ pub(super) fn append_surface_step_to_leaves(
 }
 
 pub(super) fn append_surface_tactics_by_leaf(
-    steps: &mut Vec<SimpleProofStep>,
+    steps: &mut Vec<ProofStep>,
     path_tactics: &[Vec<ProofTactic>],
 ) -> Result<(), String> {
     let path_steps = path_tactics
@@ -875,11 +872,11 @@ pub(super) fn append_surface_tactics_by_leaf(
     }
 
     pub(super) fn append(
-        steps: &mut Vec<SimpleProofStep>,
-        path_steps: &[Vec<SimpleProofStep>],
+        steps: &mut Vec<ProofStep>,
+        path_steps: &[Vec<ProofStep>],
         next_path: &mut usize,
     ) {
-        if let Some(SimpleProofStep::If {
+        if let Some(ProofStep::If {
             then_proof,
             else_proof,
             ..
@@ -912,7 +909,7 @@ pub(super) fn append_surface_tactics_by_leaf(
 /// `if` — not inside the leaves of an earlier execution branch, which would
 /// graft one case's closers onto execution paths the case excluded.
 pub(super) fn append_surface_tactics_flat(
-    steps: &mut Vec<SimpleProofStep>,
+    steps: &mut Vec<ProofStep>,
     path_tactics: &[Vec<ProofTactic>],
 ) -> Result<(), String> {
     let Some(common) = path_tactics.first() else {
@@ -1066,10 +1063,10 @@ pub(super) fn surface_branch_path_for_outcome(
     }
 }
 
-pub(super) fn surface_branch_skeleton(steps: &[SimpleProofStep]) -> Vec<SimpleProofStep> {
+pub(super) fn surface_branch_skeleton(steps: &[ProofStep]) -> Vec<ProofStep> {
     let Some((condition, then_proof, else_proof)) =
         steps.iter().rev().find_map(|step| match step {
-            SimpleProofStep::If {
+            ProofStep::If {
                 condition,
                 then_proof,
                 else_proof,
@@ -1079,7 +1076,7 @@ pub(super) fn surface_branch_skeleton(steps: &[SimpleProofStep]) -> Vec<SimplePr
     else {
         return Vec::new();
     };
-    vec![SimpleProofStep::If {
+    vec![ProofStep::If {
         condition: condition.clone(),
         then_proof: Box::new(ProofCertificate::from_steps(surface_branch_skeleton(
             then_proof.steps(),
@@ -1092,7 +1089,7 @@ pub(super) fn surface_branch_skeleton(steps: &[SimpleProofStep]) -> Vec<SimplePr
 
 pub(super) fn synthesize_surface_alternatives(
     paths: Vec<ProofCertificateBuilder>,
-) -> Result<Vec<SimpleProofStep>, String> {
+) -> Result<Vec<ProofStep>, String> {
     if paths.is_empty() {
         return Err("certified alternatives contained no paths".to_string());
     }
@@ -1104,7 +1101,7 @@ pub(super) fn synthesize_surface_alternatives(
 
 pub(super) fn synthesize_surface_paths(
     paths: Vec<ProofCertificateBuilder>,
-) -> Result<Vec<SimpleProofStep>, String> {
+) -> Result<Vec<ProofStep>, String> {
     if paths.len() == 1 {
         return Ok(paths.into_iter().next().unwrap().steps);
     }
@@ -1158,7 +1155,7 @@ pub(super) fn synthesize_surface_paths(
     }
 
     let mut steps = prefix;
-    steps.push(SimpleProofStep::If {
+    steps.push(ProofStep::If {
         condition: first_choice.condition,
         then_proof: Box::new(ProofCertificate::from_steps(synthesize_surface_paths(
             then_paths,

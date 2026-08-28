@@ -595,7 +595,7 @@ pub(super) fn execute_branch_step_from_execution_point(
                 &mut execution.program_point_states,
                 &construction_point_overrides,
             );
-            construct_simple_step_for_planned_operation(
+            construct_proof_step_for_planned_operation(
                 execution,
                 proof_context,
                 construction.sink,
@@ -1638,7 +1638,7 @@ fn execute_step_from_execution_point_selecting_path(
                 &mut execution.program_point_states,
                 &construction_point_overrides,
             );
-            construct_simple_step_for_planned_operation(
+            construct_proof_step_for_planned_operation(
                 execution,
                 proof_context,
                 construction.sink,
@@ -1896,7 +1896,7 @@ fn execute_step_from_execution_point_selecting_path(
     let state: &mut CState = &mut execution.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
-    // later simple step. Record that form during both planning and
+    // later proof step. Record that form during both planning and
     // explicit certificate validation; otherwise check immediately forgets
     // evaluator guards such as `defined(x + 1)` that planning retained.
     let exit_point = ProgramPointRef {
@@ -2163,7 +2163,7 @@ fn execute_step_from_execution_point_selecting_path(
         for operation in &deferred_transport_operations {
             if let Some(construction) = construction.as_mut() {
                 let environments = construction.environments;
-                construct_simple_step_for_planned_operation(
+                construct_proof_step_for_planned_operation(
                     execution,
                     proof_context,
                     construction.sink,
