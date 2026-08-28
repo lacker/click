@@ -851,7 +851,6 @@ thread_local! {
 /// `PureFactContext` in a non-canonical form. The standing regression for
 /// `docs/internals/canonicalization.md` asserts zero over fixture verification.
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) fn count_canonical_at_creation_violations<T>(body: impl FnOnce() -> T) -> (T, usize) {
     let previous = CANONICAL_AT_CREATION_VIOLATIONS.with(|count| count.replace(Some(0)));
     let result = body();
