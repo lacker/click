@@ -704,7 +704,7 @@ pub enum CRuntimeError {
     DuplicateResource {
         resource: CResourceFact,
     },
-    OverlappingWriteResources {
+    OverlappingOwnedMemoryResources {
         left: Box<CMemoryRange>,
         right: Box<CMemoryRange>,
     },
@@ -1420,7 +1420,7 @@ pub enum CResource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceContextValidityError {
     DuplicateOwnedResourceFact(CResourceFact),
-    OverlappingWriteResources {
+    OverlappingOwnedMemoryResources {
         left: CMemoryRange,
         right: CMemoryRange,
     },
@@ -1510,8 +1510,8 @@ pub enum CResourceAccessMode {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CResourceSpec {
-    Read(CMemorySegment),
-    Write(CMemorySegment),
+    ViewMemory(CMemorySegment),
+    OwnMemory(CMemorySegment),
     Quantified {
         quantity: CExpression,
         resource: Box<CResourceSpec>,

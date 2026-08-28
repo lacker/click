@@ -297,7 +297,7 @@ fn parses_composite_resource_definition() {
                 arguments: vec![current_int(7)],
                 parameter_types: vec![C0Type::Int32],
             },
-            ResourceClause::Write(ContractSegment {
+            ResourceClause::OwnMemory(ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Variable("flag".to_string()),
                 start: CExpression::Value(int32(0)),
@@ -386,7 +386,7 @@ fn parses_resource_verb_function_clauses() {
     assert_eq!(
         function.requires(),
         &[
-            Requirement::Resource(ResourceClause::Write(ContractSegment {
+            Requirement::Resource(ResourceClause::OwnMemory(ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Variable("flag".to_string()),
                 start: CExpression::Value(int32(0)),
@@ -418,7 +418,7 @@ fn parses_resource_verb_function_clauses() {
         &[
             EnsureClause {
                 name: None,
-                ensure: Ensure::Resource(ResourceClause::Write(ContractSegment {
+                ensure: Ensure::Resource(ResourceClause::OwnMemory(ContractSegment {
                     state: ContractSegmentState::Current,
                     base: CExpression::Variable("flag".to_string()),
                     start: CExpression::Value(int32(0)),

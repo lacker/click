@@ -45,7 +45,7 @@ that live allocation authority was returned through the contract or freed.
 
 The allocation/null refinement and allocation/free transitions are recorded
 as memory-snapshot edges. Registering the pending result has an explicit
-memory-preserving edge, allowing existing loads and permissions to cross the
+memory-preserving edge, allowing existing loads and memory resource facts to cross the
 unresolved state. Failed allocation removes that metadata and returns to the
 pre-allocation memory identity without producing allocation authority.
 Successful allocation starts from the pending snapshot but introduces only
@@ -112,7 +112,7 @@ permission covers.
 A checked universal fact that reads every `int32` cell under the exact guard
 `0 <= k and k < n` also certifies `loadable(p[0..n])` for that same memory and
 base. This lets a modular copy or initialization postcondition re-establish the
-initialized prefix without an extra ad-hoc permission proposition. A narrower
+initialized prefix without an extra ad-hoc loadability proposition. A narrower
 guard, another base, or another memory snapshot does not establish the range.
 
 Use `loadable(p[lo..hi])` for the same kind of loadability fact when Click

@@ -77,8 +77,8 @@ consumes p[0..1];
 
 These give the verifier permission to check external memory accesses. `views`
 permits loads; an owned element permits both loads and stores.
-Resource facts are carried separately from pure facts. [Permissions](permissions.md)
-covers transfer through
+Resource facts are carried separately from pure facts.
+[Resources and memory permissions](resources.md) covers transfer through
 function calls and the distinction between loadability and authority.
 
 Requirements can be labeled:

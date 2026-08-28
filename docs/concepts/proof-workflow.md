@@ -179,7 +179,7 @@ control flow.
   runs in every feasible case. It does not execute a C `if` statement.
 - `observe(resource);`: project one view step from a held composite resource
   fact. This exposes immediate pure facts and viewed immediate contained
-  resource facts without exposing owned contained permissions.
+  resource facts without exposing owned contained resource facts.
 - `choose(k from requirement name);`: open a named existential precondition,
   introducing proof-local int32 value `k`.
 - `choose(k from requirement N);`: the same operation by zero-based requirement

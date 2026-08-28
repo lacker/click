@@ -312,7 +312,7 @@ Examples:
 
 This distinction matters. `observe(...)` should be a deterministic tactic
 that adds observable pure facts and viewed immediate contained resource facts.
-It should not unfold hidden owned permissions, and it should not consume the
+It should not unfold hidden owned resource facts, and it should not consume the
 observed resource fact. It should also stay one-step: recursive expansion of
 large composite resources belongs behind an explicit bounded tactic or
 future summary mechanism, not in default `auto` behavior.
@@ -406,7 +406,7 @@ exact-argument population, regardless of its quantity:
   closes.
 - `observe(resource)` projects one view step without consuming the resource
   fact. It exposes immediate pure facts and viewed immediate contained resource
-  facts, but not owned contained permissions.
+  facts, but not owned contained resource facts.
 - `count(resource(arguments))` observes the exact population quantity, while
   `_` arguments sum all matching populations.
 

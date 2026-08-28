@@ -505,8 +505,8 @@ pub enum Ensure {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResourceClause {
-    Read(ContractSegment),
-    Write(ContractSegment),
+    ViewMemory(ContractSegment),
+    OwnMemory(ContractSegment),
     Quantified {
         quantity: ContractExpression,
         resource: Box<ResourceClause>,
@@ -719,7 +719,7 @@ fn collect_current_resource_clause_variables(
     names: &mut BTreeSet<String>,
 ) {
     match resource {
-        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             collect_current_segment_variables(segment, names);
         }
         ResourceClause::Quantified { quantity, resource } => {

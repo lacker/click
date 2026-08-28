@@ -93,7 +93,7 @@ impl PureFactContext {
         bytes: &Bitvector32Term,
     ) -> bool {
         // The loadable prover is the one consumer of the extended DAG
-        // bridging: a permission fact recorded at one snapshot term must
+        // bridging: a loadability fact recorded at one snapshot term must
         // discharge a load extracted at another. Scoping the power here
         // keeps execution pruning and simp planning byte-identical to the
         // pre-arc path (see api.rs).

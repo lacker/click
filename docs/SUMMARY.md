@@ -39,7 +39,7 @@
 - [C0 and C fragments](concepts/c0-and-c-fragments.md)
 - [Undefined behavior](concepts/undefined-behavior.md)
 - [Loadability](concepts/loadability.md)
-- [Permissions](concepts/permissions.md)
+- [Resources and memory permissions](concepts/resources.md)
 - [Aliasing and frames](concepts/aliasing-and-frames.md)
 - [Loops and invariants](concepts/loops-and-invariants.md)
 - [Predicates](concepts/predicates.md)

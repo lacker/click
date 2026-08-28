@@ -702,12 +702,12 @@ fn resource_family_cores_are_view_facts() {
     };
 
     assert_eq!(
-        read_element(base.clone(), 0, 1).core(),
-        Some(read_element(base.clone(), 0, 1))
+        view_memory_fact(base.clone(), 0, 1).core(),
+        Some(view_memory_fact(base.clone(), 0, 1))
     );
     assert_eq!(
-        write_element(base.clone(), 0, 1).core(),
-        Some(read_element(base, 0, 1))
+        own_memory_fact(base.clone(), 0, 1).core(),
+        Some(view_memory_fact(base, 0, 1))
     );
     assert_eq!(
         CResourceFact::own_token("token".to_string(), vec![int32(0)]).core(),
@@ -1356,8 +1356,8 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
     let error = ResourceContext::new()
         .try_compose_with_facts(
             [
-                write_element(base.clone(), 0, 1),
-                write_element(base.clone(), 0, 1),
+                own_memory_fact(base.clone(), 0, 1),
+                own_memory_fact(base.clone(), 0, 1),
             ],
             &PureFactContext::new(),
         )
@@ -1365,7 +1365,7 @@ fn checked_resource_composition_rejects_invalid_state_before_normalizing() {
 
     assert_eq!(
         error,
-        ResourceContextValidityError::OverlappingWriteResources {
+        ResourceContextValidityError::OverlappingOwnedMemoryResources {
             left: memory_range(base.clone(), 0, 1),
             right: memory_range(base, 0, 1),
         }

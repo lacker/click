@@ -16,7 +16,7 @@ fn memory_range(
     CMemoryRange::new(base, start.into(), end.into())
 }
 
-fn read_element(
+fn view_memory_fact(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
@@ -24,7 +24,7 @@ fn read_element(
     CResourceFact::view_memory(memory_range(base, start, end))
 }
 
-fn write_element(
+fn own_memory_fact(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
@@ -32,20 +32,20 @@ fn write_element(
     CResourceFact::own_memory(memory_range(base, start, end))
 }
 
-fn read_context(
+fn view_memory_context(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_fact(read_element(base, start, end))
+    ResourceContext::new().unchecked_with_fact(view_memory_fact(base, start, end))
 }
 
-fn write_context(
+fn own_memory_context(
     base: Pointer,
     start: impl Into<Bitvector32Term>,
     end: impl Into<Bitvector32Term>,
 ) -> ResourceContext {
-    ResourceContext::new().unchecked_with_fact(write_element(base, start, end))
+    ResourceContext::new().unchecked_with_fact(own_memory_fact(base, start, end))
 }
 
 fn assert_checkable_derivation(assumptions: &PureFactContext, proposition: &Proposition) {

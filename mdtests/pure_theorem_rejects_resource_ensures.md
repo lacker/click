@@ -5,10 +5,10 @@ resource to the caller's resource context.
 
 ```click
 theorem resource_conclusion_is_not_pure(p: int32*) {
-    ensures write(p[0..1]) by auto;
+    produces p[0..1] by auto;
 }
 ```
 
 ```expect
-fail: `ensures` accepts pure propositions only; use `owns` or `produces` for owned output
+fail: pure theorem `resource_conclusion_is_not_pure` currently supports proposition `ensures` clauses only
 ```

@@ -276,13 +276,13 @@ pub(in crate::lang::click) fn describe_resource_clause(resource: &ResourceClause
             describe_contract_expression(quantity),
             describe_resource_clause(resource)
         ),
-        ResourceClause::Read(segment) => format!(
+        ResourceClause::ViewMemory(segment) => format!(
             "views {}[{}..{}]",
             describe_c_expression(&segment.base),
             describe_c_expression(&segment.start),
             describe_c_expression(&segment.end)
         ),
-        ResourceClause::Write(segment) => format!(
+        ResourceClause::OwnMemory(segment) => format!(
             "owns {}[{}..{}]",
             describe_c_expression(&segment.base),
             describe_c_expression(&segment.start),
@@ -669,7 +669,7 @@ pub(super) fn validate_resource_clause(
     context: &str,
 ) -> Result<(), ClickError> {
     match resource {
-        ResourceClause::Read(_) | ResourceClause::Write(_) => Ok(()),
+        ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => Ok(()),
         ResourceClause::Quantified { quantity, resource } => {
             validate_contract_expression_calls(quantity, click_functions, context)?;
             let actual =

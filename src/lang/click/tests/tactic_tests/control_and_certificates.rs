@@ -66,7 +66,7 @@ fn parses_frontier_branch_ensuring_interface() {
             else_tactics,
         }) if matches!(assertions.as_slice(), [
             ProofAssertion::Fact(_),
-            ProofAssertion::Resource(ResourceClause::Write(_)),
+            ProofAssertion::Resource(ResourceClause::OwnMemory(_)),
         ]) && then_tactics == &[ProofTactic::Step]
             && else_tactics == &[ProofTactic::SmartExecute]
     ));

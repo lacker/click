@@ -2002,7 +2002,7 @@ fn population_quantities_are_equal(
 
 fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) -> bool {
     match resource {
-        CResourceSpec::Read(segment) | CResourceSpec::Write(segment) => {
+        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => {
             segment.guard.is_none()
                 && c_expression_is_snapshot_independent(&segment.base)
                 && c_expression_is_snapshot_independent(&segment.start)
@@ -2021,12 +2021,12 @@ fn resource_spec_has_snapshot_independent_footprint(resource: &CResourceSpec) ->
 fn population_body_requires_positive_witness(definition: &CCompositeResourceDefinition) -> bool {
     fn resource_is_duplicable_view(resource: &CResourceSpec) -> bool {
         match resource {
-            CResourceSpec::Read(_) => true,
+            CResourceSpec::ViewMemory(_) => true,
             CResourceSpec::Quantified { resource, .. } => resource_is_duplicable_view(resource),
             CResourceSpec::Composite { access, .. } | CResourceSpec::Token { access, .. } => {
                 *access == CResourceAccessMode::View
             }
-            CResourceSpec::Write(_) => false,
+            CResourceSpec::OwnMemory(_) => false,
         }
     }
 
@@ -3682,8 +3682,8 @@ fn resource_context_runtime_error(error: ResourceContextValidityError) -> CRunti
         ResourceContextValidityError::DuplicateOwnedResourceFact(resource) => {
             CRuntimeError::DuplicateResource { resource }
         }
-        ResourceContextValidityError::OverlappingWriteResources { left, right } => {
-            CRuntimeError::OverlappingWriteResources {
+        ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
+            CRuntimeError::OverlappingOwnedMemoryResources {
                 left: Box::new(left),
                 right: Box::new(right),
             }
@@ -3753,12 +3753,12 @@ pub(super) fn evaluate_function_resource_spec(
             };
             Ok(Ok(CResourceFact::own_quantity(inner, quantity)))
         }
-        CResourceSpec::Read(segment) => {
+        CResourceSpec::ViewMemory(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "could not evaluate a read resource segment".to_string(),
+                        "could not evaluate a viewed memory resource segment".to_string(),
                     )));
                 }
             };
@@ -3768,12 +3768,12 @@ pub(super) fn evaluate_function_resource_spec(
                 segment.end,
             ))))
         }
-        CResourceSpec::Write(segment) => {
+        CResourceSpec::OwnMemory(segment) => {
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
                     return Ok(Err(CRuntimeError::FunctionContract(
-                        "could not evaluate a write resource segment".to_string(),
+                        "could not evaluate an owned memory resource segment".to_string(),
                     )));
                 }
             };

@@ -379,7 +379,7 @@ fn scoped_call_borrows_end_before_free() {
         c_return(c_int32_literal(0)),
     )
     .with_resource_summary(
-        vec![CResourceSpec::Read(CMemorySegment::new(
+        vec![CResourceSpec::ViewMemory(CMemorySegment::new(
             c_variable("data"),
             c_int32_literal(0),
             c_int32_literal(1),
@@ -744,7 +744,7 @@ fn nullable_owner_contract(body: CStatement) -> (CState, CFunction, Vec<CExpress
                 ],
                 parameter_types: vec![CType::Int32Pointer, CType::Int32],
             },
-            CResourceSpec::Write(CMemorySegment {
+            CResourceSpec::OwnMemory(CMemorySegment {
                 base: c_variable("item"),
                 start: c_int32_literal(0),
                 end: c_int32_literal(1),

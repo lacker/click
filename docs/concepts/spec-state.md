@@ -12,7 +12,8 @@ program points.
 
 Click does not yet have general first-class mutable spec state. It does have a
 resource context for viewed and owned memory, allocation authority, and
-user-defined resources, described in [Permissions](permissions.md). This page
+user-defined resources, described in
+[Resources and memory permissions](resources.md). This page
 explains the boundary between those implemented mechanisms and more general
 proof-only state.
 
@@ -74,13 +75,13 @@ Spec state should feel like ordinary Click facts. A user should be able to
 state, carry, unfold, and prove model facts without switching to a completely
 different mental model.
 
-This matters for permission logic. A resource fact may say that the current
+This matters for memory-permission logic. A resource fact may say that the current
 proof state has read or write authority over some memory. Unlike pure facts,
 some resource facts must not be copied freely. Click's viewed and owned memory
 elements therefore live in a resource context rather than as
 classical predicate facts.
 
-## Relationship to permission logic
+## Relationship to resource logic
 
 The implemented specification layer has three kinds of state:
 

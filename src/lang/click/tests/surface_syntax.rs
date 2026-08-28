@@ -118,7 +118,7 @@ fn parses_checked_signature_and_contract_clauses() {
                     },
                 },
             },
-            Requirement::Resource(ResourceClause::Write(ContractSegment {
+            Requirement::Resource(ResourceClause::OwnMemory(ContractSegment {
                 state: ContractSegmentState::Current,
                 base: CExpression::Variable("p".to_string()),
                 start: CExpression::Value(int32(0)),
@@ -1539,7 +1539,7 @@ fn nested_field_segments_keep_the_terminal_field_offset() {
     "#;
     let file = parse_c0_click_file(click_source, &[("write_nested.c", c_source)])
         .expect("nested field segments should retain imported terminal field metadata");
-    let Requirement::Resource(ResourceClause::Write(required)) =
+    let Requirement::Resource(ResourceClause::OwnMemory(required)) =
         &file.function_blocks()[0].requires()[1]
     else {
         panic!("expected a nested owned field requirement")
@@ -1598,7 +1598,7 @@ fn parses_struct_object_segments_without_exposing_layout_cells() {
         "owner->data[0..owner->cap]"
     );
 
-    let Requirement::Resource(ResourceClause::Write(segment)) = &function.requires()[1] else {
+    let Requirement::Resource(ResourceClause::OwnMemory(segment)) = &function.requires()[1] else {
         panic!("expected an owned object requirement")
     };
 
@@ -1657,6 +1657,26 @@ fn rejects_legacy_mutable_field_effect_spelling() {
         "{}",
         error.message()
     );
+}
+
+#[test]
+fn rejects_legacy_read_write_resource_spelling() {
+    for resource_clause in ["views read(p[0..1]);", "owns write(p[0..1]);"] {
+        let source = format!(
+            r#"
+                resource wrapper(p: int32*) {{
+                    {resource_clause}
+                }}
+            "#
+        );
+        let error =
+            parse(&source).expect_err("legacy read/write resource syntax should be retired");
+        assert!(
+            error.message().contains("expected `]`") && error.message().contains("got `..`"),
+            "unexpected diagnostic for `{resource_clause}`: {}",
+            error.message()
+        );
+    }
 }
 
 #[test]

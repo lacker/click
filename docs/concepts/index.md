@@ -30,7 +30,7 @@ fits into verification.
 
 - [Memory model](memory-model.md)
 - [Loadability](loadability.md)
-- [Permissions and resources](permissions.md)
+- [Resources and memory permissions](resources.md)
 - [Aliasing and frames](aliasing-and-frames.md)
 - [Specification state](spec-state.md)
 

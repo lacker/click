@@ -2,7 +2,7 @@
 
 This checks that `observe(resource)` is enough to use the immediate viewed
 facts and read permissions of a folded len/cap/data buffer resource without
-unfolding the owned permissions.
+unfolding the owned contained memory resources.
 
 ```c filename=buffer_len.c
 struct owner {

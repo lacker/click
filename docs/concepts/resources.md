@@ -1,9 +1,14 @@
-# Permissions
+# Resources and memory permissions
 
-Permissions describe what external memory a proof may access. In the proof
-context, permissions are resource facts. They sit alongside pure facts such as
-integer bounds, but they obey resource-composition rules because some
-permissions must not be copied freely.
+Resources are the logical objects that a proof can hold, view, transfer,
+consume, split, combine, fold, and unfold. A held resource plus its `own` or
+`view` access mode is a resource fact. Resource facts sit alongside pure facts
+such as integer bounds, but obey resource-composition rules because owned facts
+must not be copied freely.
+
+A memory permission is the access authority provided by a memory resource
+fact. Permissions are therefore one use of resources, not a parallel proof
+state or a second general-purpose tracking system.
 
 Click currently has two first-layer memory permissions:
 
@@ -132,8 +137,9 @@ Owned memory resources are linear across function calls. `owns` transfers the
 resource to the callee and returns it; `consumes` transfers it without returning
 it. The caller cannot use a consumed resource afterward.
 
-This is the main difference between a permission and an ordinary proposition.
-Ordinary facts can be used repeatedly. An owned resource can be transferred.
+This is the main difference between an owned resource fact and an ordinary
+proposition. Ordinary facts can be used repeatedly. An owned resource can be
+transferred.
 
 ## Function calls
 
@@ -319,7 +325,7 @@ int32 return_fd(int32 fd) {
 
 The first `observe` exposes a viewed `nonnegative_fd(fd)` resource. The second
 `observe` exposes that resource's immediate fact, `fd >= 0`. Neither step
-consumes `live_fd(fd)`, and neither step unfolds owned permissions. This
+consumes `live_fd(fd)`, and neither step unfolds owned contained resources. This
 one-step behavior is intentional: large composite resources should not be
 recursively expanded by default proof automation.
 
@@ -420,7 +426,8 @@ resource list(node: struct node*) {
 
 The false case is an empty body; conditional resource bodies have no `else`.
 The condition must not read memory. This avoids circular reasoning in which a
-load is used to decide whether the permission authorizing that load exists.
+load is used to decide whether the memory resource authorizing that load
+exists.
 
 A guarded body may contain itself directly. `unfold(list(node))` exposes one
 nonnull node and the still-folded `list(node->next)` tail; `fold` performs the
@@ -434,9 +441,9 @@ important after reading a next pointer: if the context proves
 `node->next == tail`, ownership of `list(node->next)` is ownership of
 `list(tail)` as well.
 
-If a fact reads mutable memory, the composite body must contain write
-permission covering that memory. This is what makes the fact stable while
-the resource is folded:
+If a fact reads mutable memory, the composite body must contain an owned memory
+resource covering that memory. This is what makes the fact stable while the
+resource is folded:
 
 <!-- verified-example: mdtests/composite_resource_composes_token.md -->
 ```click
@@ -460,7 +467,7 @@ This symbolic check proves the index is inside the range; the memory base must
 still match the contained owned memory resource directly.
 
 `views flag[0..1]` is not enough for this purpose. A viewed resource authorizes
-inspection but does not prevent another holder of write permission from
+inspection but does not prevent a holder of an owned memory resource from
 changing the cell. Pure scalar facts such as `fd >= 0` do not need a contained
 memory resource.
 
@@ -476,10 +483,10 @@ self-recursion is the deliberate exception. Resource unfolding is explicit;
 `auto` does not yet choose unfold/fold steps on its own.
 
 The smallest ownership-shaped pattern is a composite resource that bundles
-several concrete permissions. For example, `first_cell_copy_access(dst, src)`
+several concrete memory resource facts. For example, `first_cell_copy_access(dst, src)`
 can own `dst[0..1]` and view `src[0..1]`, while
-`owned_one_cell(owner, data)` can contain permission for an owner object and an
-explicitly passed buffer pointer. In this conservative shape, the resource's
+`owned_one_cell(owner, data)` can contain memory resources for an owner object
+and an explicitly passed buffer pointer. In this conservative shape, the resource's
 parameters name the lower-level memory objects directly. More convenient
 field-dependent composite resources can derive a contained buffer from
 `owner->data`. The folded resource exposes derived `separate(...)` facts from
@@ -540,14 +547,14 @@ prove the subrange is covered.
 
 ## Element width
 
-Permission ranges use the element width of the pointer expression.
+Memory-resource ranges use the element width of the pointer expression.
 
 For `int32 p[]`, `p[1..2]` covers one four-byte `int32` cell.
 
-For `uint8 p[]`, `p[1..2]` covers one byte. Permission for `p[0..1]` does not
+For `uint8 p[]`, `p[1..2]` covers one byte. A memory resource for `p[0..1]` does not
 cover `p[1]`.
 
-## Supported permission behavior
+## Supported resource behavior
 
 Click implements:
 
@@ -564,13 +571,13 @@ Click implements:
   resources,
 - one-step fact views for folded composite resources, plus
   `observe(resource)` tactics that explicitly record fact-view projection
-  without exposing contained permissions,
+  without exposing contained owned resource facts,
 - owned memory implying viewed authority,
 - visible owned resources imply `separate(...)` facts; provably overlapping
   visible writes are rejected,
 - composite resources project direct `contains(parent, child)` facts for owned
   contained resources and direct `separate(child1, child2)` facts for owned
-  sibling resources without exposing the hidden permissions,
+  sibling resources without exposing the hidden owned resource facts,
 - copyable read transfer,
 - linear write transfer through function summaries,
 - covered subrange splitting and adjacent range rejoining,
@@ -591,5 +598,5 @@ Not implemented yet:
 - explicit resource algebra tactics,
 - general mutable spec/model state.
 
-The current permission layer is intentionally small. It should be treated as the
-foundation for broader permission logic, not as the final ownership model.
+The current resource layer is intentionally small. Its memory family is the
+foundation for broader memory-permission logic, not the final ownership model.

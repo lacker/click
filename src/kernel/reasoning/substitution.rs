@@ -1441,7 +1441,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
                 resource, from, to,
             )),
         },
-        CResourceSpec::Read(segment) => CResourceSpec::Read(CMemorySegment {
+        CResourceSpec::ViewMemory(segment) => CResourceSpec::ViewMemory(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),
@@ -1450,7 +1450,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_resource_spec(
                 .as_ref()
                 .map(|guard| substitute_bitvector_variable_in_spec_proposition(guard, from, to)),
         }),
-        CResourceSpec::Write(segment) => CResourceSpec::Write(CMemorySegment {
+        CResourceSpec::OwnMemory(segment) => CResourceSpec::OwnMemory(CMemorySegment {
             base: substitute_bitvector_variable_in_c_expression(&segment.base, from, to),
             start: substitute_bitvector_variable_in_c_expression(&segment.start, from, to),
             end: substitute_bitvector_variable_in_c_expression(&segment.end, from, to),

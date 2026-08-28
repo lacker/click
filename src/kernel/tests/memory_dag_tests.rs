@@ -548,7 +548,7 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
     );
 }
 
-/// The owned-string loadable shape: the permission fact and its bound facts
+/// The owned-string loadable shape: the loadability fact and its bound facts
 /// write `len` as a load at contract
 /// entry, while the index the goal extracts writes it at a later snapshot
 /// separated by a block declaration, stores, and a cell-forgetting prune —
@@ -569,10 +569,10 @@ fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
         Box::new(len_pointer.clone()),
     );
 
-    // The recorded facts: the buffer permission and both `len` bounds, all
+    // The recorded facts: the buffer loadability range and both `len` bounds, all
     // written at entry.
     let assumptions = PureFactContext::new()
-        // Same-block permissions that cannot cover `buffer[len]`. These used
+        // Same-block loadability ranges that cannot cover `buffer[len]`. These used
         // to trigger costly general equality searches before the matching
         // symbolic range was considered.
         .assume_proposition(Proposition::CMemoryLoadable {

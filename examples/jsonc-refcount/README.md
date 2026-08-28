@@ -25,7 +25,7 @@ The current support is intentionally narrow:
 - pointer-to-struct parameters
 - `->` field loads and stores for that first field
 - `loadable(obj->ref_count)` as the field-loadability precondition
-- `read(obj[0..1])` or `write(obj[0..1])` as the access permission
+- `views obj[0..1]` or `owns obj[0..1]` as the memory access resource
 - `mutable obj->ref_count` for field writes
 
 Keep this pilot narrow. Add the smallest C0, memory-model, and proof features

@@ -1810,14 +1810,12 @@ pub(in crate::lang::click) fn substitute_resource_clause_for_summary(
                 substitutions,
             )?),
         }),
-        ResourceClause::Read(segment) => Ok(ResourceClause::Read(substitute_contract_segment(
-            segment,
-            substitutions,
-        )?)),
-        ResourceClause::Write(segment) => Ok(ResourceClause::Write(substitute_contract_segment(
-            segment,
-            substitutions,
-        )?)),
+        ResourceClause::ViewMemory(segment) => Ok(ResourceClause::ViewMemory(
+            substitute_contract_segment(segment, substitutions)?,
+        )),
+        ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
+            substitute_contract_segment(segment, substitutions)?,
+        )),
         ResourceClause::Declared {
             access,
             kind,
@@ -1866,12 +1864,12 @@ pub(in crate::lang::click) fn resource_clause_to_resource_spec(
             quantity: resource_argument_to_c_expression(quantity)?,
             resource: Box::new(resource_clause_to_resource_spec(resource)?),
         }),
-        ResourceClause::Read(segment) => Ok(CResourceSpec::Read(CMemorySegment::new(
+        ResourceClause::ViewMemory(segment) => Ok(CResourceSpec::ViewMemory(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),
         ))),
-        ResourceClause::Write(segment) => Ok(CResourceSpec::Write(CMemorySegment::new(
+        ResourceClause::OwnMemory(segment) => Ok(CResourceSpec::OwnMemory(CMemorySegment::new(
             segment.base.clone(),
             segment.start.clone(),
             segment.end.clone(),

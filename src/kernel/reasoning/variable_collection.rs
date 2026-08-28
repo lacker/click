@@ -688,7 +688,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
             collect_c_expression_bitvector_variables(quantity, variables);
             collect_resource_spec_bitvector_variables(resource, variables);
         }
-        CResourceSpec::Read(segment) => {
+        CResourceSpec::ViewMemory(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -696,7 +696,7 @@ pub(in crate::kernel) fn collect_resource_spec_bitvector_variables(
                 collect_spec_proposition_bitvector_variables(guard, variables);
             }
         }
-        CResourceSpec::Write(segment) => {
+        CResourceSpec::OwnMemory(segment) => {
             collect_c_expression_bitvector_variables(&segment.base, variables);
             collect_c_expression_bitvector_variables(&segment.start, variables);
             collect_c_expression_bitvector_variables(&segment.end, variables);
@@ -780,8 +780,8 @@ pub(crate) fn resource_context_has_read(
     // across an opaque effect may name its bounds with load atoms from the
     // pre-effect snapshot, while the expression being loaded names the same
     // cells at the current snapshot. Keep the snapshot-DAG bridge scoped to
-    // this permission query, just as `proves_memory_loadable` does for
-    // proposition-backed permissions.
+    // this resource-backed access query, just as `proves_memory_loadable`
+    // does for proposition-backed loadability facts.
     crate::kernel::api::with_extended_dag_bridging(|| {
         resources.permits_memory_read(pointer, byte_width, assumptions)
     })

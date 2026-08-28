@@ -544,7 +544,7 @@ pub(super) fn describe_runtime_error(
             "duplicate resource fact `{}`",
             describe_resource_fact(resource, parameters, arguments)
         ),
-        crate::kernel::CRuntimeError::OverlappingWriteResources { left, right } => format!(
+        crate::kernel::CRuntimeError::OverlappingOwnedMemoryResources { left, right } => format!(
             "overlapping owned memory resource facts `owns {}` and `owns {}`",
             describe_memory_range(left, parameters, arguments),
             describe_memory_range(right, parameters, arguments)

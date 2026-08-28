@@ -39,7 +39,7 @@ resource rules. Contrast with [composite resource](#composite-resource).
 ### Alias
 
 A pointer or reference that can designate storage also designated by another
-  value. Click tracks the permissions needed to reason soundly in the presence
+  value. Click tracks memory resources needed to reason soundly in the presence
   of aliases. See [Aliasing and frames](../concepts/aliasing-and-frames.md).
 
 ### Ambient fact
@@ -105,7 +105,7 @@ while checking signed overflow and other C definedness conditions separately.
 
 ### Borrow
 
-Scoped permission to use authority without taking ownership. A callee's `views`
+Scoped use of a resource view without taking ownership. A callee's `views`
 requirement can borrow from the caller's owned resource for the duration of the
 call without consuming it or creating a new persistent view afterward.
 
@@ -574,7 +574,7 @@ outcomes. The result is only the returned value, not the whole outcome.
 
 ### Ownership
 
-The right represented by a resource or permission to rely on, transform, or
+The authority represented by an owned resource fact to rely on, transform, or
 transfer some state. Click models ownership explicitly rather than inferring
 exclusive access from a C pointer alone.
 
@@ -593,8 +593,9 @@ by choosing a branch arm. The opposite arm receives the opposite polarity.
 
 ### Permission
 
-Evidence authorizing a particular view or operation on state. Permissions
-  support modular reasoning about reads, writes, aliases, and frames.
+Memory-access authority granted by a viewed or owned memory resource fact. A
+viewed fact permits reads; an owned fact permits reads and writes. Permission
+is the meaning of those memory resources, not a separate proof-state store.
 
 ### Point proof
 
@@ -732,8 +733,8 @@ explicit and smart tactics advance the same checked proof object directly.
 
 ### Resource
 
-A logical representation of owned state with rules for transfer, splitting,
-  combination, and consumption.
+A logical object governed by rules for access modes, transfer, splitting,
+combination, and consumption. A proof holds resources as resource facts.
 
 ### Resource context
 
@@ -936,8 +937,8 @@ path assumption.
 
 ### View
 
-A logical interpretation of underlying state, usually represented through a
-  resource or permission and related to other views by explicit rules.
+A logical interpretation of underlying state, usually represented by a viewed
+resource fact and related to other views by explicit resource-family rules.
 
 ## W
 

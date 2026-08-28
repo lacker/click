@@ -631,7 +631,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             resource.clone(),
             false,
         ),
-        ResourceClause::Read(_) | ResourceClause::Write(_) => {
+        ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `observe` expects a declared resource"
             )));
@@ -899,7 +899,8 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
                 .map_err(|error| error.message().to_string())?;
             owned_children.push((child.clone(), child_subject));
         }
-        let (ResourceClause::Read(segment) | ResourceClause::Write(segment)) = &contained else {
+        let (ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment)) = &contained
+        else {
             continue;
         };
         if let Some(kernel) =
@@ -968,7 +969,7 @@ fn record_observed_composite_surface_facts<F: ResourcePureFacts>(
 fn resource_clause_subject(resource: &ResourceClause) -> ResourceSubject {
     match resource {
         ResourceClause::Quantified { resource, .. } => resource_clause_subject(resource),
-        ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
+        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
             ResourceSubject::Memory(segment.clone())
         }
         ResourceClause::Declared {
@@ -1472,7 +1473,8 @@ pub(super) fn append_lowered_resource_clause_loadable_fact(
     state: &CState,
     propositions: &mut Vec<Proposition>,
 ) {
-    let (ResourceClause::Read(segment) | ResourceClause::Write(segment)) = resource else {
+    let (ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment)) = resource
+    else {
         return;
     };
     let Some(range) = lowered
@@ -1567,7 +1569,7 @@ fn describe_resource_context_validity_error(
                 describe_resource_fact(&resource, parameters, arguments)
             )
         }
-        ResourceContextValidityError::OverlappingWriteResources { left, right } => {
+        ResourceContextValidityError::OverlappingOwnedMemoryResources { left, right } => {
             format!(
                 "overlapping owned memory resource facts `owns {}` and `owns {}`",
                 describe_memory_range(&left, parameters, arguments),
@@ -2881,14 +2883,12 @@ pub(super) fn instantiate_resource_clause(
             quantity: substitute_contract_expression(quantity, substitutions)?,
             resource: Box::new(instantiate_resource_clause(resource, substitutions)?),
         }),
-        ResourceClause::Read(segment) => Ok(ResourceClause::Read(instantiate_contract_segment(
-            segment,
-            substitutions,
-        )?)),
-        ResourceClause::Write(segment) => Ok(ResourceClause::Write(instantiate_contract_segment(
-            segment,
-            substitutions,
-        )?)),
+        ResourceClause::ViewMemory(segment) => Ok(ResourceClause::ViewMemory(
+            instantiate_contract_segment(segment, substitutions)?,
+        )),
+        ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
+            instantiate_contract_segment(segment, substitutions)?,
+        )),
         ResourceClause::Declared {
             access,
             kind,
@@ -2936,8 +2936,12 @@ fn materialize_composite_resource_cells(
     parameters: &[syntax::C0Parameter],
 ) -> CMemory {
     let Some((segment, range)) = (match resource_clause {
-        ResourceClause::Read(segment) => lowered.memory_view_range().map(|range| (segment, range)),
-        ResourceClause::Write(segment) => lowered.memory_own_range().map(|range| (segment, range)),
+        ResourceClause::ViewMemory(segment) => {
+            lowered.memory_view_range().map(|range| (segment, range))
+        }
+        ResourceClause::OwnMemory(segment) => {
+            lowered.memory_own_range().map(|range| (segment, range))
+        }
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
     }) else {
         return memory;

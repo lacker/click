@@ -2102,7 +2102,7 @@ impl ResourceFamilyAlgebra for MemoryResourceAlgebra {
             return None;
         };
         memory_ranges_proven_overlapping(left, right, assumptions).then(|| {
-            ResourceContextValidityError::OverlappingWriteResources {
+            ResourceContextValidityError::OverlappingOwnedMemoryResources {
                 left: left.clone(),
                 right: right.clone(),
             }

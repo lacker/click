@@ -112,7 +112,7 @@ Done means:
 - mdtests cover each new C feature with both a successful proof and at least
   one representative failure.
 
-## Milestone 2: spec state, permissions, heap, and real frames
+## Milestone 2: spec state, resources, heap, and real frames
 
 json-c-shaped code allocates, stores pointers inside objects, shares objects,
 and releases them. Click needs a disciplined memory story before that is
@@ -120,7 +120,7 @@ comfortable.
 
 Likely additions:
 
-- Permission logic:
+- Resource and memory-permission logic:
   read/write authority over memory locations or ranges. A first mandatory
   viewed/owned resource context exists for memory ranges, including
   covered subrange transfer for function calls. The implementation now has an
@@ -157,7 +157,7 @@ Design notes:
 
 - Do not make ownership a magic json-c concept. Build general memory predicates
   and then define json-c-specific predicates in a library spec.
-- Do not design refcount ownership before spec state and basic permissions are
+- Do not design refcount ownership before spec state and basic resources are
   settled. Refcounting is a pressure test for those layers, not the starting
   point.
 - Treat `malloc`, `free`, `memcpy`, `memcmp`, `strlen`, and friends as either
@@ -195,7 +195,7 @@ Likely additions:
 - Predicate/function namespaces that scale with modules.
 - A richer standard library:
   integer ranges, more byte-slice predicates, null-terminated strings,
-  permutations, sortedness, permission/ownership predicates, and frame
+  permutations, sortedness, resource/ownership predicates, and frame
   predicates.
 - A clearer split between:
   executable C behavior, pure Click functions, predicates, theorems, and proof
@@ -286,7 +286,7 @@ Candidate target properties:
 - Correct behavior for selected getters/setters.
 - String or byte-buffer invariants for selected parsing/printing helpers.
 - Reference-count or ownership invariants for a small object lifecycle, after
-  spec state and permission logic are available.
+  spec state and resource logic are available.
 - Frame properties: a setter changes the intended field and preserves the rest.
 
 Suggested order:
@@ -295,7 +295,7 @@ Suggested order:
 2. Select 3-5 small functions that exercise pointers, structs, strings, and
    helper calls.
 3. Write sidecar specs with explicit preconditions and frame predicates. Add
-   ownership predicates only after spec state and permission logic are in place.
+   ownership predicates only after spec state and resource logic are in place.
 4. Add the smallest missing C0/frontend and proof features needed by those
    functions.
 5. Verify memory safety first.
@@ -314,8 +314,8 @@ Done means:
 
 Good next tasks from the current state:
 
-1. Choose the next spec/model-state boundary before adding fractional or
-   persistent permissions. Mandatory viewed/owned range resources, composite
+1. Choose the next spec/model-state boundary before adding fractional memory
+   permissions or persistent resource views. Mandatory viewed/owned range resources, composite
    wrappers, and exact struct/runtime-sized `int32` allocation lifetimes
    already exist.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:

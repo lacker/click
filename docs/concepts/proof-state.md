@@ -10,7 +10,7 @@ At a proof site, the state can contain:
 - pure facts and assumptions;
 - one or more symbolic execution paths at a frontier;
 - path conditions and generated definedness obligations;
-- memory snapshots, resource views, and permissions;
+- memory snapshots and resource facts, including derived views;
 - named marks and structural context for branches or loops.
 
 A tactic requests a state transition. A simple tactic identifies the operation

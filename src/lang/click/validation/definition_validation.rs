@@ -1385,7 +1385,7 @@ fn analyze_resource_fact_read_ownership(
 ) -> ResourceFactReadOwnershipAnalysis {
     let mut notes = Vec::new();
     for resource in contained {
-        let ResourceClause::Write(segment) = resource else {
+        let ResourceClause::OwnMemory(segment) = resource else {
             notes.push(format!(
                 "`{}` is not an owned memory resource",
                 describe_resource_clause(resource)
@@ -1395,7 +1395,7 @@ fn analyze_resource_fact_read_ownership(
         let resource_description = describe_resource_clause(resource);
         if segment.state != ContractSegmentState::Current {
             notes.push(format!(
-                "`{resource_description}` is not current-state write permission"
+                "`{resource_description}` is not a current-state owned memory resource"
             ));
             continue;
         }
@@ -1607,9 +1607,9 @@ fn declared_composite_resource_name(resource: &ResourceClause) -> Option<&str> {
             ..
         } => Some(name),
         ResourceClause::Quantified { resource, .. } => declared_composite_resource_name(resource),
-        ResourceClause::Read(_) | ResourceClause::Write(_) | ResourceClause::Declared { .. } => {
-            None
-        }
+        ResourceClause::ViewMemory(_)
+        | ResourceClause::OwnMemory(_)
+        | ResourceClause::Declared { .. } => None,
     }
 }
 
@@ -1627,7 +1627,7 @@ fn reject_composite_resource_cycles(definitions: &[ResourceDefinition]) -> Resul
                         name,
                         ..
                     } => Some(name.clone()),
-                    ResourceClause::Read(_) | ResourceClause::Write(_) => None,
+                    ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_) => None,
                     ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => None,
                 })
                 .filter(|dependency| {

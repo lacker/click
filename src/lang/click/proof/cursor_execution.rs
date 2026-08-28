@@ -373,8 +373,8 @@ fn resource_is_direct_observed_core(
             })?;
             let core = match child {
                 ResourceClause::Quantified { .. } => continue,
-                ResourceClause::Read(segment) | ResourceClause::Write(segment) => {
-                    ResourceClause::Read(segment)
+                ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => {
+                    ResourceClause::ViewMemory(segment)
                 }
                 ResourceClause::Declared {
                     kind,

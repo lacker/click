@@ -431,9 +431,6 @@ impl Parser {
     }
 
     fn parse_composite_resource_contains_clause(&mut self) -> Result<ResourceClause, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write")) {
-            return self.parse_resource_clause();
-        }
         self.parse_declared_resource_call()
     }
 
@@ -1051,12 +1048,6 @@ impl Parser {
         };
         let requirement = match (self.peek_ident(), self.peek_next()) {
             (Some("loadable"), Some(Token::LParen)) => self.parse_loadable_requirement()?,
-            (Some("read"), Some(Token::LParen)) => return Err(self.error(
-                "`requires` accepts pure propositions only; use `views` for read access",
-            )),
-            (Some("write"), Some(Token::LParen)) => return Err(self.error(
-                "`requires` accepts pure propositions only; use `owns` or `consumes` for owned access",
-            )),
             _ => {
                 let proposition = self.parse_proposition()?;
                 self.expect(Token::Semicolon)?;
@@ -1087,18 +1078,6 @@ impl Parser {
         let segment = self.parse_current_contract_segment()?;
         self.expect(Token::RParen)?;
         Ok(Requirement::LoadableSegment { segment })
-    }
-
-    fn parse_resource_clause(&mut self) -> Result<ResourceClause, ClickError> {
-        let name = self.expect_ident("resource name")?;
-        self.expect(Token::LParen)?;
-        let segment = self.parse_current_contract_segment()?;
-        self.expect(Token::RParen)?;
-        match name.as_str() {
-            "read" => Ok(ResourceClause::Read(segment)),
-            "write" => Ok(ResourceClause::Write(segment)),
-            _ => Err(self.error(format!("unknown resource `{name}`"))),
-        }
     }
 
     fn parse_resource_subject_pair(
@@ -1136,11 +1115,6 @@ impl Parser {
         &mut self,
         access: ResourceAccessMode,
     ) -> Result<ResourceClause, ClickError> {
-        if matches!(self.peek_ident(), Some("read" | "write"))
-            && self.peek_next() == Some(&Token::LParen)
-        {
-            return self.parse_resource_clause();
-        }
         if matches!(self.peek(), Some(Token::Ident(_)))
             && self.peek_ident() != Some("object")
             && self.peek_next() == Some(&Token::LParen)
@@ -1149,8 +1123,8 @@ impl Parser {
         }
         let segment = self.parse_current_contract_segment()?;
         Ok(match access {
-            ResourceAccessMode::Own => ResourceClause::Write(segment),
-            ResourceAccessMode::View => ResourceClause::Read(segment),
+            ResourceAccessMode::Own => ResourceClause::OwnMemory(segment),
+            ResourceAccessMode::View => ResourceClause::ViewMemory(segment),
         })
     }
 
@@ -1285,21 +1259,6 @@ impl Parser {
     }
 
     fn parse_ensure_condition(&mut self) -> Result<Ensure, ClickError> {
-        if self.peek_next() == Some(&Token::LParen) {
-            match self.peek_ident() {
-                Some("read") => {
-                    return Err(self.error(
-                        "`ensures` accepts pure propositions only; use `views` to retain read access",
-                    ));
-                }
-                Some("write") => {
-                    return Err(self.error(
-                        "`ensures` accepts pure propositions only; use `owns` or `produces` for owned output",
-                    ));
-                }
-                _ => {}
-            }
-        }
         Ok(Ensure::Proposition(self.parse_proposition()?))
     }
 

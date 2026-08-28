@@ -451,10 +451,10 @@ Top-level verification gets its resource context from the function's resource
 verbs, while function calls apply the callee's verified contract as one opaque
 execution step.
 
-These permissions are currently one built-in resource family: memory resources.
-The family defines how resources entail, split, rejoin, transfer, and consume
-each other. This keeps the user-facing memory syntax concrete while sharing the
-same context machinery with non-memory resources.
+These memory resource facts belong to the built-in memory family. The family
+defines how resources entail, split, rejoin, transfer, and consume each other.
+This keeps the user-facing memory syntax concrete while sharing the same
+context machinery with non-memory resources.
 
 Click also supports exact-match abstract resources:
 
@@ -554,7 +554,7 @@ resource list(node: struct node*) {
 ```
 
 There is no `else`: when the guard is false, the body is empty. The guard must
-be load-free, because it decides which memory permissions exist and therefore
+be load-free, because it decides which memory resource facts exist and therefore
 cannot depend on reading that same memory. A guarded body may directly contain
 the resource being defined. This direct self-recursion is the supported
 recursive form; unguarded recursion and mutual resource cycles are rejected.
@@ -566,11 +566,11 @@ child such as `list(node->next)` folded. This makes proof cost depend on the
 number of explicit list operations, not the unknown length of the list.
 
 Holding the folded abstract token exposes its immediate pure facts and viewed
-resource facts, but not its owned contained permissions. Hidden contained
+resource facts, but not its owned contained resource facts. Hidden contained
 owned resources also expose direct `contains(...)` and `separate(...)` pure
 facts. In an explicit proof script,
 `observe(uncalled(flag));` non-destructively records this projection while
-keeping owned permissions hidden. `unfold(uncalled(flag));` consumes the
+keeping owned contained resources hidden. `unfold(uncalled(flag));` consumes the
 abstract token resource fact and exposes its contained resource facts for
 mutation. Composite bodies can bundle built-in memory resources and other
 declared resources. Declared `fact` clauses are pure facts.
@@ -677,12 +677,13 @@ subrange is covered. Viewed and owned memory elements also make the covered
 range loadable for symbolic execution, so ordinary external reads and writes
 do not need a separate `loadable(...)` requirement for the same range.
 
-This is intentionally not the full permission system. There are no fractions,
-general ownership predicates, general allocator APIs, or user-defined resource
-algebras. Exact struct allocation and runtime-sized `int32` arrays are the
+This is intentionally not a complete resource system. Memory permissions have
+no fractional form, and there are no general ownership predicates, general
+allocator APIs, or user-defined resource algebras. Exact struct allocation and
+runtime-sized `int32` arrays are the
 supported heap slices. `loadable`, `mutable`, and `immutable` remain separate
-concepts from permission: loadability proves an access is in bounds, while
-resources authorize the access.
+concepts from memory permission: loadability proves an access is in bounds,
+while memory resources authorize the access.
 
 ## Propositions
 

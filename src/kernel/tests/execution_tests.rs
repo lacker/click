@@ -22,7 +22,7 @@ fn join_state_forgets_changed_scalars_and_memory() {
                 .with_block("heap", 4)
                 .store(pointer.clone(), int32(0)),
         )
-        .with_resource_context(write_context(pointer.clone(), 0, 1));
+        .with_resource_context(own_memory_context(pointer.clone(), 0, 1));
     let state_one = CState::new()
         .with_local("x", stable_x.clone())
         .with_local("y", int32(1))
@@ -332,7 +332,11 @@ fn resource_representation_requires_certified_check_facts_and_exact_state() {
             certified_path,
             CFunctionOutcome::Return {
                 value: int32(certified_result),
-                state: CState::new().with_resource_context(write_context(changed_pointer, 0, 1)),
+                state: CState::new().with_resource_context(own_memory_context(
+                    changed_pointer,
+                    0,
+                    1
+                )),
             },
             &[],
         )
@@ -400,7 +404,7 @@ fn function_call_threads_memory_but_discards_callee_locals() {
         block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let resources = write_context(pointer.clone(), 0, 1);
+    let resources = own_memory_context(pointer.clone(), 0, 1);
     let state = CState::new()
         .with_local("caller", int32(42))
         .with_resource_context(resources.clone());
@@ -446,7 +450,7 @@ fn function_call_does_not_inherit_undeclared_resources() {
         block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let resources = write_context(pointer.clone(), 0, 1);
+    let resources = own_memory_context(pointer.clone(), 0, 1);
     let state = CState::new().with_resource_context(resources);
     let helper = c_function(
         CType::Int32,
@@ -481,7 +485,7 @@ fn function_call_does_not_inherit_undeclared_resources() {
             function: caller,
             arguments,
             outcome: CFunctionOutcome::RuntimeError(CRuntimeError::MissingResource {
-                resource: write_element(pointer, 0, 1),
+                resource: own_memory_fact(pointer, 0, 1),
             }),
         }
     );

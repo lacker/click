@@ -187,7 +187,7 @@ structure/DAG-matching ranges ahead of unrelated same-block ranges; and
 certificate minimization declines optional general search over deeply nested
 snapshot terms. The same run now reaches the separate certificate-spelling
 frontier in about 10.4s. The regression test keeps several misleading
-same-block permissions alongside the owned-string symbolic buffer range.
+same-block loadability ranges alongside the owned-string symbolic buffer range.
 
 The old rationale, for reference: entry states and executing states sat
 in **disjoint DAG components** ("arena identity is connected, arena

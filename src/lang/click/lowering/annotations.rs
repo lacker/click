@@ -455,8 +455,8 @@ fn collect_owned_resource_memory_segments_inner(
                 active_guard,
             )
         }
-        ResourceClause::Read(_) => Ok(()),
-        ResourceClause::Write(segment) => {
+        ResourceClause::ViewMemory(_) => Ok(()),
+        ResourceClause::OwnMemory(segment) => {
             let mut segment = CMemorySegment::new(
                 segment.base.clone(),
                 segment.start.clone(),

@@ -551,8 +551,8 @@ fn rewrite_resource_clause_exact(
     target: &ContractExpression,
 ) -> (ResourceClause, bool) {
     match resource {
-        ResourceClause::Read(segment) => (ResourceClause::Read(segment.clone()), false),
-        ResourceClause::Write(segment) => (ResourceClause::Write(segment.clone()), false),
+        ResourceClause::ViewMemory(segment) => (ResourceClause::ViewMemory(segment.clone()), false),
+        ResourceClause::OwnMemory(segment) => (ResourceClause::OwnMemory(segment.clone()), false),
         ResourceClause::Quantified { quantity, resource } => {
             let (quantity, quantity_changed) =
                 rewrite_contract_expression_exact(quantity, source, target);
@@ -876,10 +876,10 @@ pub(in crate::lang::click) fn apply_contract_lets_to_resource_clause(
             quantity: apply_contract_lets_to_expression(quantity, bindings)?,
             resource: Box::new(apply_contract_lets_to_resource_clause(*resource, bindings)?),
         }),
-        ResourceClause::Read(segment) => Ok(ResourceClause::Read(apply_contract_lets_to_segment(
-            segment, bindings,
-        )?)),
-        ResourceClause::Write(segment) => Ok(ResourceClause::Write(
+        ResourceClause::ViewMemory(segment) => Ok(ResourceClause::ViewMemory(
+            apply_contract_lets_to_segment(segment, bindings)?,
+        )),
+        ResourceClause::OwnMemory(segment) => Ok(ResourceClause::OwnMemory(
             apply_contract_lets_to_segment(segment, bindings)?,
         )),
         ResourceClause::Declared {

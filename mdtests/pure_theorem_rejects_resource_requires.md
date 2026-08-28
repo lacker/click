@@ -5,12 +5,12 @@ resource from the caller's resource context.
 
 ```click
 theorem resource_requirement_is_not_pure(p: int32*) {
-    requires write(p[0..1]);
+    consumes p[0..1];
 
     ensures 0 == 0 by auto;
 }
 ```
 
 ```expect
-fail: `requires` accepts pure propositions only; use `owns` or `consumes` for owned access
+fail: pure theorem `resource_requirement_is_not_pure` currently supports proposition `requires` clauses only
 ```

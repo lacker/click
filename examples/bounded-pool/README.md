@@ -4,8 +4,8 @@ This project verifies a fixed-capacity checkout protocol. The C pool stores
 only its capacity and current checkout count; object storage remains ordinary
 caller-owned memory.
 
-`pool_object(pool, object)` is the transferable permission and responsibility
-for one checked-out object. Its body owns that object's memory.
+`pool_object(pool, object)` is the transferable ownership resource for one
+checked-out object. Its body owns that object's memory.
 `pool_slot(pool)` represents one unoccupied place in the bounded pool. Equal
 resource units use Click's quantity model, while
 `count(pool_object(pool, _))` sums all distinct checked-out objects belonging

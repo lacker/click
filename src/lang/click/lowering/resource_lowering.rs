@@ -136,8 +136,9 @@ fn materialize_symbolic_access_resource_cells(
     arguments: &[CExpression],
 ) -> Result<CMemory, ClickError> {
     for requirement in requires {
-        let Requirement::Resource(ResourceClause::Read(segment) | ResourceClause::Write(segment)) =
-            requirement.inner()
+        let Requirement::Resource(
+            ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment),
+        ) = requirement.inner()
         else {
             continue;
         };
@@ -439,11 +440,11 @@ fn lower_resource_clause_with_values(
             };
             Ok(CResourceFact::own_quantity(resource, quantity))
         }
-        ResourceClause::Read(segment) => {
+        ResourceClause::ViewMemory(segment) => {
             let range = lower_resource_segment_with_values("read", segment, values, state, result)?;
             Ok(CResourceFact::view_memory(range))
         }
-        ResourceClause::Write(segment) => {
+        ResourceClause::OwnMemory(segment) => {
             let range =
                 lower_resource_segment_with_values("write", segment, values, state, result)?;
             Ok(CResourceFact::own_memory(range))
@@ -648,14 +649,14 @@ pub(in crate::lang::click) fn resource_clause_loadable_prop(
     memory: &CMemory,
 ) -> Result<Option<Proposition>, ClickError> {
     let (segment, range) = match resource {
-        ResourceClause::Read(segment) => {
+        ResourceClause::ViewMemory(segment) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_view_range()
                 .expect("viewed memory clause should lower to viewed memory");
             (segment, range.clone())
         }
-        ResourceClause::Write(segment) => {
+        ResourceClause::OwnMemory(segment) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_own_range()
@@ -735,7 +736,7 @@ pub(in crate::lang::click) fn concrete_access_resource_block(
     arguments: &[CExpression],
 ) -> Result<Option<(String, ConcreteMemoryRangeSeed)>, ClickError> {
     let segment = match resource {
-        ResourceClause::Read(segment) | ResourceClause::Write(segment) => segment,
+        ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment) => segment,
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
     let state = CState::new();

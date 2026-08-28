@@ -274,7 +274,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_with_resources(
             let resource_read = crate::instrumentation::measure_operation(
                 "kernel",
                 "contract load",
-                "contract load: current resource permission",
+                "contract load: current memory permission",
                 || {
                     resources.is_some_and(|resources| {
                         crate::kernel::resource_context_has_read(
@@ -313,7 +313,7 @@ pub(in crate::lang::click) fn evaluate_contract_memory_load_with_resources(
                 crate::instrumentation::measure_operation(
                     "kernel",
                     "contract load",
-                    "contract load: historical permission",
+                    "contract load: historical loadability",
                     || assumptions.proves(&required),
                 )
             };

@@ -626,7 +626,7 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
 /// A checked universal fact that reads every int32 cell in a guarded prefix
 /// certifies that complete prefix as loadable. This is the range form needed
 /// after modular initialization helpers: their postcondition can expose the
-/// value of each written cell without returning a separate ad-hoc permission
+/// value of each written cell without returning a separate ad-hoc loadability
 /// proposition.
 pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_range(
     assumptions: &PureFactContext,

@@ -338,7 +338,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                 .expect("fill3 should parse")
                 .to_kernel_function()
                 .with_resource_summary(
-                    vec![CResourceSpec::Write(CMemorySegment::new(
+                    vec![CResourceSpec::OwnMemory(CMemorySegment::new(
                         CExpression::Variable("p".to_string()),
                         CExpression::Value(int32(0)),
                         CExpression::Value(int32(3)),

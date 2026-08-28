@@ -257,13 +257,13 @@ sequence:
 - `mdtests/proof_branch_owned_pointer_local.md`: exports ownership of a
   branch-selected pointer, mutates it after the join, and reads back the write.
 - `mdtests/composite_resource_two_arrays.md`: a composite resource can
-  bundle permissions for multiple arrays.
+  bundle memory resources for multiple arrays.
 - `mdtests/composite_resource_separate_fact.md`: a composite resource can
   package a `separate(...)` fact and expose it while unfolded.
 - `mdtests/composite_resource_folded_pure_fact_projection.md`: a folded
   composite resource exposes pure facts while held.
 - `mdtests/composite_resource_folded_memory_fact_projection.md`: a folded
-  composite resource exposes memory facts while keeping contained permission
+  composite resource exposes memory facts while keeping the contained memory resource
   hidden.
 - `mdtests/composite_resource_folded_separate_fact_projection.md`: a folded
   composite resource exposes a packaged `separate(...)` fact.
@@ -279,14 +279,14 @@ sequence:
 - `mdtests/composite_resource_struct_owned_buffer.md`: a conservative
   struct-owned-buffer pattern with explicit owner and buffer parameters.
 - `mdtests/composite_resource_owner_buffer_field_dependent.md`: the desired
-  field-dependent owner-buffer shape, with the derived buffer permission and
+  field-dependent owner-buffer shape, with the derived buffer resource and
   non-aliasing fact packaged inside the composite resource.
 - `mdtests/composite_resource_owned_buffer_len_cap_data.md`: a len/cap/data
   owned-buffer resource with a stronger "has room" pre-state resource that
   folds back to the ordinary well-formed buffer after push.
 - `mdtests/composite_resource_owned_buffer_observe_len.md`: a len/cap/data
   owned-buffer getter that uses `observe(...)` to read through the folded
-  resource without unfolding owned permissions.
+  resource without unfolding owned contained resources.
 - `mdtests/composite_resource_owned_buffer_get.md`: first-cell backing-buffer
   read through a len/cap/data owned-buffer resource.
 - `mdtests/composite_resource_owned_buffer_observe_indexed.md`:
@@ -327,7 +327,7 @@ sequence:
   observe nested composite resources.
 - `mdtests/composite_resource_owner_buffer_hidden_separate_projection.md`:
   hidden contained writes imply folded-resource `separate(...)` facts without
-  exposing the hidden permissions.
+  exposing the hidden owned memory resources.
 - `mdtests/composite_resource_rejects_bad_origin.md`: folding a composite
   resource fails when its fact has not been established.
 - `mdtests/composite_resource_rejects_double_call.md`: a composite
@@ -459,8 +459,8 @@ sequence:
 ## Library-shaped mdtests
 
 - `mdtests/jsonc_refcount_getter.md`: first json-c-shaped pilot proof,
-  using a field read resource for a reference-count getter.
+  using a viewed field resource for a reference-count getter.
 - `mdtests/jsonc_refcount_setter.md`: first-field struct write
-  using a field write resource.
+  using an owned field resource.
 - `mdtests/jsonc_refcount_increment.md`: field read/modify/write
   proof with `old(obj->field)` postconditions and a no-overflow requirement.

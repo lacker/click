@@ -444,7 +444,7 @@ fn logical_and_or_short_circuit_right_operand() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let invalid_load = c_typed_load(c_pointer_value(invalid_pointer), CType::Int32);
-    let state = CState::new().with_resource_context(read_context(
+    let state = CState::new().with_resource_context(view_memory_context(
         Pointer {
             block: "missing".into(),
             offset: PointerOffsetTerm::Constant(0),
@@ -645,7 +645,7 @@ fn store_then_load_threads_native_memory() {
         block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let resources = write_context(pointer.clone(), 0, 1);
+    let resources = own_memory_context(pointer.clone(), 0, 1);
     let state = CState::new().with_resource_context(resources.clone());
     let statement = c_seq(
         c_typed_store(
@@ -676,14 +676,14 @@ fn store_then_load_threads_native_memory() {
 }
 
 #[test]
-fn read_element_permits_symbolic_external_load_from_incomplete_memory() {
+fn viewed_memory_resource_permits_symbolic_external_load_from_incomplete_memory() {
     let pointer = Pointer {
         block: "block".into(),
         offset: PointerOffsetTerm::Constant(4),
     };
     let state = CState::new()
         .with_local("p", CValue::Pointer(pointer.clone()))
-        .with_resource_context(read_context(pointer.clone(), 0, 1));
+        .with_resource_context(view_memory_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let execution =
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
@@ -715,7 +715,7 @@ fn block_backed_store_then_load_needs_no_memory_obligation() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 16);
-    let resources = write_context(pointer.clone(), 0, 1);
+    let resources = own_memory_context(pointer.clone(), 0, 1);
     let state = CState::new()
         .with_memory(memory.clone())
         .with_resource_context(resources.clone());
@@ -757,7 +757,7 @@ fn block_backed_missing_load_returns_symbolic_value_without_obligation() {
     let state = CState::new()
         .with_local("p", CValue::Pointer(pointer.clone()))
         .with_memory(memory.clone())
-        .with_resource_context(read_context(pointer.clone(), 0, 1));
+        .with_resource_context(view_memory_context(pointer.clone(), 0, 1));
     let statement = c_return(c_load(c_variable("p")));
     let theorem =
         prove_symbolic_c_execution(state.clone(), statement.clone(), PureFactContext::new())
@@ -792,7 +792,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
     let memory = CMemory::new()
         .with_block("block", 16)
         .store(second.clone(), int32(23));
-    let resources = read_context(base.clone(), 1, 2);
+    let resources = view_memory_context(base.clone(), 1, 2);
     let state = CState::new()
         .with_local("p", CValue::Pointer(base.clone()))
         .with_memory(memory)
@@ -829,7 +829,7 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
 }
 
 #[test]
-fn read_element_permits_pointer_addition_load_beyond_memory_block() {
+fn viewed_memory_resource_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
         block: "block".into(),
         offset: PointerOffsetTerm::Constant(0),
@@ -842,7 +842,7 @@ fn read_element_permits_pointer_addition_load_beyond_memory_block() {
     let state = CState::new()
         .with_local("p", CValue::Pointer(base.clone()))
         .with_memory(memory.clone())
-        .with_resource_context(read_context(base, 1, 2));
+        .with_resource_context(view_memory_context(base, 1, 2));
     let statement = c_return(c_load(c_add(c_variable("p"), c_int32_literal(1))));
     let execution =
         prove_symbolic_c_execution_paths(state.clone(), statement.clone(), PureFactContext::new());
@@ -872,7 +872,7 @@ fn fixed_bound_store_loop_touches_only_valid_pointer_range() {
         offset: PointerOffsetTerm::Constant(0),
     };
     let memory = CMemory::new().with_block("block", 12);
-    let resources = write_context(base.clone(), 0, 3);
+    let resources = own_memory_context(base.clone(), 0, 3);
     let state = CState::new()
         .with_local("p", CValue::Pointer(base.clone()))
         .with_local("i", int32(0))
@@ -956,7 +956,7 @@ fn symbolic_loadable_discharges_pointer_access_obligation() {
         .with_local("p", CValue::Pointer(base.clone()))
         .with_local("i", int32(i_bits.clone()))
         .with_memory(memory.clone())
-        .with_resource_context(write_context(base.clone(), 0, n_bits.clone()));
+        .with_resource_context(own_memory_context(base.clone(), 0, n_bits.clone()));
     let statement = c_store(c_add(c_variable("p"), c_variable("i")), c_int32_literal(7));
     let assumptions = PureFactContext::new()
         .assume_proposition(Proposition::CMemoryLoadable {

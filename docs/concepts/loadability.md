@@ -2,7 +2,8 @@
 
 Pointer proofs start with loadability. Before Click can prove what a memory access
 returns, it must know that the access is in bounds. For external memory, Click
-also needs permission to access the range; see [Permissions](permissions.md).
+also needs permission to access the range; see
+[Resources and memory permissions](resources.md).
 
 For an array parameter:
 
