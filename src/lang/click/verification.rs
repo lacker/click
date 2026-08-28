@@ -914,7 +914,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
             }
         }
         // A frontier-local proof constructs loop annotations and checked
-        // rules while replaying the actual execution path. Final whole-contract
+        // rules while checking the actual execution path. Final whole-contract
         // certification must use one coherent proof's artifacts; otherwise it
         // forgets the rule and starts concretely unrolling a symbolic loop.
         // Per-claim proofs may legitimately choose different invariants, so do

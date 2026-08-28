@@ -117,23 +117,18 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
     "#;
 
     let sources = [("push.c", push_c), ("caller.c", caller_c)];
-    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
-        proof::count_root_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
-    });
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
     verified.expect("a storage-only callee should preserve its caller's allocation authority");
-    assert_eq!(
-        root_replays, 0,
-        "both source contracts are checked directly, with no compatibility root"
-    );
     assert!(events.iter().all(|event| !matches!(
         event,
         crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
             if matches!(
                 name.as_str(),
                 "whole-claim certificate construction"
-                    | "whole-claim certificate replay"
+                    | "whole-claim certificate validation"
                     | "whole-contract certificate construction"
-                    | "whole-contract certificate replay"
+                    | "whole-contract certificate validation"
             )
     )));
 
@@ -148,7 +143,7 @@ fn resource_neutral_callee_preserves_callers_allocation_resource() {
         "{expanded}"
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_c0_sources(&expanded, &sources).expect("expanded push proof should replay");
+    verify_c0_sources(&expanded, &sources).expect("expanded push proof should check");
 }
 
 #[test]
@@ -308,7 +303,7 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
             (
                 fact.clone(),
                 ClickError::new(
-                    "comparison fact has no replayable surface form at this proof point",
+                    "comparison fact has no checkable surface form at this proof point",
                 ),
             )
         })
@@ -317,10 +312,7 @@ fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
     let rendered = super::diagnostics::describe_unexpressed_pure_facts(&failures, &[], &[]);
 
     assert!(rendered.contains("int32 equality is true"), "{rendered}");
-    assert!(
-        rendered.contains("no replayable surface form"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("no checkable surface form"), "{rendered}");
     assert!(rendered.contains("8 more omitted"), "{rendered}");
     assert!(!rendered.contains("CMemory"), "{rendered}");
     assert!(!rendered.contains("hidden-snapshot"), "{rendered}");
@@ -437,8 +429,8 @@ fn condition_certificate_search_is_not_sensitive_to_a_fact_prefix() {
 
     assert_eq!(derivation.context_premises().len(), 2);
     assert!(
-        derivation.replay(&assumptions_from_propositions(&facts)),
-        "the selected certificate premises must replay"
+        derivation.check(&assumptions_from_propositions(&facts)),
+        "the selected certificate premises must check"
     );
 }
 

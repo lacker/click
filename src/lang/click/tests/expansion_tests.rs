@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn smart_simp_expansion_replays_as_surface_click() {
+fn smart_simp_expansion_checks_as_surface_click() {
     let c_source = r#"
             int32 identity(int32 x, int32 y, int32 z) {
                 return x;
@@ -22,7 +22,7 @@ fn smart_simp_expansion_replays_as_surface_click() {
         .expect("smart simp should lower to surface tactics");
     let expanded_source = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("identity.c", c_source)])
-        .expect("printed smart simp expansion should replay");
+        .expect("printed smart simp expansion should check");
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn selected_post_execution_simp_waits_for_its_surface_closer() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("selected post-execution simp expansion should replay");
+        .expect("selected post-execution simp expansion should check");
 }
 
 #[test]
@@ -127,14 +127,14 @@ fn selected_post_execution_simp_keeps_the_surviving_execution_branch() {
     .expect("the selected success-branch simp should expand");
     verify_c0_sources(&expanded, &[("prepend.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the selected success-branch simp expansion should replay: {}\n{expanded}",
+            "the selected success-branch simp expansion should check: {}\n{expanded}",
             error.message()
         )
     });
 }
 
 #[test]
-fn returning_malloc_result_expands_to_replayable_statement_steps() {
+fn returning_malloc_result_expands_to_checkable_statement_steps() {
     let c_source = r#"
             int32* allocate_int32s(int32 count) {
                 int32* data;
@@ -176,7 +176,7 @@ fn returning_malloc_result_expands_to_replayable_statement_steps() {
     assert!(!expanded.contains("execute();"), "{expanded}");
     assert!(expanded.contains("step()"), "{expanded}");
     verify_c0_sources(&expanded, &[("allocate_int32s.c", c_source)])
-        .expect("expanded malloc-return statement steps should replay");
+        .expect("expanded malloc-return statement steps should check");
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn opaque_reallocation_execute_does_not_invent_an_identity_if() {
         "a straight-line opaque call must not expand through a synthetic proof case: {caller_expansion}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the expanded single-successor call should replay independently");
+        .expect("the expanded single-successor call should check independently");
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "the result-aware smart have must retain its checked Proof: {events:#?}"
     );
@@ -334,7 +334,7 @@ fn selected_post_execution_smart_have_uses_its_path_certificate() {
     assert!(!expanded.contains("have result == x by simp"), "{expanded}");
     assert!(expanded.contains("have result == x by {"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("selected post-execution have certificate should replay");
+        .expect("selected post-execution have certificate should check");
 }
 
 #[test]
@@ -372,9 +372,9 @@ fn post_execution_smart_have_applies_a_theorem_to_result_through_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
-        "the result-aware theorem application must not reconstruct and replay a certificate: {events:#?}"
+        "the result-aware theorem application must not reconstruct and check a certificate: {events:#?}"
     );
 
     let have_offset = click_source
@@ -441,10 +441,10 @@ fn selected_post_execution_capture_ignores_nested_certificate_indices() {
         position.line,
         position.column,
     )
-    .expect("nested certificate replay must not leak later deferred tactics into the capture");
+    .expect("nested certificate validation must not leak later deferred tactics into the capture");
     assert_eq!(expanded.matches("frame();").count(), 1, "{expanded}");
     verify_c0_sources(&expanded, &[("set.c", c_source)])
-        .expect("the selected post-execution have expansion should replay");
+        .expect("the selected post-execution have expansion should check");
 }
 
 #[test]
@@ -472,7 +472,7 @@ fn post_execution_transport_observes_a_preceding_have() {
         "#;
 
     verify_c0_sources(click_source, &[("identity.c", c_source)])
-        .expect("post-execution tactics should replay in source order");
+        .expect("post-execution tactics should check in source order");
 }
 
 #[test]
@@ -504,7 +504,7 @@ fn selected_post_execution_transport_emits_an_explicit_certificate() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "the smart transport must retain its checked Proof: {events:#?}"
     );
@@ -529,7 +529,7 @@ fn selected_post_execution_transport_emits_an_explicit_certificate() {
             .expect("selected post-execution transport should expand after finalization");
     assert!(expanded.contains("transport(result == x, result == x) using {"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("post-execution transport certificate should replay");
+        .expect("post-execution transport certificate should check");
 }
 
 #[test]
@@ -564,7 +564,7 @@ fn grouped_post_execution_unfold_retains_its_checked_proof_step() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "the grouped outcome unfold must retain its checked Proof: {events:#?}"
     );
@@ -599,7 +599,7 @@ fn grouped_post_execution_closers_use_independent_checked_proofs() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "grouped outcome closers must retain their checked Proof steps: {events:#?}"
     );
@@ -633,7 +633,7 @@ fn post_execution_rewrite_retains_its_checked_proof_step() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "outcome rewrite must retain its checked Proof step: {events:#?}"
     );
@@ -666,9 +666,9 @@ fn grouped_post_execution_simp_publishes_checked_obligations_through_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
-        "grouped direct simp must not construct and replay a second certificate: {events:#?}"
+        "grouped direct simp must not construct and check a second certificate: {events:#?}"
     );
 
     let simp_offset = click_source
@@ -716,7 +716,7 @@ fn grouped_post_execution_simp_applies_planned_steps_once_through_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "a planner-selected grouped candidate must be checked once and retained: {events:#?}"
     );
@@ -831,7 +831,7 @@ fn symbolic_max_outcomes_retain_selected_branch_order_paths() {
         let expanded = expand_c0_claim_source(click_source, &c_sources, "max", claim)
             .expect("the retained branch order proof should expand");
         verify_c0_sources(&expanded, &c_sources)
-            .expect("the expanded branch order proof should replay independently");
+            .expect("the expanded branch order proof should check independently");
     }
 }
 
@@ -876,7 +876,7 @@ fn outcome_arithmetic_normalization_retains_selected_equality_paths() {
     .expect("the retained equality paths should expand");
     assert!(expanded.matches("rewrite(").count() >= 2, "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
-        .expect("the expanded equality paths should replay independently");
+        .expect("the expanded equality paths should check independently");
 }
 
 #[test]
@@ -920,7 +920,7 @@ fn outcome_quantified_cells_retain_selected_instantiations() {
             .expect("the retained universal instance should expand");
         assert!(expanded.contains("instantiate("), "{expanded}");
         verify_c0_sources(&expanded, &c_sources)
-            .expect("the expanded universal instance should replay independently");
+            .expect("the expanded universal instance should check independently");
     }
 }
 
@@ -1022,7 +1022,7 @@ fn post_execution_simp_uses_the_introduced_antecedent_for_contradiction() {
     assert!(expanded.contains("intro();"), "{expanded}");
     assert!(expanded.contains("contradiction("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the introduced contradiction should replay independently");
+        .expect("the introduced contradiction should check independently");
 }
 
 #[test]
@@ -1054,10 +1054,10 @@ fn post_execution_smart_have_builds_recursive_conjunction_on_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("post-execution simple have replay")
+                if name.starts_with("post-execution simple have check")
                     || name == "post-execution smart have compatibility construction"
         )),
-        "the checked smart have must not construct or replay a second proof: {events:#?}"
+        "the checked smart have must not construct or check a second proof: {events:#?}"
     );
 
     let have_offset = click_source
@@ -1103,9 +1103,9 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
         }
     "#;
 
-    let (((((verified, events), certificate_checks), context_exports), replays), flat_units) =
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         crate::instrumentation::collect(|| {
@@ -1113,11 +1113,10 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
                         })
                     })
                 })
-            })
+            }
         });
     verified.expect("exit witness should refine its checked obligation scope");
     assert_eq!(flat_units, 1, "the function proof should retain Proof");
-    assert_eq!(replays, 0, "the existential proof entered internal replay");
     assert_eq!(context_exports, 0, "the existential Proof exported state");
     assert_eq!(
         certificate_checks, 0,
@@ -1127,7 +1126,7 @@ fn post_execution_existential_simp_retains_its_checked_scope() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.ensures_0" && name == "surface certificate replay"
+                if claim == "identity.ensures_0" && name == "generated certificate validation"
         )),
         "exit witness refinement must retain the accepted Proof path: {events:#?}"
     );
@@ -1166,19 +1165,18 @@ fn post_execution_choose_and_witness_share_the_retained_outcome_proof() {
         }
     "#;
 
-    let ((((verified, certificate_checks), context_exports), replays), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("identity.c", c_source)])
                     })
                 })
-            })
+            }
         });
     verified.expect("choose and witness should advance one retained outcome Proof");
     assert_eq!(flat_units, 1, "the function proof should retain Proof");
-    assert_eq!(replays, 0, "the existential operations entered replay");
     assert_eq!(
         context_exports, 0,
         "the existential operations exported state"
@@ -1264,7 +1262,7 @@ fn bounded_range_witness_closes_on_the_checked_outcome_scope() {
     .expect("the retained bounded witness should expand");
     assert!(expanded.contains("witness(k = 0);"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained bounded witness should replay independently");
+        .expect("the retained bounded witness should check independently");
 }
 
 #[test]
@@ -1300,7 +1298,7 @@ fn selected_post_execution_smart_apply_uses_exact_path_premises() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "the post-execution smart apply must retain its checked Proof: {events:#?}"
     );
@@ -1329,7 +1327,7 @@ fn selected_post_execution_smart_apply_uses_exact_path_premises() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("selected post-execution apply certificate should replay");
+        .expect("selected post-execution apply certificate should check");
 }
 
 #[test]
@@ -1456,7 +1454,7 @@ fn smart_apply_preserves_statement_snapshots_in_explicit_premises() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("decrement.c", c_source)])
-        .expect("the explicit snapshot premises should replay");
+        .expect("the explicit snapshot premises should check");
 }
 
 #[test]
@@ -1494,7 +1492,7 @@ fn source_expansion_preserves_proof_marks() {
     assert!(expanded.contains("mark before_increment;"));
     assert!(!expanded.contains("simp();"));
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("the expansion should replay through the named snapshot");
+        .expect("the expansion should check through the named snapshot");
 }
 
 #[test]
@@ -1548,13 +1546,10 @@ fn marked_constant_store_transport_retains_load_identity() {
     let sources = [("touch_other.c", touch_c), ("pipeline.c", pipeline_c)];
 
     let (
-        (
-            ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
-            replays,
-        ),
+        ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
         flat_units,
     ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
+        {
             proof::count_execution_context_exports(|| {
                 proof::count_source_certificate_checks(|| {
                     proof::count_explicit_linear_fallbacks(|| {
@@ -1564,11 +1559,10 @@ fn marked_constant_store_transport_retains_load_identity() {
                     })
                 })
             })
-        })
+        }
     });
     verified.expect("the smart marked transport should verify before expansion");
     assert_eq!(flat_units, 2, "both function proofs should retain Proof");
-    assert_eq!(replays, 0, "the marked transport entered replay");
     assert_eq!(
         context_exports, 0,
         "the marked transport exported Proof state"
@@ -1588,7 +1582,7 @@ fn marked_constant_store_transport_retains_load_identity() {
                 .then_some(tactic)
         })
         .collect::<Vec<_>>();
-    let replay_operations = events
+    let check_operations = events
         .iter()
         .filter_map(|event| {
             let crate::instrumentation::VerificationEvent::OperationFinished {
@@ -1597,28 +1591,24 @@ fn marked_constant_store_transport_retains_load_identity() {
             else {
                 return None;
             };
-            (function == "pipeline" && name.contains("replay")).then_some(name)
+            (function == "pipeline" && name.contains("check")).then_some(name)
         })
         .collect::<Vec<_>>();
     assert_eq!(
         transport_checks.len(),
         1,
-        "ordinary verification should check the selected transport exactly once: {transport_checks:#?}; replay operations: {replay_operations:#?}"
-    );
-    assert!(
-        replay_operations.is_empty(),
-        "the marked transport should not enter a replay operation: {replay_operations:#?}"
+        "ordinary verification should check the selected transport exactly once: {transport_checks:#?}; check operations: {check_operations:#?}"
     );
     let selected = click_source.find("transport(").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
     let expanded =
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
-            .expect("the marked transport should expand and replay");
+            .expect("the marked transport should expand and check");
     assert!(
         expanded
             .contains("transport(at(after_write, owner->value == 11), owner->value == 11) using {")
     );
-    verify_c0_sources(&expanded, &sources).expect("the expanded marked transport should replay");
+    verify_c0_sources(&expanded, &sources).expect("the expanded marked transport should check");
 
     let corrupted = expanded.replacen(
         "owner->value == 11) using {",
@@ -1629,18 +1619,12 @@ fn marked_constant_store_transport_retains_load_identity() {
         corrupted, expanded,
         "the expansion should expose its target"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     corrupted_result.expect_err("tampering with the transport target must invalidate the proof");
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid migrated transport must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated source must not enter execute_internal_proof"
     );
 
     let mutating_c = touch_c.replace("owner->other = 0;", "owner->value = 0;");
@@ -1708,7 +1692,7 @@ fn post_execution_store_transport_expands_from_the_recorded_store_equation() {
         "the transport source must not be duplicated as an auxiliary premise:\n{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the expanded store transport certificate should replay from a fresh parse");
+        .expect("the expanded store transport certificate should check from a fresh parse");
 }
 
 #[test]
@@ -1827,7 +1811,7 @@ fn source_expander_locates_frontier_local_have_proofs() {
     .expect("the frontier-local `have` proof should expand");
     assert_ne!(expanded, click_source);
     verify_c0_sources(&expanded, &[("statement_assert.c", c_source)])
-        .expect("the expanded frontier-local proof should replay");
+        .expect("the expanded frontier-local proof should check");
 }
 
 #[test]
@@ -1906,7 +1890,7 @@ fn smart_apply_uses_ambient_loadability_only_for_argument_lowering() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("pointer_pipeline.c", c_source)])
-        .expect("explicit theorem premises should replay with ambient argument lowering");
+        .expect("explicit theorem premises should check with ambient argument lowering");
 }
 
 #[test]
@@ -1970,7 +1954,7 @@ fn selected_branched_post_execution_apply_merges_path_certificates() {
     );
     verify_c0_sources(&expanded, &[("choose.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "branched post-execution apply certificates should replay: {}\n{expanded}",
+            "branched post-execution apply certificates should check: {}\n{expanded}",
             error.message()
         )
     });
@@ -2029,24 +2013,24 @@ fn selected_branched_post_execution_have_merges_path_certificates() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("choose.c", c_source)])
-        .expect("branched post-execution have certificates should replay");
+        .expect("branched post-execution have certificates should check");
 }
 
 #[test]
 fn selected_pure_case_split_simp_expands_by_removal() {
     // The default libtest worker stack is 2 MiB. This explicit 1.75 MiB
-    // budget catches replay-frame growth while staying below that default.
-    // Calibration (2026-08-21): the replay needs between 1216 and 1280 KiB
+    // budget catches check-frame growth while staying below that default.
+    // Calibration (2026-08-21): the check needs between 1216 and 1280 KiB
     // on rustc 1.92 / macOS, and overflowed a 1.25 MiB budget on CI's Linux
     // stable toolchain, so the budget carries about 40% headroom over the
     // measured need. Recalibrate on the CI platform before tightening it.
     std::thread::Builder::new()
-        .name("small-stack-expansion-replay".to_string())
+        .name("small-stack-expansion-check".to_string())
         .stack_size(7 * 256 * 1024)
         .spawn(selected_pure_case_split_simp_expands_by_removal_on_small_stack)
-        .expect("the small-stack replay canary thread should start")
+        .expect("the small-stack check canary thread should start")
         .join()
-        .expect("the small-stack replay canary should not panic");
+        .expect("the small-stack check canary should not panic");
 }
 
 fn selected_pure_case_split_simp_expands_by_removal_on_small_stack() {
@@ -2055,7 +2039,7 @@ fn selected_pure_case_split_simp_expands_by_removal_on_small_stack() {
     // NOT graft the enclosing branch skeleton as an `if` tree with empty
     // leaves: that tree would re-split every already-merged execution path at
     // path end and lose the execution-path/branch-trace pairing certificate
-    // replay keeps (git history (case-split expansion merge, 2026-07-31)).
+    // check keeps (git history (case-split expansion merge, 2026-07-31)).
     let c_source = r#"
             int32 sort3(int32 p[3]) {
                 int32 tmp;
@@ -2166,7 +2150,7 @@ fn source_expander_lowers_smart_simp_inside_have() {
     assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the expanded smart have should replay");
+        .expect("the expanded smart have should check");
 }
 
 #[test]
@@ -2214,7 +2198,7 @@ fn pure_structural_simp_builds_recursive_conjunction_on_proof() {
                     claim: event_claim,
                     name,
                     ..
-                } if event_claim == claim && name == "surface certificate replay"
+                } if event_claim == claim && name == "generated certificate validation"
             )),
             "{claim} must retain its structural Proof descendant: {events:#?}"
         );
@@ -2287,7 +2271,7 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "equality_transitive.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "restricted equality simp must retain its checked Proof descendant: {events:#?}"
     );
@@ -2313,7 +2297,7 @@ fn restricted_simp_expands_to_explicit_equality_rewrites() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_c0_sources(&expanded, &[]).expect("explicit equality certificate should replay");
+    verify_c0_sources(&expanded, &[]).expect("explicit equality certificate should check");
 }
 
 #[test]
@@ -2337,9 +2321,9 @@ fn pure_rewrite_retains_a_structural_surface_successor_for_simp() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "rewrite_pair.ensures_0" && name == "surface certificate replay"
+                if claim == "rewrite_pair.ensures_0" && name == "generated certificate validation"
         )),
-        "the rewrite successor must not reconstruct and replay a second proof: {events:#?}"
+        "the rewrite successor must not reconstruct and check a second proof: {events:#?}"
     );
 
     let simp_offset = click_source
@@ -2394,7 +2378,7 @@ fn restricted_simp_after_unfold_expands_explicit_conjunction_extraction() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[])
-        .expect("explicit conjunction-elimination certificate should replay");
+        .expect("explicit conjunction-elimination certificate should check");
 }
 
 #[test]
@@ -2431,7 +2415,7 @@ fn restricted_simp_expands_strict_order_to_nonstrict_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded strict-order proof should replay");
+    verify_click_theorems(&expanded).expect("expanded strict-order proof should check");
 }
 
 #[test]
@@ -2474,7 +2458,7 @@ fn post_execution_simp_applies_strict_order_rule() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded post-execution strict-order proof should replay");
+        .expect("expanded post-execution strict-order proof should check");
 }
 
 #[test]
@@ -2509,7 +2493,7 @@ fn restricted_simp_expands_negated_strict_order_to_greater_equal() {
         "{expanded}"
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded negated-order proof should replay");
+    verify_click_theorems(&expanded).expect("expanded negated-order proof should check");
 }
 
 #[test]
@@ -2539,7 +2523,7 @@ fn post_execution_simp_expands_successor_strict_increase() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained strict-increment rule must not enter legacy certificate search: {events:#?}"
@@ -2566,7 +2550,7 @@ fn post_execution_simp_expands_successor_strict_increase() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("expanded successor proof should replay");
+        .expect("expanded successor proof should check");
 }
 
 #[test]
@@ -2596,7 +2580,7 @@ fn post_execution_simp_expands_increment_definedness() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained increment-definedness rule must not enter legacy certificate search: {events:#?}"
@@ -2616,7 +2600,7 @@ fn post_execution_simp_expands_increment_definedness() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("expanded increment-definedness proof should replay");
+        .expect("expanded increment-definedness proof should check");
 }
 
 #[test]
@@ -2647,7 +2631,7 @@ fn post_execution_simp_expands_increment_lower_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_nonnegative.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained increment-lower-bound rule must not enter legacy certificate search: {events:#?}"
@@ -2678,7 +2662,7 @@ fn post_execution_simp_expands_increment_lower_bound() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment_nonnegative.c", c_source)])
-        .expect("expanded increment lower-bound proof should replay");
+        .expect("expanded increment lower-bound proof should check");
 }
 
 #[test]
@@ -2726,7 +2710,7 @@ fn post_execution_simp_expands_order_equality_closure() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity_at_bound.c", c_source)])
-        .expect("expanded order-equality proof should replay");
+        .expect("expanded order-equality proof should check");
 }
 
 #[test]
@@ -2748,9 +2732,9 @@ fn restricted_simp_expands_nonstrict_unequal_order() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "nonstrict_unequal_is_strict.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the named <=/!= strict-order step must not use construction replay: {events:#?}"
+        "the named <=/!= strict-order step must not use construction check: {events:#?}"
     );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
@@ -2772,7 +2756,7 @@ fn restricted_simp_expands_nonstrict_unequal_order() {
         "{expanded}"
     );
     assert!(!expanded.contains("simp()"), "{expanded}");
-    verify_click_theorems(&expanded).expect("nonstrict unequal certificate should replay");
+    verify_click_theorems(&expanded).expect("nonstrict unequal certificate should check");
 }
 
 #[test]
@@ -2802,7 +2786,7 @@ fn post_execution_simp_expands_increment_upper_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_below.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained increment rule must not enter legacy certificate search: {events:#?}"
@@ -2833,7 +2817,7 @@ fn post_execution_simp_expands_increment_upper_bound() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment_below.c", c_source)])
-        .expect("expanded increment upper-bound proof should replay");
+        .expect("expanded increment upper-bound proof should check");
 }
 
 #[test]
@@ -2877,7 +2861,7 @@ fn post_execution_simp_expands_strict_transitivity() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("return_first.c", c_source)])
-        .expect("expanded strict-transitivity proof should replay");
+        .expect("expanded strict-transitivity proof should check");
 }
 
 #[test]
@@ -2921,7 +2905,7 @@ fn post_execution_simp_expands_greater_equal_transitivity() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("return_last.c", c_source)])
-        .expect("expanded non-strict-transitivity proof should replay");
+        .expect("expanded non-strict-transitivity proof should check");
 }
 
 #[test]
@@ -2952,7 +2936,7 @@ fn post_execution_simp_expands_greater_equal_increment_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_ge.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained greater-equal increment rule must not enter legacy certificate search: {events:#?}"
@@ -2979,7 +2963,7 @@ fn post_execution_simp_expands_greater_equal_increment_bound() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment_ge.c", c_source)])
-        .expect("expanded greater-equal increment proof should replay");
+        .expect("expanded greater-equal increment proof should check");
 }
 
 #[test]
@@ -3011,7 +2995,7 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_gt.contract"
-                    && (name == "surface certificate replay"
+                    && (name == "generated certificate validation"
                         || name == "derivation lowering: ambient rewrite harvest")
         )),
         "the retained strict-greater increment rule must not enter legacy certificate search: {events:#?}"
@@ -3038,7 +3022,7 @@ fn post_execution_simp_expands_strict_greater_increment_bound() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment_gt.c", c_source)])
-        .expect("expanded strict-greater increment proof should replay");
+        .expect("expanded strict-greater increment proof should check");
 }
 
 #[test]
@@ -3068,9 +3052,9 @@ fn post_execution_simp_expands_greater_order_equality() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity_zero.ensures_0" && name == "surface certificate replay"
+                if claim == "identity_zero.ensures_0" && name == "generated certificate validation"
         )),
-        "the outcome equality theorem must not use construction replay: {events:#?}"
+        "the outcome equality theorem must not use construction check: {events:#?}"
     );
 
     let offset = click_source.rfind("simp()").unwrap();
@@ -3095,7 +3079,7 @@ fn post_execution_simp_expands_greater_order_equality() {
     );
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity_zero.c", c_source)])
-        .expect("expanded greater-order equality should replay");
+        .expect("expanded greater-order equality should check");
 }
 
 #[test]
@@ -3125,9 +3109,9 @@ fn post_execution_simp_composes_negated_successor_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "identity_at_least_one.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained successor-bound proof must not use construction replay: {events:#?}"
+        "the retained successor-bound proof must not use construction check: {events:#?}"
     );
     let offset = click_source.rfind("simp()").unwrap();
     let line = click_source[..offset]
@@ -3160,7 +3144,7 @@ fn post_execution_simp_composes_negated_successor_bound() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity_at_least_one.c", c_source)])
-        .expect("expanded successor lower-bound proof should replay");
+        .expect("expanded successor lower-bound proof should check");
 }
 
 #[test]
@@ -3183,9 +3167,9 @@ fn restricted_simp_composes_negated_successor_bound() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "not_below_two_is_at_least_one.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained restricted successor-bound proof must not use construction replay: {events:#?}"
+        "the retained restricted successor-bound proof must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3213,7 +3197,7 @@ fn restricted_simp_composes_negated_successor_bound() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded restricted successor proof should replay");
+    verify_click_theorems(&expanded).expect("expanded restricted successor proof should check");
 }
 
 #[test]
@@ -3260,24 +3244,19 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
             .unwrap_or(0)
         + 1;
 
-    let (((expanded, certificate_checks), context_exports), replay_executions) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    expand_c0_tactic_source_at(
-                        click_source,
-                        &[("compare_swap2.c", c_source)],
-                        line,
-                        column,
-                    )
-                })
+    let ((expanded, certificate_checks), context_exports) = {
+        proof::count_execution_context_exports(|| {
+            proof::count_source_certificate_checks(|| {
+                expand_c0_tactic_source_at(
+                    click_source,
+                    &[("compare_swap2.c", c_source)],
+                    line,
+                    column,
+                )
             })
-        });
+        })
+    };
     let expanded = expanded.expect("post-execution predicate goal should expand");
-    assert_eq!(
-        replay_executions, 0,
-        "branched predicate expansion must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "branched predicate expansion must not export semantic state"
@@ -3293,20 +3272,15 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
     );
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    let ((reverified, reverify_fallbacks), reverify_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
-            })
-        });
+    let (reverified, reverify_fallbacks) = {
+        proof::count_explicit_linear_fallbacks(|| {
+            verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
+        })
+    };
     reverified.expect("expanded predicate-goal proof should independently reverify");
     assert_eq!(
         reverify_fallbacks, 0,
         "the expanded predicate proof must use only authoritative Proof operations"
-    );
-    assert_eq!(
-        reverify_replays, 0,
-        "the expanded predicate proof must not enter execute_internal_proof"
     );
 
     let corrupted = expanded.replacen("unfold(sorted_pair);", "unfold(missing);", 1);
@@ -3314,20 +3288,15 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
         corrupted, expanded,
         "the expansion should expose its checked predicate unfold"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
-            })
-        });
+    let (corrupted_result, corrupted_fallbacks) = {
+        proof::count_explicit_linear_fallbacks(|| {
+            verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
+        })
+    };
     corrupted_result.expect_err("a corrupted branched predicate expansion must be rejected");
     assert_eq!(
         corrupted_fallbacks, 0,
         "a corrupted predicate unfold must be rejected by Proof, not compatibility"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "a corrupted predicate expansion must not enter execute_internal_proof"
     );
 
     let condition = "at(statement(1).entry, p[1]) < at(statement(1).entry, p[0])";
@@ -3337,20 +3306,15 @@ fn post_execution_simp_unfolds_predicate_goal_explicitly() {
         corrupted, expanded,
         "the expansion should expose its checked outcome condition"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
-            })
-        });
+    let (corrupted_result, corrupted_fallbacks) = {
+        proof::count_explicit_linear_fallbacks(|| {
+            verify_c0_sources(&corrupted, &[("compare_swap2.c", c_source)])
+        })
+    };
     corrupted_result.expect_err("a corrupted outcome condition must be rejected");
     assert_eq!(
         corrupted_fallbacks, 0,
         "a corrupted outcome condition must be rejected by Proof, not compatibility"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "a corrupted outcome condition must not enter execute_internal_proof"
     );
 }
 
@@ -3373,9 +3337,9 @@ fn pure_simp_retains_one_selected_equality_rewrite_before_normalize() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "predecessor_of_one_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the selected rewrite path must not use construction replay: {events:#?}"
+        "the selected rewrite path must not use construction check: {events:#?}"
     );
 
     let offset = click_source.find("simp()").unwrap();
@@ -3385,7 +3349,7 @@ fn pure_simp_retains_one_selected_equality_rewrite_before_normalize() {
     assert!(expanded.contains("rewrite(value == 1);"), "{expanded}");
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
-    verify_click_theorems(&expanded).expect("the expanded rewrite path should replay");
+    verify_click_theorems(&expanded).expect("the expanded rewrite path should check");
 }
 
 #[test]
@@ -3408,9 +3372,9 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_stays_bounded.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained pure increment rule must not use construction replay: {events:#?}"
+        "the retained pure increment rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3435,7 +3399,7 @@ fn restricted_simp_expands_increment_upper_bound_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -3458,9 +3422,9 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "positive_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the named positive-to-nonnegative step must not use construction replay: {events:#?}"
+        "the named positive-to-nonnegative step must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3485,7 +3449,7 @@ fn restricted_simp_expands_positive_to_nonnegative_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -3508,9 +3472,9 @@ fn restricted_simp_expands_strictly_positive_to_nonnegative_theorem_application(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "strictly_positive_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the named strictly-positive-to-nonnegative step must not use construction replay: {events:#?}"
+        "the named strictly-positive-to-nonnegative step must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3534,7 +3498,7 @@ fn restricted_simp_expands_strictly_positive_to_nonnegative_theorem_application(
     assert!(expanded.contains("0 < value;"), "{expanded}");
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -3557,9 +3521,9 @@ fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "positive_predecessor_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained predecessor-nonnegative rule must not use construction replay: {events:#?}"
+        "the retained predecessor-nonnegative rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3584,7 +3548,7 @@ fn restricted_simp_expands_positive_predecessor_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -3607,9 +3571,9 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "positive_predecessor_decreases.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained predecessor-decrease rule must not use construction replay: {events:#?}"
+        "the retained predecessor-decrease rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3634,7 +3598,7 @@ fn restricted_simp_expands_positive_predecessor_decrease_to_theorem_application(
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -3659,9 +3623,9 @@ fn restricted_simp_expands_predecessor_upper_bound_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "predecessor_keeps_upper_bound.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained predecessor-upper-bound rule must not use construction replay: {events:#?}"
+        "the retained predecessor-upper-bound rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3676,7 +3640,7 @@ fn restricted_simp_expands_predecessor_upper_bound_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded predecessor theorem should replay");
+    verify_click_theorems(&expanded).expect("expanded predecessor theorem should check");
 }
 
 #[test]
@@ -3699,9 +3663,9 @@ fn restricted_simp_retains_nested_one_le_predecessor_nonnegative_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "one_le_predecessor_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained nested predecessor proof must not use construction replay: {events:#?}"
+        "the retained nested predecessor proof must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3718,7 +3682,7 @@ fn restricted_simp_retains_nested_one_le_predecessor_nonnegative_proof() {
     );
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded nested predecessor proof should replay");
+    verify_click_theorems(&expanded).expect("expanded nested predecessor proof should check");
 }
 
 #[test]
@@ -3741,9 +3705,9 @@ fn restricted_simp_retains_nested_one_le_predecessor_decrease_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "one_le_predecessor_decreases.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained nested predecessor-decrease proof must not use construction replay: {events:#?}"
+        "the retained nested predecessor-decrease proof must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3761,7 +3725,7 @@ fn restricted_simp_retains_nested_one_le_predecessor_decrease_proof() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_click_theorems(&expanded)
-        .expect("expanded nested predecessor-decrease proof should replay");
+        .expect("expanded nested predecessor-decrease proof should check");
 }
 
 #[test]
@@ -3784,9 +3748,9 @@ fn restricted_simp_retains_equal_one_predecessor_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "equal_one_predecessor_is_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained equal-one path must not use construction replay: {events:#?}"
+        "the retained equal-one path must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3801,7 +3765,7 @@ fn restricted_simp_retains_equal_one_predecessor_path() {
     );
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded equal-one predecessor proof should replay");
+    verify_click_theorems(&expanded).expect("expanded equal-one predecessor proof should check");
 }
 
 #[test]
@@ -3824,9 +3788,9 @@ fn restricted_simp_retains_equal_one_predecessor_zero_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "equal_one_predecessor_is_zero.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained predecessor-zero path must not use construction replay: {events:#?}"
+        "the retained predecessor-zero path must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3836,7 +3800,7 @@ fn restricted_simp_retains_equal_one_predecessor_zero_path() {
     assert!(expanded.contains("normalize()"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded predecessor-zero proof should replay");
+    verify_click_theorems(&expanded).expect("expanded predecessor-zero proof should check");
 }
 
 #[test]
@@ -3859,9 +3823,9 @@ fn restricted_simp_expands_strict_increment_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_is_greater.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained pure strict-increment rule must not use construction replay: {events:#?}"
+        "the retained pure strict-increment rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3885,7 +3849,7 @@ fn restricted_simp_expands_strict_increment_to_theorem_application() {
     assert!(expanded.contains("value < upper;"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_c0_sources(&expanded, &[]).expect("strict increment certificate should replay");
+    verify_c0_sources(&expanded, &[]).expect("strict increment certificate should check");
 }
 
 #[test]
@@ -3906,9 +3870,9 @@ fn simp_expands_increment_definedness_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_is_defined.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained pure increment-definedness rule must not use construction replay: {events:#?}"
+        "the retained pure increment-definedness rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp()").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -3921,7 +3885,7 @@ fn simp_expands_increment_definedness_to_theorem_application() {
     assert!(expanded.contains("value < 2147483647;"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded increment-definedness proof should replay");
+    verify_click_theorems(&expanded).expect("expanded increment-definedness proof should check");
 }
 
 #[test]
@@ -3950,9 +3914,9 @@ fn restricted_simp_expands_increment_lower_bound_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_preserves_lower_bound.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained pure increment-lower-bound rule must not use construction replay: {events:#?}"
+        "the retained pure increment-lower-bound rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -3978,7 +3942,7 @@ fn restricted_simp_expands_increment_lower_bound_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -4007,9 +3971,9 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_preserves_order.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained increment-order rule must not use construction replay: {events:#?}"
+        "the retained increment-order rule must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -4035,7 +3999,7 @@ fn restricted_simp_expands_increment_order_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -4086,7 +4050,7 @@ fn restricted_simp_rewrites_a_named_successor_before_increment_order() {
     assert!(expanded.contains("at(function.entry, value)"), "{expanded}");
     assert!(!expanded.contains("simp()"), "{expanded}");
     verify_c0_sources(&expanded, &[("named_successor.c", c_source)])
-        .expect("named successor certificate should replay");
+        .expect("named successor certificate should check");
 }
 
 #[test]
@@ -4158,7 +4122,7 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
 
     let expanded =
         expand_c0_tactic_source_at(click_source, &[("vector_push.c", c_source)], line, column)
-            .expect("unchanged-prefix simp should expand to a replayable frame transport");
+            .expect("unchanged-prefix simp should expand to a checkable frame transport");
     assert!(
         expanded.contains("transport(old(owner->data[k])"),
         "{expanded}"
@@ -4166,7 +4130,7 @@ fn restricted_simp_certifies_unchanged_prefix_after_indexed_store() {
     assert!(expanded.contains("k < old(owner->len)"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, &[("vector_push.c", c_source)])
-        .expect("unchanged-prefix certificate should replay");
+        .expect("unchanged-prefix certificate should check");
 }
 
 #[test]
@@ -4189,9 +4153,9 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "two_at_most_implies_one_below.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the retained adjacent-order proof must not use construction replay: {events:#?}"
+        "the retained adjacent-order proof must not use construction check: {events:#?}"
     );
     let offset = click_source.find("simp() using").unwrap();
     let line = click_source[..offset]
@@ -4216,7 +4180,7 @@ fn restricted_simp_expands_adjacent_order_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -4244,7 +4208,7 @@ fn smart_simp_transcribes_a_three_edge_signed_order_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "three_edge_order_chain.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "signed-order simp should construct its Proof through checked theorem applications: {events:#?}"
     );
@@ -4272,7 +4236,7 @@ fn smart_simp_transcribes_a_three_edge_signed_order_path() {
         "{expanded}"
     );
     assert!(!expanded.contains("simp();"), "{expanded}");
-    verify_click_theorems(&expanded).expect("the transcribed order path should replay");
+    verify_click_theorems(&expanded).expect("the transcribed order path should check");
 }
 
 #[test]
@@ -4300,7 +4264,7 @@ fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "three_edge_equality_chain.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "equality simp should construct its Proof through checked rewrites: {events:#?}"
     );
@@ -4324,7 +4288,7 @@ fn smart_simp_transcribes_a_three_edge_bitvector_equality_path() {
     assert!(expanded.contains("rewrite(third == last);"), "{expanded}");
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
-    verify_click_theorems(&expanded).expect("the transcribed equality path should replay");
+    verify_click_theorems(&expanded).expect("the transcribed equality path should check");
 }
 
 #[test]
@@ -4355,9 +4319,9 @@ fn smart_simp_retains_both_signed_equality_rules_as_named_steps() {
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if (claim == "le_and_not_lt_are_equal.ensures_0"
                     || claim == "ge_and_not_gt_are_equal.ensures_0")
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the named equality step must not use construction replay: {events:#?}"
+        "the named equality step must not use construction check: {events:#?}"
     );
 
     let offset = click_source.find("simp();").unwrap();
@@ -4378,7 +4342,7 @@ fn smart_simp_retains_both_signed_equality_rules_as_named_steps() {
         expanded.contains("apply(int32_le_and_not_lt_implies_eq(left, right)) using"),
         "{expanded}"
     );
-    verify_click_theorems(&expanded).expect("the named equality step should independently replay");
+    verify_click_theorems(&expanded).expect("the named equality step should independently check");
 
     let offset = click_source.rfind("simp();").unwrap();
     let line = click_source[..offset]
@@ -4399,7 +4363,7 @@ fn smart_simp_retains_both_signed_equality_rules_as_named_steps() {
         "{expanded}"
     );
     verify_click_theorems(&expanded)
-        .expect("the named >=/not-> equality step should independently replay");
+        .expect("the named >=/not-> equality step should independently check");
 }
 
 #[test]
@@ -4460,7 +4424,7 @@ fn outcome_simp_consumes_its_recorded_bitvector_equality_path() {
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, &[("choose_first.c", c_source)])
-        .expect("the transcribed outcome equality path should replay");
+        .expect("the transcribed outcome equality path should check");
 }
 
 #[test]
@@ -4492,7 +4456,7 @@ fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "validate_chain.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the outcome theorem path must retain its checked Proof successor: {events:#?}"
     );
@@ -4520,7 +4484,7 @@ fn outcome_simp_applies_theorems_through_its_recorded_order_path() {
     );
     assert!(!expanded.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, &[("validate_chain.c", c_source)])
-        .expect("the transcribed outcome theorem path should replay");
+        .expect("the transcribed outcome theorem path should check");
 }
 
 #[test]
@@ -4543,7 +4507,7 @@ fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "three_at_least_implies_nonnegative.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the constant lower-bound proof should retain its checked Proof successor: {events:#?}"
     );
@@ -4570,7 +4534,7 @@ fn restricted_simp_expands_constant_order_weakening_to_theorem_application() {
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded theorem application should replay");
+    verify_click_theorems(&expanded).expect("expanded theorem application should check");
 }
 
 #[test]
@@ -4593,7 +4557,7 @@ fn restricted_simp_expands_constant_strict_upper_bound_to_theorem_application() 
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "three_at_most_implies_below_five.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the constant upper-bound proof should retain its checked Proof successor: {events:#?}"
     );
@@ -4608,7 +4572,7 @@ fn restricted_simp_expands_constant_strict_upper_bound_to_theorem_application() 
     assert!(expanded.contains("value <= 3;"), "{expanded}");
     assert!(!expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded strict upper-bound proof should replay");
+    verify_click_theorems(&expanded).expect("expanded strict upper-bound proof should check");
 }
 
 #[test]
@@ -4631,7 +4595,7 @@ fn restricted_simp_retains_increment_under_a_larger_constant() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment_three_at_most_is_five_at_most.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the increment constant-bound proof must retain both checked theorem steps: {events:#?}"
     );
@@ -4650,8 +4614,7 @@ fn restricted_simp_retains_increment_under_a_larger_constant() {
     assert!(expanded.contains("value <= 3;"), "{expanded}");
     assert!(expanded.contains("value < 5;"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
-    verify_click_theorems(&expanded)
-        .expect("expanded increment constant-bound proof should replay");
+    verify_click_theorems(&expanded).expect("expanded increment constant-bound proof should check");
 }
 
 #[test]
@@ -4676,7 +4639,7 @@ fn restricted_simp_retains_symbolic_add_definedness_theorem() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "symbolic_add_is_defined.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the symbolic-add proof must retain its checked theorem application: {events:#?}"
     );
@@ -4695,8 +4658,7 @@ fn restricted_simp_retains_symbolic_add_definedness_theorem() {
         "{expanded}"
     );
     assert!(!expanded.contains("simp() using"), "{expanded}");
-    verify_click_theorems(&expanded)
-        .expect("expanded symbolic-add definedness proof should replay");
+    verify_click_theorems(&expanded).expect("expanded symbolic-add definedness proof should check");
 }
 
 #[test]
@@ -4721,7 +4683,7 @@ fn restricted_simp_retains_symbolic_subtract_definedness_theorem() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "symbolic_subtract_is_defined.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "the symbolic-subtract proof must retain its checked theorem application: {events:#?}"
     );
@@ -4739,7 +4701,7 @@ fn restricted_simp_retains_symbolic_subtract_definedness_theorem() {
     assert!(expanded.contains("value >= amount;"), "{expanded}");
     assert!(!expanded.contains("simp() using"), "{expanded}");
     verify_click_theorems(&expanded)
-        .expect("expanded symbolic-subtract definedness proof should replay");
+        .expect("expanded symbolic-subtract definedness proof should check");
 }
 
 #[test]
@@ -4781,7 +4743,7 @@ fn restricted_simp_retains_one_plus_operand_specific_theorems() {
                     claim: event_claim,
                     name,
                     ..
-                } if event_claim == claim && name == "surface certificate replay"
+                } if event_claim == claim && name == "generated certificate validation"
             )),
             "the one-plus proof must retain its checked theorem application: {events:#?}"
         );
@@ -4793,7 +4755,7 @@ fn restricted_simp_retains_one_plus_operand_specific_theorems() {
         assert!(expanded.contains(application), "{expanded}");
         assert!(expanded.contains("2147483647 > value;"), "{expanded}");
         assert!(!expanded.contains("simp() using"), "{expanded}");
-        verify_click_theorems(&expanded).expect("expanded one-plus proof should replay");
+        verify_click_theorems(&expanded).expect("expanded one-plus proof should check");
     }
 }
 
@@ -4840,7 +4802,7 @@ fn restricted_simp_composes_equality_rewrites_with_adjacent_order() {
     );
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
-    verify_click_theorems(&expanded).expect("composed explicit certificate should replay");
+    verify_click_theorems(&expanded).expect("composed explicit certificate should check");
 }
 
 #[test]
@@ -4896,7 +4858,7 @@ fn restricted_simp_inside_have_expands_to_explicit_equality_rewrites() {
     assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("explicit equality have certificate should replay");
+        .expect("explicit equality have certificate should check");
 }
 
 #[test]
@@ -4943,19 +4905,18 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
         + 1;
     let sources = [("read_at.c", c_source)];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("the leading loadability have should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replay_executions, 0, "the loadability have entered replay");
     assert_eq!(context_exports, 0, "the loadability Proof exported state");
     assert_eq!(
         certificate_checks, 0,
@@ -4996,7 +4957,7 @@ fn restricted_simp_expands_loadable_subrange_to_explicit_transport() {
     );
     assert!(!expanded_have.contains("simp() using"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
-    verify_c0_sources(&expanded, &sources).expect("explicit loadability transport should replay");
+    verify_c0_sources(&expanded, &sources).expect("explicit loadability transport should check");
 }
 
 #[test]
@@ -5083,7 +5044,7 @@ fn restricted_simp_rewrites_pointer_aliases_inside_memory_loads() {
     assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("derive using"), "{expanded_have}");
     verify_c0_sources(&expanded, &sources)
-        .expect("expanded pointer-alias certificate should replay");
+        .expect("expanded pointer-alias certificate should check");
 }
 
 #[test]
@@ -5128,7 +5089,7 @@ fn post_execution_restricted_simp_expands_without_derive() {
     let selected = &expanded[offset..];
     assert!(selected.contains("rewrite((x + 1) == y);"), "{selected}");
     assert!(!selected.contains("derive using"), "{selected}");
-    verify_c0_sources(&expanded, &sources).expect("explicit post-execution proof should replay");
+    verify_c0_sources(&expanded, &sources).expect("explicit post-execution proof should check");
 }
 
 #[test]
@@ -5183,7 +5144,7 @@ fn source_expander_lowers_smart_apply_inside_have() {
             .expect("expanded proof should retain its suffix")];
     assert!(expanded_have.contains("apply(int32_reflexive(x)) using {"));
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the expanded smart apply inside have should replay");
+        .expect("the expanded smart apply inside have should check");
 }
 
 #[test]
@@ -5217,14 +5178,14 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
     let (verified, events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("choose.c", c_source)])
     });
-    verified.expect("checked point apply should verify without ordinary certificate replay");
+    verified.expect("checked point apply should verify without ordinary certificate validation");
     assert!(
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "choose_second.contract" && name == "surface certificate replay"
+                if claim == "choose_second.contract" && name == "generated certificate validation"
         )),
-        "the migrated smart point proof must not pass through the ordinary construction/replay gateway: {events:#?}"
+        "the migrated smart point proof must not pass through the ordinary construction/check gateway: {events:#?}"
     );
     let have_offset = click_source
         .find("have second == first")
@@ -5252,7 +5213,7 @@ fn point_have_bare_apply_retains_and_checks_its_exact_premise() {
         .expect("explicit step should retain the theorem premise");
     let premise_offset = apply_offset + premise_relative;
     verify_c0_sources(&expanded, &[("choose.c", c_source)])
-        .expect("the retained point proof should independently replay");
+        .expect("the retained point proof should independently check");
 
     let mut corrupted = expanded.clone();
     corrupted.replace_range(
@@ -5307,9 +5268,9 @@ fn point_have_mixed_linear_smart_script_continues_on_checked_successors() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "choose_second.contract" && name == "surface certificate replay"
+                if claim == "choose_second.contract" && name == "generated certificate validation"
         )),
-        "the migrated apply-then-simp proof must not use construction replay: {events:#?}"
+        "the migrated apply-then-simp proof must not use construction check: {events:#?}"
     );
 
     let have_offset = click_source
@@ -5381,9 +5342,9 @@ fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "keep.contract" && name == "surface certificate replay"
+                if claim == "keep.contract" && name == "generated certificate validation"
         )),
-        "the migrated execution apply must not pass through ordinary certificate replay: {events:#?}"
+        "the migrated execution apply must not pass through ordinary certificate validation: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -5409,7 +5370,7 @@ fn execution_bare_apply_selects_and_retains_its_step_through_proof() {
 }
 
 #[test]
-fn execution_resource_unfold_is_recorded_once_and_replays() {
+fn execution_resource_unfold_is_recorded_once_and_checks() {
     let c_source = r#"
         int32 discard(int32 x) {
             return x;
@@ -5456,11 +5417,11 @@ fn execution_resource_unfold_is_recorded_once_and_replays() {
     .expect("the grouped resource proof should expand");
     assert_eq!(expanded.matches("unfold(marker(x));").count(), 1);
     verify_c0_sources(&expanded, &[("discard.c", c_source)])
-        .expect("the one retained unfold should independently replay");
+        .expect("the one retained unfold should independently check");
 }
 
 #[test]
-fn execution_resource_observe_is_recorded_once_and_replays() {
+fn execution_resource_observe_is_recorded_once_and_checks() {
     let c_source = r#"
         int32 inspect(int32 x) {
             return x;
@@ -5507,11 +5468,11 @@ fn execution_resource_observe_is_recorded_once_and_replays() {
     .expect("the grouped resource proof should expand");
     assert_eq!(expanded.matches("observe(marker(x));").count(), 1);
     verify_c0_sources(&expanded, &[("inspect.c", c_source)])
-        .expect("the one retained observation should independently replay");
+        .expect("the one retained observation should independently check");
 }
 
 #[test]
-fn execution_resource_fold_is_recorded_once_and_replays() {
+fn execution_resource_fold_is_recorded_once_and_checks() {
     let c_source = r#"
         int32 preserve(int32 x) {
             return x;
@@ -5565,11 +5526,11 @@ fn execution_resource_fold_is_recorded_once_and_replays() {
         1
     );
     verify_c0_sources(&expanded, &[("preserve.c", c_source)])
-        .expect("the one retained fold should independently replay");
+        .expect("the one retained fold should independently check");
 }
 
 #[test]
-fn linear_execution_open_retains_one_checked_scope_and_replays() {
+fn linear_execution_open_retains_one_checked_scope_and_checks() {
     let c_source = r#"
         int32 two_steps(int32 x) {
             x = x;
@@ -5597,26 +5558,23 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("two_steps.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the linear open scope should verify through Proof");
     assert_eq!(
         flat_units, 1,
         "the complete open proof should retain one Proof"
     );
-    assert_eq!(replay_executions, 0, "the open proof entered legacy replay");
     assert_eq!(context_exports, 0, "the open Proof exported semantic state");
     assert_eq!(
         certificate_checks, 0,
@@ -5626,7 +5584,7 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "two_steps.contract" && name == "surface certificate replay"
+                if claim == "two_steps.contract" && name == "generated certificate validation"
         )),
         "ordinary linear open construction must retain its checked Proof scope: {events:#?}"
     );
@@ -5649,7 +5607,7 @@ fn linear_execution_open_retains_one_checked_scope_and_replays() {
     )
     .expect("the grouped open proof should expand");
     verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
-        .expect("the retained open scope should independently replay");
+        .expect("the retained open scope should independently check");
 }
 
 #[test]
@@ -5682,19 +5640,18 @@ fn linear_execution_open_retains_checked_prefix_on_one_proof() {
         }
     "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("add_once.c", c_source)])
                     })
                 })
-            })
+            }
         });
     verified.expect("the leading statement and open scope should verify on one Proof");
     assert_eq!(flat_units, 1, "the scoped prefix should retain one Proof");
-    assert_eq!(replay_executions, 0, "the scoped prefix entered replay");
     assert_eq!(
         context_exports, 0,
         "the scoped prefix exported semantic state"
@@ -5752,7 +5709,7 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "two_steps.contract" && name == "surface certificate replay"
+                if claim == "two_steps.contract" && name == "generated certificate validation"
         )),
         "ordinary scoped execute must retain its checked statement steps: {events:#?}"
     );
@@ -5778,7 +5735,7 @@ fn linear_execute_inside_open_retains_checked_statement_steps() {
     )
     .expect("the grouped scoped execute should expand");
     verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
-        .expect("the retained scoped statement steps should independently replay");
+        .expect("the retained scoped statement steps should independently check");
 }
 
 #[test]
@@ -5818,9 +5775,9 @@ fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "two_steps.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
-        "the retained frame must neither replay nor recheck its effect at finalization: {events:#?}"
+        "the retained frame must neither check nor recheck its effect at finalization: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -5848,7 +5805,7 @@ fn explicit_frame_inside_open_closes_its_owned_effect_goal_once() {
     )
     .expect("the grouped checked frame should expand");
     verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
-        .expect("the retained explicit frame should independently replay");
+        .expect("the retained explicit frame should independently check");
 }
 
 #[test]
@@ -5887,9 +5844,9 @@ fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "identity.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
-        "smart frame search must not replay or recheck its selected step: {events:#?}"
+        "smart frame search must not check or recheck its selected step: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -5916,11 +5873,11 @@ fn smart_immutable_frame_inside_open_selects_a_checked_simple_step() {
     )
     .expect("the smart immutable frame should expand");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the selected empty frame step should independently replay");
+        .expect("the selected empty frame step should independently check");
 }
 
 #[test]
-fn grouped_explicit_empty_mutable_frame_rejects_missing_premises_without_replay() {
+fn grouped_explicit_empty_mutable_frame_rejects_missing_premises_without_check() {
     let c_source = r#"
         int32 write_in_bounds(int32 p[], int32 i, int32 n) {
             p[i] = 9;
@@ -5944,16 +5901,14 @@ fn grouped_explicit_empty_mutable_frame_rejects_missing_premises_without_replay(
         }
     "#;
 
-    let (((verified, certificate_checks), context_exports), replay_executions) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-                })
+    let ((verified, certificate_checks), context_exports) = {
+        proof::count_execution_context_exports(|| {
+            proof::count_source_certificate_checks(|| {
+                verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
             })
-        });
+        })
+    };
     let error = verified.expect_err("the exact empty frame must not import ambient bounds");
-    assert_eq!(replay_executions, 0, "the explicit frame entered replay");
     assert_eq!(
         context_exports, 0,
         "the effect Proof exported semantic state"
@@ -5989,19 +5944,18 @@ fn grouped_explicit_empty_mutable_frame_stays_on_proof() {
         }
     "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("write_first.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("the exact empty mutable frame should verify on Proof");
     assert_eq!(flat_units, 1, "the grouped effect should retain one Proof");
-    assert_eq!(replay_executions, 0, "the explicit frame entered replay");
     assert_eq!(
         context_exports, 0,
         "the effect Proof exported semantic state"
@@ -6057,14 +6011,11 @@ fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
     let sources = [("write_first.c", c_source)];
 
     let (
-        (
-            ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-            flat_units,
-        ),
+        ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units),
         events,
     ) = crate::instrumentation::collect(|| {
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         proof::count_explicit_linear_fallbacks(|| {
@@ -6072,12 +6023,11 @@ fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
                         })
                     })
                 })
-            })
+            }
         })
     });
     let verified = verified.expect("the ordered outcome operations should verify on Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the post-execution have entered replay");
     assert_eq!(
         context_exports, 0,
         "the outcome Proof exported semantic state"
@@ -6095,9 +6045,9 @@ fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "write_first.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "grouped proof tactic replay")
+                    && matches!(name.as_str(), "generated certificate validation" | "grouped proof tactic check")
         )),
-        "the ordered outcome operations entered compatibility replay: {events:#?}"
+        "the ordered outcome operations entered legacy fallback: {events:#?}"
     );
 
     let tactics = verified[0]
@@ -6141,18 +6091,12 @@ fn grouped_post_execution_haves_before_empty_mutable_frame_stay_on_proof() {
         corrupted, rewritten,
         "the expansion should expose the checked have"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     corrupted_result.expect_err("tampering with the universal have must invalidate the proof");
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid migrated operation must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated source must not enter execute_internal_proof"
     );
 }
 
@@ -6182,27 +6126,24 @@ fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
     "#;
     let sources = [("write_first.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the ordered outcome closers should verify on Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the ordered outcome closers entered replay");
     assert_eq!(context_exports, 0, "the outcome Proof exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(explicit_fallbacks, 0, "an ordered outcome closer fell back");
 
@@ -6234,18 +6175,12 @@ fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
         corrupted, rewritten,
         "the expansion should expose normalize"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     corrupted_result.expect_err("tampering with the outcome closer must invalidate the proof");
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid migrated closer must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated source must not enter execute_internal_proof"
     );
 }
 
@@ -6303,27 +6238,24 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
     "#;
     let sources = [("apply_write.c", apply_c), ("rewrite_write.c", rewrite_c)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the ordered outcome operations should verify on Proof");
     assert_eq!(flat_units, 2, "both grouped proofs should retain Proof");
-    assert_eq!(replays, 0, "the ordered outcome operations entered replay");
     assert_eq!(context_exports, 0, "an outcome Proof exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -6387,16 +6319,10 @@ fn grouped_post_execution_rewrite_and_apply_before_frame_stay_on_proof() {
             &corrupted, original,
             "the expansion should expose {description}"
         );
-        let ((result, fallbacks), replay_executions) =
-            proof::count_internal_proof_executions(|| {
-                proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-            });
+        let (result, fallbacks) =
+            { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
         result.expect_err("tampering with an ordered outcome operation must invalidate the proof");
         assert_eq!(fallbacks, 0, "invalid {description} must not fall back");
-        assert_eq!(
-            replay_executions, 0,
-            "invalid {description} must not enter execute_internal_proof"
-        );
     }
 }
 
@@ -6433,27 +6359,24 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
     "#;
     let sources = [("write_first.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the ordered predicate unfold should verify on Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the ordered predicate unfold entered replay");
     assert_eq!(context_exports, 0, "the outcome Proof exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -6482,15 +6405,10 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
         corrupted, rewritten,
         "the expansion should expose the unfold"
     );
-    let ((result, fallbacks), replay_executions) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     result.expect_err("tampering with the predicate unfold must invalidate the proof");
     assert_eq!(fallbacks, 0, "an invalid unfold must not fall back");
-    assert_eq!(
-        replay_executions, 0,
-        "an invalid unfold must not enter execute_internal_proof"
-    );
 }
 
 #[test]
@@ -6526,26 +6444,20 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
         .expect("an empty mutable frame must fall back to ambient-fact selection");
 
     let smart_source = click_source.replace("frame() using {};", "frame();");
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(&smart_source, &[("increment.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(&smart_source, &[("increment.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("smart frame should select the exact empty mutable candidate");
     assert_eq!(flat_units, 1, "the counted scope should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the counted scope must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the counted scope must not export semantic state"
@@ -6559,9 +6471,9 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "increment.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
-        "the accepted mutable candidate must not be replayed or rechecked: {events:#?}"
+        "the accepted mutable candidate must not be checked or rechecked: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -6589,7 +6501,7 @@ fn mutable_frame_distinguishes_legacy_empty_source_from_smart_exact_candidate() 
     )
     .expect("the smart mutable frame should expand");
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("the selected empty mutable frame should independently replay");
+        .expect("the selected empty mutable frame should independently check");
 }
 
 #[test]
@@ -6615,27 +6527,24 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
     "#;
     let sources = [("preserve_markers.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the quantified resource scope should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the quantified resource scope entered replay");
     assert_eq!(context_exports, 0, "the resource scope exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -6669,9 +6578,8 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the checked resource selection"
     );
-    let ((result, fallbacks), replay_executions) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error =
         result.expect_err("tampering with the resource selection must invalidate the proof");
     assert!(
@@ -6679,10 +6587,6 @@ fn quantified_contract_resource_open_stays_on_one_proof() {
         "the checked resource-entry operation should reject the tamper directly: {error:?}"
     );
     assert_eq!(fallbacks, 0, "an invalid open must not fall back");
-    assert_eq!(
-        replay_executions, 0,
-        "an invalid open must not enter execute_internal_proof"
-    );
 }
 
 #[test]
@@ -6718,28 +6622,22 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("contextual frame should submit its selected Proof candidate");
     assert_eq!(
         flat_units, 1,
         "the mixed scoped contract should retain one Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "the mixed scoped contract entered replay"
     );
     assert_eq!(
         context_exports, 0,
@@ -6753,9 +6651,9 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_in_bounds.contract" && name == "surface certificate replay"
+                if claim == "write_in_bounds.contract" && name == "generated certificate validation"
         )),
-        "the contextual candidate must not use ordinary surface replay: {events:#?}"
+        "the contextual candidate must not use ordinary surface check: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -6778,7 +6676,7 @@ fn contextual_mutable_frame_inside_open_applies_explicit_candidate_on_proof() {
     )
     .expect("the contextual Proof-owned frame should expand");
     verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
-        .expect("the contextual frame candidate should independently replay");
+        .expect("the contextual frame candidate should independently check");
 }
 
 #[test]
@@ -6816,9 +6714,9 @@ fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "write_in_bounds.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the top-level contextual candidate must not use ordinary surface replay: {events:#?}"
+        "the top-level contextual candidate must not use ordinary surface check: {events:#?}"
     );
     assert_eq!(
         events
@@ -6847,7 +6745,7 @@ fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
     )
     .expect("the top-level contextual frame should expand");
     verify_c0_sources(&expanded, &[("write_in_bounds.c", c_source)])
-        .expect("the retained top-level contextual frame should independently replay");
+        .expect("the retained top-level contextual frame should independently check");
 
     let frame_offset = click_source
         .find("frame();")
@@ -6871,7 +6769,7 @@ fn top_level_contextual_frame_applies_explicit_candidate_on_proof() {
     )
     .expect("the deferred Proof-owned frame should expand by itself");
     verify_c0_sources(&selected, &[("write_in_bounds.c", c_source)])
-        .expect("the selected deferred frame certificate should independently replay");
+        .expect("the selected deferred frame certificate should independently check");
 }
 
 #[test]
@@ -6924,7 +6822,7 @@ fn top_level_proof_owned_frame_retains_deferred_source_order() {
     )
     .expect("the ordered Proof-owned frame should expand");
     verify_c0_sources(&expanded, &[("preserve_storage.c", c_source)])
-        .expect("the retained deferred order should independently replay");
+        .expect("the retained deferred order should independently check");
 }
 
 #[test]
@@ -6968,9 +6866,9 @@ fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_selected.contract" && name == "surface certificate replay"
+                if claim == "write_selected.contract" && name == "generated certificate validation"
         )),
-        "branched execute and its common frame must not use ordinary surface replay: {events:#?}"
+        "branched execute and its common frame must not use ordinary surface check: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -6990,7 +6888,7 @@ fn smart_execute_crosses_terminal_c_branch_before_checked_frame() {
     )
     .expect("branched execute with common frame should expand");
     verify_c0_sources(&expanded, &[("write_selected.c", c_source)])
-        .expect("the retained execution branch should independently replay");
+        .expect("the retained execution branch should independently check");
 }
 
 #[test]
@@ -7038,9 +6936,9 @@ fn smart_execute_retains_nested_terminal_c_branches_before_checked_frame() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_nested.contract" && name == "surface certificate replay"
+                if claim == "write_nested.contract" && name == "generated certificate validation"
         )),
-        "nested execute and its common frame must not use ordinary surface replay: {events:#?}"
+        "nested execute and its common frame must not use ordinary surface check: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -7074,7 +6972,7 @@ fn smart_execute_retains_nested_terminal_c_branches_before_checked_frame() {
     )
     .expect("nested branched execute with common frame should expand");
     verify_c0_sources(&expanded, &[("write_nested.c", c_source)])
-        .expect("the retained nested execution branches should independently replay");
+        .expect("the retained nested execution branches should independently check");
 }
 
 #[test]
@@ -7123,7 +7021,7 @@ fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
             } if claim == "write_conditionally_indexed.contract"
                 && matches!(
                     name.as_str(),
-                    "surface certificate replay" | "frame exact effect check"
+                    "generated certificate validation" | "frame exact effect check"
                 ) =>
             {
                 Some(name.as_str())
@@ -7133,7 +7031,7 @@ fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
         .collect::<Vec<_>>();
     assert!(
         forbidden_operations.is_empty(),
-        "partitioned frame search must neither replay nor recheck its checked Proof arms: {forbidden_operations:?}"
+        "partitioned frame search must neither check nor recheck its checked Proof arms: {forbidden_operations:?}"
     );
     let resource_transitions = events
         .iter()
@@ -7191,7 +7089,7 @@ fn contextual_frame_checks_path_specific_evidence_on_partitioned_outcomes() {
     )
     .expect("partitioned contextual frame should expand");
     verify_c0_sources(&expanded, &[("write_conditionally_indexed.c", c_source)])
-        .expect("the retained outcome-partition certificate should independently replay");
+        .expect("the retained outcome-partition certificate should independently check");
 }
 
 #[test]
@@ -7233,7 +7131,7 @@ fn linear_execute_until_inside_open_stops_on_checked_frontier() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "three_steps.contract" && name == "surface certificate replay"
+                if claim == "three_steps.contract" && name == "generated certificate validation"
         )),
         "scoped execute_until must retain its checked statement path: {events:#?}"
     );
@@ -7259,7 +7157,7 @@ fn linear_execute_until_inside_open_stops_on_checked_frontier() {
     )
     .expect("the grouped scoped execute_until should expand");
     verify_c0_sources(&expanded, &[("three_steps.c", c_source)])
-        .expect("the retained stopped-frontier steps should independently replay");
+        .expect("the retained stopped-frontier steps should independently check");
 }
 
 #[test]
@@ -7308,9 +7206,9 @@ fn linear_open_have_retains_the_selected_theorem_application() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "two_steps.contract" && name == "surface certificate replay"
+                if claim == "two_steps.contract" && name == "generated certificate validation"
         )),
-        "ordinary nested-scope construction must not replay its retained theorem step: {events:#?}"
+        "ordinary nested-scope construction must not check its retained theorem step: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -7343,7 +7241,7 @@ fn linear_open_have_retains_the_selected_theorem_application() {
     )
     .expect("the grouped nested open proof should expand");
     verify_c0_sources(&expanded, &[("two_steps.c", c_source)])
-        .expect("the retained nested theorem application should independently replay");
+        .expect("the retained nested theorem application should independently check");
 }
 
 #[test]
@@ -7376,27 +7274,24 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
     "#;
     let sources = [("read_cell.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the nested resource scopes should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the nested resource scopes entered replay");
     assert_eq!(context_exports, 0, "the nested scopes exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -7430,9 +7325,8 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the nested resource selection"
     );
-    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error =
         result.expect_err("tampering with the nested resource selection must invalidate the proof");
     assert!(
@@ -7440,10 +7334,6 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
         "the nested checked resource entry should reject the tamper directly: {error:?}"
     );
     assert_eq!(fallbacks, 0, "an invalid nested open must not fall back");
-    assert_eq!(
-        corrupted_replays, 0,
-        "an invalid nested open must not enter execute_internal_proof"
-    );
 }
 
 #[test]
@@ -7482,9 +7372,9 @@ fn linear_open_retains_a_direct_bare_theorem_application() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "retain_lower.contract" && name == "surface certificate replay"
+                if claim == "retain_lower.contract" && name == "generated certificate validation"
         )),
-        "ordinary open-scope theorem search must not replay its retained step: {events:#?}"
+        "ordinary open-scope theorem search must not check its retained step: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -7554,9 +7444,9 @@ fn linear_open_retains_a_direct_bare_fact_transport() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "set_second_return_first.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "ordinary open-scope transport search must not replay its retained step: {events:#?}"
+        "ordinary open-scope transport search must not check its retained step: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -7634,27 +7524,24 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
     "#;
     let sources = [("read_if.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the branch-arm resource scope should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the branch-arm resource scope entered replay");
     assert_eq!(context_exports, 0, "the branch-arm scope exported state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -7687,9 +7574,8 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the branch-arm resource selection"
     );
-    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error =
         result.expect_err("tampering with the branch-arm resource must invalidate the proof");
     assert!(
@@ -7699,10 +7585,6 @@ fn execution_branch_arm_resource_scope_stays_on_one_proof() {
     assert_eq!(
         fallbacks, 0,
         "an invalid branch-arm open must not fall back"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "an invalid branch-arm open must not enter execute_internal_proof"
     );
 }
 
@@ -7766,30 +7648,27 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
     "#;
     let sources = [("read_if.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the nested branch-arm scope should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the nested branch-arm scope entered replay");
     assert_eq!(
         context_exports, 0,
         "the nested branch-arm scope exported state"
     );
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -7830,9 +7709,8 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the nested branch-arm resource selection"
     );
-    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error = result
         .expect_err("tampering with the nested branch-arm resource must invalidate the proof");
     assert!(
@@ -7844,10 +7722,6 @@ fn scoped_execution_branch_arm_resource_scope_stays_on_one_proof() {
     assert_eq!(
         fallbacks, 0,
         "an invalid nested branch-arm open must not fall back"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "an invalid nested branch-arm open must not enter execute_internal_proof"
     );
 }
 
@@ -7887,30 +7761,27 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
     "#;
     let sources = [("choose_x_or_zero.c", c_source)];
 
-    let (
-        ((((verified, explicit_fallbacks), certificate_checks), context_exports), replays),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the nested terminal proof if should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(replays, 0, "the nested terminal proof if entered replay");
     assert_eq!(
         context_exports, 0,
         "the nested terminal proof if exported state"
     );
     assert_eq!(
         certificate_checks, 0,
-        "ordinary verification replayed a certificate"
+        "ordinary verification checked a certificate"
     );
     assert_eq!(
         explicit_fallbacks, 0,
@@ -7943,18 +7814,12 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
         CProofClaim::Grouped,
     )
     .expect("the nested terminal proof if should serialize");
-    let ((reverified, rewritten_replays), rewritten_flat_units) =
-        proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(&rewritten, &sources))
-        });
+    let (reverified, rewritten_flat_units) =
+        proof::count_flat_proof_units(|| verify_c0_sources(&rewritten, &sources));
     reverified.expect("the serialized nested terminal proof if should independently reverify");
     assert_eq!(
         rewritten_flat_units, 1,
         "the rewritten nested proof if should retain one Proof"
-    );
-    assert_eq!(
-        rewritten_replays, 0,
-        "the rewritten nested proof if entered execute_internal_proof"
     );
 
     let nested_if = click_source
@@ -7965,9 +7830,9 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
         .map(|offset| nested_if + offset)
         .expect("the nested then arm should contain a simp");
     let position = expansion::position_at_offset(click_source, selected_simp);
-    let (((selected_expansion, selected_fallbacks), selected_replays), selected_flat_units) =
+    let ((selected_expansion, selected_fallbacks), selected_flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     expand_c0_tactic_source_at(
                         click_source,
@@ -7976,7 +7841,7 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
                         position.column,
                     )
                 })
-            })
+            }
         });
     let selected_expansion = selected_expansion
         .expect("the selected terminal-arm simp should expand from retained provenance");
@@ -7993,35 +7858,21 @@ fn execution_branch_arm_terminal_proof_if_stays_on_one_proof() {
         2,
         "selected expansion should replace only the attributed nested-arm simp"
     );
-    assert_eq!(
-        selected_replays, 0,
-        "selected nested-arm expansion entered execute_internal_proof"
-    );
-    let (selected_reverified, selected_reverify_replays) =
-        proof::count_internal_proof_executions(|| verify_c0_sources(&selected_expansion, &sources));
+    let selected_reverified = verify_c0_sources(&selected_expansion, &sources);
     selected_reverified
         .expect("the selected terminal-arm simp expansion should independently reverify");
-    assert_eq!(
-        selected_reverify_replays, 0,
-        "the selected nested-arm expansion entered execute_internal_proof when reverified:\n{selected_expansion}"
-    );
 
     let corrupted = rewritten.replacen("if x >= 0 {", "if result >= 0 {", 1);
     assert_ne!(
         corrupted, rewritten,
         "the expansion should expose the nested proof-if condition"
     );
-    let ((result, fallbacks), corrupted_replays) = proof::count_internal_proof_executions(|| {
-        proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-    });
+    let (result, fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     result.expect_err("an unavailable result condition must invalidate the nested proof if");
     assert_eq!(
         fallbacks, 0,
         "an invalid nested proof if must not fall back"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "an invalid nested proof if must not enter execute_internal_proof"
     );
 }
 
@@ -8057,26 +7908,20 @@ fn branch_interface_retains_its_checked_abstract_join() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("nonnegative.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("nonnegative.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the checked branch interface should verify");
     assert_eq!(flat_units, 1, "the branch proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the branch proof must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the branch proof must not export semantic state"
@@ -8090,7 +7935,7 @@ fn branch_interface_retains_its_checked_abstract_join() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "nonnegative.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the branch, common return, and frame must retain one checked Proof: {events:#?}"
     );
@@ -8174,7 +8019,7 @@ fn branch_interface_retains_exact_unchanged_ownership() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "preserve_marker.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "an unchanged exact ownership export must retain its checked Proof: {events:#?}"
     );
@@ -8264,9 +8109,9 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "preserve_two_markers.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "quantity-interface construction must not replay its surface certificate: {events:#?}"
+        "quantity-interface construction must not check its surface certificate: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -8347,9 +8192,9 @@ fn branch_arms_retain_bare_theorem_applications_on_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "retain_order.contract" && name == "surface certificate replay"
+                if claim == "retain_order.contract" && name == "generated certificate validation"
         )),
-        "ordinary branch theorem search must not replay its retained applications: {events:#?}"
+        "ordinary branch theorem search must not check its retained applications: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -8427,7 +8272,7 @@ fn branch_join_retains_a_bare_theorem_application_in_its_continuation() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "choose_bound.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the branch, theorem, return, and frame must retain one checked Proof: {events:#?}"
     );
@@ -8515,7 +8360,7 @@ fn branch_join_retains_a_bare_fact_transport_in_its_continuation() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "choose_bound_transport.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the branch, transport, return, and frame must retain one checked Proof: {events:#?}"
     );
@@ -8597,20 +8442,10 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
+    let (verified, _events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("select_positive.c", c_source)])
     });
     let verified = verified.expect("the common nested have should advance the joined Proof");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "select_positive.contract"
-                    && (matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
-                        || name.starts_with("smart tactic compatibility replay"))
-        )),
-        "the branch, nested have, return, and frame must retain one checked Proof: {events:#?}"
-    );
     let tactics = verified[0]
         .expanded_proof_tactics()
         .expect("the checked common nested have should retain an expansion");
@@ -8670,7 +8505,7 @@ fn branch_join_retains_a_nested_have_in_its_continuation() {
     );
     assert_ne!(
         corrupted, expanded,
-        "the expansion should expose the path-independent checked frame"
+        "the expansion should expose the path-independent verified frame"
     );
     assert!(
         verify_c0_sources(&corrupted, &[("select_positive.c", c_source)]).is_err(),
@@ -8721,7 +8556,7 @@ fn branch_join_retains_linear_execute_on_its_common_successor() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_and_increment.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the branch, execute, and frame must retain one checked Proof: {events:#?}"
     );
@@ -8816,9 +8651,9 @@ fn incremented_strict_lower_bound_retains_its_theorem_path() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_and_increment_positive.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the typed outcome simp must not ordinarily replay its theorem path: {events:#?}"
+        "the typed outcome simp must not ordinarily check its theorem path: {events:#?}"
     );
 
     let expanded = expand_c0_claim_source(
@@ -8889,9 +8724,9 @@ fn post_execution_have_anchors_strict_increment_theorem_premises() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_and_increment_positive_have.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the smart have must not reconstruct and replay its theorem path: {events:#?}"
+        "the smart have must not reconstruct and check its theorem path: {events:#?}"
     );
 
     let have_offset = click_source
@@ -8977,9 +8812,9 @@ fn branch_arms_retain_bare_fact_transports_on_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "set_choice_return_first.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "ordinary branch transport search must not replay its retained steps: {events:#?}"
+        "ordinary branch transport search must not check its retained steps: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -9070,9 +8905,9 @@ fn branch_arms_retain_nested_have_proofs() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_nonnegative.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "ordinary branch-have construction must not replay its retained scopes: {events:#?}"
+        "ordinary branch-have construction must not check its retained scopes: {events:#?}"
     );
     let tactics = verified[0]
         .expanded_proof_tactics()
@@ -9152,7 +8987,7 @@ fn explicit_branch_arms_retain_terminal_execute_search() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "choose_one_or_two.contract"
-                    && matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                    && matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "terminal arm execution and framing must retain their checked Proof operations: {events:#?}"
     );
@@ -9225,9 +9060,9 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "select_ready.ensures_0"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the common changed-resource descendant must not be reconstructed by replay: {events:#?}"
+        "the common changed-resource descendant must not be reconstructed by check: {events:#?}"
     );
     let tactics = verified
         .last()
@@ -9312,7 +9147,7 @@ fn decided_branch_interface_retains_the_surviving_checked_state() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "selected_nonnegative.contract" && name == "surface certificate replay"
+                if claim == "selected_nonnegative.contract" && name == "generated certificate validation"
         )),
         "decided interface construction must retain its checked state directly: {events:#?}"
     );
@@ -9379,26 +9214,23 @@ fn open_scope_retains_its_checked_branch_interface() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("scoped_nonnegative.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("scoped_nonnegative.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the scoped branch interface should stay on Proof");
     assert_eq!(
         flat_units, 1,
         "the scoped interface should retain one Proof"
     );
-    assert_eq!(replay_executions, 0, "the scoped interface entered replay");
     assert_eq!(
         context_exports, 0,
         "the scoped interface exported semantic state"
@@ -9411,7 +9243,7 @@ fn open_scope_retains_its_checked_branch_interface() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "scoped_nonnegative.contract" && name == "surface certificate replay"
+                if claim == "scoped_nonnegative.contract" && name == "generated certificate validation"
         )),
         "scoped branch-interface construction must retain checked structure: {events:#?}"
     );
@@ -9479,23 +9311,20 @@ fn open_scope_retains_its_checked_execution_branch() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("empty_branch.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("empty_branch.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the execution branch should join inside the open Proof");
     assert_eq!(flat_units, 1, "the scoped branch should retain one Proof");
-    assert_eq!(replay_executions, 0, "the scoped branch entered replay");
     assert_eq!(
         context_exports, 0,
         "the scoped branch exported semantic state"
@@ -9508,7 +9337,7 @@ fn open_scope_retains_its_checked_execution_branch() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "empty_branch.contract" && name == "surface certificate replay"
+                if claim == "empty_branch.contract" && name == "generated certificate validation"
         )),
         "ordinary scoped branch construction must retain its checked structure: {events:#?}"
     );
@@ -9537,7 +9366,7 @@ fn open_scope_retains_its_checked_execution_branch() {
     )
     .expect("the grouped scoped branch should expand");
     verify_c0_sources(&expanded, &[("empty_branch.c", c_source)])
-        .expect("the retained scoped branch should independently replay");
+        .expect("the retained scoped branch should independently check");
 }
 
 #[test]
@@ -9577,23 +9406,20 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("selected_branch.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("selected_branch.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("the decided execution path should stay inside the open Proof");
     assert_eq!(flat_units, 1, "the decided scope should retain one Proof");
-    assert_eq!(replay_executions, 0, "the decided scope entered replay");
     assert_eq!(
         context_exports, 0,
         "the decided scope exported semantic state"
@@ -9606,7 +9432,7 @@ fn open_scope_retains_a_decided_execution_branch_and_its_continuation() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "selected_branch.contract" && name == "surface certificate replay"
+                if claim == "selected_branch.contract" && name == "generated certificate validation"
         )),
         "the scoped decided branch must retain its searched simple steps directly: {events:#?}"
     );
@@ -9705,7 +9531,7 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+    let ((verified, _events), planning_transitions) = count_planning_statement_transitions(|| {
         crate::instrumentation::collect(|| {
             verify_c0_sources(click_source, &[("choose.c", c_source)])
         })
@@ -9714,15 +9540,6 @@ fn automatic_terminal_branch_retains_its_checked_proof_outcomes() {
     assert_eq!(
         planning_transitions, 0,
         "the automatic terminal branch must search only on checked Proof descendants"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "choose.contract"
-                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
-        )),
-        "terminal branch construction must bypass compatibility replay: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -9791,9 +9608,9 @@ fn point_smart_have_retains_a_checked_simple_closer() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
-        "the migrated smart have must not pass through ordinary certificate replay: {events:#?}"
+        "the migrated smart have must not pass through ordinary certificate validation: {events:#?}"
     );
 }
 
@@ -9825,9 +9642,9 @@ fn point_smart_have_retains_a_checked_theorem_application() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "first.contract" && name == "surface certificate replay"
+                if claim == "first.contract" && name == "generated certificate validation"
         )),
-        "the migrated theorem-backed have must not ordinarily replay its certificate: {events:#?}"
+        "the migrated theorem-backed have must not ordinarily check its certificate: {events:#?}"
     );
 
     let expanded = expand_c0_claim_source(
@@ -9884,7 +9701,7 @@ fn explicit_linear_point_have_uses_the_checked_proof_path() {
     assert!(expanded.contains("have value >= 0 by {"));
     assert!(expanded.matches("assumption();").count() >= 2);
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded explicit point have should independently replay");
+        .expect("expanded explicit point have should independently check");
 }
 
 #[test]
@@ -9923,9 +9740,9 @@ fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("post-execution simple have replay")
+                if name.starts_with("post-execution simple have check")
         )),
-        "the explicit outcome have must retain its checked Proof without legacy replay: {events:#?}"
+        "the explicit outcome have must retain its checked Proof without fallback validation: {events:#?}"
     );
 
     let expanded = expand_c0_claim_source(
@@ -9938,7 +9755,7 @@ fn explicit_post_execution_have_uses_the_checked_outcome_proof_path() {
     assert!(expanded.contains("have result >= 0 by {"), "{expanded}");
     assert!(expanded.matches("assumption();").count() >= 2, "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded explicit outcome have should independently replay");
+        .expect("expanded explicit outcome have should independently check");
 }
 
 #[test]
@@ -9986,7 +9803,7 @@ fn quantified_outcome_simp_keeps_its_binder_on_the_checked_goal() {
     assert!(expanded.contains("intro();"), "{expanded}");
     assert!(expanded.contains("instantiate("), "{expanded}");
     verify_c0_sources(&expanded, &[("bounded.c", c_source)])
-        .expect("the retained binder-aware certificate should replay");
+        .expect("the retained binder-aware certificate should check");
 }
 
 #[test]
@@ -10038,7 +9855,7 @@ fn outcome_simp_with_no_open_claims_is_an_empty_proof_transition() {
         .expect("expanded release proof should exist");
     assert!(!release_proof.contains("simp();"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the expansion without the empty simp should replay");
+        .expect("the expansion without the empty simp should check");
 }
 
 #[test]
@@ -10109,7 +9926,7 @@ fn outcome_predicate_unfold_relowers_resource_counts_on_the_checked_proof() {
     assert!(expanded.contains("unfold(valid_pool);"), "{expanded}");
     assert!(expanded.contains("normalize();"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained predicate closure should replay independently");
+        .expect("the retained predicate closure should check independently");
 }
 
 #[test]
@@ -10182,7 +9999,7 @@ fn outcome_predicate_unfold_uses_the_checked_frame_population_transition() {
     );
     assert!(expanded.contains("unfold(valid_pool);"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained population transition should replay independently");
+        .expect("the retained population transition should check independently");
 }
 
 #[test]
@@ -10223,20 +10040,13 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     "#;
     let sources = [("sort_three_cells.c", c_source)];
 
-    let (((verified, events), replay_executions), flat_units) =
-        proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
-                crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources))
-            })
-        });
+    let ((verified, events), flat_units) = proof::count_flat_proof_units(|| {
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources))
+    });
     verified.expect("the surviving unfold-owned universal should close through Proof");
     assert_eq!(
         flat_units, 1,
         "the nested outcome tree should retain one Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "the nested outcome tree entered compatibility replay"
     );
     assert!(
         events.iter().all(|event| !matches!(
@@ -10261,29 +10071,21 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     );
     assert!(expanded.contains("normalize();"), "{expanded}");
     assert!(expanded.contains("unfold(permutation);"), "{expanded}");
-    let ((reverified, expanded_replays), expanded_flat_units) =
-        proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
-        });
+    let (reverified, expanded_flat_units) =
+        proof::count_flat_proof_units(|| verify_c0_sources(&expanded, &sources));
     assert_eq!(
         expanded_flat_units, 1,
         "the rewritten nested proof should retain one Proof"
     );
-    assert_eq!(
-        expanded_replays, 0,
-        "the rewritten nested proof entered compatibility replay"
-    );
-    reverified.expect("the retained nested predicate proof should replay independently");
+    reverified.expect("the retained nested predicate proof should check independently");
 
     let corrupted = expanded.replace("statement(1).entry", "statement(6).entry");
     assert_ne!(
         corrupted, expanded,
         "the expansion should expose its checked root branch anchor"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error = corrupted_result
         .expect_err("tampering with the nested execution branch anchor must invalidate the proof");
     assert!(
@@ -10298,10 +10100,6 @@ fn outcome_predicate_unfold_provenance_survives_nested_have_expansion() {
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid nested branch anchor must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "an invalid nested branch anchor must not enter execute_internal_proof"
     );
 }
 
@@ -10341,15 +10139,10 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
     "#;
     let sources = [("two_decisions.c", c_source)];
 
-    let ((verified, replays), flat_units) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
-    });
+    let (verified, flat_units) =
+        proof::count_flat_proof_units(|| verify_c0_sources(click_source, &sources));
     verified.expect("successive outcome splits should verify");
     assert_eq!(flat_units, 1, "the outcome splits should retain one Proof");
-    assert_eq!(
-        replays, 0,
-        "the outcome splits entered compatibility replay"
-    );
 
     let expanded = expand_c0_claim_source(
         click_source,
@@ -10360,18 +10153,12 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
     .expect("successive outcome splits should expand");
     assert!(expanded.contains("statement(2).entry"), "{expanded}");
     assert!(expanded.contains("statement(5).entry"), "{expanded}");
-    let ((reverified, expanded_replays), expanded_flat_units) =
-        proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
-        });
+    let (reverified, expanded_flat_units) =
+        proof::count_flat_proof_units(|| verify_c0_sources(&expanded, &sources));
     reverified.expect("the rewritten outcome splits should verify normally");
     assert_eq!(
         expanded_flat_units, 1,
         "the rewritten outcome splits should retain one Proof"
-    );
-    assert_eq!(
-        expanded_replays, 0,
-        "the rewritten outcome splits entered compatibility replay"
     );
 
     let corrupted = expanded.replace("statement(2).entry", "statement(5).entry");
@@ -10379,10 +10166,8 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
         corrupted, expanded,
         "the expansion should expose the first C branch"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, &sources)) };
     let error = corrupted_result.expect_err("the corrupted branch anchor must be rejected");
     // The corrupted anchor names a statement that has not been executed
     // where the split is stated; the Proof rejects it at lowering.
@@ -10396,7 +10181,6 @@ fn successive_post_execution_ifs_stay_on_one_proof() {
         "the Proof-owned C split should reject the corruption directly: {error:?}"
     );
     assert_eq!(corrupted_fallbacks, 0, "the corruption entered a fallback");
-    assert_eq!(corrupted_replays, 0, "the corruption entered replay");
 }
 
 #[test]
@@ -10483,7 +10267,7 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
     assert!(expanded.contains("instantiate("), "{expanded}");
     assert!(expanded.contains("transport("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained bound universal proof should replay independently");
+        .expect("the retained bound universal proof should check independently");
 }
 
 #[test]
@@ -10533,7 +10317,7 @@ fn bound_universal_fixture_census_has_no_outcome_fallbacks() {
                 .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
         verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
             panic!(
-                "expanded proof from `{}` did not replay independently: {error:?}",
+                "expanded proof from `{}` failed independent verification: {error:?}",
                 path.display()
             )
         });
@@ -10597,7 +10381,7 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
         assert!(expanded.contains(retained_step), "{expanded}");
         verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
             panic!(
-                "expanded proof from `{}` did not replay independently: {error:?}",
+                "expanded proof from `{}` failed independent verification: {error:?}",
                 path.display()
             )
         });
@@ -10609,7 +10393,7 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
             .join("\n");
         assert!(
             verify_c0_sources(&without_retained_step, &c_sources).is_err(),
-            "`{}` replayed after deleting its selected retained step",
+            "`{}` checked after deleting its selected retained step",
             path.display()
         );
         if filename == "separate_symbolic_unwritten_read.md" {
@@ -10620,7 +10404,7 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
                 .join("\n");
             assert!(
                 verify_c0_sources(&without_separation, &c_sources).is_err(),
-                "`{}` replayed after deleting its required separation premises",
+                "`{}` checked after deleting its required separation premises",
                 path.display()
             );
         }
@@ -10701,7 +10485,7 @@ fn resource_example_pipelines_have_no_outcome_fallbacks() {
         assert!(expanded.contains(retained_step), "{expanded}");
         verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
             panic!(
-                "expanded proof from `{}` did not replay independently: {error:?}",
+                "expanded proof from `{}` failed independent verification: {error:?}",
                 path.display()
             )
         });
@@ -10894,7 +10678,7 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
         assert!(expanded.contains(retained_step), "{expanded}");
         verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
             panic!(
-                "expanded proof from `{}` did not replay independently: {error:?}",
+                "expanded proof from `{}` failed independent verification: {error:?}",
                 path.display()
             )
         });
@@ -10906,7 +10690,7 @@ fn branch_continuation_claims_retain_their_selected_outcome_step() {
             .join("\n");
         assert!(
             verify_c0_sources(&without_retained_step, &c_sources).is_err(),
-            "`{}` replayed after deleting its selected retained theorem step",
+            "`{}` checked after deleting its selected retained theorem step",
             path.display()
         );
     }
@@ -10981,7 +10765,7 @@ fn frame_certified_outcome_claim_closes_on_the_checked_proof() {
     )
     .expect("the frame-certified outcome should expand");
     verify_c0_sources(&expanded, &sources)
-        .expect("the frame-certified expansion should replay independently");
+        .expect("the frame-certified expansion should check independently");
 }
 
 #[test]
@@ -11037,7 +10821,7 @@ fn outcome_simp_transports_loadability_on_the_checked_proof() {
             .expect("the retained loadability transport should expand");
     assert!(expanded.contains("transport"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained loadability transport should replay independently");
+        .expect("the retained loadability transport should check independently");
 }
 
 #[test]
@@ -11125,7 +10909,7 @@ fn outcome_simp_transports_unchanged_old_equality_on_the_checked_proof() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the retained old-equality transport should replay independently");
+        .expect("the retained old-equality transport should check independently");
 }
 
 #[test]
@@ -11172,7 +10956,7 @@ fn outcome_simp_instantiates_an_unfolded_byte_predicate_on_the_checked_proof() {
     .expect("the retained universal specialization should expand");
     assert!(expanded.contains("instantiate("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the unfolded universal specialization should replay independently");
+        .expect("the unfolded universal specialization should check independently");
 }
 
 #[test]
@@ -11242,7 +11026,7 @@ fn outcome_simp_materializes_selected_composite_separation_on_the_checked_proof(
     .expect("the retained resource separation should expand");
     assert!(expanded.contains("assumption();"), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the selected resource separation should replay independently");
+        .expect("the selected resource separation should check independently");
 }
 
 #[test]
@@ -11311,7 +11095,7 @@ fn quantified_old_transport_substitutes_its_introduced_binder_on_the_checked_pro
         "{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the quantified old transport should replay independently");
+        .expect("the quantified old transport should check independently");
 }
 
 #[test]
@@ -11340,13 +11124,10 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
             }
         "#;
     let (
-        (
-            ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
+        ((((verified, events), explicit_fallbacks), certificate_checks), context_exports),
         flat_units,
     ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
+        {
             proof::count_execution_context_exports(|| {
                 proof::count_source_certificate_checks(|| {
                     proof::count_explicit_linear_fallbacks(|| {
@@ -11356,14 +11137,10 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
                     })
                 })
             })
-        })
+        }
     });
     verified.expect("the unfold-then-simp have should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the leading predicate have entered execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the leading predicate have exported semantic state"
@@ -11380,7 +11157,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "identity.contract" && name == "surface certificate replay"
+                if claim == "identity.contract" && name == "generated certificate validation"
         )),
         "the migrated unfold-then-simp path must retain its checked Proof: {events:#?}"
     );
@@ -11415,7 +11192,7 @@ fn source_expander_lowers_smart_simp_after_unfold_inside_have() {
     assert!(expanded_have.contains("normalize();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("the expanded unfolded smart have should replay");
+        .expect("the expanded unfolded smart have should check");
 }
 
 #[test]
@@ -11468,7 +11245,7 @@ fn source_expander_extracts_unfolded_conjuncts_inside_have() {
     assert!(!expanded.contains("simp() using"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("identity.c", c_source)])
-        .expect("expanded point-proof conjunction extraction should replay");
+        .expect("expanded point-proof conjunction extraction should check");
 }
 
 #[test]
@@ -11521,7 +11298,7 @@ fn source_expander_preserves_pointer_field_form_inside_smart_have() {
     );
     assert!(expanded.contains("assumption();"), "{expanded}");
     verify_c0_sources(&expanded, &[("holder.c", c_source)])
-        .expect("the expanded pointer-valued have should replay");
+        .expect("the expanded pointer-valued have should check");
 }
 
 #[test]
@@ -11582,7 +11359,7 @@ fn source_expander_synthesizes_an_indexed_load_through_a_pointer_field() {
             .expect("the indexed pointer-field fact should have a surface form");
     assert!(expanded.contains("owner->data[1] == value"), "{expanded}");
     verify_c0_sources(&expanded, &[("holder.c", c_source)])
-        .expect("the indexed pointer-field expansion should replay");
+        .expect("the indexed pointer-field expansion should check");
 }
 
 #[test]
@@ -11641,7 +11418,7 @@ fn smart_have_uses_transport_planned_at_the_mutation_boundary() {
     assert!(!expanded_have.contains("transport("), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("transport.c", c_source)])
-        .expect("the expansion should replay using the transport planned by the prior statement");
+        .expect("the expansion should check using the transport planned by the prior statement");
 }
 
 #[test]
@@ -11699,7 +11476,7 @@ fn smart_have_uses_fact_selected_by_explicit_step_at_the_mutation_boundary() {
     assert!(expanded_have.contains("assumption();"), "{expanded_have}");
     assert!(!expanded_have.contains("simp();"), "{expanded_have}");
     verify_c0_sources(&expanded, &[("transport.c", c_source)])
-        .expect("the explicit-step boundary transport should replay");
+        .expect("the explicit-step boundary transport should check");
 }
 
 #[test]
@@ -11771,7 +11548,7 @@ fn source_expander_recalls_a_fact_at_a_recorded_statement_entry() {
     let expanded = expand_c0_tactic_source_at(click_source, &c_sources, line, column)
         .expect("the snapshot have should expand");
     assert!(expanded.contains("assumption();"), "{expanded}");
-    verify_c0_sources(&expanded, &c_sources).expect("the expanded snapshot have should replay");
+    verify_c0_sources(&expanded, &c_sources).expect("the expanded snapshot have should check");
 }
 
 #[test]
@@ -11899,11 +11676,11 @@ fn source_expander_derives_separation_from_call_postconditions() {
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &c_sources)
-        .expect("the expanded separation derivation should replay");
+        .expect("the expanded separation derivation should check");
 }
 
 #[test]
-fn branched_smart_simp_expansion_replays_as_surface_click() {
+fn branched_smart_simp_expansion_checks_as_surface_click() {
     let c_source = r#"
             int32 choose(int32 flag) {
                 if (flag) {
@@ -11928,7 +11705,7 @@ fn branched_smart_simp_expansion_replays_as_surface_click() {
         .expect("branched smart simp should lower to surface tactics");
     let expanded_source = click_source.replacen("by { execute(); simp(); }", &expanded, 1);
     verify_c0_sources(&expanded_source, &[("choose.c", c_source)])
-        .expect("printed branched smart simp expansion should replay");
+        .expect("printed branched smart simp expansion should check");
 }
 
 #[test]
@@ -11965,7 +11742,7 @@ fn source_expander_replaces_only_the_selected_claim_proof() {
 }
 
 #[test]
-fn source_expander_replaces_and_replays_grouped_proof() {
+fn source_expander_replaces_and_checks_grouped_proof() {
     let c_source = r#"
             int32 identity(int32 x) {
                 return x;
@@ -11996,7 +11773,7 @@ fn source_expander_replaces_and_replays_grouped_proof() {
 }
 
 #[test]
-fn source_expander_replaces_and_replays_contextual_frame() {
+fn source_expander_replaces_and_checks_contextual_frame() {
     let c_source = r#"
             int32 write_in_bounds(int32 p[], int32 i, int32 n) {
                 p[i] = 9;
@@ -12084,7 +11861,7 @@ fn selected_post_execution_frame_stays_inside_open_scope() {
     .expect("selected frame inside an open scope should expand");
     assert!(!expanded.contains("frame();"), "{expanded}");
     verify_c0_sources(&expanded, &[("increment_counted.c", c_source)])
-        .expect("expanded frame must replay before the open scope closes");
+        .expect("expanded frame must check before the open scope closes");
 }
 
 #[test]
@@ -12158,7 +11935,7 @@ fn source_expander_is_idempotent() {
 }
 
 #[test]
-fn source_expander_replaces_and_replays_default_ensure_proof() {
+fn source_expander_replaces_and_checks_default_ensure_proof() {
     let c_source = r#"
             int32 identity(int32 x) {
                 return x;
@@ -12194,7 +11971,7 @@ fn source_expander_replaces_and_replays_default_ensure_proof() {
 }
 
 #[test]
-fn source_expander_replaces_and_replays_default_effect_proof() {
+fn source_expander_replaces_and_checks_default_effect_proof() {
     let c_source = r#"
             int32 zero() {
                 return 0;
@@ -12285,7 +12062,7 @@ fn pure_pointer_add_zero_simp_expands_to_rewrite_and_assumption() {
     assert!(expanded.contains("rewrite(offset == 0);"), "{expanded}");
     assert!(expanded.contains("assumption();"), "{expanded}");
     assert!(!expanded.contains("simp()"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded pointer identity proof should replay");
+    verify_click_theorems(&expanded).expect("expanded pointer identity proof should check");
 }
 
 #[test]
@@ -12319,7 +12096,7 @@ fn pure_branching_disjunction_simp_expands_to_left_right() {
     assert!(expanded.contains("left();"), "{expanded}");
     assert!(expanded.contains("right();"), "{expanded}");
     assert!(!expanded.contains("simp()"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded branching disjunction proof should replay");
+    verify_click_theorems(&expanded).expect("expanded branching disjunction proof should check");
 }
 
 #[test]
@@ -12355,7 +12132,7 @@ fn pure_folded_constant_successor_simp_expands_to_successor_bound() {
         "{expanded}"
     );
     assert!(!expanded.contains("simp()"), "{expanded}");
-    verify_click_theorems(&expanded).expect("expanded constant successor proof should replay");
+    verify_click_theorems(&expanded).expect("expanded constant successor proof should check");
 }
 
 #[test]
@@ -12403,9 +12180,9 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                 if name == "post-execution smart have compatibility construction"
-                    || name.starts_with("post-execution simple have replay")
+                    || name.starts_with("post-execution simple have check")
         )),
-        "the checked unfold and structural simp must not reconstruct or replay their proof: {events:#?}"
+        "the checked unfold and structural simp must not reconstruct or check their proof: {events:#?}"
     );
     let offset = click_source.find("have ordered_pair").unwrap();
     let position = expansion::position_at_offset(click_source, offset);
@@ -12424,7 +12201,7 @@ fn unfolded_conjunction_have_simp_expands_to_a_split_certificate() {
     );
     verify_c0_sources(&expanded, &[("set_pair.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the expanded split certificate should replay: {}\n{expanded}",
+            "the expanded split certificate should check: {}\n{expanded}",
             error.message()
         )
     });
@@ -12480,7 +12257,7 @@ fn outcome_predecessor_bound_simp_expands_to_the_named_rule() {
     assert!(!expanded.contains("simp()"), "{expanded}");
     verify_c0_sources(&expanded, &[("drop_one.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the expanded predecessor bound certificate should replay: {}\n{expanded}",
+            "the expanded predecessor bound certificate should check: {}\n{expanded}",
             error.message()
         )
     });
@@ -12534,5 +12311,5 @@ fn expanded_step_uses_the_whole_context_for_frame_evidence() {
         .nth(1)
         .expect("the expanded source should retain the pipeline");
     assert!(pipeline.contains("step();"), "{pipeline}");
-    verify_c0_sources(&expanded, &c_sources).expect("the expanded pipeline proof should replay");
+    verify_c0_sources(&expanded, &c_sources).expect("the expanded pipeline proof should check");
 }

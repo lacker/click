@@ -150,7 +150,7 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
     for pointer in &writes {
         check_effect_planning_deadline()?;
         // Most concrete writes already sit at a constant offset inside a
-        // declared mutable object. Match the exact replay rule first; building
+        // declared mutable object. Match the exact check rule first; building
         // a contextual assumptions index over a long execution history is
         // unnecessary in that overwhelmingly common case.
         if segments
@@ -197,7 +197,7 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
             )
             .and_then(|()| {
                 Err(ClickError::new(format!(
-                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce replayable derivations"
+                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce checkable derivations"
                 )))
             });
         };
@@ -274,7 +274,7 @@ pub(in crate::lang::click) fn plan_effect_clause_derivations(
             )
             .and_then(|()| {
                 Err(ClickError::new(format!(
-                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce replayable derivations"
+                    "`{claim_label}` failed on path {path_index}: contextual footprint proof did not produce checkable derivations"
                 )))
             });
         };
@@ -357,7 +357,7 @@ fn prove_mutation_footprint_with_policy(
             .cloned()
             .map(ExecutionPureFact::new),
     );
-    // Exact certificate replay uses only propositions named by the
+    // Exact certificate validation uses only propositions named by the
     // certificate. Building a contextual assumptions database here is both
     // unnecessary and pathological after a long execution has accumulated
     // many memory snapshots.
@@ -457,7 +457,7 @@ fn exact_proposition_is_available_or_true(
     // Comparison is by canonical form: a load term and the load variable
     // for the same load are one fact. The canonical form is
     // deterministic and assumption-free, so the exact policy stays
-    // replay-identical.
+    // check-identical.
     let required = crate::kernel::canonical_condition_fact(required);
     fn contains(fact: &Proposition, required: &Proposition) -> bool {
         crate::kernel::canonical_condition_fact(fact) == *required

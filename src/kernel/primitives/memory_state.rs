@@ -489,10 +489,10 @@ impl CMemory {
         // otherwise-unused size keeps such snapshots content-distinct, while
         // havocs with equal parents and equal write sets — genuinely
         // indistinguishable — still share a node. Deterministic: the hasher
-        // is fixed-key and the ranges are replay-stable.
+        // is fixed-key and the ranges are check-stable.
         let write_set_fingerprint = {
             use std::hash::{Hash, Hasher};
-            // The fingerprint must identify the write set across the replay
+            // The fingerprint must identify the write set across the check
             // and the independent certification, which write one call's
             // ranges over different snapshot variants — so it hashes only
             // form-invariant structure: the range count, each base

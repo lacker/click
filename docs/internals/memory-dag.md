@@ -54,7 +54,7 @@ keeps that node's established provenance.
 
 Derivations are advisory evidence. Missing provenance can make a reasoning
 query fail to establish an equality, but it can't make an invalid equality
-true. Walks are bounded and fall back to the ordinary checked reasoning path
+true. Walks are bounded and fall back to the checked reasoning path
 when an edge is missing or can't be crossed safely.
 
 The graph never treats a lifetime boundary or an unknown write as an ordinary

@@ -34,7 +34,7 @@ is:
   arithmetic normalization, fold/range reasoning, aliasing, and modular calls.
 - Every new proof feature should land with an mdtest that explains why it
   exists.
-- Keep replayability in mind. `auto` may search, but successful automation
+- Keep checkability in mind. `auto` may search, but successful automation
   should move toward stable tactics when a proof becomes important.
 - Diagnostics are a design surface. A failed proof should point at the missing
   requirement, invariant, frame fact, or unsupported C feature.

@@ -98,7 +98,7 @@ pub(super) fn render_profiles_with_top(
         CategorySection {
             category: TacticCategory::Simple,
             title: "SIMPLE — FIX THE ENGINE; DO NOT EXPAND",
-            advice: "A slow simple tactic is deterministic certificate replay. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
+            advice: "A slow simple tactic is deterministic certificate validation. Reduce its verifier path and fix that bottleneck before expanding more smart tactics.",
         },
         thresholds,
         time_limit,
@@ -816,7 +816,7 @@ fn render_diagnoses(output: &mut String, profiles: &[ProjectProfile]) {
             findings += 1;
             writeln!(
                 output,
-                "    SIMPLE ENGINE BUG — deterministic replay crossed a tail or throughput bound; reduce and fix Click."
+                "    SIMPLE ENGINE BUG — deterministic check crossed a tail or throughput bound; reduce and fix Click."
             )
             .expect("writing a String cannot fail");
         }

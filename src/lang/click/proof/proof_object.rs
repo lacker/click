@@ -186,8 +186,8 @@ pub(super) struct ExecutionProofCaseSplit<'a> {
 
 /// Bookkeeping for one logical `cases` split over an execution frontier.
 /// Unlike an execution `if`, this split introduces the two exact disjuncts
-/// from an already-available proposition and does not write a path choice
-/// into the compatibility replay state.
+/// from an already-available proposition and does not write a C-path choice
+/// into the execution state.
 pub(super) struct ExecutionLogicalCasesSplit<'a> {
     marker: ProofCheckpoint<'a>,
     split: SplitId,
@@ -313,7 +313,7 @@ struct PreparedExecutionArm {
 /// statement. In that case execution resumes by popping the already-owned
 /// persistent continuation stack. Deriving that structural result from the
 /// root lets both descendants be checked against one independently computed
-/// frontier rather than selecting either arm's replay state.
+/// frontier rather than selecting either arm's execution state.
 #[derive(Clone)]
 struct ExecutionBranchJoinContinuation {
     remaining: Arc<CStatement>,
@@ -1117,7 +1117,7 @@ impl Default for ProofLocals {
 
 /// Execution data whose unchanged pieces can be shared by checked `Proof`
 /// successors. Pure facts live in `ProofState::facts`; this contains only the
-/// frontier state, legacy replay metadata, and persistent branch provenance.
+/// frontier state, certificate-construction metadata, and persistent branch provenance.
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) state: SharedValue<CState>,
@@ -1143,7 +1143,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// finalization; joins carry each arm's suffix.
     pub(in crate::lang::click::proof) post_execution_tactics:
         PersistentSequence<DeferredPostExecutionTactic>,
-    /// The path's surface record: replay-visible certificate facts, the
+    /// The path's surface record: certificate-visible certificate facts, the
     /// premise anchor, and proof-level case choices.
     pub(in crate::lang::click::proof) surface_record: SurfaceRecord,
     /// The execution frontier was intentionally replaced by a branch
@@ -1159,7 +1159,7 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
     /// the same reference under another form — names in this region.
     ///
-    /// `old` denotes function entry, but certificate replay used to resolve it
+    /// `old` denotes function entry, but certificate validation used to resolve it
     /// *positionally*, to whichever state the enclosing proof region started
     /// from. Inside a function-body proof those coincide; inside a
     /// loop-preservation region they do not, so the same surface text meant
@@ -1186,14 +1186,14 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) function_entry_derivations: PersistentOrderedSet<Theorem>,
     pub(in crate::lang::click::proof) region_simp: Option<(usize, usize)>,
     pub(in crate::lang::click::proof) region_invariants_closed: bool,
-    /// Where the replayed `close_invariants` tactic sat, so the invariant
-    /// bundle check its caller performs after the replay finishes can be
+    /// Where the checked `close_invariants` tactic sat, so the invariant
+    /// bundle check its caller performs after the check finishes can be
     /// timed against that tactic's own identity instead of going unattributed.
     ///
-    /// `close_invariants` only records the intent during replay; the kernel
+    /// `close_invariants` only records the intent during check; the kernel
     /// re-derivation that gives it meaning runs in
     /// `verify_one_loop_preservation_proof` once the whole certificate has
-    /// replayed. Without this the dominant cost of the loop-invariant bundle
+    /// checked. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(in crate::lang::click::proof) invariant_closer_step: Option<InvariantCloserStep>,
     pub(in crate::lang::click::proof) next_opaque_call: u64,
@@ -1459,7 +1459,7 @@ impl<'p> PointOperationView<'p> {
 /// The goal owns the path's result value, post-outcome C state, and fact
 /// context, and borrows the function-exit frontier's snapshot by identity
 /// for lowering. Result and effect operations will consume these goals
-/// directly instead of converting through the legacy replay adapter.
+/// directly instead of converting through a mutable execution-context adapter.
 #[derive(Clone)]
 struct OutcomeGoal {
     /// Zero-based position among the exit's checked paths, in the checked
@@ -1712,7 +1712,7 @@ pub(super) struct ProofFacts {
     /// included merely because they are independently available.
     proper_conjuncts: PersistentSet<Proposition>,
     /// Atomic exact facts after the same direct-load normalization used by
-    /// condition replay. This lets a branch reject its opposite path with an
+    /// condition check. This lets a branch reject its opposite path with an
     /// indexed lookup instead of scanning every unrelated fact.
     by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
     /// Exact true int32 equalities keyed by constant, variable, or interned
@@ -1720,7 +1720,8 @@ pub(super) struct ProofFacts {
     /// rewrite search walks only atoms named by the goal and their buckets.
     bitvector_equalities_by_atom:
         PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
-    by_quantified_replay: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+    by_quantified_equivalence:
+        PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>>,
     /// Kernel-certified memory summaries for the selected execution
     /// frontier. Structural frame checking consumes these as transition
     /// evidence; they are not user premises and have no Surface spelling.
@@ -2112,7 +2113,7 @@ impl<'a> Proof<'a> {
     ) -> Result<ProofCertificate, ClickError> {
         if !Arc::ptr_eq(&self.context, &checkpoint.context) {
             return Err(
-                self.step_error("certificate checkpoint belongs to a different proof context")
+                self.step_error("certificate validationpoint belongs to a different proof context")
             );
         }
         self.certificate_after_node(Some(&checkpoint.node))

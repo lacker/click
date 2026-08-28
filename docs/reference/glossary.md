@@ -168,7 +168,7 @@ the proof state.
 
 ### Certification
 
-Independent checked construction of the kernel authority needed to accept a
+Independently checked construction of the kernel authority needed to accept a
 claim, contract, or transition. Planning can propose evidence, but certification
 reconstructs or validates it without trusting the planner's success result.
 
@@ -723,13 +723,12 @@ are pure proofs.
 
 ## R
 
-### Replay
+### Round-trip validation
 
-Checking a previously produced explicit proof again: a certificate, or the
-rewritten Surface Click an expansion emits, verified through the ordinary
-entry point. A fact is *replay-available* when that later check can see it
-without search. Replay isn't a phase of the proof model: explicit and smart
-tactics advance the same checked proof object directly.
+Checking generated proof text through the ordinary verification entry point.
+This confirms that a smart tactic's serialized simple steps express the checked
+result. It is a validation boundary, not a separate phase or proof engine:
+explicit and smart tactics advance the same checked proof object directly.
 
 ### Resource
 

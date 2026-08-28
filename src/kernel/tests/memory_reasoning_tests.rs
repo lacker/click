@@ -418,7 +418,7 @@ fn direct_resource_match_uses_exact_field_load_equalities() {
 }
 
 #[test]
-fn direct_composite_resource_match_replays_pointer_load_across_block_declaration() {
+fn direct_composite_resource_match_checks_pointer_load_across_block_declaration() {
     if skip_without_memory_dag() {
         return;
     }
@@ -2303,7 +2303,7 @@ fn separation_refutes_an_alias_guard_exactly_when_the_index_is_in_range() {
 /// A loop back edge re-proves `forall k < b + 1, P(k)` from an invariant that
 /// only covers `k < b`. The missing step is one case split, not a theory: `k`
 /// is below `b` or equal to it, and the two halves are discharged by facts
-/// that are already present. Replay must accept the same split and must reject
+/// that are already present. Check must accept the same split and must reject
 /// it when the bound that licensed it is gone.
 #[test]
 fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
@@ -2330,10 +2330,10 @@ fn an_assumed_upper_bound_splits_a_goal_at_its_final_index() {
         derivation.rule,
         PropositionDerivationRule::UpperBoundSplit { .. }
     ));
-    assert!(derivation.replay(&context));
+    assert!(derivation.check(&context));
     // Without the bound there is no split to license and nothing to prove.
     let unbounded = PureFactContext::new();
-    assert!(!derivation.replay(&unbounded));
+    assert!(!derivation.check(&unbounded));
     assert!(unbounded.derive_proposition(&goal).is_none());
 }
 
@@ -3173,7 +3173,7 @@ fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
     // The lazy-separation monotonicity requirement: adding a valid compact
     // composition carrier must not break, or meaningfully slow, an already
     // provable snapshot premise. Pinned by the bounded-pool regression where
-    // a fifth carrier turned an exact-premise replay into context-wide
+    // a fifth carrier turned an exact-premise check into context-wide
     // repeated range derivation.
     let target = Pointer {
         block: PointerBlock::ExternalArgument,

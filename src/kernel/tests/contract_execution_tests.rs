@@ -55,7 +55,7 @@ fn apply_pool_transition(state: &CState, function: &CFunction, pool: u32, object
         outcome,
         &PureFactContext::new(),
     )
-    .expect("the checked resource transition should replay");
+    .expect("the checked resource transition should check");
     assert!(obligations.is_empty());
     let CFunctionOutcome::Return { state, .. } = outcome else {
         panic!("resource transition did not return");

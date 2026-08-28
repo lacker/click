@@ -546,7 +546,7 @@ impl PureFactContext {
             return false;
         };
         // Base matching is by canonical form: a raw load and the canonical
-        // name for it are one base. Deterministic, so decisions replay.
+        // name for it are one base. Deterministic, so decisions check.
         if !crate::kernel::eval::terms_have_same_canonical_form(&term_base, base)
             || signed_u32_constant(addend).is_none_or(|value| value <= 0)
         {

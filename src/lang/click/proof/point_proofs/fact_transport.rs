@@ -20,7 +20,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
             let surface = checked_surface_comparison_fact_at_point(
                 view,
                 kernel,
-                SurfaceFactMatch::ReplayEquivalent,
+                SurfaceFactMatch::AvailabilityEquivalent,
                 available,
                 parameters,
                 arguments,
@@ -40,7 +40,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
         }
         selected.push(source_pair);
     }
-    let replays = |selected: &[(Proposition, ClickProposition)]| {
+    let checks = |selected: &[(Proposition, ClickProposition)]| {
         let explicit = selected
             .iter()
             .map(|(kernel, _)| kernel.clone())
@@ -72,7 +72,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
         certified_fact_transport_reaches(source, target, state.memory(), &transport_assumptions)
     };
 
-    if !replays(&selected) {
+    if !checks(&selected) {
         let rank = |proposition: &Proposition| match proposition {
             Proposition::CResourceSeparate { .. }
             | Proposition::CMemoryDisjoint { .. }
@@ -92,12 +92,12 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
         remaining.sort_by_key(|(kernel, _)| rank(kernel));
         for pair in remaining {
             selected.push(pair);
-            if replays(&selected) {
+            if checks(&selected) {
                 break;
             }
         }
     }
-    if !replays(&selected) {
+    if !checks(&selected) {
         let unavailable_count = available
             .iter()
             .filter(|fact| !candidates.iter().any(|(candidate, _)| candidate == *fact))
@@ -111,7 +111,7 @@ pub(in crate::lang::click::proof) fn plan_explicit_fact_transport(
     while index < selected.len() {
         let mut reduced = selected.clone();
         reduced.remove(index);
-        if replays(&reduced) {
+        if checks(&reduced) {
             selected = reduced;
         } else {
             index += 1;
@@ -128,7 +128,7 @@ pub(in crate::lang::click::proof) struct CheckedPointFactTransport {
 /// Audited semantic operation for one explicit mid-execution
 /// `transport(source, target) using { premises }`.
 ///
-/// Both explicit source replay and `Proof::apply_step` call this operation.
+/// Both explicit source check and `Proof::apply_step` call this operation.
 /// It does not mutate surface bookkeeping or proof provenance; it returns the
 /// exact checked source and target for those owners to record atomically.
 #[allow(clippy::too_many_arguments)]
@@ -332,7 +332,7 @@ pub(in crate::lang::click::proof) fn check_point_fact_transport_using_facts(
             "`{claim_label}` tactic {tactic_index}: could not lower `transport` target: {message}"
         ))
     })?;
-    if !available.replay_available_across_effects(&target, effect_facts) {
+    if !available.available_across_effects(&target, effect_facts) {
         let transition_facts = fact_transport_transition_facts(effect_facts, &source);
         let transport_assumptions = transition_facts
             .iter()

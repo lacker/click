@@ -70,24 +70,20 @@ fn flat_function_proof_stays_on_proof_through_claim_acceptance() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("identity.c", c_source)])
                     })
                 })
-            })
+            }
         });
     verified.expect("the flat function proof should verify");
     assert_eq!(
         flat_units, 1,
         "the claim should finish from one retained Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "flat verification must not enter execute_internal_proof"
     );
     assert_eq!(
         context_exports, 0,
@@ -124,19 +120,18 @@ fn individual_linear_open_proof_stays_on_proof_through_claim_acceptance() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("identity.c", c_source)])
                     })
                 })
-            })
+            }
         });
     verified.expect("the individual open proof should verify");
     assert_eq!(flat_units, 1, "the open claim should finish from one Proof");
-    assert_eq!(replay_executions, 0, "the open claim entered legacy replay");
     assert_eq!(context_exports, 0, "the open claim exported semantic state");
     assert_eq!(
         certificate_checks, 0,
@@ -249,35 +244,24 @@ fn explicit_call_partition_if_stays_on_one_proof_after_scoped_open() {
         ("replace_after_scoped_open.c", caller_source),
     ];
 
-    let (
-        (
-            ((((verified, certificate_checks), _context_exports), _replay_executions), flat_units),
-            replay_labels,
-        ),
-        export_labels,
-    ) = proof::collect_execution_context_export_labels(|| {
-        proof::collect_internal_proof_execution_labels(|| {
-            proof::count_flat_proof_units(|| {
-                proof::count_internal_proof_executions(|| {
-                    proof::count_execution_context_exports(|| {
-                        proof::count_source_certificate_checks(|| {
-                            verify_c0_sources(click_source, sources)
+    let ((((verified, certificate_checks), _context_exports), flat_units), export_labels) =
+        proof::collect_execution_context_export_labels(|| {
+            {
+                proof::count_flat_proof_units(|| {
+                    {
+                        proof::count_execution_context_exports(|| {
+                            proof::count_source_certificate_checks(|| {
+                                verify_c0_sources(click_source, sources)
+                            })
                         })
-                    })
+                    }
                 })
-            })
-        })
-    });
+            }
+        });
     verified.expect("the explicit call partition should remain on one retained Proof");
     assert_eq!(
         flat_units, 2,
         "both source proofs should enter the direct Proof driver"
-    );
-    assert!(
-        replay_labels
-            .iter()
-            .all(|label| label != "replace_after_scoped_open.contract"),
-        "the caller entered legacy replay: {replay_labels:?}"
     );
     assert!(
         export_labels
@@ -420,7 +404,7 @@ fn following_c_if_splits_one_symbolic_call_successor() {
     )
     .expect("the explicit result split should retain an expandable proof");
     verify_c0_sources(&expanded, sources)
-        .expect("the explicit result split expansion should replay independently");
+        .expect("the explicit result split expansion should check independently");
 
     // The call has one symbolic successor. Its data-identity postconditions
     // are irrelevant to the following C `if`, which branches only on the
@@ -449,7 +433,7 @@ fn following_c_if_splits_one_symbolic_call_successor() {
     )
     .expect("the single-successor proof should remain expandable");
     verify_c0_sources(&expanded_without_bridge, sources)
-        .expect("the expanded single-successor proof should replay independently");
+        .expect("the expanded single-successor proof should check independently");
 }
 
 #[test]
@@ -483,22 +467,18 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
         "#;
     let sources = &[("identity_after_prefix.c", c_source)];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("the mid-execution proof case split should remain on one retained Proof");
     assert_eq!(flat_units, 1, "the contract should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the split must not enter legacy replay"
-    );
     assert_eq!(
         context_exports, 0,
         "the split must not export semantic state"
@@ -539,25 +519,21 @@ fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("identity.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("the grouped flat function proof should verify");
     assert_eq!(verified.len(), 2, "both grouped claims should be proved");
     assert_eq!(
         flat_units, 1,
         "the grouped claims should finish from one retained Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "grouped flat verification must not enter execute_internal_proof"
     );
     assert_eq!(
         context_exports, 0,
@@ -614,15 +590,15 @@ fn grouped_n_way_function_outcomes_stay_on_one_proof() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("classify.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("the grouped N-way function proof should verify");
     assert_eq!(
@@ -631,10 +607,6 @@ fn grouped_n_way_function_outcomes_stay_on_one_proof() {
         "both claims should be proved on each of the three outcomes"
     );
     assert_eq!(flat_units, 1, "all outcomes should stay on one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "grouped N-way verification must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the grouped N-way Proof must not export into an entry execution state"
@@ -676,20 +648,19 @@ fn grouped_n_way_outcomes_discard_exactly_infeasible_siblings_on_proof() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("pointer_is_null.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("the feasible grouped outcome should verify");
     assert_eq!(verified.len(), 1);
     assert_eq!(flat_units, 1, "the selected outcome should stay on Proof");
-    assert_eq!(replay_executions, 0);
     assert_eq!(context_exports, 0);
     assert_eq!(certificate_checks, 0);
 
@@ -746,22 +717,18 @@ fn grouped_calls_keep_contract_transitions_on_proof() {
         "#;
     let sources = &[("set_one.c", set_source), ("call_set_one.c", caller_source)];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("the grouped call and callee proofs should verify");
     assert_eq!(flat_units, 2, "both functions should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the grouped caller must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the grouped caller must not export its checked call state"
@@ -932,25 +899,21 @@ fn grouped_opaque_calls_keep_declared_composite_resources_on_proof() {
         ("borrow_token_twice.c", caller_source),
     ];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("declared composite resources should cross both checked calls");
     assert_eq!(flat_units, 2, "both functions should retain one Proof");
     assert_eq!(
-        replay_executions, 0,
-        "declared-resource calls must not replay"
-    );
-    assert_eq!(
         context_exports, 0,
-        "declared-resource calls must not export replay state"
+        "declared-resource calls must not export execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -1046,22 +1009,21 @@ fn grouped_mutable_composite_calls_keep_open_scopes_on_proof() {
         ("set_wrapped_seven.c", caller_source),
     ];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("mutable composite resources should cross the scoped opaque call");
     assert_eq!(flat_units, 2, "both open-scope proofs should stay on Proof");
-    assert_eq!(replay_executions, 0, "open scopes must not replay");
     assert_eq!(
         context_exports, 0,
-        "open scopes must not export replay state"
+        "open scopes must not export execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -1160,25 +1122,21 @@ fn grouped_mutable_composite_calls_continue_on_proof_after_preparatory_scope() {
         ("prepare_then_set_seven.c", caller_source),
     ];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("the closed preparatory scope should continue through the checked call");
     assert_eq!(flat_units, 2, "both functions should retain one Proof");
     assert_eq!(
-        replay_executions, 0,
-        "the preparatory scope continuation must not replay"
-    );
-    assert_eq!(
         context_exports, 0,
-        "the closed preparatory scope must not export replay state"
+        "the closed preparatory scope must not export execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -1244,19 +1202,18 @@ fn grouped_sequential_top_level_scopes_stay_on_one_proof() {
         "#;
     let sources = &[("add_twice.c", c_source)];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     verified.expect("both sequential scopes should advance one checked Proof");
     assert_eq!(flat_units, 1, "the function should retain one Proof");
-    assert_eq!(replay_executions, 0, "sequential scopes must not replay");
     assert_eq!(
         context_exports, 0,
         "sequential scopes must not export semantic state"
@@ -1322,15 +1279,15 @@ fn grouped_predicate_contracts_stay_on_one_proof() {
         "#;
     let sources = &[("identity.c", c_source)];
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, sources)
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("the grouped predicate contract should verify");
     assert_eq!(verified.len(), 2, "both predicate claims should be proved");
@@ -1339,12 +1296,8 @@ fn grouped_predicate_contracts_stay_on_one_proof() {
         "the predicate claims should stay on one Proof"
     );
     assert_eq!(
-        replay_executions, 0,
-        "predicate verification must not replay"
-    );
-    assert_eq!(
         context_exports, 0,
-        "the predicate Proof must not export replay state"
+        "the predicate Proof must not export execution state"
     );
     assert_eq!(
         certificate_checks, 0,
@@ -1404,29 +1357,20 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
         "#;
     let sources = &[("inspect_pair.c", c_source)];
 
-    let (
-        (
-            (((verified, explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     verified.expect("leading resource relations should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "resource-relation haves must not replay"
-    );
     assert_eq!(
         context_exports, 0,
         "resource-relation haves must not export semantic state"
@@ -1473,20 +1417,14 @@ fn grouped_leading_resource_relations_stay_on_one_proof() {
         ),
     ] {
         assert_ne!(corrupted, expanded, "expansion should expose {relation}");
-        let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-            proof::count_internal_proof_executions(|| {
-                proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources))
-            });
+        let (corrupted_result, corrupted_fallbacks) =
+            { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
         corrupted_result.expect_err(&format!(
             "tampering with {relation} must invalidate the proof"
         ));
         assert_eq!(
             corrupted_fallbacks, 0,
             "invalid migrated {relation} must not become a compatibility miss"
-        );
-        assert_eq!(
-            corrupted_replays, 0,
-            "invalid migrated {relation} must not enter replay"
         );
     }
 }
@@ -1527,29 +1465,20 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
         "#;
     let sources = &[("inspect_pair.c", c_source)];
 
-    let (
-        (
-            (((verified, explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     verified.expect("relations projected by an explicit unfold should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "explicit resource operations and derived relations must not replay"
-    );
     assert_eq!(
         context_exports, 0,
         "the unfolded resource proof must not export semantic state"
@@ -1595,18 +1524,12 @@ fn grouped_unfolded_resource_relations_stay_on_one_proof() {
         corrupted, expanded,
         "expansion should expose the derived separation"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
     corrupted_result.expect_err("tampering with the derived separation must fail");
     assert_eq!(
         corrupted_fallbacks, 0,
         "invalid migrated separation must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated separation must not enter replay"
     );
 }
 
@@ -1645,29 +1568,20 @@ fn grouped_mutable_outcome_resources_stay_on_one_proof() {
         "#;
     let sources = &[("set_seven.c", c_source)];
 
-    let (
-        (
-            (((verified, explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, sources)
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, sources)
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     verified.expect("mutable outcome resource operations should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "mutable outcome resource operations must not replay"
-    );
     assert_eq!(
         context_exports, 0,
         "the mutable outcome Proof must not export semantic state"
@@ -1702,18 +1616,12 @@ fn grouped_mutable_outcome_resources_stay_on_one_proof() {
         corrupted, expanded,
         "expansion should expose the post-execution frame premise"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources))
-        });
+    let (corrupted_result, corrupted_fallbacks) =
+        { proof::count_explicit_linear_fallbacks(|| verify_c0_sources(&corrupted, sources)) };
     corrupted_result.expect_err("tampering with the post-execution frame premise must fail");
     assert_eq!(
         corrupted_fallbacks, 0,
         "invalid migrated outcome work must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated outcome work must not enter replay"
     );
 }
 
@@ -2178,7 +2086,7 @@ fn separate_requirement_proves_symbolic_unwritten_read() {
     assert!(!expanded.contains("transport("), "{expanded}");
     assert!(!expanded.contains("derive using"), "{expanded}");
     verify_c0_sources(&expanded, &[("write_i_read_j.c", c_source)])
-        .expect("expanded unwritten read should replay");
+        .expect("expanded unwritten read should check");
 }
 
 #[test]
@@ -2204,24 +2112,17 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
-        crate::instrumentation::collect(|| {
-            verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
-        })
-    });
+    let ((verified, _events), planning_transitions) =
+        collect_planning_statement_transitions(|| {
+            crate::instrumentation::collect(|| {
+                verify_c0_sources(click_source, &[("write_in_bounds.c", c_source)])
+            })
+        });
     let verified = verified.expect("contextual frame should verify");
     assert!(
         planning_transitions.is_empty(),
         "the complete effect script must search only on checked Proof descendants: \
          {planning_transitions:#?}"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("smart tactic compatibility replay")
-        )),
-        "the complete effect script must not enter compatibility replay: {events:#?}"
     );
     let theorem = verified
         .iter()
@@ -2265,7 +2166,7 @@ fn contextual_frame_expands_to_surface_bounds_and_exact_frame() {
         premises,
     }) = expanded.last()
     else {
-        panic!("contextual frame should end in exact frame replay: {expanded:?}");
+        panic!("contextual frame should end in exact frame check: {expanded:?}");
     };
     assert!(
         !format!("{premises:?}").contains("unrelated"),
@@ -2302,7 +2203,7 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
         "#;
 
     let (result, flat_units) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
+        {
             proof::count_execution_context_exports(|| {
                 proof::count_source_certificate_checks(|| {
                     collect_planning_statement_transitions(|| {
@@ -2312,20 +2213,15 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
                     })
                 })
             })
-        })
+        }
     });
-    let (result, replay_executions) = result;
     let (result, context_exports) = result;
     let (result, certificate_checks) = result;
-    let ((verified, events), planning_transitions) = result;
+    let ((verified, _events), planning_transitions) = result;
     let verified = verified.expect("the grouped effect proof should verify");
     assert_eq!(
         flat_units, 1,
         "the grouped effect proof should retain one Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "the grouped effect proof must not enter execute_internal_proof"
     );
     assert_eq!(
         context_exports, 0,
@@ -2339,14 +2235,6 @@ fn grouped_contextual_frame_retains_complete_effect_script_on_proof() {
         planning_transitions.is_empty(),
         "the complete grouped effect script must search only on checked Proof descendants: \
          {planning_transitions:#?}"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("smart tactic compatibility replay")
-        )),
-        "the complete grouped effect script must not enter compatibility replay: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2408,24 +2296,17 @@ fn grouped_contextual_frame_combines_multiple_effect_certificates_on_proof() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
-        crate::instrumentation::collect(|| {
-            verify_c0_sources(click_source, &[("write_both.c", c_source)])
-        })
-    });
+    let ((verified, _events), planning_transitions) =
+        collect_planning_statement_transitions(|| {
+            crate::instrumentation::collect(|| {
+                verify_c0_sources(click_source, &[("write_both.c", c_source)])
+            })
+        });
     let verified = verified.expect("the grouped multi-effect proof should verify");
     assert!(
         planning_transitions.is_empty(),
         "the grouped multi-effect script must search only on checked Proof descendants: \
          {planning_transitions:#?}"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("smart tactic compatibility replay")
-        )),
-        "the grouped multi-effect script must not enter compatibility replay: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2477,26 +2358,22 @@ fn contextual_frame_expands_independently_in_branch_leaves() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("write_selected.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("branched contextual frame should verify");
     assert_eq!(flat_units, 1, "the effect claim should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the effect proof entered legacy replay"
-    );
     assert_eq!(context_exports, 0, "the effect Proof exported its state");
     assert_eq!(
         certificate_checks, 0,
-        "ordinary effect verification replayed a certificate"
+        "ordinary effect verification checked a certificate"
     );
     let theorem = verified
         .iter()

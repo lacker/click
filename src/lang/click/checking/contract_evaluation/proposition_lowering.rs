@@ -434,7 +434,7 @@ pub(in crate::lang::click) fn lower_outcome_proposition_with_environment(
             // Its consequent is unreachable in this point judgment, so do
             // not lower memory expressions that the implication cannot use.
             // Retaining the implication shape lets an explicit
-            // `intro(); contradiction(...)` certificate check normally.
+            // `intro(); contradiction(...)` certificate validation normally.
             if matches!(
                 &left,
                 Proposition::ConditionIs(ConditionTerm::Constant(actual), expected)

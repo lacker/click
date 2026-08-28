@@ -179,9 +179,9 @@ impl<'a> Proof<'a> {
     /// Whether a transitional driver may check and then export this frame
     /// step. Empty mutable function frames stay out of that adapter: their
     /// exact `Proof` meaning differs from the legacy ambient-fact behavior,
-    /// so checking one before compatibility replay would apply earlier smart
-    /// operations twice. An authoritative Proof unit applies the exact step
-    /// directly instead of consulting this compatibility query.
+    /// so this capability query must decline rather than precheck one after
+    /// earlier smart operations. An authoritative Proof unit applies the exact
+    /// step directly instead of consulting this compatibility query.
     pub(super) fn supports_checked_execution_frame_using(
         &self,
         region: Option<&CodeRegionRef>,
@@ -245,7 +245,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .replay_available_across_effects(kernel, &execution.effect_facts)
+                        .available_across_effects(kernel, &execution.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -257,7 +257,7 @@ impl<'a> Proof<'a> {
             // or a resource-shaped fact derived atomically from the context.
             let available = |fact: &Proposition| {
                 self.facts()
-                    .replay_available_across_effects(fact, &execution.effect_facts)
+                    .available_across_effects(fact, &execution.effect_facts)
                     || (matches!(
                         fact,
                         Proposition::CResourceContains { .. }
@@ -396,7 +396,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .replay_available_across_effects(kernel, &execution.effect_facts)
+                        .available_across_effects(kernel, &execution.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -405,7 +405,7 @@ impl<'a> Proof<'a> {
                 })?;
             if !self
                 .facts()
-                .replay_available_across_effects(&fact, &execution.effect_facts)
+                .available_across_effects(&fact, &execution.effect_facts)
             {
                 return Err(self.step_error(format!(
                     "`frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
@@ -473,7 +473,7 @@ impl<'a> Proof<'a> {
         }
         if let Some(region) = region {
             // Loop effect clauses are declared by frontier-local `loop`
-            // tactics. Bind the exact clauses already checked on this replay
+            // tactics. Bind the exact clauses already checked on this check
             // before resolving labels or validating the qualified frame.
             let frame_function_block = (!execution.frontier_loop_clauses.is_empty()).then(|| {
                 context
@@ -648,7 +648,7 @@ impl<'a> Proof<'a> {
 
     /// Uses the contextual footprint planner only to select a typed tree of
     /// Surface operations. The plan has performed no semantic transition and
-    /// contains no certificate builder or replay-owned proof state.
+    /// contains no certificate builder or parallel proof state.
     pub(super) fn select_contextual_frame_candidate(
         &self,
     ) -> Result<Option<ContextualFramePlan>, ClickError> {
@@ -810,7 +810,7 @@ impl<'a> Proof<'a> {
 
     /// Searches for a terminal frame candidate and submits the selected
     /// Surface-operation plan directly to this Proof. Successful search returns
-    /// the already-checked descendant; it does not export outcomes or replay
+    /// the already-checked descendant; it does not export outcomes or check
     /// the candidate through a second semantic representation.
     pub(in crate::lang::click::proof) fn try_smart_frame_at(
         &self,
@@ -864,7 +864,7 @@ impl<'a> Proof<'a> {
     /// Selects exact premises for a smart loop structural frame from facts
     /// indexed under C names used by that loop body. Candidate work is bounded
     /// by the affected source operation and its relevant indexed facts; no
-    /// ambient fact scan or semantic replay participates.
+    /// ambient fact scan or semantic check participates.
     pub(in crate::lang::click::proof) fn try_smart_loop_effect_frame_at(
         &self,
         body: &CStatement,
@@ -891,7 +891,7 @@ impl<'a> Proof<'a> {
             {
                 if self
                     .facts()
-                    .replay_available_across_effects(kernel, &execution.effect_facts)
+                    .available_across_effects(kernel, &execution.effect_facts)
                 {
                     candidates.insert(kernel.clone());
                 }
@@ -951,7 +951,7 @@ impl<'a> Proof<'a> {
                     for atom in atoms {
                         if self
                             .facts()
-                            .replay_available_across_effects(&atom, &execution.effect_facts)
+                            .available_across_effects(&atom, &execution.effect_facts)
                         {
                             candidates.insert(atom);
                         }
@@ -994,7 +994,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |candidate| {
                     self.facts()
-                        .replay_available_across_effects(candidate, &execution.effect_facts)
+                        .available_across_effects(candidate, &execution.effect_facts)
                 })
                 .cloned()
                 .or_else(|| {
@@ -1039,16 +1039,16 @@ impl<'a> Proof<'a> {
 
     // Each primitive rule stays outlined so adding a rule-local proposition
     // payload cannot enlarge every `apply_step` dispatch frame. This is part
-    // of the expansion replay stack budget documented in testing-click.md.
+    // of the expansion check stack budget documented in testing-click.md.
     #[inline(never)]
     pub(super) fn apply_assumption(&self) -> Result<ProofState, ClickError> {
         let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
         let available = match self.context.as_ref() {
             ProofContext::Point(_) => {
-                self.facts().pure_replay_available(goal) || normalizes_context_free(goal)
+                self.facts().pure_assumption_available(goal) || normalizes_context_free(goal)
             }
             // A judgment stated at a function outcome closes with the same
-            // point-level replay availability its legacy point root used.
+            // point-level check availability its legacy point root used.
             // A judgment stated at a function outcome closes on a fact
             // available across the path's recorded effects: a fact about a
             // cell that ownership proves untouched by a later call keeps its
@@ -1058,10 +1058,10 @@ impl<'a> Proof<'a> {
                 let point = self
                     .focused_outcome_point()
                     .expect("the guard resolved the outcome point");
-                self.facts().pure_replay_available(goal)
+                self.facts().pure_assumption_available(goal)
                     || self
                         .facts()
-                        .replay_available_across_effects(goal, &point.effect_facts)
+                        .available_across_effects(goal, &point.effect_facts)
                     || normalizes_context_free(goal)
             }
             // A nested proposition judgment stated at an execution frontier

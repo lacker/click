@@ -103,7 +103,7 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
-    /// Applies one ordinary checked step inside the nested body. Failed
+    /// Applies one checked step inside the nested body. Failed
     /// candidates leave the enclosing scope value unchanged.
     pub(in crate::lang::click::proof) fn apply_step(
         &self,
@@ -828,7 +828,7 @@ impl<'a> ProofScope<'a> {
         // At an outcome or pure point a bare assumption may cite an ambient
         // fact the certificate cannot spell, so a derivation from spelled
         // premises is preferred. Mid-execution, an available fact is its own spelling:
-        // `assumption();` replays by re-checking the judgment, and the
+        // `assumption();` checks by re-checking the judgment, and the
         // frontier derivation exists for what the direct closer cannot
         // prove, not to replace what it can.
         let mid_execution = matches!(self.body.context.as_ref(), ProofContext::Execution(_))
@@ -836,9 +836,9 @@ impl<'a> ProofScope<'a> {
         if body.node.depth == 1
             && matches!(body.node.step.as_deref(), Some(SimpleProofStep::Assumption))
             && !mid_execution
-            && let Some(replayable) = self.body.try_simp_closure_after_direct(true)?
+            && let Some(checkable) = self.body.try_simp_closure_after_direct(true)?
         {
-            body = replayable;
+            body = checkable;
         }
         let mut next = self.clone();
         next.body = body;

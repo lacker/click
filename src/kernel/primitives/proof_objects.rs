@@ -642,7 +642,7 @@ impl SignedOrderDerivationStep {
 
     /// Return the exact context proposition from which this normalized edge
     /// was collected. This matters for polarity-normalized edges such as
-    /// `not (x <= y)`, whose path shape is `y < x` but whose replay premise
+    /// `not (x <= y)`, whose path shape is `y < x` but whose check premise
     /// is not literally that positive comparison.
     pub fn premise(&self) -> &Proposition {
         &self.premise

@@ -109,7 +109,7 @@ impl<'a> Proof<'a> {
     /// Every candidate is checked by applying the corresponding simple step
     /// to this immutable root. Failed descendants are discarded; the
     /// returned `Proof` is the already-checked, deletion-minimized success,
-    /// so callers never reconstruct or replay the selected certificate.
+    /// so callers never reconstruct or check the selected certificate.
     pub(in crate::lang::click::proof) fn search_point_fact_transport(
         &self,
         source: &ClickProposition,
@@ -445,7 +445,7 @@ impl<'a> Proof<'a> {
             if matches!(normalize_proposition(&requirement), SimpProposition::True) {
                 continue;
             }
-            let matched = self                .facts()                .matching_replay_fact_across_effects(&requirement, &[])
+            let matched = self                .facts()                .matching_fact_across_effects(&requirement, &[])
                 .ok_or_else(|| {
                     self.step_error(format!(
                         "theorem application `{}` requires an unavailable exact premise: {requirement:?}",
@@ -522,7 +522,7 @@ impl<'a> Proof<'a> {
                         (lowered.clone()
                             == requirement.clone()
                             || condition_polarity_equivalent(lowered, &requirement))
-                            && self                                .facts()                                .replay_available_across_effects(lowered, &[])
+                            && self                                .facts()                                .available_across_effects(lowered, &[])
                     };
                     let direct = lower_point_proposition_with_assumptions(
                         candidate,

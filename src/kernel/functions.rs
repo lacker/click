@@ -1669,7 +1669,7 @@ fn prepare_function_resource_transfer(
         != required_resources.facts().len()
         || caller_composite_heads != required_composite_heads;
     let mut callee_resources = if preserve_explicit_representation && has_explicit_representation {
-        // Proof replay may have opened exactly the recursive branches needed
+        // Proof execution may have opened exactly the recursive branches needed
         // by the body with `observe` or `unfold`. Independent certification
         // must execute from that same definitionally equivalent form.
         // The transfer checks below still consume every declared requirement,
@@ -3606,7 +3606,7 @@ pub(super) fn resource_context_definitionally_contains(
 
 /// Checks definitional containment while requiring every unconsumed resource
 /// to be duplicable. This recognizes two folded names for the same owned body
-/// without permitting a replay state to add unrelated ghost ownership.
+/// without permitting a execution state to add unrelated ghost ownership.
 pub(super) fn resource_context_definitionally_contains_without_owned_residue(
     available: &ResourceContext,
     required: &ResourceContext,

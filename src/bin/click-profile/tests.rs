@@ -843,7 +843,7 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
     )
     .expect("the current timing format should parse");
     failed.verification_failure =
-        Some("example sidecar failed: certificate did not replay".to_string());
+        Some("example sidecar failed: certificate validation failed".to_string());
 
     let report = render_profiles(
         &[failed, successful],
@@ -853,7 +853,7 @@ click timing: tactic example.contract 0 execute class smart statement 1 source 1
 
     assert!(report.contains("VERIFICATION FAILURES"));
     assert!(report.contains("INCOMPLETE CORRECTNESS RUN"), "{report}");
-    assert!(report.contains("certificate did not replay"));
+    assert!(report.contains("certificate validation failed"));
     assert!(report.contains("examples/successful.click:12:5"));
     assert!(report.contains("fix the verification failure first"));
 }

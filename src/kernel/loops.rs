@@ -693,9 +693,9 @@ fn verify_lowered_invariant_path(
                 "invariant {check_index} is missing path obligation: {proposition:?}"
             ));
         };
-        if !derivation.replay(&local) {
+        if !derivation.check(&local) {
             return Err(format!(
-                "invariant {check_index} path obligation derivation did not replay: {proposition:?}"
+                "invariant {check_index} path obligation derivation check failed: {proposition:?}"
             ));
         }
     }
@@ -711,9 +711,9 @@ fn verify_lowered_invariant_path(
             path.proposition
         ));
     };
-    if !derivation.replay(&local) {
+    if !derivation.check(&local) {
         return Err(format!(
-            "invariant {check_index} path derivation did not replay: {:?}",
+            "invariant {check_index} path derivation check failed: {:?}",
             path.proposition
         ));
     }

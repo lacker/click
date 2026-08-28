@@ -27,7 +27,7 @@ multi-call stepped proof is a separate execution-proof concern.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
 the small getter/setter proofs first. Long `step()` blocks are checked
-replay artifacts retained for predictable performance and expansion coverage.
+proof artifacts retained for predictable performance and expansion coverage.
 Restricted equality chains use `simp() using`; expansion turns them into
 explicit `rewrite` and `normalize` steps. Ordinary authoring should start with
 smart tactics and expand only after profiling.

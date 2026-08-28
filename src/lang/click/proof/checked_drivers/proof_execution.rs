@@ -21,56 +21,6 @@ pub(in crate::lang::click::proof) fn take_driver_declines()
     DRIVER_DECLINES.with(|declines| std::mem::take(&mut *declines.borrow_mut()))
 }
 
-#[cfg(test)]
-thread_local! {
-    static INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static ROOT_INTERNAL_PROOF_EXECUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static COLLECTED_INTERNAL_PROOF_LABELS: std::cell::RefCell<Option<Vec<String>>> = const {
-        std::cell::RefCell::new(None)
-    };
-}
-
-#[cfg(test)]
-pub(in crate::lang::click) fn count_root_internal_proof_executions<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = ROOT_INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
-    let result = operation();
-    let after = ROOT_INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::lang::click) fn count_internal_proof_executions<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, usize) {
-    let before = INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
-    let result = operation();
-    let after = INTERNAL_PROOF_EXECUTIONS.with(std::cell::Cell::get);
-    (result, after - before)
-}
-
-#[cfg(test)]
-pub(in crate::lang::click) fn collect_internal_proof_execution_labels<R>(
-    operation: impl FnOnce() -> R,
-) -> (R, Vec<String>) {
-    COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
-        assert!(
-            labels.borrow().is_none(),
-            "internal-proof label collectors cannot nest"
-        );
-        *labels.borrow_mut() = Some(Vec::new());
-    });
-    let result = operation();
-    let labels = COLLECTED_INTERNAL_PROOF_LABELS.with(|labels| {
-        labels
-            .borrow_mut()
-            .take()
-            .expect("the active internal-proof label collector was retained")
-    });
-    (result, labels)
-}
-
 /// A simple step written in an execution arm. A source `step()` is the bare
 /// statement step; the other simple statement forms map as themselves.
 fn arm_simple_step(tactic: &ProofTactic) -> Option<SimpleProofStep> {
@@ -890,7 +840,7 @@ fn try_check_flat_function_proof_inner<'a>(
 
 /// Checks one function proof containing supported top-level resource scopes
 /// and execution branches without exporting any checked structure back into
-/// replay-owned semantic state. Linear prefixes, structural bodies and joins,
+/// parallel semantic state. Linear prefixes, structural bodies and joins,
 /// intervening continuations, the frame, and the outcome suffix remain one
 /// persistent Proof lineage; a miss publishes neither semantic state nor
 /// expansion metadata.
@@ -1452,7 +1402,7 @@ pub(in crate::lang::click::proof) fn preservation_smart_step<'a>(
 /// preservation path never rejoins across the back edge — so every leaf
 /// reaches the loop's typed boundary and is collected for the caller's
 /// per-path bundle, certificate, and effect processing. There is no
-/// compatibility fallback: a tactic outside the checked operations is a
+/// secondary interpreter: a tactic outside the checked operations is a
 /// prompt failure naming the tactic.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn advance_preservation_region<'a>(
@@ -2851,7 +2801,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     let claim_label = proof_context.claim_label;
 
     if execution.loop_effect_goal.is_some() {
-        // A structural-effect replay path may already own the exact C-branch
+        // A structural-effect validation path may already own the exact C-branch
         // fact under this Surface spelling. Prefer that unambiguous indexed
         // identity to rereading the condition from the heap. Ordinary loop
         // preservation must lower afresh because the same spelling can name

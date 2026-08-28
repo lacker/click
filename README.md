@@ -91,7 +91,7 @@ High-value entry points:
 
 Repository work follows [AGENTS.md](AGENTS.md). In particular, verifier and
 proof-tooling instability takes priority over new features and example work:
-slow tactics must fail locally, smart certificates must replay, expansion must
+slow tactics must fail locally, smart certificates must verify, expansion must
 work, and normal diagnostics must remain bounded.
 
 ## Verification

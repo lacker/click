@@ -264,7 +264,7 @@ fn symbolic_max_function_call_reports_branch_facts() {
 }
 
 #[test]
-fn resource_representation_requires_certified_replay_facts_and_exact_state() {
+fn resource_representation_requires_certified_check_facts_and_exact_state() {
     let certified_result = Bitvector32Term::Variable(Variable(31));
     let other_argument = Bitvector32Term::Variable(Variable(32));
     let desired_result = Bitvector32Term::Variable(Variable(33));
@@ -283,7 +283,7 @@ fn resource_representation_requires_certified_replay_facts_and_exact_state() {
         value: int32(desired_result.clone()),
         state,
     };
-    let replay_equality = Proposition::ConditionIs(
+    let check_equality = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(
             Box::new(desired_result),
             Box::new(certified_result.clone()),
@@ -295,19 +295,19 @@ fn resource_representation_requires_certified_replay_facts_and_exact_state() {
         certify_c_function_execution_path_resource_representation(
             certified_path,
             desired_outcome.clone(),
-            &[ExecutionPureFact::certified(replay_equality.clone())],
+            &[ExecutionPureFact::certified(check_equality.clone())],
         )
         .is_some(),
-        "a kernel-certified replay equality should align fresh return values"
+        "a kernel-certified check equality should align fresh return values"
     );
     assert!(
         certify_c_function_execution_path_resource_representation(
             certified_path,
             desired_outcome,
-            &[ExecutionPureFact::new(replay_equality)],
+            &[ExecutionPureFact::new(check_equality)],
         )
         .is_none(),
-        "an untrusted replay fact must not certify a representation change"
+        "an untrusted check fact must not certify a representation change"
     );
 
     let changed_pointer = Pointer {

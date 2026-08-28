@@ -8,7 +8,7 @@ pub(crate) fn canonical_c_memory_for_pointer_load(memory: &CMemory, pointer: &Po
 
 /// Checks whether two resource forms denote the same resource using only
 /// exact facts and the bounded memory-resolution relation. This is intended
-/// for certificate replay: it does not search for containment or separation.
+/// for certificate validation: it does not search for containment or separation.
 pub(crate) fn c_resources_directly_match(
     left: &CResource,
     right: &CResource,
@@ -31,7 +31,7 @@ pub(crate) fn c_resources_directly_match(
                 "kernel",
                 "resource context equality",
                 "resource direct match: pointer value",
-                || pointers_match_for_resource_replay(left, right, assumptions),
+                || pointers_match_for_resource_check(left, right, assumptions),
             )
         }
         _ => false,
@@ -44,7 +44,7 @@ pub(crate) fn c_resources_directly_match(
                     "resource context equality",
                     "resource memory match: start",
                     || {
-                        bitvectors_match_for_resource_replay(
+                        bitvectors_match_for_resource_check(
                             left.start(),
                             right.start(),
                             assumptions,
@@ -54,12 +54,12 @@ pub(crate) fn c_resources_directly_match(
                     "kernel",
                     "resource context equality",
                     "resource memory match: end",
-                    || bitvectors_match_for_resource_replay(left.end(), right.end(), assumptions),
+                    || bitvectors_match_for_resource_check(left.end(), right.end(), assumptions),
                 ) && crate::instrumentation::measure_operation(
                     "kernel",
                     "resource context equality",
                     "resource memory match: base",
-                    || pointers_match_for_resource_replay(left.base(), right.base(), assumptions),
+                    || pointers_match_for_resource_check(left.base(), right.base(), assumptions),
                 ))
         }
         (
@@ -93,7 +93,7 @@ pub(crate) fn c_resources_directly_match(
     }
 }
 
-fn bitvectors_match_for_resource_replay(
+fn bitvectors_match_for_resource_check(
     left: &Bitvector32Term,
     right: &Bitvector32Term,
     assumptions: &PureFactContext,
@@ -173,7 +173,7 @@ fn pointer_offsets_match_from_memory_derivations(
     }
 }
 
-fn pointer_offsets_match_for_resource_replay(
+fn pointer_offsets_match_for_resource_check(
     left: &PointerOffsetTerm,
     right: &PointerOffsetTerm,
     assumptions: &PureFactContext,
@@ -234,7 +234,7 @@ fn pointer_offsets_match_for_resource_replay(
     )
 }
 
-fn pointers_match_for_resource_replay(
+fn pointers_match_for_resource_check(
     left: &Pointer,
     right: &Pointer,
     assumptions: &PureFactContext,
@@ -243,7 +243,7 @@ fn pointers_match_for_resource_replay(
         return true;
     }
     if left.block == right.block
-        && pointer_offsets_match_for_resource_replay(&left.offset, &right.offset, assumptions)
+        && pointer_offsets_match_for_resource_check(&left.offset, &right.offset, assumptions)
     {
         return true;
     }
@@ -411,9 +411,9 @@ fn c_memory_load_is_unchanged_unmemoized(
     // it answers from recorded edges in a bounded number of hops, where
     // `memories_match_for_pointer_load_under_assumptions` first compares
     // whole non-local block sets and then every differing cell.
-    // This API is a certificate-replay query. No-op block declarations,
+    // This API is a certificate-check query. No-op block declarations,
     // forgotten caches, and allocations of a distinct block are sound DAG
-    // bridges here; enabling them keeps replay on the bounded derivation walk
+    // bridges here; enabling them keeps check on the bounded derivation walk
     // instead of falling into whole-snapshot alias search.
     if crate::instrumentation::measure_operation(
         "kernel",
@@ -580,7 +580,7 @@ fn memory_derivations_reach(
         if current == *target {
             return true;
         }
-        // The replay and the independent kernel certification build parallel
+        // The check and the independent kernel certification build parallel
         // derivation chains for one execution, so the target is often a
         // sibling form of a snapshot on this chain rather than the same
         // interned object. Decide that pair with the bounded pointer-load
@@ -782,7 +782,7 @@ pub(super) struct MemoryDagHop {
 /// The first variants are complete local proof steps: they can be checked
 /// from the edge, query pointer, and exact named premise without invoking an
 /// alias or range solver. `AssumptionDependent` keeps the decision kind for
-/// existing boolean consumers but deliberately is not a replayable proof;
+/// existing boolean consumers but deliberately is not a checkable proof;
 /// those branches must gain typed child derivations before an atomic
 /// certificate may consume the path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -850,7 +850,7 @@ impl MemoryDagHopJustification {
 
     /// Check one completed local edge proof without asking a general solver
     /// to rediscover it. Returns false for the not-yet-typed branches.
-    pub(super) fn replays(
+    pub(super) fn checks(
         &self,
         derivation: &CMemoryDerivation,
         pointer: &Pointer,
@@ -903,7 +903,7 @@ impl MemoryDagHopJustification {
                     && ranges
                         .iter()
                         .zip(mutable_ranges)
-                        .all(|(evidence, range)| evidence.replays(range, pointer, assumptions))
+                        .all(|(evidence, range)| evidence.checks(range, pointer, assumptions))
             }
             Self::CallHavocFrozenContext => {
                 let CMemoryDerivation::CallHavoc {
@@ -993,7 +993,7 @@ impl PositiveTermEvidence {
             .then_some(Self::OneLowerBound(lower_bound))
     }
 
-    fn replays(&self, term: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
+    fn checks(&self, term: &Bitvector32Term, assumptions: &PureFactContext) -> bool {
         match self {
             Self::Constant => signed_bitvector_constant(term).is_some_and(|value| value > 0),
             Self::ExactCondition(condition) => {
@@ -1011,7 +1011,7 @@ impl PositiveTermEvidence {
 }
 
 impl RangeDisjointFromPointerEvidence {
-    fn replays(
+    fn checks(
         &self,
         range: &CMemoryRange,
         pointer: &Pointer,
@@ -1031,7 +1031,7 @@ impl RangeDisjointFromPointerEvidence {
             }
             Self::ForwardOffset { offset, positive } => {
                 forward_range_offset_from_pointer(range, pointer) == Some(offset.clone())
-                    && positive.replays(
+                    && positive.checks(
                         &Bitvector32Term::add(offset.clone(), range.start.clone()),
                         assumptions,
                     )
@@ -1055,7 +1055,7 @@ impl MemoryDagCell {
         }
     }
 
-    fn replays_walk_from(
+    fn checks_walk_from(
         &self,
         memory: &SharedCMemory,
         pointer: &Pointer,
@@ -1070,7 +1070,7 @@ impl MemoryDagCell {
                 || current.derivation().as_ref() != Some(&hop.derivation)
                 || !hop
                     .justification
-                    .replays(hop.derivation.as_ref(), pointer, assumptions)
+                    .checks(hop.derivation.as_ref(), pointer, assumptions)
             {
                 return false;
             }
@@ -1179,7 +1179,7 @@ pub(super) fn pointer_offset_equality_evidence(
 }
 
 impl PointerOffsetEqualityEvidence {
-    pub(super) fn replays(
+    pub(super) fn checks(
         &self,
         left: &PointerOffsetTerm,
         right: &PointerOffsetTerm,
@@ -1204,8 +1204,8 @@ impl PointerOffsetEqualityEvidence {
                 } else {
                     (right_a.as_ref(), right_b.as_ref())
                 };
-                first.replays(left_a, right_first, assumptions)
-                    && second.replays(left_b, right_second, assumptions)
+                first.checks(left_a, right_first, assumptions)
+                    && second.checks(left_b, right_second, assumptions)
             }
             Self::Int32Scaled { byte_width, values } => {
                 let (
@@ -1223,7 +1223,7 @@ impl PointerOffsetEqualityEvidence {
                 };
                 left_width == byte_width
                     && right_width == byte_width
-                    && values.replays(
+                    && values.checks(
                         &Proposition::ConditionIs(
                             ConditionTerm::equal(left.as_ref().clone(), right.as_ref().clone()),
                             true,
@@ -1253,7 +1253,7 @@ impl AtomicMemoryLoadEqualityEvidence {
     /// Check the currently completed typed subset of retained DAG equality
     /// evidence. Unsupported terminal-value and assumption-dependent edge
     /// proofs return false instead of invoking a solver.
-    pub(super) fn replays(&self, proposition: &Proposition, assumptions: &PureFactContext) -> bool {
+    pub(super) fn checks(&self, proposition: &Proposition, assumptions: &PureFactContext) -> bool {
         let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
             proposition
         else {
@@ -1276,8 +1276,8 @@ impl AtomicMemoryLoadEqualityEvidence {
         };
         left_pointer == right_pointer
             && left_evidence.node() == right_evidence.node()
-            && left_evidence.replays_walk_from(left_memory, left_pointer, assumptions)
-            && right_evidence.replays_walk_from(right_memory, right_pointer, assumptions)
+            && left_evidence.checks_walk_from(left_memory, left_pointer, assumptions)
+            && right_evidence.checks_walk_from(right_memory, right_pointer, assumptions)
     }
 }
 
@@ -1315,23 +1315,23 @@ const MEMORY_DAG_HOP_DISTINCTNESS_FUEL: usize = 128;
 // order-path load matching in assumptions.rs) runs ONLY inside the loadable
 // prover. Everywhere else — execution pruning, load canonicalization, simp
 // planning — behavior must stay byte-identical to the pre-arc path, because
-// certified forms and case-split structure replay against it. The flag
-// is scoped, not global, so generation and replay of the same query always
+// certified forms and case-split structure check against it. The flag
+// is scoped, not global, so generation and check of the same query always
 // agree.
 thread_local! {
     static EXTENDED_DAG_BRIDGING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static EXPLICIT_DAG_REPLAY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EXPLICIT_DAG_CHECK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 pub(super) fn extended_dag_bridging_active() -> bool {
     EXTENDED_DAG_BRIDGING.with(std::cell::Cell::get)
 }
 
-/// True while explicit certificate replay widens the DAG walk (see
+/// True while explicit certificate validation widens the DAG walk (see
 /// `explicit_atomic_equality_from_memory_derivations`); resolution answers
 /// computed in that mode must not be shared with the planner-facing arms.
-pub(super) fn explicit_dag_replay_active() -> bool {
-    EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+pub(super) fn explicit_dag_check_active() -> bool {
+    EXPLICIT_DAG_CHECK.with(std::cell::Cell::get)
 }
 
 /// True outside any memory-DAG cell lookup. Answers computed inside a
@@ -1555,7 +1555,7 @@ fn memory_dag_cell_source(
                 ..
             } => {
                 if write == pointer
-                    || EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                    || EXPLICIT_DAG_CHECK.with(std::cell::Cell::get)
                         && write.block == pointer.block
                         && pointer_offsets_match_from_memory_derivations(
                             &write.offset,
@@ -1581,7 +1581,7 @@ fn memory_dag_cell_source(
                 // Extended-bridging scope only, and under its own capped
                 // budget so this advisory walk can never drain the
                 // enclosing query's fuel — fuel-coupled forms elsewhere
-                // must replay byte-for-byte.
+                // must check byte-for-byte.
                 if write.blocks_proven_distinct(pointer) {
                     MemoryDagHopJustification::StoreDistinctBlocks
                 } else if let Some(condition) =
@@ -1606,7 +1606,7 @@ fn memory_dag_cell_source(
                             MemoryDagAssumptionKind::StoreCommonBaseDistinctness,
                         )
                     }
-                } else if EXPLICIT_DAG_REPLAY.with(std::cell::Cell::get)
+                } else if EXPLICIT_DAG_CHECK.with(std::cell::Cell::get)
                     && assumptions
                         .pointers_proven_disjoint_by_shallow_explicit_range(write, pointer)
                 {
@@ -1714,7 +1714,7 @@ fn memory_dag_cell_source(
                     context,
                     pointer,
                 ) {
-                    // Decided by the edge's own frozen context: replayable
+                    // Decided by the edge's own frozen context: checkable
                     // from the edge and the pointer alone.
                     MemoryDagHopJustification::CallHavocFrozenContext
                 } else if assumptions.ranges_proven_disjoint_from_pointer_for_frame(
@@ -1998,7 +1998,7 @@ pub(super) fn atomic_memory_load_equality_evidence(
 }
 
 /// Resolves an equality from the execution-recorded memory DAG for explicit
-/// certificate replay. Unlike the planner-facing DAG arm, this may cross
+/// certificate validation. Unlike the planner-facing DAG arm, this may cross
 /// no-op block declarations and stores whose distinctness follows from the
 /// certificate's separation facts; every crossed edge remains justified by
 /// exact facts and the bounded DAG walk.
@@ -2008,7 +2008,7 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
     assumptions: &PureFactContext,
 ) -> bool {
     let _assumptions_id_scope = assumptions.enter_id_scope();
-    let previous = EXPLICIT_DAG_REPLAY.with(|flag| flag.replace(true));
+    let previous = EXPLICIT_DAG_CHECK.with(|flag| flag.replace(true));
     let result = with_extended_dag_bridging(|| {
         if atomic_loads_equal_along_memory_derivations(left, right, assumptions) {
             return true;
@@ -2028,7 +2028,7 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
         };
         resolves_to(left, right) || resolves_to(right, left)
     });
-    EXPLICIT_DAG_REPLAY.with(|flag| flag.set(previous));
+    EXPLICIT_DAG_CHECK.with(|flag| flag.set(previous));
     result
 }
 
@@ -2827,7 +2827,7 @@ pub(crate) fn c_condition_facts_equivalent_for_memory_resolution(
 
 /// Exports each certified store as the condition fact its record proves:
 /// loading the stored pointer from the post-store memory yields the stored
-/// value. These are execution-certified equations usable by replay.
+/// value. These are execution-certified equations usable by check.
 pub(crate) fn certified_store_equations(facts: &[ExecutionPureFact]) -> Vec<Proposition> {
     facts
         .iter()

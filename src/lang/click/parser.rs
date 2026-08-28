@@ -1846,7 +1846,7 @@ impl Parser {
             }
             return Ok(ProofTactic::Loop(StructuralClause {
                 // The actual loop identity is bound from the execution
-                // frontier during replay.  This sentinel is never lowered.
+                // frontier during check.  This sentinel is never lowered.
                 region: CodeRegion::Loop(usize::MAX),
                 label,
                 decreases,

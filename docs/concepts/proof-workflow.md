@@ -44,7 +44,7 @@ int32 set_first(int32 p[], int32 value) {
 }
 ```
 
-Click replays the C region once. Every effect and postcondition is then checked
+Click checks the C region once. Every effect and postcondition is then checked
 against the resulting shared proof state. Goal-specific closing steps still
 have their normal roles: `frame()` closes effect goals, and `simp()` or
 resource reasoning closes postconditions. Per-claim proof clauses remain

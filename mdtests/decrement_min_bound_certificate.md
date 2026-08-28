@@ -1,4 +1,4 @@
-# Decrement safety replays from the strict minimum bound
+# Decrement safety follows from the strict minimum bound
 
 The direct precondition that an `int32` value is above `INT32_MIN` is exactly
 the condition needed to certify that subtracting one does not overflow.

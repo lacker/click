@@ -1259,7 +1259,7 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// deterministically by hashing that identity into a reserved id space, so
 /// every pass — contract-grant lowering, requirement evaluation, and body
 /// execution — writes the same load with the same variable without sharing
-/// any allocator state, and certificates replay across runs. A thread-local
+/// any allocator state, and certificates check across runs. A thread-local
 /// registry detects hash collisions between distinct load identities and
 /// stops verification loudly instead of silently conflating them.
 pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
@@ -1351,7 +1351,7 @@ fn load_variable_for_term_uncached(bits: &Bitvector32Term) -> Option<(Variable, 
 /// Binds a load term to its load variable and records the defining
 /// equation in the path's fact stream. The defining equation is
 /// kernel-certified by construction: the load variable represents this
-/// load. It must not demand a replayable assumption derivation
+/// load. It must not demand a checkable assumption derivation
 /// downstream.
 fn mint_load_variable(
     bits: &Bitvector32Term,
@@ -1367,7 +1367,7 @@ fn mint_load_variable(
 /// Records a load variable's exact defining fact in a fact
 /// stream, deduplicated by proposition. The equation is kernel-certified by
 /// construction: the load variable represents this load. It must not demand
-/// a replayable assumption derivation downstream.
+/// a checkable assumption derivation downstream.
 fn record_load_variable_defining_fact(
     variable: Variable,
     load: Bitvector32Term,

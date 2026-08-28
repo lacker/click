@@ -468,7 +468,7 @@ impl PureFactContext {
     /// True when some exact order fact strictly bounds `term` above
     /// (`term < y` for any `y`). A strict signed bound pins
     /// `term < INT_MAX`, which is what discharges `term + 1` overflow
-    /// checks from exact facts alone.
+    /// is checked from exact facts alone.
     pub(in crate::kernel) fn has_exact_strict_upper_bound(&self, term: &Bitvector32Term) -> bool {
         self.condition_order_facts()
             .iter()
@@ -498,7 +498,7 @@ impl PureFactContext {
     ) -> Option<Vec<SignedOrderDerivationStep>> {
         // Keep the exact source proposition alongside the normalized edge.
         // `condition_as_order_fact` intentionally normalizes polarity (for
-        // example, false `x <= y` becomes `y < x`); replay must check the
+        // example, false `x <= y` becomes `y < x`); check must check the
         // proposition that was actually present, not merely the normalized
         // form. This collection is local to derivation construction so
         // the durable evidence remains self-contained.

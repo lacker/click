@@ -79,7 +79,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
     .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
     // Expansion lowers a shared initialize proof to optional predicate
     // unfolds followed by one explicit `have` per invariant.  Recognize that
-    // surface-certificate shape on the next verification pass and replay it
+    // surface-certificate shape on the next verification pass and check it
     // directly.  Sending it back through the per-invariant planner would
     // treat the whole certificate as the proof of every individual `have`,
     // recursively duplicate it, and can make a valid first expansion fail.
@@ -135,7 +135,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     expected_goal
                 });
                 // Planning an invariant's entry proof is proof search, not
-                // replay. Classify it by the `by` clause the search is
+                // check. Classify it by the `by` clause the search is
                 // discharging, exactly as if it were written as a `have`.
                 let planned_step = timings_enabled.then(|| {
                     ProofTactic::Have(ProofHave {
@@ -219,10 +219,10 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     invariant_items.len()
                 )));
             }
-            let mut replay_available = context.pure_facts.clone();
+            let mut certificate_available = context.pure_facts.clone();
             let invariant_start = certificate.to_proof_tactics().len() - invariant_items.len();
             for (certificate_index, tactic) in certificate.to_proof_tactics().iter().enumerate() {
-                // Certificate replay for the initialize phase never reaches
+                // Certificate validation for the initialize phase never reaches
                 // the checked drivers' tactic loop, so time each step here in
                 // the same format and let `source_tactic_class` classify it.
                 let _timing = TacticTiming::new(
@@ -240,11 +240,11 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                             "`{claim_label}` certificate step {certificate_index} names unknown predicate `{name}`"
                         )));
                     }
-                    replay_available = unfold_available_predicate_facts(
+                    certificate_available = unfold_available_predicate_facts(
                         environment.predicate_environment,
                         environment.click_function_environment,
                         std::slice::from_ref(name),
-                        &replay_available,
+                        &certificate_available,
                     )
                     .map_err(|message| {
                         ClickError::new(format!(
@@ -285,7 +285,7 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     environment.theorem_environment,
                     &step_claim_label,
                     certificate_index,
-                    &replay_available,
+                    &certificate_available,
                     &[],
                     environment.parsed_function.parameters(),
                     environment.arguments,
@@ -299,11 +299,11 @@ pub(in crate::lang::click::proof) fn verify_loop_initialization_pure_proof(
                     environment.function_block.requires(),
                     None,
                 )?;
-                if !replay_available.contains(&fact) {
-                    replay_available.push(fact);
+                if !certificate_available.contains(&fact) {
+                    certificate_available.push(fact);
                 }
             }
-            Ok(replay_available)
+            Ok(certificate_available)
         },
     )?;
     let assumptions = assumptions_from_propositions(&available);
@@ -1149,7 +1149,7 @@ fn verify_structural_effect_proof(
     // Every recursively simple operation and nested resource scope supported
     // by the typed Proof APIs is authoritative here. Smart frame syntax
     // selects its bounded explicit premises from this Proof; a search miss is
-    // a checked failure rather than permission to replay the same candidate
+    // a checked failure rather than permission to check the same candidate
     // elsewhere.
     if !loop_effect_open_body_supported(&certificate) {
         return Err(ClickError::new(format!(

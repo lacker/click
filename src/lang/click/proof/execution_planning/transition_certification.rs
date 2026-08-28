@@ -301,7 +301,7 @@ pub(in crate::lang::click) fn certified_statement_transitions(
             // An exact consumed premise is already the smallest stable
             // certificate dependency. Do not replace it with a different
             // ambient fact that can re-derive it: that would turn a simple
-            // statement step back into heuristic reasoning during replay.
+            // statement step back into heuristic reasoning during check.
             if pure_facts.contains(&premise) {
                 if !leaf_premises.contains(&premise) {
                     leaf_premises.push(premise);
@@ -567,7 +567,7 @@ fn certified_transitions_from_execution(
                 let mut theorem_context = pure_facts.to_vec();
                 for premise in theorem_implication_premises(path.theorem()) {
                     // An ambient condition the theorem merely carried along is
-                    // already replayable as itself; recording an identity
+                    // already checkable as itself; recording an identity
                     // derivation for it would advertise it as something the
                     // execution consumed and force it into the certificate.
                     if matches!(premise, Proposition::ConditionIs(_, _))
@@ -614,7 +614,7 @@ fn certified_transitions_from_execution(
                                 continue;
                             }
                             return Err(ClickError::new(format!(
-                                "{context_label} used an assumption-derived theorem premise without a replayable derivation: {}",
+                                "{context_label} used an assumption-derived theorem premise without a checkable derivation: {}",
                                 describe_derivation_failure(&premise, &theorem_context),
                             )));
                         };
@@ -658,7 +658,7 @@ fn certified_transitions_from_execution(
                         && planning_assumptions.proves(proposition)
                     {
                         return Err(ClickError::new(format!(
-                            "{context_label} used an assumption-derived execution fact without a replayable derivation: {}",
+                            "{context_label} used an assumption-derived execution fact without a checkable derivation: {}",
                             describe_derivation_failure(proposition, pure_facts),
                         )));
                     }
@@ -687,7 +687,7 @@ fn certified_transitions_from_execution(
                             // set. Permit one proof-producing atomic check over
                             // exactly that set, after execution has deferred
                             // every non-exact obligation. This keeps certificate
-                            // replay independent of the ambient proof context
+                            // check independent of the ambient proof context
                             // without requiring callers to write out internal
                             // evaluator predicates such as no-overflow facts.
                             let exact_derivation = if matches!(
@@ -699,7 +699,7 @@ fn certified_transitions_from_execution(
                                 // A contract predicate unfolds to one
                                 // conjunction. Composing that conjunction
                                 // from facts already present in the explicit
-                                // replay context is propositional certificate
+                                // check context is propositional certificate
                                 // construction, not open-ended premise
                                 // search.
                                 minimal_proposition_derivation(proposition, pure_facts)?
@@ -1135,7 +1135,7 @@ mod condition_transition_tests {
 }
 
 /// Direct transport of one fact across the statement effect, together with
-/// the exact facts its bounded frame check consumed (recorded so replay
+/// the exact facts its bounded frame check consumed (recorded so check
 /// frames the fact from the same evidence). The source fact itself is not a
 /// frame premise.
 fn direct_transport_with_frame_premises(

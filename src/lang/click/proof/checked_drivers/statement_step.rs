@@ -9,7 +9,7 @@ pub(in crate::lang::click::proof) struct CheckedStatementStep {
 /// Checks one statement transition in the complete proof context and
 /// atomically advances the caller-selected execution successor.
 ///
-/// This is the audited semantic operation shared by explicit source replay
+/// This is the audited semantic operation shared by explicit source check
 /// and the checked proof-object frontier. It performs no premise selection;
 /// the proof's facts and resources are the transition context.
 #[allow(clippy::too_many_arguments)]
@@ -90,8 +90,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
                 }
             }
         };
-        if requirement_pure_facts
-            .replay_available_across_effects(&branch_fact, &execution.effect_facts)
+        if requirement_pure_facts.available_across_effects(&branch_fact, &execution.effect_facts)
             && !step_facts.contains(&branch_fact)
         {
             step_facts.push(branch_fact);

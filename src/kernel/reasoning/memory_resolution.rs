@@ -68,7 +68,7 @@ pub(crate) fn clear_canonical_memory_cache() {
 /// query must run unmemoized. Unmemoized cases are the ones whose answers
 /// are ambient-state-dependent: a nested arm shares the caller's fuel, a
 /// nested memory-DAG cell lookup sees the depth cutoff, and explicit
-/// certificate replay crosses extra DAG edges. In-progress condition
+/// certificate validation crosses extra DAG edges. In-progress condition
 /// decisions need no guard here: every decision cycle cut and in-decision
 /// weakening records a search truncation, which already blocks negative
 /// caching, and a positive answer is found evidence that remains valid
@@ -83,7 +83,7 @@ fn resolution_query_memo_id(assumptions: &PureFactContext) -> Option<(u64, bool)
     if !crate::kernel::api::memory_dag_cell_lookup_depth_is_zero() {
         return None;
     }
-    if crate::kernel::api::explicit_dag_replay_active() {
+    if crate::kernel::api::explicit_dag_check_active() {
         return None;
     }
     // Ambient scope only: content-hashing the fact set on every top-level
@@ -201,7 +201,7 @@ pub(in crate::kernel) fn with_memory_resolution_fuel<T>(body: impl FnOnce() -> T
 /// `body` spends. For advisory arms (memory-DAG hop checks) that run inside
 /// arbitrary resolution queries — without the shield their spending would
 /// perturb fuel-coupled answers elsewhere, and certified forms must
-/// replay byte-for-byte. Deterministic: the cap is a constant, so the answer
+/// check byte-for-byte. Deterministic: the cap is a constant, so the answer
 /// depends only on the inputs.
 pub(crate) fn with_isolated_memory_resolution_fuel<T>(
     budget: usize,
@@ -1402,7 +1402,7 @@ pub(in crate::kernel) fn memories_match_for_pointer_load_under_assumptions(
             // this function, forming an unbounded cycle. Suppressing the
             // general check weakens the search, so record a truncation: a
             // negative answer from this weaker context must not be memoized
-            // and replayed where the full check would have run.
+            // and checked where the full check would have run.
             crate::instrumentation::measure_operation(
                 "kernel",
                 "resource context equality",

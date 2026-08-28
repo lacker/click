@@ -814,7 +814,7 @@ fn glossary_inventory_is_bidirectional() {
 }
 
 #[test]
-fn public_docs_do_not_make_certificate_replay_a_verification_phase() {
+fn public_docs_do_not_make_round_trip_validation_a_verification_phase() {
     let docs = root().join("docs");
     let mut files = Vec::new();
     markdown_files(&docs.join("concepts"), &mut files);
@@ -822,14 +822,10 @@ fn public_docs_do_not_make_certificate_replay_a_verification_phase() {
     files.sort();
 
     let retired_claims = [
-        "certificate replay",
-        "certificate replays",
-        "certificate does not replay",
-        "replayable certificate",
-        "replayable tactic",
-        "replay step",
-        "replay boundary",
-        "simple replay",
+        "round-trip validation phase",
+        "certificate-validation phase",
+        "second verification phase",
+        "validation interpreter",
     ];
     let glossary = docs.join("reference/glossary.md");
     let mut failures = Vec::new();
@@ -855,7 +851,7 @@ fn public_docs_do_not_make_certificate_replay_a_verification_phase() {
     }
     assert!(
         failures.is_empty(),
-        "retired certificate-replay model in public docs:\n{}",
+        "round-trip validation described as a separate verification phase:\n{}",
         failures.join("\n")
     );
 }
@@ -920,7 +916,7 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
 #[test]
 fn implementation_uses_canonical_form_and_load_variable_terms() {
     let repository = root();
-    let mut files = vec![repository.join("WIP-FALLOUT.md")];
+    let mut files = Vec::new();
     files_with_extension(&repository.join("src"), "rs", &mut files);
     files_with_extension(&repository.join("design"), "md", &mut files);
     files.sort();
@@ -954,6 +950,47 @@ fn implementation_uses_canonical_form_and_load_variable_terms() {
     assert!(
         failures.is_empty(),
         "retired implementation terminology:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn retired_execution_engine_terminology_is_absent() {
+    let repository = root();
+    let mut files = vec![repository.join("AGENTS.md"), repository.join("README.md")];
+    for directory in [
+        "design", "docs", "examples", "issues", "mdtests", "src", "tests",
+    ] {
+        for extension in ["c", "click", "md", "rs", "toml"] {
+            files_with_extension(&repository.join(directory), extension, &mut files);
+        }
+    }
+    files.sort();
+
+    // Construct the retired word so this regression does not itself preserve it.
+    let retired = ["re", "play"].concat();
+    let mut failures = Vec::new();
+    for path in files {
+        let source = fs::read_to_string(&path).expect("read terminology source");
+        if source.to_ascii_lowercase().contains(&retired) {
+            failures.push(
+                path.strip_prefix(&repository)
+                    .expect("repository-relative path")
+                    .display()
+                    .to_string(),
+            );
+        }
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().contains(&retired))
+        {
+            failures.push(format!("{} (filename)", path.display()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "retired execution-engine terminology remains in:\n{}",
         failures.join("\n")
     );
 }

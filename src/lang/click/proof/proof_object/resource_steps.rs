@@ -63,11 +63,11 @@ impl<'a> Proof<'a> {
                     ),
                     None => None,
                 };
-                // Point and outcome certificates replay `unfold` from its
+                // Point and outcome certificates check `unfold` from its
                 // retained surface form.  Re-lower that unfolded body
                 // against the checked successor facts as part of this same
                 // audited step, so resource counts and current memory loads
-                // resolve exactly as they do during independent replay.
+                // resolve exactly as they do during independent verification.
                 // Unfolding only the already-lowered kernel predicate leaves
                 // those expressions stranded in the older lowering context.
                 let kernel = match (&surface, self.context.as_ref()) {

@@ -139,7 +139,7 @@ pub(super) fn lower_surface_atomic_derivation(
                 checked_surface_comparison_fact_for_typed_derivation(
                     view,
                     premise,
-                    SurfaceFactMatch::ReplayEquivalent,
+                    SurfaceFactMatch::AvailabilityEquivalent,
                     available,
                     parameters,
                     arguments,
@@ -151,7 +151,7 @@ pub(super) fn lower_surface_atomic_derivation(
                 checked_surface_comparison_fact_at_point(
                     view,
                     premise,
-                    SurfaceFactMatch::ReplayEquivalent,
+                    SurfaceFactMatch::AvailabilityEquivalent,
                     available,
                     parameters,
                     arguments,
@@ -250,7 +250,7 @@ pub(super) fn lower_surface_atomic_derivation(
     )
     .is_ok_and(|goal| normalizes_context_free(&goal));
     drop(_normalization_span);
-    let replay_kind = |pairs: &[(Proposition, ClickProposition)]| {
+    let availability_kind = |pairs: &[(Proposition, ClickProposition)]| {
         let surface_premises = pairs
             .iter()
             .map(|(_, surface)| {
@@ -294,12 +294,12 @@ pub(super) fn lower_surface_atomic_derivation(
     let typed_order_pairs = recorded_signed_order_pairs(derivation, &premise_pairs);
     let typed_order_plan = typed_order_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| plan_recorded_signed_order_path(&lowered_conclusion, pairs));
     let typed_equality_pairs = recorded_bitvector_equality_pairs(derivation, &premise_pairs);
     let typed_equality_plan = typed_equality_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_bitvector_equality_path(&lowered_conclusion, derivation, pairs)
         });
@@ -307,7 +307,9 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_bitvector_equality_rewrite_path_pairs(derivation, &premise_pairs);
     let typed_equality_rewrite_plan = typed_equality_rewrite_paths
         .as_ref()
-        .filter(|paths| replay_kind(&paths.iter().flatten().cloned().collect::<Vec<_>>()).is_some())
+        .filter(|paths| {
+            availability_kind(&paths.iter().flatten().cloned().collect::<Vec<_>>()).is_some()
+        })
         .and_then(|paths| {
             plan_recorded_bitvector_equality_rewrite_paths(&lowered_conclusion, derivation, paths)
         });
@@ -315,7 +317,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs);
     let typed_increment_plan = typed_increment_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_upper_bound_for_context(&lowered_conclusion, pairs, false)
         });
@@ -323,7 +325,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_constant_upper_bound_pairs(derivation, &premise_pairs);
     let typed_increment_constant_upper_plan = typed_increment_constant_upper_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_constant_upper_bound_for_context(
                 &lowered_conclusion,
@@ -335,7 +337,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_strictly_increases_pairs(derivation, &premise_pairs);
     let typed_strict_increment_plan = typed_strict_increment_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_strictly_increases_for_context(
                 &lowered_conclusion,
@@ -347,7 +349,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_one_plus_strictly_increases_pairs(derivation, &premise_pairs);
     let typed_one_plus_strict_plan = typed_one_plus_strict_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_one_plus_strictly_increases_for_context(
                 &lowered_conclusion,
@@ -359,7 +361,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_below_max_is_defined_pairs(derivation, &premise_pairs);
     let typed_increment_definedness_plan = typed_increment_definedness_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_below_max_is_defined_for_context(
                 &lowered_conclusion,
@@ -371,7 +373,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_one_plus_below_max_is_defined_pairs(derivation, &premise_pairs);
     let typed_one_plus_definedness_plan = typed_one_plus_definedness_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_one_plus_below_max_is_defined_for_context(
                 &lowered_conclusion,
@@ -383,7 +385,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_nonnegative_add_within_max_pairs(derivation, &premise_pairs);
     let typed_nonnegative_add_plan = typed_nonnegative_add_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_nonnegative_add_within_max_for_context(
                 &lowered_conclusion,
@@ -395,7 +397,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_nonnegative_subtract_within_value_pairs(derivation, &premise_pairs);
     let typed_nonnegative_subtract_plan = typed_nonnegative_subtract_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_nonnegative_subtract_within_value_for_context(
                 &lowered_conclusion,
@@ -407,7 +409,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_lower_bound_pairs(derivation, &premise_pairs);
     let typed_increment_lower_bound_plan = typed_increment_lower_bound_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_lower_bound_for_context(&lowered_conclusion, pairs, false)
         });
@@ -415,7 +417,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_greater_equal_lower_bound_pairs(derivation, &premise_pairs);
     let typed_increment_greater_equal_plan = typed_increment_greater_equal_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_greater_equal_lower_bound_for_context(
                 &lowered_conclusion,
@@ -427,7 +429,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_strict_greater_lower_bound_pairs(derivation, &premise_pairs);
     let typed_increment_strict_greater_plan = typed_increment_strict_greater_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_strict_greater_lower_bound_for_context(
                 &lowered_conclusion,
@@ -439,7 +441,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_strict_greater_from_strict_lower_pairs(derivation, &premise_pairs);
     let typed_increment_strict_from_strict_plan = typed_increment_strict_from_strict_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_strict_greater_from_strict_lower_for_context(
                 &lowered_conclusion,
@@ -451,7 +453,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_increment_preserves_order_pairs(derivation, &premise_pairs);
     let typed_increment_preserves_order_plan = typed_increment_preserves_order_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_increment_preserves_order_for_context(
                 &lowered_conclusion,
@@ -463,7 +465,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_positive_predecessor_is_nonnegative_pairs(derivation, &premise_pairs);
     let typed_positive_predecessor_nonnegative_plan = typed_positive_predecessor_nonnegative_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_positive_predecessor_is_nonnegative_for_context(
                 &lowered_conclusion,
@@ -475,7 +477,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_positive_predecessor_strictly_decreases_pairs(derivation, &premise_pairs);
     let typed_positive_predecessor_decrease_plan = typed_positive_predecessor_decrease_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_positive_predecessor_strictly_decreases_for_context(
                 &lowered_conclusion,
@@ -487,7 +489,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_nonnegative_predecessor_upper_bound_pairs(derivation, &premise_pairs);
     let typed_predecessor_upper_bound_plan = typed_predecessor_upper_bound_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_nonnegative_predecessor_upper_bound_for_context(
                 &lowered_conclusion,
@@ -504,7 +506,7 @@ pub(super) fn lower_surface_atomic_derivation(
     });
     let typed_one_le_predecessor_plan = typed_one_le_predecessor_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_one_le_predecessor_for_context(&lowered_conclusion, pairs, false)
         });
@@ -518,7 +520,7 @@ pub(super) fn lower_surface_atomic_derivation(
             });
     let typed_equal_one_predecessor_plan = typed_equal_one_predecessor_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_equal_one_predecessor_for_context(
                 &lowered_conclusion,
@@ -531,7 +533,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_equal_one_predecessor_is_zero_pairs(derivation, &premise_pairs);
     let typed_equal_one_predecessor_zero_plan = typed_equal_one_predecessor_zero_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_equal_one_predecessor_is_zero(
                 &lowered_conclusion,
@@ -543,7 +545,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_le_and_not_lt_implies_equality_pairs(derivation, &premise_pairs);
     let typed_le_not_lt_equality_plan = typed_le_not_lt_equality_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_le_and_not_lt_implies_equality_for_context(
                 &lowered_conclusion,
@@ -555,7 +557,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_ge_and_not_gt_implies_equality_pairs(derivation, &premise_pairs);
     let typed_ge_not_gt_equality_plan = typed_ge_not_gt_equality_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_ge_and_not_gt_implies_equality_for_context(
                 &lowered_conclusion,
@@ -567,7 +569,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_positive_is_nonnegative_pairs(derivation, &premise_pairs);
     let typed_positive_nonnegative_plan = typed_positive_nonnegative_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_positive_is_nonnegative_for_context(
                 &lowered_conclusion,
@@ -579,7 +581,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_strictly_positive_is_nonnegative_pairs(derivation, &premise_pairs);
     let typed_strictly_positive_nonnegative_plan = typed_strictly_positive_nonnegative_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_strictly_positive_is_nonnegative_for_context(
                 &lowered_conclusion,
@@ -591,7 +593,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_successor_le_implies_lt_pairs(derivation, &premise_pairs);
     let typed_successor_le_plan = typed_successor_le_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_successor_le_implies_lt_for_context(
                 &lowered_conclusion,
@@ -603,7 +605,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_constant_lower_bound_weakening_pairs(derivation, &premise_pairs);
     let typed_constant_lower_plan = typed_constant_lower_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_constant_lower_bound_weakening_for_context(
                 &lowered_conclusion,
@@ -615,7 +617,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_negated_strict_successor_bound_pairs(derivation, &premise_pairs);
     let typed_negated_successor_bound_plan = typed_negated_successor_bound_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_negated_strict_successor_bound_for_context(
                 &lowered_conclusion,
@@ -627,7 +629,7 @@ pub(super) fn lower_surface_atomic_derivation(
         recorded_int32_le_and_neq_implies_strict_pairs(derivation, &premise_pairs);
     let typed_le_neq_strict_plan = typed_le_neq_strict_pairs
         .as_ref()
-        .filter(|pairs| replay_kind(pairs).is_some())
+        .filter(|pairs| availability_kind(pairs).is_some())
         .and_then(|pairs| {
             plan_recorded_int32_le_and_neq_implies_strict_for_context(
                 &lowered_conclusion,
@@ -760,7 +762,7 @@ pub(super) fn lower_surface_atomic_derivation(
     }
     if !surface_normalizes_context_free
         && !typed_path_written
-        && (premise_pairs.is_empty() || replay_kind(&premise_pairs).is_none())
+        && (premise_pairs.is_empty() || availability_kind(&premise_pairs).is_none())
     {
         return Err(ClickError::new(format!(
             "surface premises do not view the atomic derivation of {}\nunexpressed derivation premises: {}",
@@ -1037,7 +1039,7 @@ pub(super) fn lower_surface_atomic_derivation(
     // form (the same fact recorded against an earlier memory) denotes
     // the value only through frame reasoning, which the simple rewrite
     // cannot check; those premises stay available to the transport path.
-    let surface_replays_kernel = |kernel: &Proposition, surface: &ClickProposition| {
+    let surface_matches_kernel = |kernel: &Proposition, surface: &ClickProposition| {
         view.surface_propositions
             .available_kernel(surface, available)
             .cloned()
@@ -1060,7 +1062,7 @@ pub(super) fn lower_surface_atomic_derivation(
     };
     let rewrite_pairs = premise_pairs
         .iter()
-        .filter(|(kernel, surface)| surface_replays_kernel(kernel, surface))
+        .filter(|(kernel, surface)| surface_matches_kernel(kernel, surface))
         .cloned()
         .collect::<Vec<_>>();
     // The premises the planner selected are already written and validated;
@@ -1226,7 +1228,7 @@ pub(super) fn lower_surface_atomic_derivation(
         )
     });
     Err(ClickError::new(format!(
-        "smart reasoning found a derivation, but Click has no explicit simple certificate for {}\n  selected premises: {}\n  replayable equality rewrites: {}{}",
+        "smart reasoning found a derivation, but Click has no explicit simple certificate for {}\n  selected premises: {}\n  checkable equality rewrites: {}{}",
         describe_pure_fact(&lowered_conclusion, parameters, arguments),
         premise_pairs
             .iter()
@@ -1428,7 +1430,7 @@ fn contract_expression_for_instantiation_value(
 /// universal premise, specialized at an explicit constant, proves the goal
 /// after its guards discharge from the remaining listed premises. The named
 /// `instantiate ... using` step adds the specialized fact and `assumption`
-/// closes the exact goal, matching independent simple-step replay.
+/// closes the exact goal, matching independent simple-step check.
 pub(super) fn plan_explicit_forall_instantiation(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],
@@ -1462,7 +1464,7 @@ pub(super) fn plan_explicit_forall_instantiation(
                 continue;
             };
             // The closer is `assumption`, so the instantiated conclusion must
-            // match the goal by exactly the equivalence assumption replays.
+            // match the goal by exactly the equivalence assumption checks.
             if conclusion != *goal {
                 continue;
             }
@@ -1513,7 +1515,7 @@ fn plan_explicit_universal_conclusion_discharge(
         conclusion == *goal_conclusion || conclusion.clone() == goal_conclusion.clone();
     // Constant-argument instances offer several instantiation candidates, so
     // the caller may insist the instantiated conclusion provably reaches the
-    // goal before accepting a transport that replay would reject.
+    // goal before accepting a transport that check would reject.
     if !closes_by_assumption
         && let Some(gate) = conclusion_gate
         && !gate(&conclusion)
@@ -1523,7 +1525,7 @@ fn plan_explicit_universal_conclusion_discharge(
     // A residual form difference (for example a loop counter the listed
     // order facts pin to a constant) crosses through an explicit transport
     // from the instantiated conclusion instead. The transported closure is
-    // validated by the caller's immediate certificate replay, so no weaker
+    // validated by the caller's immediate certificate validation, so no weaker
     // equivalence pre-check runs here.
     let transport_closure = if closes_by_assumption {
         None
@@ -1761,7 +1763,7 @@ fn plan_explicit_unchanged_load_transport(
         *kernel_value,
     );
     let mut selected = Vec::<(Proposition, ClickProposition)>::new();
-    let replays = |selected: &[(Proposition, ClickProposition)]| {
+    let checks = |selected: &[(Proposition, ClickProposition)]| {
         let explicit = selected
             .iter()
             .map(|(kernel, _)| kernel.clone())
@@ -1800,7 +1802,7 @@ fn plan_explicit_unchanged_load_transport(
             &transition_facts,
         )
     };
-    if !replays(&selected) {
+    if !checks(&selected) {
         let rank = |proposition: &Proposition| match proposition {
             Proposition::CResourceSeparate { .. }
             | Proposition::CMemoryDisjoint { .. }
@@ -1816,19 +1818,19 @@ fn plan_explicit_unchanged_load_transport(
                 continue;
             }
             selected.push(candidate);
-            if replays(&selected) {
+            if checks(&selected) {
                 break;
             }
         }
     }
-    if !replays(&selected) {
+    if !checks(&selected) {
         return None;
     }
     let mut index = 0;
     while index < selected.len() {
         let mut reduced = selected.clone();
         reduced.remove(index);
-        if replays(&reduced) {
+        if checks(&reduced) {
             selected = reduced;
         } else {
             index += 1;
@@ -1840,7 +1842,7 @@ fn plan_explicit_unchanged_load_transport(
         operator: ComparisonOperator::Equal,
         right: right.clone(),
     };
-    // The reflexive source normalizes context-free; the transport replay
+    // The reflexive source normalizes context-free; the transport check
     // materializes its symbolic load term itself, so no nested `have` is
     // needed (a nested proof could not see an introduced universal binder).
     Some(vec![
@@ -1866,7 +1868,7 @@ pub(super) fn lower_restricted_simp_plan(
     let assumptions = assumptions_from_propositions(&available);
     let exact_derivation = match plan {
         SimpEvidence::Assumption => {
-            if !pure_fact_is_replay_available(goal, &available) {
+            if !pure_fact_is_available(goal, &available) {
                 return Err(ClickError::new(
                     "`simp() using` selected `assumption`, but the goal is not one of its listed premises",
                 ));
@@ -1882,9 +1884,9 @@ pub(super) fn lower_restricted_simp_plan(
             None
         }
         SimpEvidence::Derivation(derivation) => {
-            if derivation.conclusion() != goal || !derivation.replay(&assumptions) {
+            if derivation.conclusion() != goal || !derivation.check(&assumptions) {
                 return Err(ClickError::new(
-                    "`simp() using` selected a derivation that does not replay from exactly its listed premises",
+                    "`simp() using` selected a derivation that does not check from exactly its listed premises",
                 ));
             }
             Some(derivation)
@@ -1904,15 +1906,15 @@ pub(super) fn lower_restricted_simp_plan(
         } else {
             right.as_ref()
         };
-        // `left`/`right` replay accepts the selected disjunct when it is the
+        // `left`/`right` check accepts the selected disjunct when it is the
         // same total boolean condition as an available fact up to polarity
         // (e.g. `x > 0` from `not (x <= 0)`); construction mirrors exactly
         // that check rather than demanding the literal form.
-        let disjunct_replays = pure_fact_is_replay_available(child_goal, &available)
+        let disjunct_available = pure_fact_is_available(child_goal, &available)
             || available
                 .iter()
                 .any(|fact| condition_polarity_equivalent(fact, child_goal));
-        if child.conclusion() != child_goal || !disjunct_replays {
+        if child.conclusion() != child_goal || !disjunct_available {
             return Err(ClickError::new(
                 "`simp() using` selected a derived disjunct that needs an explicit intermediate `have`",
             ));
@@ -3048,7 +3050,7 @@ pub(super) fn plan_recorded_signed_order_path(
 }
 
 /// A theorem application can complete an exact matching proposition goal.
-/// Outcome replay can instead add an equivalent snapshot fact, so callers
+/// Outcome check can instead add an equivalent snapshot fact, so callers
 /// specify whether the checked application closes this particular goal.
 pub(super) fn plan_recorded_signed_order_path_for_context(
     goal: &Proposition,
@@ -3589,7 +3591,7 @@ fn plan_explicit_strict_implies_nonstrict(
 /// Plans a vacuous-implication certificate: an implication chain whose
 /// antecedent at some depth is refuted by a listed premise closes by
 /// introducing antecedents down to the refuted one, then naming the
-/// contradiction. Replay pushes each introduced antecedent exactly as the
+/// contradiction. Check pushes each introduced antecedent exactly as the
 /// goal writes it, so the refuting premise must be that form's exact
 /// opposite (flipped condition polarity or a stripped `not`); anything looser
 /// would not survive the `contradiction` tactic's exact-match check.
@@ -3622,7 +3624,7 @@ fn plan_explicit_implies_refuted_antecedent(
 /// Modus ponens over a listed implication premise: walk a (possibly chained)
 /// implication whose antecedents are each listed premises, and close the goal
 /// when a consequent along the walk is the goal. The emitted `extract` names
-/// the consequent's surface form, so replay re-checks the same bounded
+/// the consequent's surface form, so the checker revalidates the same bounded
 /// rule; `assumption` then closes the goal from the extracted fact.
 fn plan_explicit_discharged_implication_consequent(
     goal: &Proposition,

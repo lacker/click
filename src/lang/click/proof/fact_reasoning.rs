@@ -142,12 +142,12 @@ pub(in crate::lang::click) enum SnapshotBlindPointerOffsetKey {
 }
 
 /// One-pass alpha-invariant key for the quantified logical/condition
-/// fragment used by replay premises. Bound variables are represented by
+/// fragment used by check premises. Bound variables are represented by
 /// structural ordinals while free variables retain their kernel identities.
 /// Memory snapshots in loads are deliberately omitted, matching the
-/// separately checked canonical-form replay equivalence.
+/// separately checked canonical-form check equivalence.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) struct QuantifiedReplayKey(AlphaPropositionKey);
+pub(super) struct QuantifiedEquivalenceKey(AlphaPropositionKey);
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum AlphaPropositionKey {
@@ -633,7 +633,7 @@ pub(super) fn discharged_implication_consequent_is_available(
     }
     let assumptions = assumptions_from_propositions(available);
     let fact_available = |needed: &Proposition| {
-        pure_fact_is_replay_available(needed, available)
+        pure_fact_is_available(needed, available)
             || available.iter().any(|fact| {
                 condition_polarity_equivalent(fact, needed)
                     || propositions_equal_modulo_proven_snapshots(fact, needed, &assumptions)
@@ -761,7 +761,7 @@ fn canonical_order_condition(
     }
 }
 
-pub(super) fn quantified_replay_equivalent_available_fact(
+pub(super) fn quantified_equivalent_available_fact(
     required: &Proposition,
     available: &[Proposition],
 ) -> Option<Proposition> {
@@ -1093,16 +1093,16 @@ fn alpha_proposition_key(
 
 /// Returns a linear-time persistent-index key for a universal in the covered
 /// logical/condition fragment. Unsupported atomic families return `None` and
-/// remain on their legacy replay path rather than being placed in a broad
+/// remain on their unindexed fallback path rather than being placed in a broad
 /// bucket. Selecting a candidate by this key proves nothing; the quantified
-/// replay judgment still validates it.
-pub(super) fn quantified_replay_index_key(
+/// check judgment still validates it.
+pub(super) fn quantified_equivalence_index_key(
     proposition: &Proposition,
-) -> Option<QuantifiedReplayKey> {
+) -> Option<QuantifiedEquivalenceKey> {
     if !matches!(proposition, Proposition::ForAll { .. }) {
         return None;
     }
-    alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedReplayKey)
+    alpha_proposition_key(proposition, &mut BTreeMap::new(), &mut 0).map(QuantifiedEquivalenceKey)
 }
 
 /// See the doc comment below: a generation-side recognizer only, comparing
@@ -1155,16 +1155,13 @@ fn nested_quantified_binder_equivalent_exact(
     }
 }
 
-pub(super) fn pure_fact_is_replay_available(
-    required: &Proposition,
-    available: &[Proposition],
-) -> bool {
+pub(super) fn pure_fact_is_available(required: &Proposition, available: &[Proposition]) -> bool {
     available.contains(required)
         || exactly_available_fact(required, available).is_some()
         || available
             .iter()
             .any(|fact| quantified_binder_equivalent(required, fact))
-        || quantified_replay_equivalent_available_fact(required, available).is_some()
+        || quantified_equivalent_available_fact(required, available).is_some()
 }
 
 pub(super) fn atomic_conjuncts<'a>(
@@ -1790,7 +1787,7 @@ mod tests {
     }
 
     #[test]
-    fn quantified_replay_key_is_alpha_invariant_and_preserves_free_variables() {
+    fn quantified_check_key_is_alpha_invariant_and_preserves_free_variables() {
         let quantified =
             |outer: Variable, inner: Variable, free: Variable, name: &str| Proposition::ForAll {
                 var: outer,
@@ -1833,19 +1830,19 @@ mod tests {
         );
 
         assert_eq!(
-            quantified_replay_index_key(&left),
-            quantified_replay_index_key(&renamed),
+            quantified_equivalence_index_key(&left),
+            quantified_equivalence_index_key(&renamed),
             "binder identities and existential display names are not semantic"
         );
         assert_ne!(
-            quantified_replay_index_key(&left),
-            quantified_replay_index_key(&different_free),
+            quantified_equivalence_index_key(&left),
+            quantified_equivalence_index_key(&different_free),
             "free variable identities remain part of the key"
         );
     }
 
     #[test]
-    fn quantified_replay_key_sees_through_load_variables() {
+    fn quantified_check_key_sees_through_load_variables() {
         // A universal lowered to load variables keys as the loads those
         // variables represent. A bound index inside a load variable keys by
         // binder ordinal, so renamed binders share a bucket with each other
@@ -1883,12 +1880,12 @@ mod tests {
         let renamed = universal(Variable(2_000_000), named(Variable(2_000_000)));
         let written = universal(Variable(3_000_001), cell(Variable(3_000_001)));
         assert_eq!(
-            quantified_replay_index_key(&left),
-            quantified_replay_index_key(&renamed)
+            quantified_equivalence_index_key(&left),
+            quantified_equivalence_index_key(&renamed)
         );
         assert_eq!(
-            quantified_replay_index_key(&left),
-            quantified_replay_index_key(&written)
+            quantified_equivalence_index_key(&left),
+            quantified_equivalence_index_key(&written)
         );
         assert!(quantified_binder_equivalent(&left, &renamed));
     }

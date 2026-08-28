@@ -3,7 +3,7 @@
 An explicit equality rewrite may mention an element through a pointer alias.
 The surrounding array ownership makes the expression loadable; the restricted
 simplifier must use only its listed equalities to prove the value claim, and
-its expanded certificate must replay without requiring a redundant
+its expanded certificate must check without requiring a redundant
 element-loadability premise.
 
 ```c filename=restricted_simp_pointer_alias_loadability.c

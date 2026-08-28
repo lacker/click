@@ -577,7 +577,7 @@ fn verify_theorem_ensure(
                     )
                 },
                 |certificate| {
-                    replay_pure_theorem_certificate(
+                    validate_pure_theorem_certificate(
                         claim_label,
                         &context.requires,
                         &goal,
@@ -653,7 +653,7 @@ fn verify_theorem_ensure(
 ///
 /// Failed descendants are simply discarded. A successful descendant already
 /// owns both the semantic successor and the exact simple certificate that
-/// produced it, so ordinary operation does not reconstruct and replay that
+/// produced it, so ordinary operation does not reconstruct and check that
 /// certificate through the legacy gateway.
 #[allow(clippy::too_many_arguments)]
 fn check_direct_pure_goal_with_proof(
@@ -1010,7 +1010,7 @@ fn pure_theorem_surface_certificate(
 
     if context.requires.contains(goal)
         || exactly_available_fact(goal, &context.requires).is_some()
-        || quantified_replay_equivalent_available_fact(goal, &context.requires).is_some()
+        || quantified_equivalent_available_fact(goal, &context.requires).is_some()
     {
         return ProofCertificate::from_proof_tactics(&[ProofTactic::Assumption]).map_err(
             |error| {
@@ -1505,7 +1505,7 @@ fn lower_pure_induction_tactics(
 /// persistent `Proof` operations used by ordinary source scripts; no parallel
 /// certificate interpreter participates in acceptance.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn replay_pure_theorem_certificate(
+pub(super) fn validate_pure_theorem_certificate(
     claim_label: &str,
     requires: &[Proposition],
     goal: &Proposition,
@@ -2001,7 +2001,7 @@ fn prove_pure_theorem_tactics(
                             describe_pure_fact(&lowered, &[], &[])
                         )));
                     };
-                    if !pure_fact_is_replay_available(&lowered, &available) {
+                    if !pure_fact_is_available(&lowered, &available) {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` tactic {tactic_index}: `cases` requires its exact disjunction as an available fact: {}",
                             describe_pure_fact(&lowered, &[], &[])
@@ -2191,7 +2191,7 @@ fn prove_pure_theorem_tactics(
             ProofTactic::Assumption => {
                 if !available.contains(&goal)
                     && exactly_available_fact(&goal, &available).is_none()
-                    && quantified_replay_equivalent_available_fact(&goal, &available).is_none()
+                    && quantified_equivalent_available_fact(&goal, &available).is_none()
                 {
                     return Err(ClickError::new(format!(
                         "`assumption` failed for `{claim_label}`: {}",

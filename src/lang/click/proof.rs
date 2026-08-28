@@ -48,12 +48,6 @@ pub(in crate::lang::click) fn collect_planning_statement_transitions<R>(
 ) -> (R, Vec<(String, usize, String)>) {
     cursor_execution::collect_planning_statement_transitions(operation)
 }
-#[cfg(test)]
-pub(in crate::lang::click) use checked_drivers::collect_internal_proof_execution_labels;
-#[cfg(test)]
-pub(in crate::lang::click) use checked_drivers::count_internal_proof_executions;
-#[cfg(test)]
-pub(in crate::lang::click) use checked_drivers::count_root_internal_proof_executions;
 use checked_drivers::*;
 use execution_planning::*;
 pub(super) use execution_planning::{
@@ -73,7 +67,7 @@ pub(in crate::lang::click) use proof_object::collect_execution_context_export_la
 use proof_object::*;
 #[cfg(test)]
 use pure_theorems::{
-    lower_pure_theorem_proposition, pure_theorem_context, replay_pure_theorem_certificate,
+    lower_pure_theorem_proposition, pure_theorem_context, validate_pure_theorem_certificate,
 };
 pub(super) use pure_theorems::{
     pure_theorem_array_refs, pure_theorem_parameter_values, verify_theorem_definitions,
@@ -97,7 +91,7 @@ use timing::TacticTiming;
 pub(super) use timing::{SourceTacticClass, source_tactic_class};
 
 /// Checked kernel evidence used as the input to constructing one
-/// [`SimpleProofStep`]. Evidence never forms an ordered replayable program of
+/// [`SimpleProofStep`]. Evidence never forms an ordered checkable program of
 /// its own: search consumes it transiently to write the surface step, and the
 /// resulting operation is checked by `Proof`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -223,7 +217,7 @@ fn apply_logical_goal_tactic(
                 if normalizes_context_free(&instance) {
                     continue;
                 }
-                if !pure_fact_is_replay_available(&instance, available) {
+                if !pure_fact_is_available(&instance, available) {
                     return Err(format!(
                         "`enumerate` requires each in-range instance as an exact available fact; missing {}",
                         describe_pure_fact(&instance, &[], &[]),
@@ -579,8 +573,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
     available: &[Proposition],
 ) -> Result<(), String> {
     let target_matches_goal = target == goal
-        || quantified_replay_equivalent_available_fact(goal, std::slice::from_ref(target))
-            .is_some();
+        || quantified_equivalent_available_fact(goal, std::slice::from_ref(target)).is_some();
     if !target_matches_goal {
         return Err(format!(
             "atomic premise derivation target does not match the current goal\n  target: {}\n  goal: {}",
@@ -633,7 +626,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
         return Ok(());
     }
     // Overflow side-conditions are execution-certified facts with no Surface
-    // surface form, so a certificate can never list them; replay consumes
+    // surface form, so a certificate can never list them; check consumes
     // them from the ambient record, and this check may too. Only that shape
     // widens the premise set — evidence for everything else stays listed.
     let ambient_overflow_facts = available
@@ -708,7 +701,7 @@ pub(super) fn check_atomic_premise_derivation_goal(
     // Effect summaries and certified-write records are deterministic
     // execution artifacts with no surface form; certificate generation
     // deliberately omits them from the premise list (mirroring its
-    // loadability carve-out), so the replay environment supplies them.
+    // loadability carve-out), so the check environment supplies them.
     // Only these two shapes ride along: everything else the derivation
     // consumes must be a listed premise.
     let effect_context = available
@@ -788,7 +781,7 @@ pub(super) fn plan_restricted_simp_goal(
     available: &[Proposition],
 ) -> Result<PropositionDerivation, String> {
     if target != goal
-        && quantified_replay_equivalent_available_fact(goal, std::slice::from_ref(target)).is_none()
+        && quantified_equivalent_available_fact(goal, std::slice::from_ref(target)).is_none()
     {
         return Err(format!(
             "`simp` target does not match the current goal\n  target: {}\n  goal: {}",
@@ -823,9 +816,9 @@ pub(super) fn plan_restricted_simp_goal(
         ));
     };
     derivation
-        .replay(&assumptions)
+        .check(&assumptions)
         .then_some(derivation)
-        .ok_or_else(|| "`simp() using` planned a derivation that did not replay".to_string())
+        .ok_or_else(|| "`simp() using` planned a derivation that failed validation".to_string())
 }
 
 pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> bool {
@@ -839,19 +832,19 @@ pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> boo
 fn pure_goal_proof_certificate_gateway<T>(
     claim_label: &str,
     planner: impl FnOnce() -> Result<ProofCertificate, ClickError>,
-    replay: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
+    check: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
 ) -> Result<(ProofCertificate, T), ClickError> {
     pure_goal_proof_certificate_gateway_with_checked_result(
         claim_label,
         || planner().map(|certificate| (certificate, None)),
-        replay,
+        check,
     )
 }
 
 fn pure_goal_proof_certificate_gateway_with_checked_result<T>(
     claim_label: &str,
     planner: impl FnOnce() -> Result<(ProofCertificate, Option<T>), ClickError>,
-    replay: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
+    check: impl FnOnce(&ProofCertificate) -> Result<T, ClickError>,
 ) -> Result<(ProofCertificate, T), ClickError> {
     let function = claim_label
         .split_once('.')
@@ -867,12 +860,12 @@ fn pure_goal_proof_certificate_gateway_with_checked_result<T>(
         None => crate::instrumentation::measure_operation(
             function,
             claim_label,
-            "surface certificate replay",
-            || replay(&certificate),
+            "generated certificate validation",
+            || check(&certificate),
         )
         .map_err(|error| {
             ClickError::new(format!(
-                "pure goal `{claim_label}` certificate failed ordinary replay:\n{}\n{}",
+                "pure goal `{claim_label}` certificate failed round-trip validation:\n{}\n{}",
                 format_proof_certificate(&certificate),
                 error.message()
             ))
@@ -1198,7 +1191,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn pure_fact_replay_availability_ignores_quantifier_binder_ids() {
+    fn pure_fact_check_availability_ignores_quantifier_binder_ids() {
         let quantified_equality = |variable| Proposition::ForAll {
             var: variable,
             sort: Sort::CInt32,
@@ -1211,13 +1204,13 @@ mod certificate_tests {
             )),
         };
         let available = quantified_equality(Variable(2_000_000));
-        let replayed = quantified_equality(Variable(3_000_000));
+        let checked = quantified_equality(Variable(3_000_000));
 
-        assert!(pure_fact_is_replay_available(&replayed, &[available]));
+        assert!(pure_fact_is_available(&checked, &[available]));
     }
 
     #[test]
-    fn pure_certificate_replay_is_transactional() {
+    fn pure_certificate_check_is_transactional() {
         let file = parse(
             r#"
                 theorem reflexive(x: int32) {
@@ -1256,7 +1249,7 @@ mod certificate_tests {
             "reflexive.ensures_0",
             || Ok(failing.clone()),
             |certificate| {
-                replay_pure_theorem_certificate(
+                validate_pure_theorem_certificate(
                     "reflexive.ensures_0",
                     &context.requires,
                     &goal,
@@ -1274,11 +1267,11 @@ mod certificate_tests {
         assert!(
             error
                 .message()
-                .contains("certificate failed ordinary replay"),
+                .contains("certificate failed round-trip validation"),
             "unexpected gateway error: {}",
             error.message()
         );
-        let succeeded = replay_pure_theorem_certificate(
+        let succeeded = validate_pure_theorem_certificate(
             "reflexive.ensures_0",
             &context.requires,
             &goal,
@@ -1410,9 +1403,9 @@ mod certificate_tests {
                             | "disjunction.ensures_0"
                             | "impossible.ensures_0"
                     )
-                        && name == "surface certificate replay"
+                        && name == "generated certificate validation"
             )),
-            "checked smart pure proofs must not pass through ordinary certificate replay: {events:#?}"
+            "checked smart pure proofs must not pass through ordinary certificate validation: {events:#?}"
         );
     }
 
@@ -1524,7 +1517,7 @@ enum ProofCaseAssumptionKind {
         proposition: ClickProposition,
         value: bool,
     },
-    /// Disjunction elimination from `cases`: replay checks that the written
+    /// Disjunction elimination from `cases`: proof checking requires the written
     /// disjunction is an available fact at the split point, then assumes
     /// exactly the selected disjunct.
     Disjunct {

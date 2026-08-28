@@ -54,18 +54,18 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
             predicate_environment,
             click_function_environment,
         );
-        // Prefer the current-state lowering when it is replayable. A retained
+        // Prefer the current-state lowering when it is checkable. A retained
         // surface form can also name an older raw load whose value the
         // current memory evaluates through (for example after swapping struct
         // fields); that historical kernel remains the fallback for premises
-        // that cannot be replayed under the current form.
+        // that cannot be checked under the current form.
         let recorded = || {
             surface_propositions
                 .available_kernel_matching(surface_premise, |kernel| available.contains(kernel))
                 .cloned()
         };
         let premise = match freshly_lowered {
-            Ok(fresh) if available.replay_available_across_effects(&fresh, &[]) => fresh,
+            Ok(fresh) if available.available_across_effects(&fresh, &[]) => fresh,
             Ok(fresh) => recorded().unwrap_or(fresh),
             Err(message) => recorded().ok_or_else(|| {
                 ClickError::new(format!(
@@ -73,7 +73,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
                 ))
             })?,
         };
-        if !available.replay_available_across_effects(&premise, &[]) {
+        if !available.available_across_effects(&premise, &[]) {
             let available_facts = available.to_vec();
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `apply using` requires an exact premise: {}",
@@ -166,7 +166,7 @@ pub(in crate::lang::click::proof) fn check_point_theorem_application_using_facts
 
 /// Returns the kernel authority for a standard theorem application whose
 /// exact instantiated implication may be needed by whole-function
-/// certification. Surface replay still checks the application separately;
+/// certification. Surface proof checking still validates the application separately;
 /// this carries only the fixed kernel axiom, never a searched conclusion.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn kernel_standard_theorem_derivation_at_current_point(
@@ -418,8 +418,7 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         condition_polarity_equivalent(&lowered.clone(), &kernel.clone())
             || exactly_available_fact(&kernel.clone(), std::slice::from_ref(&lowered.clone()))
                 .is_some()
-            || quantified_replay_equivalent_available_fact(kernel, std::slice::from_ref(lowered))
-                .is_some()
+            || quantified_equivalent_available_fact(kernel, std::slice::from_ref(lowered)).is_some()
     };
     // Recorded source forms are the cheapest exact candidates and cover
     // ordinary premises. Check them before synthesizing variants at every
@@ -479,11 +478,8 @@ pub(in crate::lang::click::proof) fn checked_surface_fact_at_outcome(
         if (matches!(
             (kernel, recorded),
             (Proposition::ForAll { .. }, Proposition::ForAll { .. })
-        ) || quantified_replay_equivalent_available_fact(
-            kernel,
-            std::slice::from_ref(recorded),
-        )
-        .is_some())
+        ) || quantified_equivalent_available_fact(kernel, std::slice::from_ref(recorded))
+            .is_some())
             && let Ok(surface) = view.surface_propositions.surface(recorded)
             && !bases.contains(surface)
         {

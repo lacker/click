@@ -678,7 +678,7 @@ pub(in crate::lang::click) fn prove_claims_by_grouped_script(
 
 /// Exit-claim closure: structural evidence that the current semantic proof
 /// unit discharged a claim. Surface tactics are retained only as provenance;
-/// they are not replayed as an ordinary-verification acceptance gate.
+/// they are not proof_candidate as an ordinary-verification acceptance gate.
 ///
 /// Mid-execution the invariant is already structural — a smart operation can
 /// continue only from its accepted checked `Proof` descendant, so "accepted
@@ -1133,7 +1133,7 @@ pub(super) fn finish_ordered_proof<'a>(
         // context is built.  Their phase proofs can unfold predicates just
         // like legacy structural clauses, so fresh whole-function
         // certification must expose those definitions at function entry as
-        // well.  Otherwise proof replay can initialize an invariant from an
+        // well. Otherwise the proof can initialize an invariant from an
         // unfolded requirement while kernel certification sees only the
         // opaque predicate and rejects the verified loop rule.
         certification_facts = requirements_with_structural_unfolds(
@@ -1303,12 +1303,12 @@ pub(super) fn finish_ordered_proof<'a>(
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?;
-            let replay_outcomes = execution
+            let proof_outcomes = execution
                 .paths()
                 .iter()
                 .map(|path| path.outcome().clone())
                 .collect::<Vec<_>>();
-            let outcomes_match = |replayed: &crate::kernel::CFunctionExecutionCandidate,
+            let outcomes_match = |proof_candidate: &crate::kernel::CFunctionExecutionCandidate,
                                   certified_index: usize| {
                 let certified = &certified_outcomes[certified_index];
                 let certified_path = &certified_execution.paths()[certified_index];
@@ -1317,7 +1317,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     .into_iter()
                     .map(|fact| fact.proposition().clone())
                     .collect::<Vec<_>>();
-                let replayed_facts = replayed
+                let proof_facts = proof_candidate
                     .execution_facts()
                     .into_iter()
                     .map(|fact| fact.proposition().clone())
@@ -1332,18 +1332,18 @@ pub(super) fn finish_ordered_proof<'a>(
                         .iter()
                         .map(ProofObligation::proposition),
                 );
-                let replayed_path_conditions = replayed_facts
+                let proof_path_conditions = proof_facts
                     .iter()
                     .chain(
-                        replayed
+                        proof_candidate
                             .obligations()
                             .iter()
                             .map(ProofObligation::proposition),
                     )
                     .collect::<Vec<_>>();
                 if certified_path_conditions.into_iter().any(|certified_fact| {
-                    replayed_path_conditions.iter().any(|replayed_fact| {
-                        propositions_are_exact_negations(certified_fact, replayed_fact)
+                    proof_path_conditions.iter().any(|checked_fact| {
+                        propositions_are_exact_negations(certified_fact, checked_fact)
                     })
                 }) {
                     return false;
@@ -1351,7 +1351,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 // A proof-level branch can select an execution path even when a
                 // simple statement certificate deliberately omitted the C branch
                 // guard from its own fact list. Include that selected branch when
-                // pairing the replay candidate with an independently certified
+                // pairing the check candidate with an independently certified
                 // path, or a recursive return known to equal zero can be paired
                 // with the unrelated base-case path merely because their final
                 // observable values coincide.
@@ -1359,13 +1359,13 @@ pub(super) fn finish_ordered_proof<'a>(
                     let CFunctionOutcome::Return {
                         value: result,
                         state: post_state,
-                    } = replayed.outcome()
+                    } = proof_candidate.outcome()
                     else {
                         return false;
                     };
-                    let mut replayed_available = pure_facts.clone();
-                    replayed_available.extend(
-                        replayed
+                    let mut proof_available = pure_facts.clone();
+                    proof_available.extend(
+                        proof_candidate
                             .facts()
                             .iter()
                             .map(|fact| fact.proposition().clone()),
@@ -1380,7 +1380,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 pre_state,
                                 post_state,
                                 result,
-                                &replayed_available,
+                                &proof_available,
                                 &case.condition,
                                 predicate_environment,
                                 click_function_environment,
@@ -1394,10 +1394,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                 Proposition::Not(Box::new(condition))
                             }
                         };
-                        if replayed_path_conditions.iter().any(|replayed_fact| {
-                            propositions_are_exact_negations(replayed_fact, &case_fact)
+                        if proof_path_conditions.iter().any(|checked_fact| {
+                            propositions_are_exact_negations(checked_fact, &case_fact)
                         }) {
-                            // The replay execution still contains every C path;
+                            // The check execution still contains every C path;
                             // proof-level branching filters the incompatible ones
                             // later.  Such a path only needs its ordinary matching
                             // kernel certificate, not a certificate compatible
@@ -1418,11 +1418,11 @@ pub(super) fn finish_ordered_proof<'a>(
                 for fact in &pure_facts {
                     path_assumptions = path_assumptions.assume_proposition(fact.clone());
                 }
-                for fact in replayed_facts {
+                for fact in proof_facts {
                     path_assumptions = path_assumptions.assume_proposition(fact);
                 }
                 for equation in
-                    crate::kernel::certified_store_equations(&replayed.execution_facts())
+                    crate::kernel::certified_store_equations(&proof_candidate.execution_facts())
                         .into_iter()
                         .chain(crate::kernel::certified_store_equations(
                             &certified_path.execution_facts(),
@@ -1439,12 +1439,12 @@ pub(super) fn finish_ordered_proof<'a>(
                     }
                 }
                 c_function_outcomes_program_state_definitionally_equal(
-                    replayed.outcome(),
+                    proof_candidate.outcome(),
                     certified,
                     &path_assumptions,
                 ) || c_function_outcomes_program_state_equal_by_execution_provenance(
-                    replayed.outcome(),
-                    &replayed.execution_facts(),
+                    proof_candidate.outcome(),
+                    &proof_candidate.execution_facts(),
                     certified,
                     &certified_path.execution_facts(),
                     &path_assumptions,
@@ -1455,20 +1455,20 @@ pub(super) fn finish_ordered_proof<'a>(
             // vacuous. Such a path needs no matching kernel certificate — the
             // exit drain below skips it by the same case reasoning.
             let path_excluded_by_proof_branch =
-            |replayed: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
+            |proof_candidate: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
                 if proof_execution.case_assumptions.is_empty() {
                     return Ok(false);
                 }
                 let CFunctionOutcome::Return {
                     value: result,
                     state: post_state,
-                } = replayed.outcome()
+                } = proof_candidate.outcome()
                 else {
                     return Ok(false);
                 };
                 let mut available = pure_facts.clone();
                 available.extend(
-                    replayed
+                    proof_candidate
                         .facts()
                         .iter()
                         .map(|fact| fact.proposition().clone()),
@@ -1509,7 +1509,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         Ok(false) => {}
                         Err(()) => {
                             return Err(ClickError::new(format!(
-                                "execution replay for `{proof_label}` cannot attribute a path to a sibling proof branch: the routed assumptions are already inconsistent"
+                                "execution pass for `{proof_label}` cannot attribute a path to a sibling proof branch: the routed assumptions are already inconsistent"
                             )));
                         }
                     }
@@ -1517,7 +1517,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 }
                 Ok(false)
             };
-            let certified_path_for_replay = crate::instrumentation::measure_operation(
+            let certified_path_for_proof = crate::instrumentation::measure_operation(
                 function_block.signature().name(),
                 &proof_label,
                 "certified outcome pairing",
@@ -1527,7 +1527,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             .then(|| vec![Some(0); execution.paths().len()]));
                     }
                     let mut pairing = Vec::with_capacity(execution.paths().len());
-                    for (path_index, replayed) in execution.paths().iter().enumerate() {
+                    for (path_index, proof_candidate) in execution.paths().iter().enumerate() {
                         if !group_members.contains(&path_index) {
                             pairing.push(None);
                             continue;
@@ -1543,11 +1543,13 @@ pub(super) fn finish_ordered_proof<'a>(
                             pairing.push(None);
                             continue;
                         }
-                        if let Some(certified_index) = (0..certified_outcomes.len())
-                            .find(|certified_index| outcomes_match(replayed, *certified_index))
+                        if let Some(certified_index) =
+                            (0..certified_outcomes.len()).find(|certified_index| {
+                                outcomes_match(proof_candidate, *certified_index)
+                            })
                         {
                             pairing.push(Some(certified_index));
-                        } else if path_excluded_by_proof_branch(replayed)? {
+                        } else if path_excluded_by_proof_branch(proof_candidate)? {
                             pairing.push(None);
                         } else {
                             return Ok(None);
@@ -1556,25 +1558,25 @@ pub(super) fn finish_ordered_proof<'a>(
                     Ok(Some(pairing))
                 },
             )?;
-            let Some(certified_path_for_replay) = certified_path_for_replay else {
+            let Some(certified_path_for_proof) = certified_path_for_proof else {
                 // Outcome equality is a conservative kernel query: once the
                 // ambient limit fires it returns `false`, which used to turn a
-                // valid replay into a ghost-region or memory mismatch. Give the
+                // valid check into a ghost-region or memory mismatch. Give the
                 // limit priority over the semantic pairing diagnostic.
                 check_verification_deadline()?;
                 return Err(ClickError::new(format!(
-                    "execution replay for `{proof_label}` contains a path not reproduced by kernel certification\n  replay: {replay_outcomes:?}\n  certified: {certified_outcomes:?}"
+                    "execution pass for `{proof_label}` contains a path not reproduced by kernel certification\n  check: {proof_outcomes:?}\n  certified: {certified_outcomes:?}"
                 )));
             };
             for &member in group_members {
-                if let Some(certified_index) = certified_path_for_replay[member] {
+                if let Some(certified_index) = certified_path_for_proof[member] {
                     merged_pairing[member] = Some((group_index, certified_index));
                 }
             }
             certified_executions.push(certified_execution);
             certified_outcomes_by_group.push(certified_outcomes);
         }
-        let certified_path_for_replay = merged_pairing;
+        let certified_path_for_proof = merged_pairing;
         let certification_facts = base_certification_facts;
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
@@ -1599,7 +1601,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         &proof_label,
                         "execution path preparation",
                     );
-                    let Some(certified_path_index) = certified_path_for_replay[path_index] else {
+                    let Some(certified_path_index) = certified_path_for_proof[path_index] else {
                         // This context's proof-branch case set excludes the path; a
                         // sibling context certifies it.
                         continue 'execution_path;
@@ -1733,7 +1735,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 Ok(true) => {
                                     // A proof-level branch only owns execution outcomes
                                     // compatible with its assumption.  The sibling branch
-                                    // certifies this path; replaying this branch's exact
+                                    // certifies this path; checking this branch's exact
                                     // per-outcome certificate against a contradictory
                                     // path would require it to list an unrelated
                                     // contradiction instead of the premises it was
@@ -1850,7 +1852,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     );
                     // The ordered surface equalities each claim's goal was
                     // rewritten through, parallel to `rewritten_claim_goals`.
-                    // The direct Simp path replays them inside its checked
+                    // The direct Simp path checks them inside its checked
                     // `have` scope, so a rewritten claim proves the same
                     // rewritten goal the legacy closer checks.
                     let mut rewrite_claim_equalities: Vec<Vec<ClickProposition>> =
@@ -2120,7 +2122,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     )));
                                 };
                                 // The retained `apply using` step is prefixed to every
-                                // claim certificate, so independent replay holds the
+                                // claim certificate, so independent verification holds the
                                 // same checked conclusions when the closer runs.
                                 for fact in added_facts {
                                     if !path_requirements.contains(&fact) {
@@ -2241,12 +2243,12 @@ pub(super) fn finish_ordered_proof<'a>(
                                             available
                                         },
                                     );
-                                // Post-execution proof certificates replay against
+                                // Post-execution proof certificates check against
                                 // the same kernel-certified loadability consequences
                                 // of stores that were available while planning them.
                                 // Restricting these facts to hand-written `derive`
                                 // scripts let smart `simp` search succeed and then
-                                // fail when its generated certificate was replayed.
+                                // fail when its generated certificate was proof_candidate.
                                 // The migrated path first: the `have` scope
                                 // opens on this path's evolving outcome proof.
                                 // Haves in the audited execute/have/empty-frame
@@ -2984,9 +2986,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                     }
                                 }
                                 // The ambient frame checks against every available
-                                // fact; its replayable surface form is exactly
+                                // fact; its checkable surface form is exactly
                                 // `frame()`. Form out one snapshot's surface facts
-                                // here produced a premise list replay could not
+                                // here produced a premise list check could not
                                 // re-establish.
                                 record_post_execution_surface_tactic(
                                     deferred.surface_recorded,
@@ -3266,7 +3268,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     Ensure::Proposition(surface_goal) => {
                                                         // A rewritten claim proves the
                                                         // original form with its
-                                                        // recorded rewrites replayed
+                                                        // recorded rewrites proof_candidate
                                                         // inside the checked scope.
                                                         direct_claims.push((
                                                             claim_index,
@@ -4008,7 +4010,7 @@ pub(super) fn finish_ordered_proof<'a>(
             // Surface synthesis follows proof contexts, not the number of
             // semantic execution paths they contribute. A proof branch can
             // be vacuous after certified-path filtering while its checked
-            // surface arm is still required to replay the surrounding `if`.
+            // surface arm is still required to check the surrounding `if`.
             // Record exactly one builder per declared claim for this context;
             // tying builders to produced theorems silently dropped such arms
             // (and duplicated builders when a context certified many paths).
@@ -4051,7 +4053,7 @@ pub(super) fn finish_ordered_proof<'a>(
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {
             let Some(deferred) = proof_execution.expansion.deferred_tactic_capture.as_ref() else {
-                // Structured proofs produce one replay context per logical
+                // Structured proofs produce one check context per logical
                 // case.  A selected deferred tactic activates the expansion
                 // capture while those contexts are being built, but contexts
                 // from sibling branches legitimately have no capture.  Let
@@ -4065,7 +4067,7 @@ pub(super) fn finish_ordered_proof<'a>(
             // the tactic is simply removed. Grafting the enclosing branch
             // skeleton around empty leaves would instead re-split every
             // already-merged execution path at path end, losing the
-            // execution-path/branch-trace pairing certificate replay keeps —
+            // execution-path/branch-trace pairing certificate validation keeps —
             // proof-level `if` conditions lower at each path's own outcome, so
             // an alien path meets another path's branch conditions as
             // contradictory facts it cannot use.

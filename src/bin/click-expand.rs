@@ -314,7 +314,7 @@ fn verify_expansion(
     });
     if click::instrumentation::deadline_exceeded() {
         return Err(expansion_deadline_error(
-            "replaying the generated certificate",
+            "checking the generated certificate",
             &events,
         ));
     }
@@ -362,7 +362,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resource_pattern_exit_simp_expansion_replays() {
+    fn resource_pattern_exit_simp_expansion_checks() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("mdtests/resource_pattern_counts_cross_contracts.md");
         let mdtest = read_mdtest(&path).expect("fixture should parse");
@@ -376,7 +376,7 @@ mod tests {
             .expect("exit simp should generate a certificate");
         click::lang::click::verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
             panic!(
-                "resource-pattern exit simp expansion should replay: {}\n{expanded}",
+                "resource-pattern exit simp expansion should check: {}\n{expanded}",
                 error.message()
             )
         });
@@ -403,13 +403,13 @@ mod tests {
     #[test]
     fn reports_an_expired_expansion_deadline_directly() {
         let error = click::instrumentation::with_deadline(Duration::ZERO, || {
-            check_expansion_deadline("replaying a generated certificate")
+            check_expansion_deadline("checking a generated certificate")
         })
         .expect_err("an expired expansion deadline should fail directly");
 
         assert!(
             error.starts_with(
-                "expansion time limit exceeded while replaying a generated certificate:"
+                "expansion time limit exceeded while checking a generated certificate:"
             ),
             "{error}"
         );
@@ -605,7 +605,7 @@ int32 identity(int32 x) {
             in_place: false,
         };
 
-        let expanded = run(&arguments).expect("the whole claim should expand and replay");
+        let expanded = run(&arguments).expect("the whole claim should expand and check");
 
         assert_ne!(expanded, click_source);
         assert!(!expanded.contains("execute();"));

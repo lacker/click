@@ -137,7 +137,7 @@ int32 caller(int32 x) { ensures result == x + x; } by {
 }
 
 #[test]
-fn modular_call_snapshot_anchor_replays_with_owned_resource() {
+fn modular_call_snapshot_anchor_checks_with_owned_resource() {
     let init_c = r#"
 struct box {
     int32 value;
@@ -272,7 +272,7 @@ int32 box_pipeline(struct box* owner, int32 data[], int32 value) {
             ("box_pipeline.c", pipeline_c),
         ],
     )
-    .expect("an explicit call-entry snapshot should replay with an owned resource");
+    .expect("an explicit call-entry snapshot should check with an owned resource");
 }
 
 /// A `simp() using` premise that equates one expression across two call
@@ -380,7 +380,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
     ];
 
     verify_c0_sources(click_source, &sources)
-        .expect("the snapshot-bridged restricted simp certificate should replay");
+        .expect("the snapshot-bridged restricted simp certificate should check");
 
     let selected = click_source.find("have owner->data == data by {").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -400,7 +400,7 @@ int32 box_pipeline(struct box* owner, int32 data[]) {
         "a reflexive snapshot premise must not be rewritten:\n{expanded}"
     );
     verify_c0_sources(&expanded, &sources)
-        .expect("the explicit bridged-premise certificate should replay");
+        .expect("the explicit bridged-premise certificate should check");
 }
 
 #[test]
@@ -495,18 +495,9 @@ int32 pipeline(struct counter* owner) {
         ("pipeline.c", pipeline_c),
     ];
 
-    let (verified, events) =
+    let (verified, _events) =
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
     verified.expect("the original smart proof should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "pipeline.contract"
-                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
-        )),
-        "resource-backed execute_until entered compatibility replay: {events:#?}"
-    );
 
     let frontier_have = click_source.find("have owner->value == 1 by simp").unwrap();
     let have_position = expansion::position_at_offset(click_source, frontier_have);
@@ -523,7 +514,7 @@ int32 pipeline(struct counter* owner) {
         "the explicit certificate should retain a source statement anchor"
     );
     verify_c0_sources(&have_expanded, &sources)
-        .expect("the mixed-snapshot frontier-local expansion should replay");
+        .expect("the mixed-snapshot frontier-local expansion should check");
 
     let selected = click_source.find("execute_until").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -532,7 +523,7 @@ int32 pipeline(struct counter* owner) {
             .expect("mixed-snapshot smart execution should expand");
     assert!(!expanded.contains("execute_until(statement(3));"));
     verify_c0_sources(&expanded, &sources)
-        .expect("the mixed-snapshot smart execution expansion should replay");
+        .expect("the mixed-snapshot smart execution expansion should check");
 }
 
 #[test]
@@ -691,18 +682,9 @@ int32 buffer_pipeline(
         ("buffer_pipeline.c", pipeline_c),
     ];
 
-    let (verified, events) =
+    let (verified, _events) =
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
     verified.expect("the original vector-shaped proof should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "buffer_push.contract"
-                    && name == "smart tactic compatibility replay (tactic 3, source 3)"
-        )),
-        "the snapshot-qualified contextual frame entered compatibility replay: {events:#?}"
-    );
 
     let selected = click_source.rfind("execute_until").unwrap();
     let position = expansion::position_at_offset(click_source, selected);
@@ -711,7 +693,7 @@ int32 buffer_pipeline(
             .expect("vector-shaped mixed-snapshot smart execution should expand");
     assert!(!expanded.contains("execute_until(statement(3));"));
     verify_c0_sources(&expanded, &sources)
-        .expect("the vector-shaped mixed-snapshot expansion should replay");
+        .expect("the vector-shaped mixed-snapshot expansion should check");
 
     let buffer_push = click_source.find("int32 buffer_push").unwrap();
     let frame = buffer_push + click_source[buffer_push..].find("frame();").unwrap();
@@ -1158,20 +1140,11 @@ fn perpetual_service_example_verifies_stably_across_repeated_runs() {
         let c_sources = crate::cli::read_verifying_sources(click_path, &click_source)
             .expect("the example C sources should resolve");
         let sources = crate::cli::source_refs(&c_sources);
-        let (verified, events) =
+        let (verified, _events) =
             crate::instrumentation::collect(|| verify_c0_sources(&click_source, &sources));
         verified.unwrap_or_else(|error| {
             panic!("`{}` failed: {}", click_path.display(), error.message())
         });
-        assert!(
-            events.iter().all(|event| !matches!(
-                event,
-                crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                    if claim == "service_step.contract"
-                        && name.starts_with("smart tactic compatibility replay")
-            )),
-            "the service frame must apply its selected premises directly to Proof: {events:#?}"
-        );
         // The flaky fold lives in `service_step`; repeat its verification to
         // pin cross-run determinism of the shared caches and interners.
         for round in 0..4 {
@@ -1295,18 +1268,9 @@ fn input_cursor_call_step_with_trailing_have_stays_on_proof() {
         .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
     let c_sources = crate::cli::source_refs(&sources);
 
-    let (verified, events) =
+    let (verified, _events) =
         crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
     verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "input_cursor_shared_pipeline.contract"
-                    && name == "smart tactic compatibility replay (tactic 5, source 5)"
-        )),
-        "the call step's trailing have entered compatibility replay: {events:#?}"
-    );
 
     let marker = "    step();\n    transport(at(statement(4).entry";
     let selected = click_source
@@ -1371,18 +1335,9 @@ fn recursive_zero_list_branch_frames_stay_on_proof() {
         .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
     let c_sources = crate::cli::source_refs(&sources);
 
-    let (verified, events) =
+    let (verified, _events) =
         crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
     verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim.starts_with("zero_list_sum")
-                    && name.starts_with("smart tactic compatibility replay")
-        )),
-        "a recursive branch frame entered compatibility replay: {events:#?}"
-    );
 
     let function_start = click_source
         .find("int32 zero_list_sum(")
@@ -1420,18 +1375,9 @@ fn recursive_zero_list_branch_frames_stay_on_proof() {
         premises_start..premises_end,
         "\n                1 == 0;\n            ",
     );
-    let (invalid, invalid_events) =
+    let (invalid, _invalid_events) =
         crate::instrumentation::collect(|| verify_c0_sources(&corrupted, &c_sources));
     invalid.expect_err("ordinary verification should reject an unavailable frame premise");
-    assert!(
-        invalid_events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim.starts_with("zero_list_sum")
-                    && name.starts_with("smart tactic compatibility replay")
-        )),
-        "the invalid explicit frame entered compatibility replay: {invalid_events:#?}"
-    );
 }
 
 #[test]

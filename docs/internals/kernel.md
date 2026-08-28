@@ -479,7 +479,7 @@ and verification.
 Pure-function induction deliberately preserves the symbolic evaluation
 boundary. The language layer lowers the theorem predicate with recursive pure
 applications opaque, constructs a fresh universally quantified strong
-hypothesis, and replays every proof branch. Applying that hypothesis goes
+hypothesis, and checks every proof branch. Applying that hypothesis goes
 through the kernel's exact `forall int32` instantiation operation: the
 quantified fact, nonnegative argument, strict decrease, substituted theorem
 requirements, and resulting predicate must all match. The ordinary one-step

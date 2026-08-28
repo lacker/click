@@ -384,7 +384,7 @@ fn bounded_auto_loop_expands_without_a_detached_summary() {
 
     assert!(!expanded.contains("summarize("), "{expanded}");
     verify_c0_sources(&expanded, &sources)
-        .expect("the bounded loop certificate should freshly replay");
+        .expect("the bounded loop certificate should freshly check");
 }
 
 #[test]
@@ -437,7 +437,7 @@ fn struct_name_signature_mismatch_reports_direct_error() {
 }
 
 #[test]
-fn observed_cursor_facts_produce_replayable_surface_certificates() {
+fn observed_cursor_facts_produce_checkable_surface_certificates() {
     let c_source = r#"
         struct input_cursor {
             int32 pos;
@@ -537,7 +537,7 @@ fn observed_cursor_facts_produce_replayable_surface_certificates() {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("the grouped simp should emit a non-circular surface certificate");
     verify_c0_sources(&expanded, &sources)
-        .expect("the grouped simp surface certificate should replay from fresh source");
+        .expect("the grouped simp surface certificate should check from fresh source");
 }
 
 #[test]
@@ -612,19 +612,10 @@ fn explicit_store_step_with_unfolded_resource_facts_verifies() {
         }
     "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
+    let (verified, _events) = crate::instrumentation::collect(|| {
         verify_c0_sources(click_source, &[("owned_string_set.c", c_source)])
     });
     verified.expect("explicit store certificate should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "owned_string_set.contract"
-                    && name == "smart tactic compatibility replay (tactic 9, source 9)"
-        )),
-        "the leading Have and resource-backed step must remain on Proof: {events:#?}"
-    );
 
     let smart_step = click_source
         .rfind("step();")
@@ -728,7 +719,7 @@ fn expanded_read_step_uses_contextual_range_separation() {
             .map(|offset| offset + 1)
             .unwrap_or(0)
         + 1;
-    let (expanded, events) = crate::instrumentation::collect(|| {
+    let (expanded, _events) = crate::instrumentation::collect(|| {
         expand_c0_tactic_source_at(
             click_source,
             &[("owned_string_pop.c", c_source)],
@@ -736,16 +727,7 @@ fn expanded_read_step_uses_contextual_range_separation() {
             column,
         )
     });
-    let expanded = expanded.expect("the read step's generated surface certificate should replay");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "owned_string_pop.contract"
-                    && name == "smart tactic compatibility replay (tactic 3, source 3)"
-        )),
-        "resource-backed execute entered compatibility replay: {events:#?}"
-    );
+    let expanded = expanded.expect("the read step's generated surface certificate should check");
 
     let strict_limits = crate::instrumentation::TacticLimits {
         simple: std::time::Duration::from_secs(30),
@@ -769,7 +751,7 @@ fn expanded_read_step_uses_contextual_range_separation() {
 }
 
 #[test]
-fn decrement_contract_replays_nonnegative_and_equality_certificates() {
+fn decrement_contract_checks_nonnegative_and_equality_certificates() {
     let c_source = r#"
         int32 decrement(int32 value, int32 count) {
             return value - 1;
@@ -792,5 +774,5 @@ fn decrement_contract_replays_nonnegative_and_equality_certificates() {
     "#;
 
     verify_c0_sources(click_source, &[("decrement.c", c_source)])
-        .expect("decrement arithmetic should search and replay consistently");
+        .expect("decrement arithmetic should search and check consistently");
 }

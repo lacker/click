@@ -907,7 +907,7 @@ fn find_claim_proof_edit(
 /// An explicit expansion request threaded through one verification run.
 ///
 /// Verification fills in `result` for the selected proof site as it goes;
-/// nothing about verification's own control flow or replay state depends on
+/// nothing about verification's own control flow or execution state depends on
 /// the capture being present. This replaces the old thread-local expansion
 /// probe and its abort-by-sentinel-error protocol: expansion is now one
 /// ordinary verification plus a lookup.

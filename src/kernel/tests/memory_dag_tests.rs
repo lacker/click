@@ -64,7 +64,7 @@ fn a_store_records_the_edge_from_the_snapshot_it_wrote() {
 }
 
 #[test]
-fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
+fn retained_store_hops_carry_locally_checkable_distinctness_proofs() {
     if skip_without_memory_dag() {
         return;
     }
@@ -98,7 +98,7 @@ fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
         "unexpected retained reason: {:?}",
         constant_hop.justification
     );
-    assert!(constant_hop.justification.replays(
+    assert!(constant_hop.justification.checks(
         constant_hop.derivation.as_ref(),
         &constant_read,
         &PureFactContext::new(),
@@ -117,7 +117,7 @@ fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
         &PureFactContext::new(),
     )
     .expect("the atomic query retains the same typed walk");
-    assert!(constant_atomic.replays(
+    assert!(constant_atomic.checks(
         &Proposition::ConditionIs(ConditionTerm::equal(constant_left, constant_right), true,),
         &PureFactContext::new(),
     ));
@@ -143,18 +143,18 @@ fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
             condition: inequality,
         }
     );
-    assert!(symbolic_hop.justification.replays(
+    assert!(symbolic_hop.justification.checks(
         symbolic_hop.derivation.as_ref(),
         &symbolic_read,
         &assumptions,
     ));
     assert!(
-        !symbolic_hop.justification.replays(
+        !symbolic_hop.justification.checks(
             symbolic_hop.derivation.as_ref(),
             &symbolic_read,
             &PureFactContext::new(),
         ),
-        "the retained exact premise must still be present during replay"
+        "the retained exact premise must still be present during check"
     );
     let symbolic_left = Bitvector32Term::MemoryLoad(
         crate::kernel::intern_c_memory_ref(&after_symbolic),
@@ -169,10 +169,10 @@ fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
             .expect("the atomic query retains the exact inequality proof");
     let symbolic_goal =
         Proposition::ConditionIs(ConditionTerm::equal(symbolic_left, symbolic_right), true);
-    assert!(symbolic_atomic.replays(&symbolic_goal, &assumptions));
+    assert!(symbolic_atomic.checks(&symbolic_goal, &assumptions));
     assert!(
-        !symbolic_atomic.replays(&symbolic_goal, &PureFactContext::new()),
-        "atomic replay cannot borrow the missing exact inequality"
+        !symbolic_atomic.checks(&symbolic_goal, &PureFactContext::new()),
+        "atomic check cannot borrow the missing exact inequality"
     );
     let derivation = assumptions
         .derive_atomic_proposition(&symbolic_goal)
@@ -184,9 +184,9 @@ fn retained_store_hops_carry_locally_replayable_distinctness_proofs() {
             ..
         }
     ));
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     assert!(
-        !derivation.replay(&PureFactContext::new()),
+        !derivation.check(&PureFactContext::new()),
         "the proof object still checks its exact premise context"
     );
 }
@@ -425,7 +425,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
         assert!(first.is_fully_typed());
         let goal =
             Proposition::ConditionIs(ConditionTerm::equal(load_in(&left), load_in(&right)), true);
-        assert!(first.replays(&goal, &PureFactContext::new()));
+        assert!(first.checks(&goal, &PureFactContext::new()));
         let derivation =
             with_extended_dag_bridging(|| PureFactContext::new().derive_atomic_proposition(&goal))
                 .expect("call-havoc range evidence flows out of the original decision");
@@ -436,7 +436,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
                 ..
             }
         ));
-        assert!(derivation.replay(&PureFactContext::new()));
+        assert!(derivation.check(&PureFactContext::new()));
     }
 
     // Soundness, and so asserted in both modes: an intervening loop havoc has
@@ -518,9 +518,9 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
     );
     assert!(evidence.is_fully_typed());
     let goal = Proposition::ConditionIs(ConditionTerm::equal(load(&called), load(&base)), true);
-    assert!(evidence.replays(&goal, &assumptions));
+    assert!(evidence.checks(&goal, &assumptions));
     assert!(
-        !evidence.replays(&goal, &PureFactContext::new()),
+        !evidence.checks(&goal, &PureFactContext::new()),
         "neither separation nor positivity may be borrowed from ambient search"
     );
     let left_offset = PointerOffsetTerm::scale_int32(load(&called), 4);
@@ -539,11 +539,11 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
             ..
         }
     ));
-    assert!(offset_derivation.replay(&assumptions));
+    assert!(offset_derivation.check(&assumptions));
     // The call-havoc edge froze the context in force when it was recorded,
-    // so crossing it replays from the edge alone.
+    // so crossing it is checked from the edge alone.
     assert!(
-        offset_derivation.replay(&PureFactContext::new()),
+        offset_derivation.check(&PureFactContext::new()),
         "the havoc edge's frozen context decides the crossing without ambient premises"
     );
 }
@@ -556,7 +556,7 @@ fn call_havoc_retains_exact_separation_and_positive_offset_steps() {
 /// the two forms in disjoint DAG components. The loadable prover's
 /// extended bridging connects them; everywhere outside that prover the new
 /// edges must stay invisible (pinned by the frame-evidence test above and
-/// the byte-identical replay of the certified corpus).
+/// the byte-identical check of the certified corpus).
 #[test]
 fn loadable_bound_check_bridges_len_forms_across_block_and_prune_edges() {
     if skip_without_memory_dag() {

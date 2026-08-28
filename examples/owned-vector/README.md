@@ -69,7 +69,7 @@ of grow-then-append.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
 the `vector_len` and other short accessor proofs first. Long `step()`,
-explicit transports, and named theorem applications are checked replay
+explicit transports, and named theorem applications are checked check
 artifacts retained for predictable performance and expansion coverage;
 ordinary authoring should begin with the corresponding smart tactic and
 expand only after profiling.

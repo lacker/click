@@ -108,7 +108,7 @@ impl Default for TacticWorkLimits {
     /// Simple calibration (2026-08-12, whole-claim-gate base, after the
     /// order-fact and resolution-query memos, measured with budgets
     /// disabled so no cost is clipped): the green example corpus (1,278
-    /// simple tactics including the gate's certificate re-replays) measures
+    /// simple tactics including the gate's generated-certificate validation) measures
     /// p95 = 1,027 units, p99 = 6,292, max = 16,583; the green mdtest
     /// corpus (6,137 simple tactics across 383 fixtures) measures p99 =
     /// 766, second-largest = 20,796, max = 148,094 (copy3's
@@ -813,7 +813,7 @@ fn close_operation_span() {
 
 /// RAII form of [`measure_operation`] for code whose control flow cannot be
 /// placed in a closure (for example, a loop that mutates and moves outer
-/// replay state). Dropping the guard records the completed span.
+/// execution state). Dropping the guard records the completed span.
 pub struct OperationTiming {
     measurement: Option<(String, String, String, TacticInstant, WorkCounterGuard)>,
 }

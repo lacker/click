@@ -1995,8 +1995,8 @@ id = "glossary.quantifier"
 path = "reference/glossary.md#quantifier"
 
 [[item]]
-id = "glossary.replay"
-path = "reference/glossary.md#replay"
+id = "glossary.round-trip-validation"
+path = "reference/glossary.md#round-trip-validation"
 
 [[item]]
 id = "glossary.resource"

@@ -43,7 +43,9 @@ impl<'a> Proof<'a> {
             node = current.parent.clone();
         }
         if ancestor.is_some() {
-            return Err(self.step_error("certificate checkpoint is not an ancestor of this proof"));
+            return Err(
+                self.step_error("certificate validationpoint is not an ancestor of this proof")
+            );
         }
         steps.reverse();
         Ok(ProofCertificate::from_steps(steps))
@@ -163,7 +165,8 @@ impl<'a> Proof<'a> {
     /// without accepting a historical Surface-to-kernel index entry as a
     /// substitute for an in-scope form.
     ///
-    /// The ordinary checker may use that index to recognize an exact fact.
+    /// The independent certificate validator may use that index to recognize an
+    /// exact fact.
     /// Smart theorem selection additionally needs arguments that can be
     /// lowered when the retained `apply` step runs. In particular, a local
     /// that has left scope must be written through `at(...)` rather than

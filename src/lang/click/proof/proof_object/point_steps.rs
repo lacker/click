@@ -443,7 +443,7 @@ impl<'a> Proof<'a> {
             // A leading nested `have` is a proposition proof at the
             // execution frontier. It evaluates the quantified fact and
             // argument in that frontier's point environment without
-            // exporting or replaying execution state.
+            // exporting or checking execution state.
             ProofContext::Execution(_) => {
                 self.execution_proposition_point_view().ok_or_else(|| {
                     self.step_error("`instantiate` requires a point proposition proof")
@@ -466,7 +466,7 @@ impl<'a> Proof<'a> {
             .map(|surface| self.lower_surface_proposition(surface, "`instantiate using` premise"))
             .collect::<Result<Vec<_>, _>>()?;
         for premise in &explicit_premises {
-            if !self.facts().replay_available_across_effects(premise, &[]) {
+            if !self.facts().available_across_effects(premise, &[]) {
                 return Err(self.step_error(format!(
                     "`instantiate using` requires an unavailable exact premise: {premise:?}"
                 )));
@@ -477,10 +477,7 @@ impl<'a> Proof<'a> {
             self.lower_surface_proposition(&surface_quantified, "`instantiate` quantified fact")?;
         let quantified = if self.facts().contains(&lowered_quantified) {
             lowered_quantified
-        } else if let Some(available) = self
-            .facts()
-            .matching_quantified_replay_fact(&lowered_quantified)
-        {
+        } else if let Some(available) = self.facts().matching_quantified_fact(&lowered_quantified) {
             available
         } else {
             return Err(self.step_error(format!(

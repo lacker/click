@@ -827,7 +827,7 @@ pub struct CBlock {
 /// content hash; ordering keeps a same-identity fast path but falls back to
 /// structural comparison so BTreeMap iteration order stays the structural
 /// order (proof search is sensitive to iteration order, and arena-insertion
-/// order would be nondeterministic across replays).
+/// order would be nondeterministic across checks).
 #[derive(Clone)]
 pub struct SharedCMemory {
     arena: u32,
@@ -1690,7 +1690,7 @@ pub struct CVerifiedPureTheorem {
 
 /// A proof tree produced by contextual proposition reasoning.
 ///
-/// Smart reasoning may search for this tree. Replay only checks the selected
+/// Smart reasoning may search for this tree. Check only checks the selected
 /// rule and its explicit children; it never searches for an alternative proof.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PropositionDerivation {
@@ -2058,7 +2058,7 @@ pub struct SymbolicCExecutionPath {
     pub(super) theorem: Theorem,
 }
 
-/// An untrusted collection of replayed function outcomes.
+/// An untrusted collection of checked function outcomes.
 ///
 /// Candidates deliberately carry no [`Theorem`]. They become useful as proof
 /// evidence only after a checked kernel execution independently reproduces the
@@ -2136,9 +2136,9 @@ pub(super) struct KernelVariableGenerator {
 
 impl KernelVariableGenerator {
     /// Build the deterministic fresh-name stream used by both planning and
-    /// certificate replay. Given the same lower bound and reserved set, the
+    /// certificate validation. Given the same lower bound and reserved set, the
     /// first available identifier and every successor are identical; callers
-    /// carry `next` across proof steps so a replay never relies on accidental
+    /// carry `next` across proof steps so a check never relies on accidental
     /// equality with an independently chosen symbolic name.
     pub(super) fn fresh_for(lower_bound: u64, existing: BTreeSet<Variable>) -> Self {
         Self {

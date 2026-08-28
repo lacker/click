@@ -75,7 +75,7 @@ fn explicit_nonnegative_add_definedness_certifies_the_whole_contract() {
 }
 
 #[test]
-fn apply_using_replays_only_with_its_explicit_premises() {
+fn apply_using_checks_only_with_its_explicit_premises() {
     let c_source = r#"
             int32 increment(int32 x) {
                 return x + 1;
@@ -104,7 +104,7 @@ fn apply_using_replays_only_with_its_explicit_premises() {
         "#;
 
     verify_c0_sources(click_source, &[("increment.c", c_source)])
-        .expect("explicit theorem premises should replay");
+        .expect("explicit theorem premises should check");
 
     let missing_premise = click_source.replace(
         "apply(increment_is_defined(x)) using {
@@ -183,16 +183,10 @@ fn source_expander_makes_theorem_application_premises_explicit() {
             }
         "#;
 
-    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
-        proof::count_root_internal_proof_executions(|| {
-            verify_c0_sources(click_source, &[("increment.c", c_source)])
-        })
+    let (verified, events) = crate::instrumentation::collect(|| {
+        verify_c0_sources(click_source, &[("increment.c", c_source)])
     });
     verified.expect("bare theorem application should verify");
-    assert!(
-        root_replays <= 1,
-        "ordinary verification must not replay the extracted theorem application"
-    );
     let simple_apply_checks = events
         .iter()
         .filter(|event| {
@@ -221,7 +215,7 @@ fn source_expander_makes_theorem_application_premises_explicit() {
     assert!(expanded.contains("apply(increment_is_defined(x)) using {"));
     assert!(expanded.contains("x < 2147483647;"));
     verify_c0_sources(&expanded, &[("increment.c", c_source)])
-        .expect("expanded theorem application should replay");
+        .expect("expanded theorem application should check");
 }
 
 #[test]
@@ -925,24 +919,20 @@ fn unfolds_predicate_goal_to_prove_compare_swap_sorted() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("compare_swap2.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("unfolded predicate goal should prove compare-swap sortedness");
 
     assert_eq!(verified.len(), 2);
     assert_eq!(flat_units, 1, "the ensure proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "branched predicate execution must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "branched predicate execution must not export semantic state"
@@ -983,15 +973,15 @@ fn unfolds_general_sorted_predicate() {
             }
         "#;
 
-    let ((((verified, certificate_checks), context_exports), replay_executions), flat_units) =
+    let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_execution_context_exports(|| {
                     proof::count_source_certificate_checks(|| {
                         verify_c0_sources(click_source, &[("keep_sorted.c", c_source)])
                     })
                 })
-            })
+            }
         });
     let verified = verified.expect("general sorted predicate should unfold deterministically");
 
@@ -999,10 +989,6 @@ fn unfolds_general_sorted_predicate() {
     assert_eq!(
         flat_units, 1,
         "the grouped predicate proof should retain one Proof"
-    );
-    assert_eq!(
-        replay_executions, 0,
-        "the preserved heap predicate must not enter execute_internal_proof"
     );
     assert_eq!(
         context_exports, 0,
@@ -1173,7 +1159,7 @@ fn mid_execution_witness_simp_have_expands_to_a_simple_certificate() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "current_have.contract" && name == "surface certificate replay"
+                if claim == "current_have.contract" && name == "generated certificate validation"
         )),
         "the migrated witness/simp have must retain its checked Proof path: {events:#?}"
     );
@@ -1250,26 +1236,20 @@ fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
             }
         "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("choose_witness.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("choose_witness.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("a choose/witness/simp have should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the existential point scope must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the existential point scope must not export semantic state"
@@ -1282,9 +1262,9 @@ fn mid_execution_choose_witness_simp_retains_the_checked_proof_path() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "choose_witness.contract" && name == "surface certificate replay"
+                if claim == "choose_witness.contract" && name == "generated certificate validation"
         )),
-        "the migrated choose/witness/simp path must not reconstruct and replay: {events:#?}"
+        "the migrated choose/witness/simp path must not reconstruct and check: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -1410,7 +1390,7 @@ fn point_witness_retains_a_structural_surface_goal_for_simp() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
                 if name == "post-execution smart have compatibility construction"
-                    || name.starts_with("post-execution simple have replay")
+                    || name.starts_with("post-execution simple have check")
         )),
         "the witness successor must retain the structural proof without reconstruction: {events:#?}"
     );
@@ -1557,7 +1537,7 @@ fn outcome_instantiate_uses_the_checked_proof_path() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if name.starts_with("post-execution simple have replay")
+                if name.starts_with("post-execution simple have check")
         )),
         "outcome instantiation must remain on the checked Proof path: {events:#?}"
     );
@@ -1655,7 +1635,7 @@ fn cases_eliminates_a_disjunctive_premise() {
     "#;
 
     verify_c0_sources(click_source, &[("keep_small.c", c_source)])
-        .expect("explicit cases over the disjunctive requirement should replay");
+        .expect("explicit cases over the disjunctive requirement should check");
 }
 
 #[test]
@@ -1896,26 +1876,20 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
         }
     "#;
 
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("keep.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("keep.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("nested point have search should verify through Proof scopes");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the leading point scope must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "the leading point scope must not export semantic state"
@@ -1928,9 +1902,9 @@ fn smart_point_nested_have_theorem_search_retains_checked_scopes() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "keep.contract" && name == "surface certificate replay"
+                if claim == "keep.contract" && name == "generated certificate validation"
         )),
-        "nested point scope search must not reconstruct and replay a body: {events:#?}"
+        "nested point scope search must not reconstruct and check a body: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2012,29 +1986,20 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
         }
     "#;
 
-    let (
-        (
-            (((verified, explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &[("logical_haves.c", c_source)])
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &[("logical_haves.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("leading logical have scopes should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "logical have decomposition must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "logical have decomposition must not export semantic state"
@@ -2074,12 +2039,11 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose a checked branch selection"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&corrupted, &[("logical_haves.c", c_source)])
-            })
-        });
+    let (corrupted_result, corrupted_fallbacks) = {
+        proof::count_explicit_linear_fallbacks(|| {
+            verify_c0_sources(&corrupted, &[("logical_haves.c", c_source)])
+        })
+    };
     let error = corrupted_result
         .expect_err("tampering with a logical branch selection must invalidate the proof");
     assert!(
@@ -2091,10 +2055,6 @@ fn leading_logical_have_decomposition_stays_on_one_proof() {
     assert_eq!(
         corrupted_fallbacks, 0,
         "an invalid migrated operation must not become a compatibility miss"
-    );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated source must not enter execute_internal_proof"
     );
 }
 
@@ -2150,29 +2110,20 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         }
     "#;
 
-    let (
-        (
-            (((verified, explicit_fallbacks), certificate_checks), context_exports),
-            replay_executions,
-        ),
-        flat_units,
-    ) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            proof::count_execution_context_exports(|| {
-                proof::count_source_certificate_checks(|| {
-                    proof::count_explicit_linear_fallbacks(|| {
-                        verify_c0_sources(click_source, &[("universal_haves.c", c_source)])
+    let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
+        proof::count_flat_proof_units(|| {
+            {
+                proof::count_execution_context_exports(|| {
+                    proof::count_source_certificate_checks(|| {
+                        proof::count_explicit_linear_fallbacks(|| {
+                            verify_c0_sources(click_source, &[("universal_haves.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("leading universal have scopes should verify through Proof");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "universal have scopes must not enter execute_internal_proof"
-    );
     assert_eq!(
         context_exports, 0,
         "universal have scopes must not export semantic state"
@@ -2212,12 +2163,11 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         corrupted, rewritten,
         "the expansion should expose the checked instantiation argument"
     );
-    let ((corrupted_result, corrupted_fallbacks), corrupted_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::count_explicit_linear_fallbacks(|| {
-                verify_c0_sources(&corrupted, &[("universal_haves.c", c_source)])
-            })
-        });
+    let (corrupted_result, corrupted_fallbacks) = {
+        proof::count_explicit_linear_fallbacks(|| {
+            verify_c0_sources(&corrupted, &[("universal_haves.c", c_source)])
+        })
+    };
     let error = corrupted_result
         .expect_err("tampering with a universal instantiation must invalidate the proof");
     assert!(
@@ -2230,14 +2180,10 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
         corrupted_fallbacks, 0,
         "an invalid migrated operation must not become a compatibility miss"
     );
-    assert_eq!(
-        corrupted_replays, 0,
-        "invalid migrated source must not enter execute_internal_proof"
-    );
 }
 
 #[test]
-fn grouped_top_level_existential_operations_reject_without_replay() {
+fn grouped_top_level_existential_operations_reject_without_check() {
     let c_source = "int32 identity(int32 x) { return x; }";
     let cases = [
         (
@@ -2274,22 +2220,17 @@ fn grouped_top_level_existential_operations_reject_without_replay() {
     ];
 
     for (operation, click_source, expected) in cases {
-        let (((result, certificate_checks), context_exports), replay_executions) =
-            proof::count_internal_proof_executions(|| {
-                proof::count_execution_context_exports(|| {
-                    proof::count_source_certificate_checks(|| {
-                        verify_c0_sources(click_source, &[("identity.c", c_source)])
-                    })
+        let ((result, certificate_checks), context_exports) = {
+            proof::count_execution_context_exports(|| {
+                proof::count_source_certificate_checks(|| {
+                    verify_c0_sources(click_source, &[("identity.c", c_source)])
                 })
-            });
+            })
+        };
         let error = result.expect_err("a grouped top-level existential operation must be rejected");
         assert!(
             error.message().contains(expected),
             "unexpected grouped {operation} error: {error:?}"
-        );
-        assert_eq!(
-            replay_executions, 0,
-            "grouped top-level {operation} rejection must not enter execute_internal_proof"
         );
         assert_eq!(
             context_exports, 0,
@@ -2436,7 +2377,7 @@ fn smart_point_have_if_retains_checked_arm_proofs_directly() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "keep.contract" && name == "surface certificate replay"
+                if claim == "keep.contract" && name == "generated certificate validation"
         )),
         "branch-local theorem search must retain its checked Proof paths: {events:#?}"
     );
@@ -2484,17 +2425,11 @@ fn leading_universal_contradiction_scope_stays_on_proof() {
         }
     "#;
 
-    let ((verified, replay_executions), flat_units) = proof::count_flat_proof_units(|| {
-        proof::count_internal_proof_executions(|| {
-            verify_c0_sources(click_source, &[("impossible_universal.c", c_source)])
-        })
+    let (verified, flat_units) = proof::count_flat_proof_units(|| {
+        verify_c0_sources(click_source, &[("impossible_universal.c", c_source)])
     });
     verified.expect("a checked contradiction should close the leading universal scope");
     assert_eq!(flat_units, 1, "the grouped proof should retain one Proof");
-    assert_eq!(
-        replay_executions, 0,
-        "the universally supported leading scope must not enter compatibility replay"
-    );
 }
 
 #[test]
@@ -2708,7 +2643,7 @@ fn pure_rewrite_rejects_an_int32_equality_that_is_not_available() {
     "#;
 
     let error = verify_c0_sources(click_source, &[])
-        .expect_err("a rewrite by an unproven equality must fail replay");
+        .expect_err("a rewrite by an unproven equality must fail check");
     assert!(
         error
             .message()
@@ -2741,7 +2676,7 @@ fn branching_pure_disjunction_lowers_to_left_right_certificate() {
 fn left_right_reject_the_disjunct_the_branch_does_not_prove() {
     // The then-branch assumes `x <= 0`, which proves the left disjunct only;
     // an explicit `right()` there names a disjunct the branch context does
-    // not contain and must fail replay.
+    // not contain and must fail check.
     let click_source = r#"
         theorem int32_sign_split_swapped(x: int32) {
             ensures x <= 0 or x > 0 by {
@@ -2755,7 +2690,7 @@ fn left_right_reject_the_disjunct_the_branch_does_not_prove() {
     "#;
 
     let error = verify_c0_sources(click_source, &[])
-        .expect_err("selecting the unproven disjunct must fail replay");
+        .expect_err("selecting the unproven disjunct must fail check");
     assert!(
         error
             .message()

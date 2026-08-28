@@ -89,9 +89,9 @@ diagnostic.
   derivation.
 - **Expansion** replaces smart proof source with an extracted explicit proof
   and verifies the complete rewritten source through ordinary verification.
-- Use **replay** only for checking previously produced proof text again or for
-  the current compatibility implementation. Don't present it as a required
-  phase of ordinary verification.
+- Use **round-trip validation** for checking generated proof text through the
+  ordinary verifier. Don't present it as a separate phase of ordinary
+  verification.
 - A **program point** is a location in C. An **execution frontier** combines
   one current program point with its symbolic state and pending continuations.
   Use *frontier* only as its short form.

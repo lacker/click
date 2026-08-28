@@ -1,6 +1,6 @@
 # certified stores pair a final load with the stored return value
 
-Proof replay may retain a return as a load from final memory while fresh
+The proof state may retain a return as a load from final memory while fresh
 kernel certification simplifies it to the value stored earlier. A later
 disjoint store and folding the raw fields back into a composite resource must
 not make those two certified executions disagree.

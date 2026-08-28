@@ -48,7 +48,7 @@ pub fn c_function_outcomes_definitionally_equal(
 /// Compares the observable program portion of two outcomes, leaving ghost
 /// resource representation to a separate kernel certificate.
 ///
-/// Proof replay uses this only to select the independently reproduced path;
+/// Proof construction uses this only to select the independently reproduced path;
 /// [`certify_c_function_execution_path_resource_representation`] remains the
 /// authority that accepts the selected path's resources.
 pub fn c_function_outcomes_program_state_definitionally_equal(
@@ -293,7 +293,7 @@ fn memories_equal_by_matching_derivations(
     }
     /// A store whose value is the base memory's own load at the stored
     /// pointer is a no-op: the produced memory denotes the same state as its
-    /// base, differing only in which cells are materialized. Proof replay
+    /// base, differing only in which cells are materialized. Proof execution
     /// mints such edges when a tactic forces a symbolic load into a concrete
     /// cell, and independent certification never does, so chain matching
     /// must see through them. Purely structural — the load's memory operand
@@ -496,8 +496,8 @@ pub(crate) fn clear_representation_certificate_cache() {
 /// Changes only the bounded symbolic representation of a certified return path.
 ///
 /// Program values and memory must be definitionally equal using the path's
-/// facts plus kernel-certified facts from the desired replay. Uncertified
-/// replay facts are deliberately excluded. The old and new resource contexts
+/// facts plus kernel-certified facts from the desired path. Uncertified
+/// planning facts are deliberately excluded. The old and new resource contexts
 /// must mutually satisfy every fact under those same assumptions.
 pub fn certify_c_function_execution_path_resource_representation(
     path: &SymbolicCExecutionPath,

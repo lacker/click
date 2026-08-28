@@ -281,7 +281,7 @@ pub(super) fn append_execution_effect_facts(
     for fact in source {
         // Verified-call rule results are kernel-certified transition facts,
         // just like memory-effect summaries. Keep them available to later
-        // explicit replay without making the surface certificate restate
+        // explicit check without making the surface certificate restate
         // opaque call identities or intermediate-memory equalities.
         if (is_memory_effect_proposition(fact.proposition()) || fact.is_certified())
             && !target.contains(fact)
@@ -559,7 +559,7 @@ pub(super) fn execute_branch_step_from_execution_point(
         // It remains available after independently explored paths are merged,
         // whereas a later statement-entry state can legitimately differ
         // across those paths and is therefore not retained in the common
-        // replay interface. Sorting networks are the representative case:
+        // check interface. Sorting networks are the representative case:
         // the second comparison's current operand is an entry value selected
         // by the first comparison.
         let condition = proof_context
@@ -1004,7 +1004,7 @@ pub(super) fn record_loop_program_point_state(
 
 /// Swaps the listed program points to their pre-recording values (or removes
 /// points the recording introduced) so a surface step can be written against
-/// the view its own replay will have; returns what must be put back.
+/// the view its own check will have; returns what must be put back.
 fn construction_point_overrides(
     program_point_states: &ProgramPointStates,
     function_block: &FunctionBlock,
@@ -1568,7 +1568,7 @@ fn execute_step_from_execution_point_selecting_path(
     let step_statement = source_statement;
 
     // The surface step for this statement is written from the proof point
-    // *before* the statement runs. Its own replay establishes this
+    // *before* the statement runs. Its own check establishes this
     // statement's entry snapshots only while re-executing it, so construction
     // must see the program points exactly as they were before these entry
     // recordings: points the recording adds or overwrites here are presented
@@ -1897,7 +1897,7 @@ fn execute_step_from_execution_point_selecting_path(
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
     // later simple step. Record that form during both planning and
-    // explicit certificate replay; otherwise replay immediately forgets
+    // explicit certificate validation; otherwise check immediately forgets
     // evaluator guards such as `defined(x + 1)` that planning retained.
     let exit_point = ProgramPointRef {
         region: CodeRegionRef::Statement(statement_index),
@@ -2152,9 +2152,9 @@ fn execute_step_from_execution_point_selecting_path(
     }
     // Standalone fact-transport steps are written against the post-statement
     // state, so their construction runs after the statement's exit snapshots
-    // are in place. Each transport adds its target to the replay-visible
+    // are in place. Each transport adds its target to the certificate-visible
     // certificate facts, and finishing the transports retires the stale
-    // pre-statement sources, mirroring what the certificate's own replay
+    // pre-statement sources, mirroring what the certificate's own check
     // carries across this statement.
     if construction.is_some() {
         // Construction reads the post-statement state while it records into
@@ -2287,7 +2287,7 @@ pub(super) fn bounded_execute_from_execution_point(
     // Each explored path constructs its own surface steps from a clean
     // builder; the paths are merged back into one step sequence (with `if`
     // structure at genuine forks) once the frontiers are complete. Every
-    // path starts from the replay-visible certificate facts at this point.
+    // path starts from the certificate-visible certificate facts at this point.
     // Each explored path constructs its own surface steps into its own sink,
     // seeded with the planning anchor; the paths are merged back into one
     // step sequence (with `if` structure at genuine forks) once complete.

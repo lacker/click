@@ -486,7 +486,7 @@ const SIGNED_INTERVAL_MEMO_LIMIT: usize = 100_000;
 
 /// Content-derived memo identity: equal fact sets share an id, and any
 /// in-place mutation changes the contents and therefore the id, so a decision
-/// memoized under an id can never be replayed against different facts.
+/// memoized under an id can never be checked against different facts.
 fn assumptions_memo_id(assumptions: &PureFactContext) -> u64 {
     ASSUMPTIONS_MEMO_IDS.with(|ids| {
         let mut ids = ids.borrow_mut();
@@ -1360,7 +1360,7 @@ impl PureFactContext {
             }
         }
         // (constants-first, load count, term order): a total, deterministic
-        // preference so replay sees identical canonical forms.
+        // preference so check sees identical canonical forms.
         fn preference(term: &Bitvector32Term) -> (bool, usize, Bitvector32Term) {
             (
                 term.as_const().is_none(),
@@ -2151,7 +2151,7 @@ fn proposition_derivation(
 impl PropositionDerivation {
     /// Check this proof tree against an available context without searching for
     /// alternate proofs.
-    pub fn replay(&self, available: &PureFactContext) -> bool {
+    pub fn check(&self, available: &PureFactContext) -> bool {
         let id_scope = PureFactContextIdScope::enter(available);
         match &self.rule {
             PropositionDerivationRule::ContextFree => solve_builtin_prop(&self.conclusion),
@@ -2162,7 +2162,7 @@ impl PropositionDerivation {
                 evidence,
             } => {
                 (id_scope.id == *premises_id || available.includes(premises))
-                    && premises.replays_atomic_derivation(
+                    && premises.checks_atomic_derivation(
                         &self.conclusion,
                         *for_simp,
                         *premises_id,
@@ -2178,20 +2178,20 @@ impl PropositionDerivation {
                 };
                 left.conclusion == **expected_left
                     && right.conclusion == **expected_right
-                    && left.replay(available)
-                    && right.replay(available)
+                    && left.check(available)
+                    && right.check(available)
             }
             PropositionDerivationRule::OrLeft(proof) => {
                 let Proposition::Or(expected, _) = &self.conclusion else {
                     return false;
                 };
-                proof.conclusion == **expected && proof.replay(available)
+                proof.conclusion == **expected && proof.check(available)
             }
             PropositionDerivationRule::OrRight(proof) => {
                 let Proposition::Or(_, expected) = &self.conclusion else {
                     return false;
                 };
-                proof.conclusion == **expected && proof.replay(available)
+                proof.conclusion == **expected && proof.check(available)
             }
             PropositionDerivationRule::DoubleNegation(proof) => {
                 let Proposition::Not(body) = &self.conclusion else {
@@ -2200,7 +2200,7 @@ impl PropositionDerivation {
                 let Proposition::Not(expected) = body.as_ref() else {
                     return false;
                 };
-                proof.conclusion == **expected && proof.replay(available)
+                proof.conclusion == **expected && proof.check(available)
             }
             PropositionDerivationRule::Implies { antecedent, body } => {
                 let Proposition::Implies(expected_antecedent, expected_body) = &self.conclusion
@@ -2209,27 +2209,27 @@ impl PropositionDerivation {
                 };
                 antecedent == expected_antecedent.as_ref()
                     && body.conclusion == **expected_body
-                    && body.replay(&available.clone().assume_proposition(antecedent.clone()))
+                    && body.check(&available.clone().assume_proposition(antecedent.clone()))
             }
             PropositionDerivationRule::ImpliesFalseAntecedent(proof) => {
                 let Proposition::Implies(expected_antecedent, _) = &self.conclusion else {
                     return false;
                 };
                 proof.conclusion == Proposition::Not(Box::new(expected_antecedent.as_ref().clone()))
-                    && proof.replay(available)
+                    && proof.check(available)
             }
             PropositionDerivationRule::ForAllBody(proof) => {
                 let Proposition::ForAll { var, body, .. } = &self.conclusion else {
                     return false;
                 };
                 proof.conclusion == **body
-                    && proof.replay(&available.without_free_bitvector_variable(*var))
+                    && proof.check(&available.without_free_bitvector_variable(*var))
             }
             PropositionDerivationRule::FiniteForAll { instances } => {
                 let expected = available.finite_forall_instantiations(&self.conclusion);
                 !expected.is_empty()
                     && derivations_match_propositions(instances, &expected)
-                    && instances.iter().all(|proof| proof.replay(available))
+                    && instances.iter().all(|proof| proof.check(available))
             }
             PropositionDerivationRule::FiniteContextSplit {
                 variable,
@@ -2263,7 +2263,7 @@ impl PropositionDerivation {
                     })
                     .collect::<Vec<_>>();
                 derivations_match_propositions(instances, &expected)
-                    && instances.iter().all(|proof| proof.replay(available))
+                    && instances.iter().all(|proof| proof.check(available))
             }
             PropositionDerivationRule::UpperBoundSplit {
                 bound,
@@ -2280,11 +2280,11 @@ impl PropositionDerivation {
                 let term = Bitvector32Term::Variable(*variable);
                 below.conclusion == self.conclusion
                     && at.conclusion == self.conclusion
-                    && below.replay(&available.clone().assume_condition(
+                    && below.check(&available.clone().assume_condition(
                         ConditionTerm::signed_less_than(term.clone(), pivot.clone()),
                         true,
                     ))
-                    && at.replay(
+                    && at.check(
                         &available
                             .clone()
                             .assume_condition(ConditionTerm::equal(term, pivot.clone()), true),
@@ -2306,7 +2306,7 @@ impl PropositionDerivation {
                 base.remove_proposition_fact(disjunction);
                 cases.iter().zip(expected_cases).all(|(proof, case)| {
                     proof.conclusion == self.conclusion
-                        && proof.replay(&base.clone().assume_proposition(case))
+                        && proof.check(&base.clone().assume_proposition(case))
                 })
             }
         }
@@ -2315,7 +2315,7 @@ impl PropositionDerivation {
 
 /// The `(variable, pivot)` an assumed condition licenses splitting on, when it
 /// says `variable <= pivot` in either form. Shared by the search and the
-/// replay so the two cannot drift.
+/// check so the two cannot drift.
 fn upper_bound_split_candidate(condition: &ConditionTerm) -> Option<(Variable, &Bitvector32Term)> {
     let (left, right, plus_one) = match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right) => (left, right, true),
@@ -2685,7 +2685,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
 /// Pins a term to a signed constant using EXACT facts only: either the term
 /// is itself constant, or one recorded exact equality names its value. Exact
 /// condition facts are pinned verbatim into certificates, so both smart
-/// execution and replay see the same set and the answer is deterministic.
+/// execution and check see the same set and the answer is deterministic.
 /// One hop, no recursion: a value-dependent range endpoint like
 /// `owner->len` is separated from its constant by exactly the recorded
 /// resource fact, never by a rewrite chain.
@@ -2743,7 +2743,7 @@ fn bitvector_index_in_range_shallow(
         &ConditionTerm::signed_less_equal(start.clone(), index.clone()),
     ) == Some(true)
         // Canonical-keyed bound lookup before any searching arm: indexed
-        // and deterministic, so replay sees the same answer.
+        // and deterministic, so check sees the same answer.
         || assumptions.canonical_bound_holds(start, index, false)
         || assumptions.has_exact_order_path(start, index, false)
         || assumptions.should_defer_non_exact_condition_reasoning()
@@ -2930,7 +2930,7 @@ fn collect_affine_bitvector_terms(
         atom => {
             // Atoms are keyed by their canonical form, so a load term and
             // its load variable cancel affinely; the verdict
-            // stays assumption-free and replay-identical because the
+            // stays assumption-free and check-identical because the
             // canonical form is deterministic.
             let current = terms
                 .entry(crate::kernel::eval::canonical_term(atom))

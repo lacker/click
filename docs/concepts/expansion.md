@@ -16,7 +16,7 @@ The workflow is:
 
 Rewritten-source verification is the boundary. Click must not emit an
 expansion merely because search reported success: extraction, rendering,
-parsing, and ordinary checking must agree on the resulting proof. An expansion
+parsing, and round-trip validation must agree on the resulting proof. An expansion
 failure, a rewrite that doesn't verify, or disagreement with profile or audit
 is a tooling defect to investigate.
 

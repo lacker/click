@@ -275,7 +275,7 @@ impl<'a> Proof<'a> {
     /// fact bases for `introduced_since`, and the shared continuation data
     /// its joins verify — bookkeeping, never semantic authority.
     /// The delta checks both execution join variants share: the arm kept
-    /// its recorded condition polarity, and every replay store the join
+    /// its recorded condition polarity, and every check store the join
     /// migrates changed by exactly the arm's claimed introduction delta,
     /// while the unmigrated stores did not change at all.
     pub(super) fn validate_execution_join_arm_deltas(
@@ -315,7 +315,7 @@ impl<'a> Proof<'a> {
                 != parent_execution.planned_statement_transitions.len()
         {
             return Err(self.step_error(format!(
-                "{name} execution arm changed replay metadata that the checked {variant} has not migrated"
+                "{name} execution arm changed check metadata that the checked {variant} has not migrated"
             )));
         }
         Ok(())
@@ -422,7 +422,7 @@ impl<'a> Proof<'a> {
     /// context becomes the successor while a logical `If` records the
     /// checked source condition and an empty contradictory arm. Verifies
     /// arrival at the shared continuation or function exit, condition
-    /// polarity, and the migrated replay deltas, and produces the `If`
+    /// polarity, and the migrated check deltas, and produces the `If`
     /// step. Callers assemble the successor around the arm's own context.
     pub(super) fn merge_decided_execution_path(
         &self,
@@ -1032,8 +1032,8 @@ impl<'a> Proof<'a> {
         } else {
             terminal_certificate(&arms[1].certificate, empty_source_arms[1])
         };
-        let then_replay = &arms[0].execution.expansion;
-        let else_replay = &arms[1].execution.expansion;
+        let then_expansion = &arms[0].execution.expansion;
+        let else_expansion = &arms[1].execution.expansion;
         let common_program_points = arms[0]
             .execution
             .program_point_states
@@ -1168,8 +1168,8 @@ impl<'a> Proof<'a> {
         // reject two different captures rather than guessing which source
         // occurrence owns the eventual expansion.
         let parent_capture = parent_execution.expansion.deferred_tactic_capture.as_ref();
-        let then_capture = then_replay.deferred_tactic_capture.as_ref();
-        let else_capture = else_replay.deferred_tactic_capture.as_ref();
+        let then_capture = then_expansion.deferred_tactic_capture.as_ref();
+        let else_capture = else_expansion.deferred_tactic_capture.as_ref();
         if parent_capture.is_some()
             && (then_capture != parent_capture || else_capture != parent_capture)
         {
@@ -1691,7 +1691,7 @@ impl<'a> Proof<'a> {
         // Fact introductions are measured against the PARENT facts, not the
         // arm's split-time base: the container seeded each arm's record with
         // the prepared introduction set, so an arm's path facts count as
-        // introduced and flow into its retained outcome paths. The replay
+        // introduced and flow into its retained outcome paths. The check
         // stores below instead diff against the arm base, matching the
         // container's empty per-arm records. The base ancestry check keeps
         // the arm honest about deriving from this exact split.
@@ -2567,7 +2567,7 @@ fn arm_entry_steps_match(steps: &[SimpleProofStep], expected: &[SimpleProofStep]
 }
 
 /// Carries the frontier-local loop proofs both arms established into the
-/// joined replay. A loop is keyed by its code region: the same C loop proved
+/// joined check. A loop is keyed by its code region: the same C loop proved
 /// in both arms is one bound clause and one verified rule.
 fn migrate_arm_loop_proofs(
     execution: &mut ExecutionProofState,

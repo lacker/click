@@ -41,7 +41,7 @@ has lowered, case assumptions, execution facts, frontier-local loop clauses
 and rules, function-entry prerequisites and derivations, planned statement
 transitions, the freshness counters, the loop-effect goal and region flags,
 branch provenance, deferred post-execution tactics, and the path's unfolded
-predicates. The path's surface record (`SurfaceRecord`: replay-visible
+predicates. The path's surface record (`SurfaceRecord`: certificate-visible
 certificate facts, the premise anchor, proof-level case choices) is typed path
 state on it too. Its one cursor, `ExpansionCursor`, records where a source
 tactic's expansion is being captured; it holds no semantic state. The checked
@@ -77,8 +77,8 @@ accepted merely because the planner labels it successful; success is a
 completed checked descendant.
 
 A checked `simp` derivation is added only for a common, bounded,
-replayable shape: it must emit simple steps the kernel checks one at a
-time and a certificate can replay. That the search-based `simp` decision
+checkable shape: it must emit simple steps the kernel checks one at a
+time and a certificate can encode. That the search-based `simp` decision
 procedure could decide a goal is not a criterion; it is a diagnostic, not
 an authority.
 

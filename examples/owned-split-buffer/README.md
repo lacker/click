@@ -23,7 +23,7 @@ contracts and then reads the transferred element through the left partition.
 
 The sidecar mixes concise smart proofs with expanded exact certificates. Read
 the small setter/accessor proofs first. Long `step()`, `transport ...
-using`, and explicit rewrite blocks are checked replay artifacts retained for
+using`, and explicit rewrite blocks are checked proof artifacts retained for
 predictable performance and expansion coverage, not the recommended first
 draft of a proof. Restricted `simp() using` arithmetic expands through named
 standard theorems rather than retaining a hidden arithmetic search.

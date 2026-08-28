@@ -746,7 +746,7 @@ pub(in crate::kernel) fn merge_execution_pure_facts_and_obligations(
     // The right fragment was executed under the left fragment's path
     // context. Recheck its assumable obligations against that same context,
     // not against the older base assumptions. In particular, a verified call
-    // can change a field that an entry-state branch constrained; replaying a
+    // can change a field that an entry-state branch constrained; checking a
     // post-call load guard against only the entry snapshot can incorrectly
     // discard a valid successor path.
     let prefix_assumptions =

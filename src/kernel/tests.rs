@@ -48,14 +48,14 @@ fn write_context(
     ResourceContext::new().unchecked_with_fact(write_element(base, start, end))
 }
 
-fn assert_replayable_derivation(assumptions: &PureFactContext, proposition: &Proposition) {
+fn assert_checkable_derivation(assumptions: &PureFactContext, proposition: &Proposition) {
     let derivation = assumptions
         .derive_proposition(proposition)
         .expect("expected an explicit proposition derivation");
     assert_eq!(derivation.conclusion(), proposition);
     assert!(
-        derivation.replay(assumptions),
-        "explicit proposition derivation must replay"
+        derivation.check(assumptions),
+        "explicit proposition derivation must check"
     );
 }
 

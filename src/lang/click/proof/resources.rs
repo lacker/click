@@ -14,7 +14,7 @@ pub(super) enum ResourceBodyClosure {
 
 /// The pure-fact surface needed by resource semantics.
 ///
-/// Legacy replay adapts its ordered vector once at the boundary. Checked
+/// Certificate construction adapts its ordered vector once at the boundary. Checked
 /// `Proof` transitions implement this over `ProofFacts`, preserving the
 /// incrementally indexed assumption context and exact-membership index.
 trait ResourcePureFacts {
@@ -2109,7 +2109,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     // `unfold` changes the proof representation of the final visible unit;
     // it does not itself perform the function contract's logical consumption.
     // Keep the population identity/count so execution certification and the
-    // eventual resource effect can replay that transition exactly.
+    // eventual resource effect can check that transition exactly.
     let _ = (population_name, population_arguments);
 
     Ok(UnfoldedCompositeResource {
@@ -2137,7 +2137,7 @@ pub(super) fn fold_composite_resources_on_outcome(
     unfolded_predicates: &[String],
     closure: ResourceBodyClosure,
 ) -> Result<CFunctionOutcome, ClickError> {
-    // Outcome/finalization replay still owns an ordered legacy fact vector.
+    // Outcome/finalization check still owns an ordered legacy fact vector.
     // Adapt it once here; the checked fold core below also serves the
     // persistent Proof transition without requiring that transition to
     // materialize all ambient facts.
@@ -2393,7 +2393,7 @@ fn fold_composite_resources_on_outcome_with_facts(
             };
             // Available facts may write this body fact through loads recorded
             // at an earlier snapshot. Decide those forms with the bounded
-            // replay matchers first: exact structural membership, the
+            // check matchers first: exact structural membership, the
             // snapshot-bridging relation with this execution's effect facts as
             // framing, and the direct separation-fact matcher. All of these do
             // work proportional to the fact being checked, so an exactly

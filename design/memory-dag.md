@@ -81,9 +81,9 @@ arm, restoring the pre-arc path exactly. Default on; the A/B handle.
    `before` per the edge rules. Its leverage is histories the *net
    snapshot diff* cannot express (e.g. crossing a call-havoc marker
    that changes the block set); a single distinct store never needed it.
-3. **(2a) `old(...)` gets a name.** Certificate replay resolved `old`
+3. **(2a) `old(...)` gets a name.** Certificate validation resolved `old`
    positionally (region execution-start); the kernel lowering names
-   function entry. `TacticReplayState::function_entry_state` +
+   function entry. `TacticCheckState::function_entry_state` +
    `old_reference_state()` make both sides name the same interned node;
    `at(function.entry, ...)` moves with it. Not flag-gated — it reads
    arena names, not derivations; a misresolution costs completeness
@@ -128,7 +128,7 @@ canonicalizing arm it contained.
 ## Where the frontier is
 
 There are currently no quarantined per-member failures. Future certificate
-spelling, replay, or performance regressions should be diagnosed as focused
+spelling, check, or performance regressions should be diagnosed as focused
 issues rather than treated as reasons to extend the DAG globally.
 
 The heap slice adds `HeapAllocationPending`, `HeapAllocated`, and `HeapFreed`
@@ -163,7 +163,7 @@ nobody had recorded:
 walks (separation-strength `Store`-hop crossing, stored-value pinning,
 order-path DAG matching) CANNOT be enabled globally. Distinctness and
 equality answers feed execution pruning, canonical forms of loads, and simp
-case-split structure, all of which certified sidecars replay
+case-split structure, all of which certified sidecars check
 byte-for-byte; unscoped enabling broke owned-string's later functions
 (pop_preserves_first: "planned simp context premise is not an
 available source fact") and drifted Return-value spellings through
@@ -173,7 +173,7 @@ shared-fuel exhaustion. The power is therefore gated behind
 look exactly like the pre-arc absence of an edge. Fuel discipline
 matters for the same reason: the hop distinctness runs under
 `with_isolated_memory_resolution_fuel` so it cannot drain the
-enclosing query's budget (fuel-coupled spellings must replay).
+enclosing query's budget (fuel-coupled spellings must check).
 
 Session 1's displacement worry (first-wins letting a BlockDeclared /
 CellsForgotten edge shadow a Store edge on content-equal snapshots) has
@@ -221,7 +221,7 @@ prover, so neither situation changed.
   The 137 s is not in the split.
 - A one-sided select-over-store equality arm: 0 firings in 295 290
   lookups (no store history for symbolic buffers); deleted.
-- Feeding `replay.effect_facts` into closer planning: stores are
+- Feeding `check.effect_facts` into closer planning: stores are
   execution facts, not effect summaries; no effect.
 - From `claude/forall-extension-wip` (all rejected, session 1):
   `forall_fact_extends_bound_by_one` (fact-side final-index matching

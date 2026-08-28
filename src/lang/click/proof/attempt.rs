@@ -1,7 +1,7 @@
 //! Untrusted, bounded search orchestration over immutable [`Proof`] values.
 //!
 //! These combinators own no semantic authority: every successor they return
-//! was produced by the ordinary checked operations of the [`Proof`] API, and
+//! was produced by the checked operations of the [`Proof`] API, and
 //! this module deliberately lives outside the audited proof-object core — it
 //! compiles against the same `pub(super)` surface smart tactics use. Because
 //! `Proof` is immutable, speculation is naturally transactional: a failed or

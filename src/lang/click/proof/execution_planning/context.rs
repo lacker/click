@@ -350,12 +350,12 @@ pub(in crate::lang::click::proof) fn certificate_leaf_for_case_path(
             };
             let choice = case_path.get(*next_case).ok_or_else(|| {
                 ClickError::new(format!(
-                    "`{claim_label}` surface certificate has more branches than its replay path"
+                    "`{claim_label}` surface certificate has more branches than its validation path"
                 ))
             })?;
             if choice.condition != proof_if.condition {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` surface certificate branch condition does not match its replay path"
+                    "`{claim_label}` surface certificate branch condition does not match its validation path"
                 )));
             }
             *next_case += 1;
@@ -473,10 +473,10 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
             environments,
             &statement_operation,
         );
-        // Certificate replay carries the pre-statement facts across this
+        // Certificate validation carries the pre-statement facts across this
         // step, adds the transition's path facts, and rewrites
         // statement-local transports; automatic planning transports stay out
-        // of the replay-visible set.
+        // of the certificate-visible set.
         let certificate_facts = &mut execution.surface_record.certificate_facts;
         for fact in &transition.path_facts {
             certificate_facts.insert(fact.clone());
@@ -582,7 +582,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
         },
     );
     // A condition step introduces evaluation guards and path facts without
-    // touching memory; extend the replay-visible set with exactly what this
+    // touching memory; extend the certificate-visible set with exactly what this
     // transition adds over the planning context.
     let certificate_facts = &mut execution.surface_record.certificate_facts;
     for fact in &transition.pure_facts {

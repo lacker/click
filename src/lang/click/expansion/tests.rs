@@ -123,40 +123,31 @@ int32 identity(int32 x) {
         .expect("then tactic should exist")
         + 8;
     let position = position_at_offset(click_source, then_offset);
-    let ((expanded, capture_replays), capture_flat_units) =
-        super::super::proof::count_flat_proof_units(|| {
-            super::super::proof::count_internal_proof_executions(|| {
-                expand_c0_tactic_source_at(
-                    click_source,
-                    &[("identity.c", c_source)],
-                    position.line,
-                    position.column,
-                )
-            })
-        });
+    let (expanded, capture_flat_units) = super::super::proof::count_flat_proof_units(|| {
+        {
+            expand_c0_tactic_source_at(
+                click_source,
+                &[("identity.c", c_source)],
+                position.line,
+                position.column,
+            )
+        }
+    });
     let expanded = expanded.expect("the nested then tactic should expand");
     assert_eq!(capture_flat_units, 1, "capture should retain one Proof");
-    assert_eq!(capture_replays, 0, "nested capture entered replay");
 
     assert_eq!(expanded.matches("execute();").count(), 1);
     assert!(
         expanded.contains("    if x == x {\n        step();"),
         "{expanded}"
     );
-    let ((reverified, reverify_replays), reverify_flat_units) =
-        super::super::proof::count_flat_proof_units(|| {
-            super::super::proof::count_internal_proof_executions(|| {
-                verify_c0_sources(&expanded, &[("identity.c", c_source)])
-            })
-        });
+    let (reverified, reverify_flat_units) = super::super::proof::count_flat_proof_units(|| {
+        verify_c0_sources(&expanded, &[("identity.c", c_source)])
+    });
     reverified.expect("the source with one nested expansion should re-verify");
     assert_eq!(
         reverify_flat_units, 1,
         "the rewritten nested tactic should retain one Proof"
-    );
-    assert_eq!(
-        reverify_replays, 0,
-        "the rewritten nested tactic entered replay"
     );
 }
 
@@ -256,7 +247,7 @@ int32 increment_selected(int32 x) {
     .expect("common step should expand");
 
     verify_c0_sources(&expanded, &[("increment.c", c_source)]).unwrap_or_else(|error| {
-        panic!("expanded common step should replay:\n{error:?}\n{expanded}")
+        panic!("expanded common step should check:\n{error:?}\n{expanded}")
     });
 }
 
@@ -313,7 +304,7 @@ int32 positive_after_branch(int32 x) {
     .expect("deferred simp should expand");
 
     verify_c0_sources(&expanded, &[("positive.c", c_source)]).unwrap_or_else(|error| {
-        panic!("expanded deferred simp should replay:\n{error:?}\n{expanded}")
+        panic!("expanded deferred simp should check:\n{error:?}\n{expanded}")
     });
 }
 
@@ -360,7 +351,7 @@ int32 same_after_branch(int32 x, int32 flag) {
 
     assert!(!expanded.contains("if at(statement(1).entry"), "{expanded}");
     verify_c0_sources(&expanded, &[("same.c", c_source)]).unwrap_or_else(|error| {
-        panic!("shared deferred expansion should replay:\n{error:?}\n{expanded}")
+        panic!("shared deferred expansion should check:\n{error:?}\n{expanded}")
     });
 }
 
@@ -405,7 +396,7 @@ int32 clamp_nonnegative(int32 x) {
     .expect("reachable continuation simp should expand");
 
     verify_c0_sources(&expanded, &[("returning.c", c_source)]).unwrap_or_else(|error| {
-        panic!("returning-arm deferred expansion should replay:\n{error:?}\n{expanded}")
+        panic!("returning-arm deferred expansion should check:\n{error:?}\n{expanded}")
     });
 }
 
@@ -452,23 +443,20 @@ int32 nested_nonnegative(int32 x, int32 flag) {
     }
 }
 "#;
-    let (
-        ((((verified, events), certificate_checks), context_exports), replay_executions),
-        flat_units,
-    ) = super::super::proof::count_flat_proof_units(|| {
-        super::super::proof::count_internal_proof_executions(|| {
-            super::super::proof::count_execution_context_exports(|| {
-                super::super::proof::count_source_certificate_checks(|| {
-                    crate::instrumentation::collect(|| {
-                        verify_c0_sources(click_source, &[("nested.c", c_source)])
+    let ((((verified, events), certificate_checks), context_exports), flat_units) =
+        super::super::proof::count_flat_proof_units(|| {
+            {
+                super::super::proof::count_execution_context_exports(|| {
+                    super::super::proof::count_source_certificate_checks(|| {
+                        crate::instrumentation::collect(|| {
+                            verify_c0_sources(click_source, &[("nested.c", c_source)])
+                        })
                     })
                 })
-            })
-        })
-    });
+            }
+        });
     let verified = verified.expect("nested end-of-arm interfaces should verify through Proof");
     assert_eq!(flat_units, 1, "the nested script should retain one Proof");
-    assert_eq!(replay_executions, 0, "nested verification must not replay");
     assert_eq!(
         context_exports, 0,
         "nested verification must not export state"
@@ -482,7 +470,7 @@ int32 nested_nonnegative(int32 x, int32 flag) {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim == "nested_nonnegative.contract"
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
         "nested end-of-arm interfaces must retain their checked Proof successors: {events:#?}"
     );
@@ -511,21 +499,19 @@ int32 nested_nonnegative(int32 x, int32 flag) {
         .expect("common simp should exist")
         + 8;
     let position = position_at_offset(click_source, selected_offset);
-    let (((expanded, expansion_checks), expansion_exports), expansion_replays) =
-        super::super::proof::count_internal_proof_executions(|| {
-            super::super::proof::count_execution_context_exports(|| {
-                super::super::proof::count_source_certificate_checks(|| {
-                    expand_c0_tactic_source_at(
-                        click_source,
-                        &[("nested.c", c_source)],
-                        position.line,
-                        position.column,
-                    )
-                })
+    let ((expanded, expansion_checks), expansion_exports) = {
+        super::super::proof::count_execution_context_exports(|| {
+            super::super::proof::count_source_certificate_checks(|| {
+                expand_c0_tactic_source_at(
+                    click_source,
+                    &[("nested.c", c_source)],
+                    position.line,
+                    position.column,
+                )
             })
-        });
+        })
+    };
     let expanded = expanded.expect("nested deferred simp should expand");
-    assert_eq!(expansion_replays, 0, "nested expansion must not replay");
     assert_eq!(
         expansion_exports, 0,
         "nested expansion must not export state"
@@ -536,7 +522,7 @@ int32 nested_nonnegative(int32 x, int32 flag) {
     );
 
     verify_c0_sources(&expanded, &[("nested.c", c_source)]).unwrap_or_else(|error| {
-        panic!("nested deferred expansion should replay:\n{error:?}\n{expanded}")
+        panic!("nested deferred expansion should check:\n{error:?}\n{expanded}")
     });
 
     let inner_offset = click_source
@@ -544,21 +530,19 @@ int32 nested_nonnegative(int32 x, int32 flag) {
         .expect("inner branch should exist")
         + 16;
     let inner_position = position_at_offset(click_source, inner_offset);
-    let (((inner, inner_checks), inner_exports), inner_replays) =
-        super::super::proof::count_internal_proof_executions(|| {
-            super::super::proof::count_execution_context_exports(|| {
-                super::super::proof::count_source_certificate_checks(|| {
-                    expand_c0_tactic_source_at(
-                        click_source,
-                        &[("nested.c", c_source)],
-                        inner_position.line,
-                        inner_position.column,
-                    )
-                })
+    let ((inner, inner_checks), inner_exports) = {
+        super::super::proof::count_execution_context_exports(|| {
+            super::super::proof::count_source_certificate_checks(|| {
+                expand_c0_tactic_source_at(
+                    click_source,
+                    &[("nested.c", c_source)],
+                    inner_position.line,
+                    inner_position.column,
+                )
             })
-        });
+        })
+    };
     let inner = inner.expect("the retained inner branch should expand");
-    assert_eq!(inner_replays, 0, "inner branch expansion must not replay");
     assert_eq!(
         inner_exports, 0,
         "inner branch expansion must not export state"
@@ -652,7 +636,7 @@ int32 caller(int32 x) {
     // Both statements run in the whole context; the call's precondition is
     // proved from it and the expansion names no premise.
     assert_eq!(expanded.matches("step();").count(), 3, "{expanded}");
-    verify_c0_sources(&expanded, &sources).expect("the call steps should replay");
+    verify_c0_sources(&expanded, &sources).expect("the call steps should check");
 }
 
 #[test]
@@ -792,7 +776,7 @@ int32 caller() {
             .expect("the grouped simp should expand across the local result assignment");
 
     verify_c0_sources(&expanded, &sources)
-        .expect("the explicit C result binding should replay without aliasing contract result");
+        .expect("the explicit C result binding should check without aliasing contract result");
 
     let explicit_source = r#"
 verifying "zero.c";
@@ -1032,7 +1016,7 @@ int32 inspect(struct box* owner) {
 }
 
 #[test]
-fn expanded_execute_and_frame_replay_after_resource_branch() {
+fn expanded_execute_and_frame_check_after_resource_branch() {
     let get_source = r#"
 struct vector { int32 len; int32 cap; int32* data; };
 int32 vector_get(struct vector* owner, int32 index) {
@@ -1169,7 +1153,7 @@ int32 vector_replace_if(
         ("vector_set.c", set_source),
         ("vector_replace_if.c", replace_source),
     ];
-    let (expanded_frame, events) = crate::instrumentation::collect(|| {
+    let (expanded_frame, _events) = crate::instrumentation::collect(|| {
         expand_top_level_tactic_for_test(
             click_source,
             &sources,
@@ -1182,21 +1166,11 @@ int32 vector_replace_if(
         .expect("smart frame should expand with snapshot-correct loadability premises");
 
     assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "vector_set.contract"
-                    && name == "smart tactic compatibility replay (tactic 7, source 7)"
-        )),
-        "a prior deferred have kept the contextual frame on compatibility replay: {events:#?}"
-    );
-
-    assert!(
         expanded_frame.contains("frame() using {"),
         "{expanded_frame}"
     );
     verify_c0_sources(&expanded_frame, &sources)
-        .expect("expanded frame certificate should independently replay");
+        .expect("expanded frame certificate should independently check");
 
     let expanded_have = expand_top_level_tactic_for_test(
         click_source,
@@ -1245,7 +1219,7 @@ int32 vector_replace_if(
     )
     .expect("common execute should expand after a resource branch");
     verify_c0_sources(&expanded_execute, &sources)
-        .expect("expanded execute certificate should independently replay");
+        .expect("expanded execute certificate should independently check");
 }
 
 #[test]
@@ -1385,7 +1359,7 @@ int32 compare_swap2(int32 p[2]) {
         simp();
     }
 }"#;
-    let (expanded_execute, events) = crate::instrumentation::collect(|| {
+    let (expanded_execute, _events) = crate::instrumentation::collect(|| {
         expand_top_level_tactic_for_test(
             click_source,
             &[("compare_swap2.c", c_source)],
@@ -1396,15 +1370,6 @@ int32 compare_swap2(int32 p[2]) {
     });
     let expanded_execute =
         expanded_execute.expect("branch-shaped execute should expand from retained Proof steps");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "compare_swap2.ensures_0"
-                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
-        )),
-        "branch-shaped execute entered compatibility replay: {events:#?}"
-    );
     verify_c0_sources(&expanded_execute, &[("compare_swap2.c", c_source)])
         .expect("expanded branch-shaped execute should verify normally");
     let original_condition = "if at(statement(1).entry, p[1]) < at(statement(1).entry, p[0]) {";
@@ -1419,7 +1384,7 @@ int32 compare_swap2(int32 p[2]) {
 
     let offset = click_source.rfind("simp").expect("simp should be present");
     let position = position_at_offset(click_source, offset);
-    let (expanded, events) = crate::instrumentation::collect(|| {
+    let (expanded, _events) = crate::instrumentation::collect(|| {
         expand_c0_tactic_source_at(
             click_source,
             &[("compare_swap2.c", c_source)],
@@ -1428,15 +1393,6 @@ int32 compare_swap2(int32 p[2]) {
         )
     });
     let expanded = expanded.expect("post-execution simp should expand");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "compare_swap2.ensures_0"
-                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
-        )),
-        "the prerequisite branch-shaped execute entered compatibility replay: {events:#?}"
-    );
 
     // The branch anchors at the statement that branched; statement 0 is
     // the `tmp` declaration, so this is the same state as function entry
@@ -1446,7 +1402,7 @@ int32 compare_swap2(int32 p[2]) {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("compare_swap2.c", c_source)])
-        .expect("branch certificate should replay against the state where it branched");
+        .expect("branch certificate should check against the state where it branched");
 }
 
 #[test]
@@ -1601,25 +1557,24 @@ int32 nested(int32 x) {
         .map(|start| start + needle.rfind("simp").unwrap())
         .expect("inner else simp should be present");
     let position = position_at_offset(click_source, offset);
-    let (((verified, original_fallbacks), original_replays), original_flat_units) =
+    let ((verified, original_fallbacks), original_flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     verify_c0_sources(click_source, &[("nested.c", c_source)])
                 })
-            })
+            }
         });
     verified.expect("nested source proof should stay on Proof");
     assert_eq!(
         original_flat_units, 1,
         "nested source proof split its Proof"
     );
-    assert_eq!(original_replays, 0, "nested source proof entered replay");
     assert_eq!(original_fallbacks, 0, "nested source proof fell back");
 
-    let (((expanded, expansion_fallbacks), expansion_replays), expansion_flat_units) =
+    let ((expanded, expansion_fallbacks), expansion_flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     expand_c0_tactic_source_at(
                         click_source,
@@ -1628,36 +1583,28 @@ int32 nested(int32 x) {
                         position.column,
                     )
                 })
-            })
+            }
         });
     let expanded = expanded.expect("selected nested-branch simp should expand");
     assert_eq!(expansion_flat_units, 1, "nested expansion split its Proof");
-    assert_eq!(
-        expansion_replays, 0,
-        "selected nested-branch expansion entered compatibility replay"
-    );
     assert_eq!(
         expansion_fallbacks, 0,
         "selected nested-branch expansion fell back from a checked operation"
     );
 
     assert_eq!(expanded.matches("simp();").count(), 2);
-    let (((reverified, reverify_fallbacks), reverify_replays), reverify_flat_units) =
+    let ((reverified, reverify_fallbacks), reverify_flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     verify_c0_sources(&expanded, &[("nested.c", c_source)])
                 })
-            })
+            }
         });
     reverified.expect("sibling proof cases must not steal the deferred capture");
     assert_eq!(
         reverify_flat_units, 1,
         "rewritten nested proof split its Proof"
-    );
-    assert_eq!(
-        reverify_replays, 0,
-        "rewritten nested-branch proof entered compatibility replay"
     );
     assert_eq!(
         reverify_fallbacks, 0,
@@ -1670,9 +1617,9 @@ int32 nested(int32 x) {
         .map(|start| start + leading.rfind("step").unwrap())
         .expect("outer then leading step should be present");
     let leading_position = position_at_offset(click_source, leading_offset);
-    let (((leading_expanded, leading_fallbacks), leading_replays), leading_flat_units) =
+    let ((leading_expanded, leading_fallbacks), leading_flat_units) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     expand_c0_tactic_source_at(
                         click_source,
@@ -1681,29 +1628,24 @@ int32 nested(int32 x) {
                         leading_position.column,
                     )
                 })
-            })
+            }
         });
     let leading_expanded = leading_expanded.expect("leading smart branch step should expand");
     assert_eq!(leading_flat_units, 1, "leading expansion split its Proof");
-    assert_eq!(leading_replays, 0, "leading expansion entered replay");
     assert_eq!(leading_fallbacks, 0, "leading expansion fell back");
     assert!(
         leading_expanded.contains("step();"),
         "leading smart step did not extract its checked operation: {leading_expanded}"
     );
-    let (((leading_reverified, leading_reverify_fallbacks), leading_reverify_replays), _) =
+    let ((leading_reverified, leading_reverify_fallbacks), _) =
         proof::count_flat_proof_units(|| {
-            proof::count_internal_proof_executions(|| {
+            {
                 proof::count_explicit_linear_fallbacks(|| {
                     verify_c0_sources(&leading_expanded, &[("nested.c", c_source)])
                 })
-            })
+            }
         });
     leading_reverified.expect("expanded leading branch step should reverify");
-    assert_eq!(
-        leading_reverify_replays, 0,
-        "expanded leading branch step entered replay"
-    );
     assert_eq!(
         leading_reverify_fallbacks, 0,
         "expanded leading branch step fell back"
@@ -1889,18 +1831,9 @@ int32 write_selected(int32 p[2], int32 flag) {
 }
 "#;
     let sources = [("write_selected.c", c_source)];
-    let (verified, events) =
+    let (verified, _events) =
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
     verified.expect("branched baseline should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "write_selected.contract"
-                    && name.starts_with("smart tactic compatibility replay (tactic 3,")
-        )),
-        "the branch-local exact frames entered compatibility replay: {events:#?}"
-    );
     for (selected_text, selected_smart) in [
         ("have result + 1", "have result + 1 == 1 by simp"),
         ("have result - 1", "have result - 1 == 0 by simp"),
@@ -1915,7 +1848,7 @@ int32 write_selected(int32 p[2], int32 flag) {
         assert!(!expanded.contains(selected_smart));
         assert!(expanded.contains("if result == 0"));
         verify_c0_sources(&expanded, &sources)
-            .expect("path-aligned branch expansion should replay as a complete proof");
+            .expect("path-aligned branch expansion should check as a complete proof");
     }
 }
 
@@ -2104,7 +2037,7 @@ int32 set_cell(int32 p[], int32 value) {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                if matches!(name.as_str(), "surface certificate replay" | "frame exact effect check")
+                if matches!(name.as_str(), "generated certificate validation" | "frame exact effect check")
         )),
         "the qualified smart frame must apply its selected simple step once through Proof: {events:#?}"
     );
@@ -2119,6 +2052,6 @@ int32 set_cell(int32 p[], int32 value) {
     assert!(!expanded.contains("frame(function);"), "{expanded}");
     assert!(expanded.contains("frame(function) using {"), "{expanded}");
     verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
-        panic!("expanded qualified frame should replay:\n{error:?}\n{expanded}")
+        panic!("expanded qualified frame should check:\n{error:?}\n{expanded}")
     });
 }

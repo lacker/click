@@ -235,7 +235,7 @@ fn equality_is_vacuous(equality: &Proposition) -> bool {
 /// load variable (or recorded value) for the rewritten read — equality
 /// substitution is congruent through a load whether the load is written as a
 /// term or named by its variable. Deterministic: the registry view and the
-/// canonical form are the same on replay.
+/// canonical form are the same on check.
 fn rewrite_through_load_variable(
     term: &Bitvector32Term,
     rewrite_pointer: &impl Fn(&Pointer) -> Pointer,
@@ -982,10 +982,10 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_from(
             tactics.extend(suffix);
             return true;
         }
-        // A disjunction closes the way `left`/`right` replay closes it: the
+        // A disjunction closes the way `left`/`right` check closes it: the
         // selected disjunct must be the same total boolean condition as an
         // available fact up to polarity (`x > 0` from `not (x <= 0)`).
-        // Construction mirrors exactly that replay check, and commits only
+        // Construction mirrors exactly that rule, and commits only
         // when a disjunct closes, so nothing beyond the two children is
         // examined.
         if let Proposition::Or(left_child, right_child) = &current {
@@ -1053,7 +1053,7 @@ pub(in crate::lang::click) fn plan_explicit_equality_rewrites_from(
 /// The checked kernel evidence behind one successful smart simplification.
 /// Search produces this at the moment it succeeds and immediately writes it
 /// as explicit surface tactics; it is never stored, ordered into a plan, or
-/// replayed as a private operation program. A derivation the surface
+/// checked as a private operation program. A derivation the surface
 /// vocabulary cannot write is a search failure, not a lowering error.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::lang::click) enum SimpEvidence {
@@ -1078,7 +1078,7 @@ pub(in crate::lang::click) fn plan_simp_certificate(
     }
 }
 
-pub(in crate::lang::click) fn replay_simp_certificate(
+pub(in crate::lang::click) fn check_simp_certificate(
     proposition: &Proposition,
     assumptions: &PureFactContext,
     certificate: &SimpEvidence,
@@ -1089,7 +1089,7 @@ pub(in crate::lang::click) fn replay_simp_certificate(
             matches!(normalize_proposition(proposition), SimpProposition::True)
         }
         SimpEvidence::Derivation(derivation) => {
-            derivation.conclusion() == proposition && derivation.replay(assumptions)
+            derivation.conclusion() == proposition && derivation.check(assumptions)
         }
     }
 }
@@ -1240,7 +1240,7 @@ pub(in crate::lang::click) fn simp_proposition(
     assumptions: &PureFactContext,
 ) -> SimpProposition {
     if let Some(certificate) = plan_simp_certificate(proposition, assumptions)
-        && replay_simp_certificate(proposition, assumptions, &certificate)
+        && check_simp_certificate(proposition, assumptions, &certificate)
     {
         return SimpProposition::True;
     }

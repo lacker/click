@@ -929,7 +929,7 @@ fn statement_fact_prefix_preserves_successor_order_without_copying_ambient_histo
 }
 
 #[test]
-fn replay_availability_probes_equivalent_condition_polarities_by_exact_index() {
+fn check_availability_probes_equivalent_condition_polarities_by_exact_index() {
     let left = Bitvector32Term::Variable(Variable(80_000));
     let right = Bitvector32Term::Variable(Variable(80_001));
     let available = Proposition::ConditionIs(
@@ -960,7 +960,7 @@ fn replay_availability_probes_equivalent_condition_polarities_by_exact_index() {
             false,
         ))),
     ] {
-        assert!(facts.replay_available_across_effects(&required, &[]));
+        assert!(facts.available_across_effects(&required, &[]));
     }
 }
 
@@ -2420,11 +2420,11 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             1,
             "unrelated implications must not enter the selected bucket"
         );
-        let quantified_key = quantified_replay_index_key(&required_antecedent)
+        let quantified_key = quantified_equivalence_index_key(&required_antecedent)
             .expect("a universal has an alpha-invariant key");
         assert_eq!(
             root.facts()
-                .by_quantified_replay
+                .by_quantified_equivalence
                 .get(&quantified_key)
                 .expect("alpha-equivalent antecedent should be indexed")
                 .len(),
@@ -2584,11 +2584,11 @@ fn point_instantiate_uses_indexed_universal_and_only_named_guards() {
             ));
         }
         let retained_root = root.clone();
-        let key = quantified_replay_index_key(&kernel_quantified)
+        let key = quantified_equivalence_index_key(&kernel_quantified)
             .expect("the selected universal should have an alpha key");
         assert_eq!(
             root.facts()
-                .by_quantified_replay
+                .by_quantified_equivalence
                 .get(&key)
                 .expect("the selected universal should be indexed")
                 .len(),
@@ -8182,7 +8182,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         assert!(execution.region_invariants_closed);
         assert!(
             execution.invariant_closer_step.is_none(),
-            "source timing metadata is attached only at the replay adapter boundary"
+            "source timing metadata is attached only at the check adapter boundary"
         );
         assert!(closed.apply_step(SimpleProofStep::CloseInvariants).is_err());
         assert_eq!(

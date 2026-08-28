@@ -194,7 +194,7 @@ impl<'a> Proof<'a> {
     /// Splits the focused preservation frontier under a proof-level `if`,
     /// introducing each arm's case assumption through the one shared
     /// case-assumption law, so lowered spellings, recorded surface
-    /// propositions, and feasibility match the replayed form exactly.
+    /// propositions, and feasibility match the checked form exactly.
     /// Infeasible arms are omitted; the returned slots align `[then, else]`.
     /// Sibling arms stay separate — a preservation path never rejoins across
     /// the back edge — so no join consumes this split.
@@ -217,7 +217,7 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         // A mid-execution case condition may name the current statement's
         // entry snapshot before any step has crossed it; record it so the
-        // form lowers, exactly as the replayed `if` did.
+        // form lowers, exactly as the checked `if` did.
         record_current_statement_entry(
             &base_execution.frontier,
             &mut base_execution.program_point_states,
@@ -246,7 +246,7 @@ impl<'a> Proof<'a> {
                 continue;
             }
             // Record where this proof-level case split sits in the path's
-            // surface record, exactly as the replayed form recorded it.
+            // surface record, exactly as the checked form recorded it.
             if arm_execution.surface_record.blocker.is_none() {
                 // The split sits after the Proof's own top-level steps: surface
                 // synthesis splits sibling paths at this offset, so it is
@@ -335,7 +335,7 @@ impl<'a> Proof<'a> {
     /// The planner fallback for a preservation smart `step`: a scratch
     /// planning pass constructs the explicit checked operations for the
     /// current statement, and this Proof applies exactly those operations.
-    /// Mirrors the replayed smart-step law, including its failure wording.
+    /// Mirrors the checked smart-step law, including its failure wording.
     pub(in crate::lang::click::proof) fn apply_planned_smart_step(
         &self,
         tactic_index: usize,
@@ -856,7 +856,7 @@ impl<'a> Proof<'a> {
         })
     }
 
-    /// Records where the replayed `close_invariants` tactic sat, so the
+    /// Records where the checked `close_invariants` tactic sat, so the
     /// kernel re-derivation its caller performs at the bundle check can be
     /// timed against that tactic's identity. Cursor metadata only.
     pub(in crate::lang::click::proof) fn record_invariant_closer(
@@ -933,7 +933,7 @@ impl<'a> Proof<'a> {
     /// `while` statement in the frontier's own statement tree, and the
     /// derived exit facts join this goal's context. The surface record and
     /// expansion capture ride the transitional cursor exactly as the
-    /// replayed form recorded them.
+    /// checked form recorded them.
     pub(in crate::lang::click::proof) fn apply_frontier_local_loop(
         &self,
         mut expansion_capture: Option<&mut ExpansionCapture>,

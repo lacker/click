@@ -1,7 +1,7 @@
 # simple tactics respect source order
 
 A later theorem application cannot be moved before an earlier goal-closing
-tactic. Explicit proof scripts replay in source order.
+tactic. Explicit proof scripts check in source order.
 
 ```click
 theorem exact_zero(x: int32) {

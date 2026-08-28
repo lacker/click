@@ -57,7 +57,7 @@ profiling don't decide validity. Expansion is accepted only after the complete
 rendered source verifies through the ordinary entry point.
 
 The ordinary `Proof` transition boundary and rewritten-source verification
-are the durable invariants; no separate certificate replay sits in front of
+are the durable invariants; no separate certificate validation sits in front of
 that check.
 
 OS process wrappers aren't part of the proof architecture. CLI commands and

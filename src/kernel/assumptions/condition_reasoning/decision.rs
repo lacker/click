@@ -278,7 +278,7 @@ impl PureFactContext {
         // constant that is nonzero mod 2^32 are unequal in every model
         // (x + c wraps back to x only when c is a multiple of 2^32). No
         // facts are consulted, so the verdict is identical in smart
-        // execution and pinned replay.
+        // execution and pinned check.
         if let Some(difference) = affine_bitvector_difference_constant(left, right)
             && difference.rem_euclid(1i64 << 32) != 0
         {

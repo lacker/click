@@ -804,7 +804,7 @@ theorem impossible_interval() {
 "#;
 
     verify_c0_sources(source, &[])
-        .expect("normalize should replay a context-free quantified derivation");
+        .expect("normalize should check a context-free quantified derivation");
 }
 
 #[test]

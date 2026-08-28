@@ -88,8 +88,8 @@ impl TacticTiming {
         )
     }
 
-    /// Times work that is not itself a surface tactic replay — a planner
-    /// searching for a certificate, or a kernel re-derivation that a replayed
+    /// Times work that is not itself a surface tactic check — a planner
+    /// searching for a certificate, or a kernel re-derivation that a checked
     /// tactic defers to its caller — under an explicit `name`, taking the
     /// class from the tactic the work belongs to rather than inventing one.
     pub(super) fn named_for_tactic(

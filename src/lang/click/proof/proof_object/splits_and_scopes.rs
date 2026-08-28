@@ -284,7 +284,7 @@ impl<'a> Proof<'a> {
     /// Splits one retained execution frontier under the two exact disjuncts
     /// of an available proposition. The disjunction is checked once at the
     /// split; each sibling receives only its own disjunct in its persistent
-    /// fact context, and no semantic state is exported to a replay cursor.
+    /// fact context, and no semantic state is exported to a construction cursor.
     pub(in crate::lang::click::proof) fn split_focused_execution_cases(
         &self,
         disjunction: ClickProposition,
@@ -896,7 +896,7 @@ impl<'a> Proof<'a> {
         // A post-execution unfold lets a predicate-call `have` prove the
         // predicate through its structural body. Pair that body kernel with
         // the same unfolded Surface view so `intro` retains binder names and
-        // subsequent simple steps serialize an independently replayable
+        // subsequent simple steps serialize an independently checkable
         // proof. Joining still publishes the opaque `kernel` named by the
         // enclosing Have step.
         let structural_proposition = if let ClickProposition::PredicateCall { name, .. } =

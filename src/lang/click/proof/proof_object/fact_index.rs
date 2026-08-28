@@ -10,7 +10,7 @@ impl ProofFacts {
         let mut proper_conjuncts = PersistentSet::default();
         let mut by_snapshot_blind = PersistentMap::default();
         let mut bitvector_equalities_by_atom = PersistentMap::default();
-        let mut by_quantified_replay = PersistentMap::default();
+        let mut by_quantified_equivalence = PersistentMap::default();
         let mut memory_effect_summaries = PersistentSequence::default();
         let mut implications_by_consequent = PersistentMap::default();
         let mut assumptions = PureFactContext::new();
@@ -22,7 +22,7 @@ impl ProofFacts {
             }
             ordered.push(fact.clone());
             top_level_exact = top_level_exact.with_value(fact.clone());
-            by_quantified_replay = index_quantified_replay_fact(by_quantified_replay, fact);
+            by_quantified_equivalence = index_quantified_fact(by_quantified_equivalence, fact);
             if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
                 memory_effect_summaries.push(fact.clone());
             }
@@ -56,7 +56,7 @@ impl ProofFacts {
             proper_conjuncts,
             by_snapshot_blind,
             bitvector_equalities_by_atom,
-            by_quantified_replay,
+            by_quantified_equivalence,
             memory_effect_summaries,
             predicate_unfolded_universal_facts: PersistentSequence::default(),
             implications_by_consequent,
@@ -95,8 +95,8 @@ impl ProofFacts {
         let mut proper_conjuncts = self.proper_conjuncts.clone();
         let mut by_snapshot_blind = self.by_snapshot_blind.clone();
         let mut bitvector_equalities_by_atom = self.bitvector_equalities_by_atom.clone();
-        let by_quantified_replay =
-            index_quantified_replay_fact(self.by_quantified_replay.clone(), &fact);
+        let by_quantified_equivalence =
+            index_quantified_fact(self.by_quantified_equivalence.clone(), &fact);
         let mut memory_effect_summaries = self.memory_effect_summaries.clone();
         if matches!(fact, Proposition::CMemoryEffectSummary { .. }) {
             memory_effect_summaries.push(fact.clone());
@@ -130,7 +130,7 @@ impl ProofFacts {
             proper_conjuncts,
             by_snapshot_blind,
             bitvector_equalities_by_atom,
-            by_quantified_replay,
+            by_quantified_equivalence,
             memory_effect_summaries,
             predicate_unfolded_universal_facts: self.predicate_unfolded_universal_facts.clone(),
             implications_by_consequent,
@@ -181,7 +181,7 @@ impl ProofFacts {
     /// goal's indexed equality buckets; unrelated ambient equalities remain
     /// implicit and are never visited.
     pub(super) fn with_selected_load_equality_bridge(&self, goal: &Proposition) -> Self {
-        if self.pure_replay_available(goal)
+        if self.pure_assumption_available(goal)
             || !matches!(
                 goal,
                 Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(_, _), true)
@@ -224,7 +224,7 @@ impl ProofFacts {
     }
 
     /// Exact or direct-load-materialization-equivalent availability used by
-    /// the deterministic rewrite rule. Unlike snapshot replay, this does not
+    /// the deterministic rewrite rule. Unlike snapshot check, this does not
     /// admit polarity changes or a semantic bridge beyond normalization.
     pub(in crate::lang::click::proof) fn materialization_available(
         &self,
@@ -237,11 +237,11 @@ impl ProofFacts {
     /// judgment used inside point proofs. This deliberately excludes
     /// cross-effect snapshot transport: such a transport needs its own
     /// retained simple step before a later assumption may consume it.
-    pub(in crate::lang::click::proof) fn pure_replay_available(
+    pub(in crate::lang::click::proof) fn pure_assumption_available(
         &self,
         required: &Proposition,
     ) -> bool {
-        self.materialization_available(required) || self.quantified_replay_available(required)
+        self.materialization_available(required) || self.quantified_fact_available(required)
     }
 
     pub(in crate::lang::click::proof) fn implicit_transport_assumptions(&self) -> &PureFactContext {
@@ -269,10 +269,10 @@ impl ProofFacts {
         successor
     }
 
-    /// Availability accepted by explicit replay, answered from persistent
+    /// Availability accepted by explicit check, answered from persistent
     /// indexes. Snapshot-blind buckets only select structurally compatible
     /// candidates; the kernel still proves every cross-snapshot match.
-    pub(in crate::lang::click::proof) fn replay_available_across_effects(
+    pub(in crate::lang::click::proof) fn available_across_effects(
         &self,
         required: &Proposition,
         framing: &[ExecutionPureFact],
@@ -281,14 +281,14 @@ impl ProofFacts {
             return true;
         }
 
-        self.quantified_replay_available(required)
+        self.quantified_fact_available(required)
     }
 
-    /// Returns one actual available fact accepted by explicit replay. Smart
+    /// Returns one actual available fact accepted by explicit check. Smart
     /// syntax selection needs the retained fact, not merely a yes/no answer:
     /// its recorded surface form may carry a statement snapshot that the
     /// freshly lowered theorem requirement no longer exposes.
-    pub(super) fn matching_replay_fact_across_effects(
+    pub(super) fn matching_fact_across_effects(
         &self,
         required: &Proposition,
         framing: &[ExecutionPureFact],
@@ -321,7 +321,7 @@ impl ProofFacts {
             return Some(form);
         }
 
-        if let Some(quantified) = self.matching_quantified_replay_fact(required) {
+        if let Some(quantified) = self.matching_quantified_fact(required) {
             return Some(quantified);
         }
 
@@ -350,26 +350,18 @@ impl ProofFacts {
             .then(|| required.clone())
     }
 
-    pub(super) fn matching_quantified_replay_fact(
-        &self,
-        required: &Proposition,
-    ) -> Option<Proposition> {
-        self.matching_quantified_replay_facts(required)
-            .into_iter()
-            .next()
+    pub(super) fn matching_quantified_fact(&self, required: &Proposition) -> Option<Proposition> {
+        self.matching_quantified_facts(required).into_iter().next()
     }
 
-    pub(super) fn matching_quantified_replay_facts(
-        &self,
-        required: &Proposition,
-    ) -> Vec<Proposition> {
-        quantified_replay_index_key(required)
-            .and_then(|key| self.by_quantified_replay.get(&key))
+    pub(super) fn matching_quantified_facts(&self, required: &Proposition) -> Vec<Proposition> {
+        quantified_equivalence_index_key(required)
+            .and_then(|key| self.by_quantified_equivalence.get(&key))
             .into_iter()
             .flat_map(PersistentSequence::iter)
             .filter(|candidate| {
                 quantified_binder_equivalent(required, candidate)
-                    || quantified_replay_equivalent_available_fact(
+                    || quantified_equivalent_available_fact(
                         required,
                         std::slice::from_ref(candidate),
                     )
@@ -379,8 +371,8 @@ impl ProofFacts {
             .collect()
     }
 
-    pub(super) fn quantified_replay_available(&self, required: &Proposition) -> bool {
-        self.matching_quantified_replay_fact(required).is_some()
+    pub(super) fn quantified_fact_available(&self, required: &Proposition) -> bool {
+        self.matching_quantified_fact(required).is_some()
     }
 
     pub(super) fn contains_discharged_implication_consequent(
@@ -396,7 +388,7 @@ impl ProofFacts {
                     && candidate
                         .antecedents
                         .iter()
-                        .all(|antecedent| self.replay_available_across_effects(antecedent, &[]))
+                        .all(|antecedent| self.available_across_effects(antecedent, &[]))
             })
     }
 
@@ -709,11 +701,11 @@ pub(super) fn collect_pointer_offset_bitvector_atoms(
     }
 }
 
-pub(super) fn index_quantified_replay_fact(
-    mut index: PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>>,
+pub(super) fn index_quantified_fact(
+    mut index: PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>>,
     fact: &Proposition,
-) -> PersistentMap<QuantifiedReplayKey, PersistentSequence<Proposition>> {
-    let Some(key) = quantified_replay_index_key(fact) else {
+) -> PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>> {
+    let Some(key) = quantified_equivalence_index_key(fact) else {
         return index;
     };
     let mut bucket = index.get(&key).cloned().unwrap_or_default();

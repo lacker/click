@@ -26,7 +26,7 @@ authorizes ordinary commits and pushes for completed in-scope chunks, but does
 not authorize unrelated work or destructive operations.
 
 Tooling instability is a stop condition for the affected feature. Never route
-around unexpected slowness, missed budgets, expansion/replay disagreement,
+around unexpected slowness, missed budgets, expansion/verification disagreement,
 misleading diagnostics, enormous states, or pressure to reshape C or example
 code. Do not raise limits, add arbitrary search caps, weaken examples, or
 change C to make a proof pass.
@@ -43,7 +43,7 @@ tactics are incomplete heuristics, and overnight work must not turn each hard
 proof into a search-engine project. Split the proof into smaller operations or
 use explicit simple tactics and continue. Investigate the engine only when
 search misses its bound, produces misleading or enormous diagnostics, reports
-success without replayable expansion, behaves nondeterministically, or the
+success without a verifiable expansion, behaves nondeterministically, or the
 needed proof cannot be expressed through the simple tactic surface.
 
 At the end of an overnight run, report completed work, remaining issues,
@@ -127,7 +127,7 @@ current feature when any of these occurs:
 
 - verification is unexpectedly slow or crosses a tactic budget without a
   prompt, local failure;
-- a smart tactic reports success but its certificate does not replay;
+- a smart tactic reports success but its generated certificate does not verify;
 - `click expand` fails, emits an unverifiable rewrite, or disagrees with
   `click profile` or `click audit`;
 - a normal diagnostic expands into a huge internal state dump; or
@@ -137,7 +137,7 @@ current feature when any of these occurs:
 Smart-search failure is expected when it is prompt, bounded, and actionable.
 It is not a reason to stop feature work or modify shared heuristics. Prefer a
 smaller smart tactic or an explicit sequence of relevant simple steps. Search
-completeness is a non-goal; sound replay, enforced bounds, useful diagnostics,
+completeness is a non-goal; sound certificate validation, enforced bounds, useful diagnostics,
 and sufficient simple tactics are requirements.
 
 Reduce and fix the tooling problem before resuming feature work. If it cannot
@@ -158,7 +158,7 @@ verification engine directly. Keep OS process isolation only as a narrow,
 owned crash-containment boundary.
 
 This priority is deliberate: Click's examples and language features depend on
-fast verification, replayable certificates, working expansion, and actionable
+fast verification, checkable certificates, working expansion, and actionable
 diagnostics. Building above a broken proof-tool boundary makes later failures
 harder to interpret.
 

@@ -43,7 +43,7 @@ fn frontier_local_loop_verifies_and_advances_to_exit() {
 }
 
 #[test]
-fn individual_loop_proof_has_no_whole_claim_acceptance_replay() {
+fn individual_loop_proof_has_no_whole_claim_acceptance_check() {
     let c_source = r#"
         int32 count_to_three() {
             int32 i;
@@ -79,20 +79,15 @@ fn individual_loop_proof_has_no_whole_claim_acceptance_replay() {
     "#;
     let sources = [("count_to_three.c", c_source)];
 
-    let ((verified, root_replays), events) = crate::instrumentation::collect(|| {
-        proof::count_root_internal_proof_executions(|| verify_c0_sources(click_source, &sources))
-    });
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &sources));
     let verified = verified.expect("the individual loop proof should verify once");
-    assert!(
-        root_replays <= 1,
-        "ordinary verification must not replay the extracted whole-claim proof"
-    );
     assert!(events.iter().all(|event| !matches!(
         event,
         crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
             if matches!(
                 name.as_str(),
-                "whole-claim certificate construction" | "whole-claim certificate replay"
+                "whole-claim certificate construction" | "whole-claim certificate validation"
             )
     )));
     verified[0]
@@ -166,9 +161,9 @@ fn loop_initialization_theorem_search_retains_checked_point_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim.contains("loop(0).initialize")
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the checked initialization Proof must not be independently replayed: {events:#?}"
+        "the checked initialization Proof must not be independently checked: {events:#?}"
     );
 
     let offset = click_source
@@ -240,9 +235,9 @@ fn loop_initialization_simp_retains_checked_point_proof() {
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
                 if claim.contains("loop(0).initialize")
-                    && name == "surface certificate replay"
+                    && name == "generated certificate validation"
         )),
-        "the checked initialization simp must not be independently replayed: {events:#?}"
+        "the checked initialization simp must not be independently checked: {events:#?}"
     );
 
     let offset = click_source
@@ -558,7 +553,7 @@ fn frontier_local_loop_frames_untouched_composite_pointer_field_across_call() {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column)
             .expect("frontier-loop expansion should retain the loop body's callee contract");
     verify_c0_sources(&expanded, &sources)
-        .expect("expanded frontier-loop initialization should replay");
+        .expect("expanded frontier-loop initialization should check");
 }
 
 #[test]
@@ -898,7 +893,7 @@ fn frontier_local_perpetual_loop_expands_a_direct_closer_without_a_return() {
 
     verify_c0_sources(&expanded, &[("spin.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the expanded perpetual-loop proof should freshly replay: {}\n{expanded}",
+            "the expanded perpetual-loop proof should freshly check: {}\n{expanded}",
             error.message()
         )
     });
@@ -992,7 +987,7 @@ fn frontier_local_loop_keyword_expands_omitted_phases() {
     assert!(expanded.contains("preserve by {"), "{expanded}");
     verify_c0_sources(&expanded, &[("count_to_n.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the expanded frontier-local loop should freshly replay: {}\n{expanded}",
+            "the expanded frontier-local loop should freshly check: {}\n{expanded}",
             error.message()
         )
     });
@@ -1059,7 +1054,7 @@ fn loop_exit_simp_expands_invariant_conjuncts_explicitly() {
     );
     verify_c0_sources(&expanded, &[("count_to_n.c", c_source)]).unwrap_or_else(|error| {
         panic!(
-            "the expanded loop-exit proof should freshly replay: {}\n{expanded}",
+            "the expanded loop-exit proof should freshly check: {}\n{expanded}",
             error.message()
         )
     });
@@ -1200,7 +1195,7 @@ fn frontier_local_loop_expands_an_explicit_nested_tactic_at_its_own_location() {
     assert!(!expanded.contains("initialize by simp"), "{expanded}");
     assert!(expanded.contains("preserve by {"), "{expanded}");
     verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
-        .expect("expanded explicit initialization tactic should freshly replay");
+        .expect("expanded explicit initialization tactic should freshly check");
 }
 
 #[test]
@@ -1319,7 +1314,7 @@ fn frontier_local_loop_expands_a_tactic_inside_preservation_at_its_own_location(
     assert_eq!(expanded, click_source);
     assert!(expanded.contains("initialize by simp"), "{expanded}");
     verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
-        .expect("expanded preservation step should freshly replay");
+        .expect("expanded preservation step should freshly check");
 }
 
 #[test]
@@ -1381,7 +1376,7 @@ fn frontier_local_loop_expands_an_explicit_effect_tactic_at_its_own_location() {
         "{expanded}"
     );
     verify_c0_sources(&expanded, &[("fill.c", c_source)])
-        .expect("expanded explicit effect tactic should freshly replay");
+        .expect("expanded explicit effect tactic should freshly check");
 }
 
 #[test]
@@ -1450,7 +1445,7 @@ fn frontier_effect_expansion_ignores_generated_preservation_suffix() {
     assert!(!expanded.contains("immutable by frame"), "{expanded}");
     assert!(expanded.contains("frame() using"), "{expanded}");
     verify_c0_sources(&expanded, &[("count_to_three.c", c_source)])
-        .expect("expanded effect certificate should freshly replay");
+        .expect("expanded effect certificate should freshly check");
 }
 
 #[test]
@@ -1490,47 +1485,29 @@ fn loop_structural_effect_frame_stays_on_proof() {
         "#;
     let without_effect = with_effect.replace("                    immutable by frame;\n", "");
 
-    let (baseline, baseline_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(&without_effect, &[("count_once.c", c_source)])
-    });
+    let baseline = { verify_c0_sources(&without_effect, &[("count_once.c", c_source)]) };
     baseline.expect("the comparison loop without an effect should verify");
-    let (verified, effect_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(with_effect, &[("count_once.c", c_source)])
-    });
+    let verified = { verify_c0_sources(with_effect, &[("count_once.c", c_source)]) };
     verified.expect("the loop structural effect should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the structural effect added compatibility replay"
-    );
 
     let effect_offset = with_effect
         .find("immutable by frame")
         .expect("the effect proof should have a source position")
         + "immutable by ".len();
     let position = expansion::position_at_offset(with_effect, effect_offset);
-    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
+    let expanded = {
         expand_c0_tactic_source_at(
             with_effect,
             &[("count_once.c", c_source)],
             position.line,
             position.column,
         )
-    });
+    };
     let expanded = expanded.expect("the checked loop effect frame should expand");
     assert!(expanded.contains("frame() using"), "{expanded}");
-    assert_eq!(
-        expansion_replays, baseline_replays,
-        "effect expansion added compatibility replay"
-    );
 
-    let (reverified, rewritten_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(&expanded, &[("count_once.c", c_source)])
-    });
+    let reverified = { verify_c0_sources(&expanded, &[("count_once.c", c_source)]) };
     reverified.expect("the extracted loop effect should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "the rewritten effect added compatibility replay"
-    );
 
     let frame_start = expanded
         .find("frame() using {")
@@ -1544,20 +1521,16 @@ fn loop_structural_effect_frame_stays_on_proof() {
         frame_start + "frame() using {".len()..frame_end,
         "\n                            0 == 1;",
     );
-    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&corrupted, &[("count_once.c", c_source)])
             .expect_err("an unavailable loop-effect frame premise must be rejected")
-    });
+    };
     assert!(
         error
             .message()
             .contains("requires an exact available premise"),
         "{}",
         error.message()
-    );
-    assert!(
-        corrupted_replays <= baseline_replays,
-        "the invalid checked effect entered additional compatibility replay: baseline {baseline_replays}, invalid {corrupted_replays}"
     );
 }
 
@@ -1613,29 +1586,11 @@ fn explicit_loop_effect_have_stays_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the explicit loop-effect have should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the structural effect added a compatibility replay execution"
-    );
-    assert_eq!(
-        replay_labels, baseline_labels,
-        "the structural effect changed the compatibility replay path"
-    );
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -1657,21 +1612,8 @@ fn explicit_loop_effect_have_stays_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the complete proof should expand from retained provenance");
-    let ((reverified, rewritten_replay_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten source should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "rewritten-source verification added a compatibility replay execution"
-    );
-    assert_eq!(
-        rewritten_replay_labels, baseline_labels,
-        "rewritten-source verification changed the compatibility replay path"
-    );
 }
 
 #[test]
@@ -1748,29 +1690,11 @@ fn loop_effect_have_logical_decomposition_stays_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the loop-effect logical have should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the logical have added a compatibility replay execution"
-    );
-    assert_eq!(
-        replay_labels, baseline_labels,
-        "the logical have changed the compatibility replay path"
-    );
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -1804,21 +1728,8 @@ fn loop_effect_have_logical_decomposition_stays_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the complete proof should expand from retained provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten source should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "rewritten-source verification replayed the logical have"
-    );
-    assert_eq!(
-        rewritten_labels, baseline_labels,
-        "rewritten-source verification changed the compatibility replay path"
-    );
 }
 
 #[test]
@@ -1900,29 +1811,11 @@ fn loop_effect_open_scope_stays_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the loop-effect open scope should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the loop-effect open scope added a compatibility replay execution"
-    );
-    assert_eq!(
-        replay_labels, baseline_labels,
-        "the loop-effect open scope changed the compatibility replay path"
-    );
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -1957,21 +1850,8 @@ fn loop_effect_open_scope_stays_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the complete proof should expand from retained provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten source should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "rewritten-source verification replayed the loop-effect open scope"
-    );
-    assert_eq!(
-        rewritten_labels, baseline_labels,
-        "rewritten-source verification changed the compatibility replay path"
-    );
 
     let after_terminal_frame = click_source.replace(
         "                                frame() using {};",
@@ -2074,29 +1954,11 @@ fn loop_effect_if_after_leading_open_scopes_stays_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the loop-effect if after leading opens should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the leading-open effect if added a compatibility replay execution"
-    );
-    assert_eq!(
-        replay_labels, baseline_labels,
-        "the leading-open effect if changed the compatibility replay path"
-    );
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2134,41 +1996,24 @@ fn loop_effect_if_after_leading_open_scopes_stays_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the complete proof should expand from retained provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten source should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "rewritten-source verification replayed the leading-open effect if"
-    );
-    assert_eq!(
-        rewritten_labels, baseline_labels,
-        "rewritten-source verification changed the compatibility replay path"
-    );
 
     let invalid_arm = click_source.replacen(
         "                                        frame() using {};",
         "                                        frame() using {\n                                            0 == 1;\n                                        };",
         1,
     );
-    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&invalid_arm, &sources)
             .expect_err("an unavailable branch-local frame premise must be rejected")
-    });
+    };
     assert!(
         error
             .message()
             .contains("requires an exact available premise"),
         "unexpected checked branch-arm diagnostic: {}",
         error.message()
-    );
-    assert!(
-        invalid_replays <= baseline_replays,
-        "the invalid checked branch entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
     );
 }
 
@@ -2267,29 +2112,11 @@ fn recursive_loop_effect_ifs_after_leading_opens_stay_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the recursive loop-effect if tree should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the recursive effect if tree added a compatibility replay execution"
-    );
-    assert_eq!(
-        replay_labels, baseline_labels,
-        "the recursive effect if tree changed the compatibility replay path"
-    );
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2329,35 +2156,24 @@ fn recursive_loop_effect_ifs_after_leading_opens_stay_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the recursive effect tree should expand from retained provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten recursive effect should verify normally");
-    assert_eq!(rewritten_replays, baseline_replays);
-    assert_eq!(rewritten_labels, baseline_labels);
 
     let invalid_leaf = click_source.replacen(
         "                                        frame() using {};",
         "                                        frame() using {\n                                            0 == 1;\n                                        };",
         1,
     );
-    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&invalid_leaf, &sources)
             .expect_err("an unavailable recursive leaf premise must be rejected")
-    });
+    };
     assert!(
         error
             .message()
             .contains("requires an exact available premise"),
         "unexpected recursive leaf diagnostic: {}",
         error.message()
-    );
-    assert!(
-        invalid_replays <= baseline_replays,
-        "the invalid recursive leaf entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
     );
 }
 
@@ -2441,26 +2257,11 @@ fn top_level_recursive_loop_effect_ifs_stay_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("the top-level recursive effect if should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the top-level recursive effect entered compatibility replay"
-    );
-    assert_eq!(replay_labels, baseline_labels);
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2498,35 +2299,24 @@ fn top_level_recursive_loop_effect_ifs_stay_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the top-level recursive effect should expand from retained provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("the rewritten top-level recursive effect should verify normally");
-    assert_eq!(rewritten_replays, baseline_replays);
-    assert_eq!(rewritten_labels, baseline_labels);
 
     let invalid_leaf = click_source.replacen(
         "                                frame() using {};",
         "                                frame() using {\n                                    0 == 1;\n                                };",
         1,
     );
-    let (error, invalid_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&invalid_leaf, &sources)
             .expect_err("an unavailable top-level leaf premise must be rejected")
-    });
+    };
     assert!(
         error
             .message()
             .contains("requires an exact available premise"),
         "unexpected top-level leaf diagnostic: {}",
         error.message()
-    );
-    assert!(
-        invalid_replays <= baseline_replays,
-        "the invalid top-level leaf entered compatibility replay: baseline {baseline_replays}, invalid {invalid_replays}"
     );
 }
 
@@ -2642,26 +2432,11 @@ fn recursive_loop_effect_cases_stay_on_proof() {
         "",
     );
 
-    let ((baseline, baseline_labels), baseline_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&without_effect, &sources)
-            })
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison loop without an effect should verify");
 
-    let ((verified, replay_labels), effect_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(click_source, &sources)
-            })
-        });
+    let verified = { verify_c0_sources(click_source, &sources) };
     let verified = verified.expect("recursive loop-effect cases should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "logical cases entered compatibility replay"
-    );
-    assert_eq!(replay_labels, baseline_labels);
 
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -2701,35 +2476,24 @@ fn recursive_loop_effect_cases_stay_on_proof() {
     let rewritten =
         expand_c0_claim_source(click_source, &sources, "count_once", CProofClaim::Grouped)
             .expect("the checked cases should serialize from Proof provenance");
-    let ((reverified, rewritten_labels), rewritten_replays) =
-        proof::count_internal_proof_executions(|| {
-            proof::collect_internal_proof_execution_labels(|| {
-                verify_c0_sources(&rewritten, &sources)
-            })
-        });
+    let reverified = { verify_c0_sources(&rewritten, &sources) };
     reverified.expect("serialized loop-effect cases should verify normally");
-    assert_eq!(rewritten_replays, baseline_replays);
-    assert_eq!(rewritten_labels, baseline_labels);
 
     let corrupted = click_source.replacen(
         "                        cases (flag == 0 or not (flag == 0)) {",
         "                        cases (flag == 1 or not (flag == 1)) {",
         1,
     );
-    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&corrupted, &sources)
             .expect_err("cases over an unavailable disjunction must be rejected")
-    });
+    };
     assert!(
         error
             .message()
             .contains("`cases` requires its exact disjunction as an available fact"),
         "unexpected cases diagnostic: {}",
         error.message()
-    );
-    assert!(
-        corrupted_replays <= baseline_replays,
-        "invalid cases entered compatibility replay: baseline {baseline_replays}, invalid {corrupted_replays}"
     );
 }
 
@@ -2773,32 +2537,24 @@ fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
         "#;
     let without_effect = with_effect.replace("                    mutable p[0..1] by frame;\n", "");
 
-    let (baseline, baseline_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(&without_effect, &[("fill_one.c", c_source)])
-    });
+    let baseline = { verify_c0_sources(&without_effect, &[("fill_one.c", c_source)]) };
     baseline.expect("the comparison loop without an effect should verify");
-    let (verified, effect_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(with_effect, &[("fill_one.c", c_source)])
-    });
+    let verified = { verify_c0_sources(with_effect, &[("fill_one.c", c_source)]) };
     verified.expect("the smart mutable loop frame should verify");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "smart mutable framing added compatibility replay"
-    );
 
     let offset = with_effect
         .find("mutable p[0..1] by frame")
         .expect("the mutable effect should have a source position")
         + "mutable p[0..1] by ".len();
     let position = expansion::position_at_offset(with_effect, offset);
-    let (expanded, expansion_replays) = proof::count_internal_proof_executions(|| {
+    let expanded = {
         expand_c0_tactic_source_at(
             with_effect,
             &[("fill_one.c", c_source)],
             position.line,
             position.column,
         )
-    });
+    };
     let expanded = expanded.expect("the smart mutable frame should expand");
     let frame_start = expanded
         .find("frame() using {")
@@ -2811,34 +2567,20 @@ fn smart_mutable_loop_frame_extracts_exact_proof_premises() {
         expanded[frame_start..frame_end].contains(';'),
         "the smart frame did not expose its checked premises: {expanded}"
     );
-    assert_eq!(
-        expansion_replays, baseline_replays,
-        "smart mutable expansion added compatibility replay"
-    );
 
-    let (reverified, rewritten_replays) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(&expanded, &[("fill_one.c", c_source)])
-    });
+    let reverified = { verify_c0_sources(&expanded, &[("fill_one.c", c_source)]) };
     reverified.expect("the explicit mutable frame should verify normally");
-    assert_eq!(
-        rewritten_replays, baseline_replays,
-        "the rewritten mutable frame added compatibility replay"
-    );
 
     let mut corrupted = expanded.clone();
     corrupted.replace_range(frame_start + "frame() using {".len()..frame_end, "");
-    let (error, corrupted_replays) = proof::count_internal_proof_executions(|| {
+    let error = {
         verify_c0_sources(&corrupted, &[("fill_one.c", c_source)])
             .expect_err("removing the selected mutable-frame premises must fail")
-    });
+    };
     assert!(
         error.message().contains("loop effect fact"),
         "{}",
         error.message()
-    );
-    assert!(
-        corrupted_replays <= baseline_replays,
-        "the corrupted mutable frame entered additional replay: baseline {baseline_replays}, invalid {corrupted_replays}"
     );
 }
 
@@ -2940,62 +2682,24 @@ fn branch_shaped_loop_effect_certificate_stays_on_proof() {
     let without_effect = with_effect.replace("                    mutable p[0..3] by frame;\n", "");
     let sources = [("bubble_pass3.c", c_source)];
 
-    let ((baseline, baseline_replays), baseline_roots) =
-        proof::count_root_internal_proof_executions(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(&without_effect, &sources))
-        });
+    let baseline = { verify_c0_sources(&without_effect, &sources) };
     baseline.expect("the comparison branching loop without an effect should verify");
-    assert_eq!(
-        baseline_roots, 0,
-        "the branching source proof is checked directly, not replayed as a detached certificate"
-    );
 
-    let ((verified, effect_replays), effect_roots) =
-        proof::count_root_internal_proof_executions(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(with_effect, &sources))
-        });
+    let verified = { verify_c0_sources(with_effect, &sources) };
     verified.expect("the branch-shaped smart frame should verify");
-    assert_eq!(effect_roots, 0, "the smart effect added an acceptance pass");
-    assert_eq!(
-        effect_replays, baseline_replays,
-        "the branch-shaped smart effect entered compatibility replay"
-    );
 
     let offset = with_effect
         .find("mutable p[0..3] by frame")
         .expect("the mutable effect should have a source position")
         + "mutable p[0..3] by ".len();
     let position = expansion::position_at_offset(with_effect, offset);
-    let ((expanded, expansion_replays), expansion_roots) =
-        proof::count_root_internal_proof_executions(|| {
-            proof::count_internal_proof_executions(|| {
-                expand_c0_tactic_source_at(with_effect, &sources, position.line, position.column)
-            })
-        });
+    let expanded =
+        { expand_c0_tactic_source_at(with_effect, &sources, position.line, position.column) };
     let expanded = expanded.expect("the branch-shaped smart frame should expand");
-    assert_eq!(
-        expansion_roots, 0,
-        "provenance extraction added a detached acceptance pass"
-    );
-    assert_eq!(
-        expansion_replays, baseline_replays,
-        "expanding the branch-shaped smart effect entered compatibility replay"
-    );
     assert!(expanded.contains("if p[(j + 1)] < p[j]"), "{expanded}");
 
-    let ((reverified, replays), rewritten_roots) =
-        proof::count_root_internal_proof_executions(|| {
-            proof::count_internal_proof_executions(|| verify_c0_sources(&expanded, &sources))
-        });
+    let reverified = { verify_c0_sources(&expanded, &sources) };
     reverified.expect("the branch-shaped explicit frame should verify normally");
-    assert_eq!(
-        rewritten_roots, 0,
-        "rewritten-source verification added an acceptance pass"
-    );
-    assert_eq!(
-        replays, baseline_replays,
-        "the branch-shaped structural effect entered compatibility replay"
-    );
 }
 
 #[test]
@@ -3044,22 +2748,13 @@ fn frame_loop_region_uses_frontier_loop_effect_summary_for_ensures() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
+    let (verified, _events) = crate::instrumentation::collect(|| {
         crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
             verify_c0_sources(click_source, &[("fill_n.c", c_source)])
         })
     });
     let verified =
         verified.expect("a qualified frame should prove preservation from the loop effect summary");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "fill_n.contract"
-                    && name == "smart tactic compatibility replay (tactic 4, source 6)"
-        )),
-        "the qualified frame's checked Proof successor must bypass compatibility replay: {events:#?}"
-    );
     assert!(
         verified[0]
             .expanded_proof_tactics()
@@ -3130,21 +2825,12 @@ fn qualified_frame_with_explicit_premise_advances_through_proof() {
             }
         "#;
 
-    let (verified, events) = crate::instrumentation::collect(|| {
+    let (verified, _events) = crate::instrumentation::collect(|| {
         crate::instrumentation::with_deadline(std::time::Duration::from_secs(3), || {
             verify_c0_sources(click_source, &[("fill_n.c", c_source)])
         })
     });
     let verified = verified.expect("an explicit qualified frame premise should verify");
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "fill_n.contract"
-                    && name == "smart tactic compatibility replay (tactic 4, source 6)"
-        )),
-        "the premise-bearing qualified frame must bypass compatibility replay: {events:#?}"
-    );
     assert!(
         verified[0]
             .expanded_proof_tactics()
@@ -3360,7 +3046,7 @@ fn body_final_branch_preservation_completes_at_typed_back_edge_boundary() {
 #[test]
 fn frontier_local_loop_exit_bound_weakens_to_a_looser_ensures() {
     // The negated loop guard leaves `i >= 3` at the loop's exit. The checked
-    // outcome `simp` must retain a replayable proof of the *looser* bounds
+    // outcome `simp` must retain a checkable proof of the *looser* bounds
     // `result >= 1` and `result <= 5` (constant-bound weakening through
     // `int32_ge_transitive` / `int32_le_transitive`), not only the exact
     // `result == 3`.

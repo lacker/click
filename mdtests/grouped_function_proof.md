@@ -1,7 +1,7 @@
 # Grouped function proof
 
 A trailing proof block proves all effect, resource, and pure postconditions from
-one execution replay. `frame()` closes the effect goal, while `simp()` closes
+one execution pass. `frame()` closes the effect goal, while `simp()` closes
 the postconditions from the resulting shared state.
 
 ```c filename=grouped_function_proof.c

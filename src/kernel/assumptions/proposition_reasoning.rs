@@ -307,12 +307,12 @@ impl PureFactContext {
         self.derive_proposition_using(proposition, false)
     }
 
-    /// Build a replayable derivation while retaining its complete atomic
+    /// Build a checkable derivation while retaining its complete atomic
     /// premise sets. This is used both by internal deterministic checks that
-    /// immediately replay the result and by certificate planning after it has
+    /// immediately check the result and by certificate planning after it has
     /// already selected a narrow explicit premise set. In the latter case,
     /// minimizing through a stronger internal theory can erase the selected
-    /// surface dependency even though the retained proof still replays.
+    /// surface dependency even though the retained proof still checks.
     pub(crate) fn derive_proposition_without_premise_minimization(
         &self,
         proposition: &Proposition,
@@ -331,10 +331,10 @@ impl PureFactContext {
 
     /// Searches for a simplifier derivation without using the goal's own
     /// exact ambient fact as a premise. This is a read-only weakening used
-    /// when an enclosing checked `have` needs independently replayable
+    /// when an enclosing checked `have` needs independently checkable
     /// evidence rather than the circular `assumption()` candidate.
     ///
-    /// The returned derivation still replays against the original stronger
+    /// The returned derivation still checks against the original stronger
     /// context. Removing one exact entry touches only persistent indexes
     /// keyed by that proposition; it never rebuilds or scans the fact set.
     pub(crate) fn derive_simp_proposition_without_exact_goal(
@@ -415,7 +415,7 @@ impl PureFactContext {
     /// Select the range fact that justified a memory-access consequence.
     ///
     /// General solving may inspect several loadability ranges while planning.
-    /// A derivation must retain the successful choice so replay does not repeat
+    /// A derivation must retain the successful choice so check does not repeat
     /// that candidate search. Other fact kinds remain available because
     /// pointer/snapshot equality can depend on explicit frame facts.
     fn atomic_derivation_premises(
@@ -1032,7 +1032,7 @@ impl PureFactContext {
 
     /// Select one concrete specialization of an available int32 universal,
     /// retaining the exact context facts used to discharge its guards. This
-    /// is planning work: replay consumes only the recorded fact, argument,
+    /// is planning work: check consumes only the recorded fact, argument,
     /// and guard premises and never scans the ambient proposition set.
     fn select_forall_int32_instantiation_evidence(
         &self,
@@ -1710,7 +1710,7 @@ impl PureFactContext {
         (result, premises_id)
     }
 
-    pub(super) fn replays_atomic_derivation(
+    pub(super) fn checks_atomic_derivation(
         &self,
         proposition: &Proposition,
         for_simp: bool,
@@ -1718,7 +1718,7 @@ impl PureFactContext {
         evidence: &AtomicPropositionDerivationEvidence,
     ) -> bool {
         if let AtomicPropositionDerivationEvidence::MemoryDag(evidence) = evidence {
-            return evidence.replays(proposition, self);
+            return evidence.checks(proposition, self);
         }
         if let AtomicPropositionDerivationEvidence::PointerOffsetMemoryDag(evidence) = evidence {
             let Proposition::ConditionIs(ConditionTerm::PointerOffsetEqual(left, right), true) =
@@ -1726,7 +1726,7 @@ impl PureFactContext {
             else {
                 return false;
             };
-            return evidence.replays(left, right, self);
+            return evidence.checks(left, right, self);
         }
         if let AtomicPropositionDerivationEvidence::BitvectorEqualityPath(path) = evidence {
             let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) =
@@ -1734,7 +1734,7 @@ impl PureFactContext {
             else {
                 return false;
             };
-            return self.replays_exact_bitvector_equality_path(path, left, right);
+            return self.checks_exact_bitvector_equality_path(path, left, right);
         }
         if let AtomicPropositionDerivationEvidence::BitvectorEqualityRewritePaths(paths) = evidence
         {
@@ -1746,7 +1746,7 @@ impl PureFactContext {
                 let Bitvector32Term::Variable(variable) = first.source else {
                     return false;
                 };
-                if !self.replays_exact_bitvector_equality_path(path, &first.source, &last.target) {
+                if !self.checks_exact_bitvector_equality_path(path, &first.source, &last.target) {
                     return false;
                 }
                 rewritten = substitute_bitvector_variable_in_proposition(
@@ -1874,7 +1874,7 @@ impl PureFactContext {
             return step.lower == base
                 && (*premise_bits as i32) < (*goal_bits as i32)
                 && !step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementStrictlyIncreases(step) = evidence
         {
@@ -1886,7 +1886,7 @@ impl PureFactContext {
                 return false;
             };
             // The premise cites the exact fact; its tie to the goal's base
-            // is canonical, which is deterministic and so replays
+            // is canonical, which is deterministic and so checks
             // identically.
             return incremented
                 .add_const_base(1)
@@ -1921,7 +1921,7 @@ impl PureFactContext {
                 && step.lower == **value
                 && step.upper == int_max
                 && step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementBelowMaxIsDefined(step) = evidence
         {
@@ -1958,7 +1958,7 @@ impl PureFactContext {
                 && step.lower == **value
                 && step.upper == int_max
                 && step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32NonnegativeAddWithinMaxIsDefined(bounds) =
             evidence
@@ -1980,8 +1980,8 @@ impl PureFactContext {
                 && bounds.within_headroom.lower == **value
                 && bounds.within_headroom.upper == headroom
                 && !bounds.within_headroom.strict
-                && self.replays_exact_order_step(&bounds.amount_nonnegative)
-                && self.replays_exact_order_step(&bounds.within_headroom);
+                && self.checks_exact_order_step(&bounds.amount_nonnegative)
+                && self.checks_exact_order_step(&bounds.within_headroom);
         }
         if let AtomicPropositionDerivationEvidence::Int32NonnegativeSubtractWithinValueIsDefined(
             bounds,
@@ -2000,8 +2000,8 @@ impl PureFactContext {
                 && bounds.within_value.lower == **amount
                 && bounds.within_value.upper == **value
                 && !bounds.within_value.strict
-                && self.replays_exact_order_step(&bounds.amount_nonnegative)
-                && self.replays_exact_order_step(&bounds.within_value);
+                && self.checks_exact_order_step(&bounds.amount_nonnegative)
+                && self.checks_exact_order_step(&bounds.within_value);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementLowerBound(bounds) = evidence {
             let Proposition::ConditionIs(
@@ -2014,7 +2014,7 @@ impl PureFactContext {
             let Some(base) = incremented.add_const_base(1) else {
                 return false;
             };
-            return self.replays_increment_bounds(bounds, lower, &base);
+            return self.checks_increment_bounds(bounds, lower, &base);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementGreaterEqualLowerBound(bounds) =
             evidence
@@ -2029,7 +2029,7 @@ impl PureFactContext {
             let Some(base) = incremented.add_const_base(1) else {
                 return false;
             };
-            return self.replays_increment_bounds(bounds, lower, &base);
+            return self.checks_increment_bounds(bounds, lower, &base);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementStrictGreaterLowerBound(bounds) =
             evidence
@@ -2044,7 +2044,7 @@ impl PureFactContext {
             let Some(base) = incremented.add_const_base(1) else {
                 return false;
             };
-            return self.replays_increment_bounds(bounds, lower, &base);
+            return self.checks_increment_bounds(bounds, lower, &base);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementStrictGreaterFromStrictLower(
             bounds,
@@ -2060,7 +2060,7 @@ impl PureFactContext {
             let Some(base) = incremented.add_const_base(1) else {
                 return false;
             };
-            return self.replays_strict_increment_bounds(bounds, lower, &base);
+            return self.checks_strict_increment_bounds(bounds, lower, &base);
         }
         if let AtomicPropositionDerivationEvidence::Int32IncrementPreservesOrder(bounds) = evidence
         {
@@ -2077,7 +2077,7 @@ impl PureFactContext {
             else {
                 return false;
             };
-            return self.replays_increment_bounds(bounds, &lower, &value);
+            return self.checks_increment_bounds(bounds, &lower, &value);
         }
         if let AtomicPropositionDerivationEvidence::Int32PositiveIsNonnegative(step) = evidence {
             let Proposition::ConditionIs(
@@ -2091,7 +2091,7 @@ impl PureFactContext {
                 && step.lower == Bitvector32Term::Constant(1)
                 && step.upper == **value
                 && !step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32StrictlyPositiveIsNonnegative(step) =
             evidence
@@ -2107,7 +2107,7 @@ impl PureFactContext {
                 && step.lower == Bitvector32Term::Constant(0)
                 && step.upper == **value
                 && step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32SuccessorLeImpliesLt(step) = evidence {
             let Proposition::ConditionIs(
@@ -2126,7 +2126,7 @@ impl PureFactContext {
             return step.lower == Bitvector32Term::Constant(successor_bits as u32)
                 && step.upper == **value
                 && !step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32ConstantLowerBoundWeakening(step) =
             evidence
@@ -2146,7 +2146,7 @@ impl PureFactContext {
             return (*goal_bits as i32) < (*premise_bits as i32)
                 && step.upper == **value
                 && !step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32NegatedStrictSuccessorBound(step) =
             evidence
@@ -2179,7 +2179,7 @@ impl PureFactContext {
                     ) if premise_value.as_ref() == value.as_ref()
                         && premise_upper.as_ref() == &step.lower
                 )
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32PositivePredecessorIsNonnegative(step) =
             evidence
@@ -2198,7 +2198,7 @@ impl PureFactContext {
                 && step.lower == Bitvector32Term::Constant(0)
                 && step.upper == value
                 && step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32PositivePredecessorStrictlyDecreases(
             step,
@@ -2218,7 +2218,7 @@ impl PureFactContext {
                 && step.lower == Bitvector32Term::Constant(0)
                 && step.upper == base
                 && step.strict
-                && self.replays_exact_order_step(step);
+                && self.checks_exact_order_step(step);
         }
         if let AtomicPropositionDerivationEvidence::Int32NonnegativePredecessorUpperBound(bounds) =
             evidence
@@ -2239,8 +2239,8 @@ impl PureFactContext {
                 && bounds.upper_bound.lower == value
                 && bounds.upper_bound.upper == **upper
                 && !bounds.upper_bound.strict
-                && self.replays_exact_order_step(&bounds.nonnegative)
-                && self.replays_exact_order_step(&bounds.upper_bound);
+                && self.checks_exact_order_step(&bounds.nonnegative)
+                && self.checks_exact_order_step(&bounds.upper_bound);
         }
         if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorIsNonnegative(source) =
             evidence
@@ -2256,7 +2256,7 @@ impl PureFactContext {
                 return false;
             };
             return lower.as_ref() == &Bitvector32Term::Constant(0)
-                && self.replays_one_le_evidence(source, &value);
+                && self.checks_one_le_evidence(source, &value);
         }
         if let AtomicPropositionDerivationEvidence::Int32OneLePredecessorStrictlyDecreases(source) =
             evidence
@@ -2271,7 +2271,7 @@ impl PureFactContext {
             let Some(base) = exact_predecessor_base(predecessor) else {
                 return false;
             };
-            return base == **value && self.replays_one_le_evidence(source, &base);
+            return base == **value && self.checks_one_le_evidence(source, &base);
         }
         if let AtomicPropositionDerivationEvidence::Int32EqualOnePredecessorIsZero(path) = evidence
         {
@@ -2283,7 +2283,7 @@ impl PureFactContext {
             let Some(value) = exact_predecessor_equal_zero_base(left, right) else {
                 return false;
             };
-            return self.replays_exact_bitvector_equality_path(
+            return self.checks_exact_bitvector_equality_path(
                 path,
                 &value,
                 &Bitvector32Term::Constant(1),
@@ -2497,7 +2497,7 @@ impl PureFactContext {
             })
     }
 
-    fn replays_exact_bitvector_equality_path(
+    fn checks_exact_bitvector_equality_path(
         &self,
         path: &[BitvectorEqualityDerivationStep],
         left: &Bitvector32Term,
@@ -2527,19 +2527,15 @@ impl PureFactContext {
         current == right
     }
 
-    fn replays_one_le_evidence(
-        &self,
-        source: &Int32OneLeEvidence,
-        value: &Bitvector32Term,
-    ) -> bool {
+    fn checks_one_le_evidence(&self, source: &Int32OneLeEvidence, value: &Bitvector32Term) -> bool {
         match source {
             Int32OneLeEvidence::Direct(step) => {
                 step.lower == Bitvector32Term::Constant(1)
                     && step.upper == *value
                     && !step.strict
-                    && self.replays_exact_order_step(step)
+                    && self.checks_exact_order_step(step)
             }
-            Int32OneLeEvidence::EqualOne(path) => self.replays_exact_bitvector_equality_path(
+            Int32OneLeEvidence::EqualOne(path) => self.checks_exact_bitvector_equality_path(
                 path,
                 value,
                 &Bitvector32Term::Constant(1),
@@ -2573,7 +2569,7 @@ impl PureFactContext {
         }))
     }
 
-    fn replays_increment_bounds(
+    fn checks_increment_bounds(
         &self,
         bounds: &Int32IncrementBoundsEvidence,
         lower: &Bitvector32Term,
@@ -2584,11 +2580,11 @@ impl PureFactContext {
             && !bounds.lower_bound.strict
             && bounds.upper_bound.lower == *value
             && bounds.upper_bound.strict
-            && self.replays_exact_order_step(&bounds.lower_bound)
-            && self.replays_exact_order_step(&bounds.upper_bound)
+            && self.checks_exact_order_step(&bounds.lower_bound)
+            && self.checks_exact_order_step(&bounds.upper_bound)
     }
 
-    fn replays_strict_increment_bounds(
+    fn checks_strict_increment_bounds(
         &self,
         bounds: &Int32IncrementBoundsEvidence,
         lower: &Bitvector32Term,
@@ -2599,11 +2595,11 @@ impl PureFactContext {
             && bounds.lower_bound.strict
             && bounds.upper_bound.lower == *value
             && bounds.upper_bound.strict
-            && self.replays_exact_order_step(&bounds.lower_bound)
-            && self.replays_exact_order_step(&bounds.upper_bound)
+            && self.checks_exact_order_step(&bounds.lower_bound)
+            && self.checks_exact_order_step(&bounds.upper_bound)
     }
 
-    fn replays_exact_order_step(&self, step: &SignedOrderDerivationStep) -> bool {
+    fn checks_exact_order_step(&self, step: &SignedOrderDerivationStep) -> bool {
         matches!(
             &step.premise,
             Proposition::ConditionIs(condition, truth)

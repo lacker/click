@@ -5,7 +5,7 @@ use super::*;
 impl<'a> Proof<'a> {
     /// Whether this execution proof has reached the function-exit frontier.
     ///
-    /// This is a read-only smart-tactic query: it exposes no replay state and
+    /// This is a read-only smart-tactic query: it exposes no execution state and
     /// grants no authority to advance the proof.
     pub(in crate::lang::click::proof) fn is_at_function_exit(&self) -> bool {
         self.execution()
@@ -230,7 +230,7 @@ impl<'a> Proof<'a> {
     /// lowering. A path proved non-returning contributes no goal. The
     /// returned handle addresses the first outcome goal; `focus` reaches its
     /// siblings. Result and effect continuations consume these goals
-    /// directly rather than converting through the legacy replay adapter.
+    /// directly rather than converting through a mutable execution-context adapter.
     pub(in crate::lang::click::proof) fn focus_function_outcomes(
         &self,
         requirement_facts: Arc<Vec<Proposition>>,
@@ -395,7 +395,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Resolves a Surface Click statement region against this proof's source
-    /// layout without exposing the mutable frontier or replay metadata.
+    /// layout without exposing the mutable frontier or check metadata.
     pub(super) fn resolve_statement_target(
         &self,
         region: &CodeRegionRef,

@@ -34,10 +34,10 @@ fn int32_le_and_not_lt_equality_derivation_retains_both_exact_premises() {
         derivation.int32_le_and_not_lt_implies_equality_premises(),
         Some((&less_equal, &not_less_than))
     );
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 
     let missing = PureFactContext::new().assume_proposition(less_equal);
-    assert!(!derivation.replay(&missing));
+    assert!(!derivation.check(&missing));
 }
 
 #[test]
@@ -64,10 +64,10 @@ fn int32_ge_and_not_gt_equality_derivation_retains_both_exact_premises() {
         derivation.int32_ge_and_not_gt_implies_equality_premises(),
         Some((&greater_equal, &not_greater_than))
     );
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 
     let missing = PureFactContext::new().assume_proposition(greater_equal);
-    assert!(!derivation.replay(&missing));
+    assert!(!derivation.check(&missing));
 }
 
 #[test]
@@ -92,8 +92,8 @@ fn int32_positive_is_nonnegative_derivation_retains_its_exact_premise() {
             .map(SignedOrderDerivationStep::premise),
         Some(&positive)
     );
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -118,8 +118,8 @@ fn int32_strictly_positive_is_nonnegative_derivation_retains_its_exact_premise()
             .map(SignedOrderDerivationStep::premise),
         Some(&positive)
     );
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -145,8 +145,8 @@ fn int32_negated_strict_successor_bound_retains_its_exact_premise() {
     assert_eq!(step.upper(), &value);
     assert!(!step.is_strict());
     assert_eq!(step.premise(), &premise);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -172,8 +172,8 @@ fn int32_successor_le_implies_lt_retains_its_exact_premise() {
     assert_eq!(step.upper(), &value);
     assert!(!step.is_strict());
     assert_eq!(step.premise(), &premise);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -204,8 +204,8 @@ fn int32_constant_lower_bound_weakening_retains_its_exact_premise() {
         assert_eq!(step.upper(), &value);
         assert!(!step.is_strict());
         assert_eq!(step.premise(), &premise);
-        assert!(derivation.replay(&assumptions));
-        assert!(!derivation.replay(&PureFactContext::new()));
+        assert!(derivation.check(&assumptions));
+        assert!(!derivation.check(&PureFactContext::new()));
     }
 }
 
@@ -231,10 +231,10 @@ fn int32_le_and_neq_strict_derivation_retains_both_exact_premises() {
         derivation.int32_le_and_neq_implies_strict_premises(),
         Some((&less_equal, &not_equal))
     );
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 
     let missing = PureFactContext::new().assume_proposition(less_equal);
-    assert!(!derivation.replay(&missing));
+    assert!(!derivation.check(&missing));
 }
 
 #[test]
@@ -1220,7 +1220,7 @@ fn strict_reverse_order_derives_a_false_comparison() {
         .derive_proposition(&target)
         .expect("a strict reverse order should prove the comparison false");
     assert_eq!(derivation.context_premises(), vec![reverse]);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     assert!(
         assumptions
             .clone()
@@ -1267,7 +1267,7 @@ fn signed_order_derivation_retains_its_exact_edge_path() {
     assert_eq!(path[1].upper(), &right);
     assert!(path[1].is_strict());
     assert_eq!(path[1].premise(), &second);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1295,7 +1295,7 @@ fn signed_order_derivation_retains_the_exact_negative_polarity_premise() {
     assert_eq!(path[0].upper(), &left);
     assert!(path[0].is_strict());
     assert_eq!(path[0].premise(), &premise);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1325,7 +1325,7 @@ fn increment_upper_bound_derivation_retains_its_exact_strict_premise() {
     assert_eq!(step.upper(), &upper);
     assert!(step.is_strict());
     assert_eq!(step.premise(), &premise);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1359,8 +1359,8 @@ fn increment_constant_upper_bound_retains_its_exact_nonstrict_premise() {
         assert_eq!(step.upper(), &Bitvector32Term::Constant(3));
         assert!(!step.is_strict());
         assert_eq!(step.premise(), &premise);
-        assert!(derivation.replay(&assumptions));
-        assert!(!derivation.replay(&PureFactContext::new()));
+        assert!(derivation.check(&assumptions));
+        assert!(!derivation.check(&PureFactContext::new()));
     }
 }
 
@@ -1391,7 +1391,7 @@ fn increment_strictly_increases_derivation_retains_its_exact_strict_premise() {
     assert_eq!(step.upper(), &upper);
     assert!(step.is_strict());
     assert_eq!(step.premise(), &premise);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1421,7 +1421,7 @@ fn increment_definedness_derivation_retains_its_exact_max_bound() {
     assert_eq!(step.upper(), &int_max);
     assert!(step.is_strict());
     assert_eq!(step.premise(), &premise);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1459,7 +1459,7 @@ fn one_plus_rules_retain_their_exact_max_bound_and_operand_order() {
     assert_eq!(defined_step.upper(), &int_max);
     assert!(defined_step.is_strict());
     assert_eq!(defined_step.premise(), &premise);
-    assert!(defined.replay(&assumptions));
+    assert!(defined.check(&assumptions));
 
     let strict = assumptions
         .derive_simp_proposition(&strict_goal)
@@ -1471,7 +1471,7 @@ fn one_plus_rules_retain_their_exact_max_bound_and_operand_order() {
     assert_eq!(strict_step.upper(), &int_max);
     assert!(strict_step.is_strict());
     assert_eq!(strict_step.premise(), &premise);
-    assert!(strict.replay(&assumptions));
+    assert!(strict.check(&assumptions));
 }
 
 #[test]
@@ -1515,8 +1515,8 @@ fn symbolic_add_definedness_retains_both_exact_named_theorem_bounds() {
     assert_eq!(headroom_step.upper(), &headroom);
     assert!(!headroom_step.is_strict());
     assert_eq!(headroom_step.premise(), &within_headroom);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -1556,8 +1556,8 @@ fn symbolic_subtract_definedness_retains_both_exact_named_theorem_bounds() {
     assert_eq!(within_value_step.upper(), &value);
     assert!(!within_value_step.is_strict());
     assert_eq!(within_value_step.premise(), &within_value);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
 }
 
 #[test]
@@ -1598,7 +1598,7 @@ fn increment_lower_bound_derivation_retains_both_exact_bounds() {
     assert_eq!(upper_bound.upper(), &upper);
     assert!(upper_bound.is_strict());
     assert_eq!(upper_bound.premise(), &upper_premise);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1655,7 +1655,7 @@ fn remaining_increment_bound_derivations_retain_both_exact_bounds() {
         assert_eq!(upper_bound.upper(), &upper);
         assert!(upper_bound.is_strict());
         assert_eq!(upper_bound.premise(), &upper_premise);
-        assert!(derivation.replay(&assumptions));
+        assert!(derivation.check(&assumptions));
     }
 }
 
@@ -1697,8 +1697,8 @@ fn strict_lower_increment_derivation_retains_both_exact_strict_bounds() {
     assert_eq!(upper_bound.upper(), &upper);
     assert!(upper_bound.is_strict());
     assert_eq!(upper_bound.premise(), &upper_premise);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(lower_premise)));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new().assume_proposition(lower_premise)));
 }
 
 #[test]
@@ -1738,7 +1738,7 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
     assert_eq!(nonnegative_step.upper(), &value);
     assert!(nonnegative_step.is_strict());
     assert_eq!(nonnegative_step.premise(), &positive);
-    assert!(nonnegative_derivation.replay(&positive_assumptions));
+    assert!(nonnegative_derivation.check(&positive_assumptions));
 
     let decrease_goal = Proposition::ConditionIs(
         ConditionTerm::signed_less_than(predecessor.clone(), value.clone()),
@@ -1751,7 +1751,7 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
         .int32_positive_predecessor_strictly_decreases_step()
         .expect("the decision should retain its exact positivity premise");
     assert_eq!(decrease_step.premise(), &positive);
-    assert!(decrease_derivation.replay(&positive_assumptions));
+    assert!(decrease_derivation.check(&positive_assumptions));
 
     let bounded_assumptions = PureFactContext::new()
         .assume_proposition(nonnegative.clone())
@@ -1774,7 +1774,7 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
     assert_eq!(bounded_step.upper(), &bound);
     assert!(!bounded_step.is_strict());
     assert_eq!(bounded_step.premise(), &bounded);
-    assert!(bounded_derivation.replay(&bounded_assumptions));
+    assert!(bounded_derivation.check(&bounded_assumptions));
 
     let one_le = Proposition::ConditionIs(
         ConditionTerm::signed_greater_equal(value.clone(), Bitvector32Term::Constant(1)),
@@ -1795,7 +1795,7 @@ fn predecessor_derivations_retain_their_exact_named_rule_premises() {
         assert_eq!(step.upper(), &value);
         assert!(!step.is_strict());
         assert_eq!(step.premise(), &one_le);
-        assert!(derivation.replay(&one_le_assumptions));
+        assert!(derivation.check(&one_le_assumptions));
     }
 }
 
@@ -1837,8 +1837,8 @@ fn predecessor_derivation_retains_equal_one_path_instead_of_a_derived_bound() {
         assert_eq!(path[0].source(), &value);
         assert_eq!(path[0].target(), &one);
         assert_eq!(path[0].premise(), &equal_one);
-        assert!(derivation.replay(&assumptions));
-        assert!(!derivation.replay(&PureFactContext::new()));
+        assert!(derivation.check(&assumptions));
+        assert!(!derivation.check(&PureFactContext::new()));
     }
 }
 
@@ -1872,8 +1872,8 @@ fn predecessor_zero_derivation_retains_its_equal_one_path() {
         assert_eq!(path[0].source(), &value);
         assert_eq!(path[0].target(), &one);
         assert_eq!(path[0].premise(), &equal_one);
-        assert!(derivation.replay(&assumptions));
-        assert!(!derivation.replay(&PureFactContext::new()));
+        assert!(derivation.check(&assumptions));
+        assert!(!derivation.check(&PureFactContext::new()));
     }
 }
 
@@ -1903,7 +1903,7 @@ fn bitvector_equality_derivation_retains_its_exact_oriented_path() {
     assert_eq!(path[1].source(), &middle);
     assert_eq!(path[1].target(), &right);
     assert_eq!(path[1].premise(), &second);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -1939,8 +1939,8 @@ fn arithmetic_normalization_retains_its_exact_equality_rewrite_paths() {
     assert_eq!(paths[1][0].source(), &right);
     assert_eq!(paths[1][0].target(), &one);
     assert_eq!(paths[1][0].premise(), &right_is_one);
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(left_is_one)));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new().assume_proposition(left_is_one)));
 }
 
 #[test]
@@ -1958,7 +1958,7 @@ fn signed_less_equal_and_inequality_derive_strict_order() {
         .assume_proposition(less_equal)
         .assume_proposition(unequal);
 
-    assert_replayable_derivation(&assumptions, &strict);
+    assert_checkable_derivation(&assumptions, &strict);
 }
 
 #[test]
@@ -2066,11 +2066,11 @@ fn condition_fact_matching_ignores_unrelated_local_memory() {
     );
     let assumptions = PureFactContext::new().assume_proposition(fact);
 
-    assert_replayable_derivation(&assumptions, &target);
+    assert_checkable_derivation(&assumptions, &target);
 }
 
 #[test]
-fn bounded_order_replay_ignores_unrelated_local_memory() {
+fn bounded_order_check_ignores_unrelated_local_memory() {
     let owner = Pointer {
         block: "arg-memory".into(),
         offset: PointerOffsetTerm::scale_int32(Bitvector32Term::Variable(Variable(100_001)), 4),
@@ -2151,7 +2151,7 @@ fn equality_chains_across_observationally_equivalent_memory_loads() {
         true,
     );
 
-    assert_replayable_derivation(&assumptions, &target);
+    assert_checkable_derivation(&assumptions, &target);
 }
 
 #[test]
@@ -2176,7 +2176,7 @@ fn proposition_derivation_proves_implication_from_false_antecedent() {
     let derivation = assumptions
         .derive_simp_proposition(&conclusion)
         .expect("a false antecedent should prove an implication");
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -2287,7 +2287,7 @@ fn memory_derivation_records_the_selected_range_candidate() {
         .derive_atomic_proposition(&target)
         .expect("the selected range should establish the element access");
 
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     assert_eq!(derivation.context_premises(), vec![selected]);
 }
 
@@ -2353,7 +2353,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
     let derivation = assumptions
         .derive_atomic_proposition(&goal)
         .expect("an initialized next cell should extend the loadable prefix");
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     let premises = derivation.context_premises();
     assert_eq!(premises.len(), 2);
     assert!(premises.contains(&prefix));
@@ -2372,7 +2372,7 @@ fn adjacent_loadable_regions_certify_their_concatenation() {
     let stored_derivation = stored_assumptions
         .derive_atomic_proposition(&stored_goal)
         .expect("a materialized next cell should extend the loadable prefix");
-    assert!(stored_derivation.replay(&stored_assumptions));
+    assert!(stored_derivation.check(&stored_assumptions));
     assert_eq!(stored_derivation.context_premises(), vec![prefix]);
 
     let gap = Proposition::CMemoryLoadable {
@@ -2659,9 +2659,9 @@ fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
     assert_eq!(selected, &quantified);
     assert_eq!(argument, &Bitvector32Term::Constant(2));
     assert_eq!(guards, std::slice::from_ref(&exit_guard));
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(quantified)));
-    assert!(!derivation.replay(&PureFactContext::new().assume_proposition(exit_guard)));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new().assume_proposition(quantified)));
+    assert!(!derivation.check(&PureFactContext::new().assume_proposition(exit_guard)));
 }
 
 #[test]
@@ -2839,7 +2839,7 @@ fn quantified_int32_fact_certifies_its_complete_guarded_range() {
 }
 
 #[test]
-fn proposition_derivation_replay_requires_its_context() {
+fn proposition_derivation_check_requires_its_context() {
     let x = Bitvector32Term::Variable(Variable(86));
     let proposition = Proposition::ConditionIs(
         ConditionTerm::signed_greater_equal(x, Bitvector32Term::Constant(0)),
@@ -2850,8 +2850,8 @@ fn proposition_derivation_replay_requires_its_context() {
         .derive_simp_proposition(&proposition)
         .expect("exact fact should produce a derivation");
 
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
     assert_eq!(derivation.context_premises(), vec![proposition]);
 }
 
@@ -2867,7 +2867,7 @@ fn implication_derivation_context_excludes_its_local_antecedent() {
         .derive_simp_proposition(&goal)
         .expect("an implication may use its own antecedent");
 
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     assert!(
         derivation.context_premises().is_empty(),
         "binder-local assumptions are not ambient certificate premises"
@@ -2889,7 +2889,7 @@ fn forall_introduction_rejects_a_variable_free_in_ambient_assumptions() {
 }
 
 #[test]
-fn forall_derivation_replay_shadows_ambient_uses_of_the_binder_id() {
+fn forall_derivation_check_shadows_ambient_uses_of_the_binder_id() {
     let variable = Variable(187);
     let value = Bitvector32Term::Variable(variable);
     let goal = forall_int32(
@@ -2904,8 +2904,8 @@ fn forall_derivation_replay_shadows_ambient_uses_of_the_binder_id() {
         arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(variable))],
     });
 
-    assert!(derivation.replay(&PureFactContext::new()));
-    assert!(derivation.replay(&contaminated));
+    assert!(derivation.check(&PureFactContext::new()));
+    assert!(derivation.check(&contaminated));
 }
 
 #[test]
@@ -2931,8 +2931,8 @@ fn finite_context_split_derivation_records_its_range_premises() {
         .derive_simp_proposition(&goal)
         .expect("the singleton finite range should establish equality");
 
-    assert!(derivation.replay(&assumptions));
-    assert!(!derivation.replay(&PureFactContext::new()));
+    assert!(derivation.check(&assumptions));
+    assert!(!derivation.check(&PureFactContext::new()));
     let context = derivation.context_premises();
     assert!(context.contains(&lower));
     assert!(context.contains(&upper));
@@ -2969,7 +2969,7 @@ fn successor_order_derivation_needs_only_an_upper_bound() {
         .derive_simp_proposition(&goal)
         .expect("an int32 value below another int32 value cannot overflow when incremented");
 
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
     assert_eq!(derivation.context_premises(), vec![upper_bound]);
 }
 
@@ -3046,11 +3046,11 @@ fn assumptions_split_small_finite_context_variable() {
     );
 
     assert!(assumptions.proves(&proposition));
-    assert_replayable_derivation(&assumptions, &proposition);
+    assert_checkable_derivation(&assumptions, &proposition);
 }
 
 #[test]
-fn finite_context_derivation_replays_under_a_narrower_range() {
+fn finite_context_derivation_checks_under_a_narrower_range() {
     let j = Bitvector32Term::Variable(Variable(88));
     let broad = PureFactContext::new()
         .assume_condition(
@@ -3080,7 +3080,7 @@ fn finite_context_derivation_replays_under_a_narrower_range() {
     );
 
     assert!(
-        derivation.replay(&narrow),
+        derivation.check(&narrow),
         "a proof covering a finite range remains valid when later facts narrow that range"
     );
 }
@@ -3112,7 +3112,7 @@ fn proposition_derivation_composes_case_split_conjuncts() {
     );
     let proposition = Proposition::And(Box::new(finite_choice.clone()), Box::new(finite_choice));
 
-    assert_replayable_derivation(&assumptions, &proposition);
+    assert_checkable_derivation(&assumptions, &proposition);
 }
 
 #[test]
@@ -3225,7 +3225,7 @@ fn conditional_forall_instantiates_at_same_named_variable_in_order_path() {
         .derive_simp_proposition(&goal)
         .expect("quantified order instance should produce a simplifier derivation");
     assert_eq!(derivation.conclusion(), &goal);
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -3367,7 +3367,7 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
 
     let proposition = Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero));
     assert!(assumptions.proves(&proposition));
-    assert_replayable_derivation(&assumptions, &proposition);
+    assert_checkable_derivation(&assumptions, &proposition);
 }
 
 #[test]
@@ -3389,7 +3389,7 @@ fn assumptions_eliminate_disjunction_to_prove_atomic_consequence() {
     );
 
     assert!(assumptions.proves(&nonnegative));
-    assert_replayable_derivation(&assumptions, &nonnegative);
+    assert_checkable_derivation(&assumptions, &nonnegative);
 }
 
 #[test]
@@ -3693,7 +3693,7 @@ fn simp_derives_vacuous_implication_before_searching_large_consequent() {
     let derivation = assumptions
         .derive_simp_proposition(&goal)
         .expect("a refuted antecedent should close before inspecting the consequent");
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]
@@ -3717,7 +3717,7 @@ fn simp_derives_implication_body_before_refuting_known_antecedent() {
     let derivation = assumptions
         .derive_simp_proposition(&goal)
         .expect("a known antecedent should use the available consequent directly");
-    assert!(derivation.replay(&assumptions));
+    assert!(derivation.check(&assumptions));
 }
 
 #[test]

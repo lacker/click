@@ -163,7 +163,7 @@ fn checked_surface_fact_at_point_with_assumptions(
     // A fact that mentions a load variable is anchored to the snapshot its
     // cell was read from; synthesize it through the program point recorded
     // for that snapshot, so the form stays correct at every later proof
-    // point where the certificate is replayed, rather than a plain form
+    // point where the certificate is checked, rather than a plain form
     // that is correct only until the cell changes.
     if crate::kernel::proposition_mentions_registered_load_variable(kernel) {
         let (exact_points, compatible_points) =
@@ -343,7 +343,7 @@ pub(super) fn snapshot_indexed_program_points<'a>(
 #[derive(Clone, Copy)]
 pub(super) enum SurfaceFactMatch {
     CanonicalExact,
-    ReplayEquivalent,
+    AvailabilityEquivalent,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -474,16 +474,16 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                 exact_fact_is_available(fact, available)
                     || exactly_available_fact(fact, available).is_some()
             },
-            |indexed| indexed.replay_available_across_effects(fact, &[]),
+            |indexed| indexed.available_across_effects(fact, &[]),
         )
     };
     // Candidates below are matched through the permissive candidate lowering
     // (symbolic contract loads allowed), but the emitted certificate is
-    // replayed by the ordinary executor, whose strict lowering requires every
+    // checked by the ordinary executor, whose strict lowering requires every
     // load to be justified. A form that only lowers permissively —
     // for example a snapshot fact whose `at(...)` anchor was dropped so its
     // current-state loads are not provably loadable — must not be emitted.
-    let strictly_replayable = |surface: &ClickProposition| {
+    let strictly_available = |surface: &ClickProposition| {
         lower_point_proposition_with_assumptions(
             surface,
             assumptions,
@@ -500,10 +500,10 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         .is_ok_and(&fact_is_available)
     };
     // A snapshot-indexed form paired with this exact available kernel fact
-    // is replayable through the view engine's program-point record. Requiring
+    // is checkable through the view engine's program-point record. Requiring
     // it to lower again against the current heap would incorrectly demand that
     // old loads remain loadable now. Current-state forms do not have that
-    // stable anchor and still go through `strictly_replayable` below.
+    // stable anchor and still go through `strictly_available` below.
     let mut recorded_surfaces = view
         .surface_propositions
         .surfaces(kernel)
@@ -582,7 +582,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             predicate_environment,
             click_function_environment,
         )
-        && strictly_replayable(&surface)
+        && strictly_available(&surface)
     {
         return Ok(surface);
     }
@@ -635,12 +635,12 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                 .is_ok_and(|lowered| {
                     matches_kernel(&lowered)
                         || proposition_contains_at_expression(base)
-                            && quantified_replay_equivalent_available_fact(
+                            && quantified_equivalent_available_fact(
                                 kernel,
                                 std::slice::from_ref(&lowered),
                             )
                             .is_some()
-                }) && strictly_replayable(base)
+                }) && strictly_available(base)
             })
             .cloned()
     };
@@ -661,7 +661,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                     click_function_environment,
                 )
                 .is_ok_and(|lowered| matches_kernel(&lowered))
-                && strictly_replayable(&candidate)
+                && strictly_available(&candidate)
             {
                 return Ok(candidate);
             }
@@ -706,7 +706,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                     click_function_environment,
                 );
                 if lowered.is_ok_and(|lowered| matches_kernel(&lowered))
-                    && strictly_replayable(&candidate)
+                    && strictly_available(&candidate)
                 {
                     return Ok(candidate);
                 }
@@ -735,7 +735,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
                     click_function_environment,
                 )
                 .is_ok_and(|lowered| matches_kernel(&lowered))
-                    && strictly_replayable(&candidate)
+                    && strictly_available(&candidate)
                 {
                     return Ok(candidate);
                 }
@@ -752,7 +752,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
             state,
             predicate_environment,
             click_function_environment,
-        ) && strictly_replayable(&surface)
+        ) && strictly_available(&surface)
         {
             return Ok(surface);
         }
@@ -766,7 +766,7 @@ fn checked_surface_comparison_fact_at_point_with_availability(
         )));
     }
     Err(ClickError::new(format!(
-        "comparison fact has no replayable surface form at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
+        "comparison fact has no checkable surface form at this proof point ({} exact and {} compatible recorded snapshots, {} structural bases)",
         exact_points.len(),
         compatible_points.len(),
         bases.len(),
@@ -969,13 +969,13 @@ pub(super) fn lower_certified_frame_path_tactics(
 }
 
 /// Constructs the surface step(s) for one planned operation directly into the
-/// planning replay's own [`ProofCertificateBuilder`]. This is the plan-time
-/// counterpart of the old plan-lowering replay: search commits to a move and
+/// planning construction's own [`ProofCertificateBuilder`]. This is the plan-time
+/// counterpart of the old plan-lowering construction: search commits to a move and
 /// immediately records how that move is written in Surface Click, so a smart
 /// tactic's result is a [`ProofCertificate`] value rather than a private operation
 /// program that must be re-executed to discover its form.
 ///
-/// Premises are written against the builder's replay-visible
+/// Premises are written against the builder's construction-visible
 /// `certificate_facts`, not the planning executor's own fact set.
 pub(super) fn construct_simple_step_for_planned_operation(
     execution: &mut ExecutionProofState,
@@ -991,7 +991,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
     let available = std::mem::take(&mut execution.surface_record.certificate_facts);
     let available_facts = available.to_vec();
     {
-        // Planner construction runs on a replay context that carries no typed
+        // Planner construction runs on a construction context that carries no typed
         // path state; the unfold set only refines a transport-planning
         // diagnostic here.
         let mut context =
@@ -1015,7 +1015,7 @@ pub(super) fn construct_simple_step_for_planned_operation(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn append_simple_proof_step_for_operation(
-    replay: &mut ProofCertificateConstructionContext<'_>,
+    construction: &mut ProofCertificateConstructionContext<'_>,
     state: &CState,
     available: &[Proposition],
     function_block: &FunctionBlock,
@@ -1027,11 +1027,13 @@ pub(super) fn append_simple_proof_step_for_operation(
     internal_operation: Option<&ConstructionEvidence>,
     _statement_uses_memory_context: Option<bool>,
 ) {
-    if replay.proof_certificate_builder.blocker.is_some() {
+    if construction.proof_certificate_builder.blocker.is_some() {
         return;
     }
     if let Err(error) = check_verification_deadline() {
-        replay.proof_certificate_builder.block(error.message());
+        construction
+            .proof_certificate_builder
+            .block(error.message());
         return;
     }
     match (surface_tactic, internal_operation) {
@@ -1040,16 +1042,20 @@ pub(super) fn append_simple_proof_step_for_operation(
             Some(ConstructionEvidence::CertifiedStatementStep {
                 planned_transition: Some(planned_transition),
             }),
-        ) if !replay.proof_certificate_builder.lowering_planned_transition
-            && replay
+        ) if !construction
+            .proof_certificate_builder
+            .lowering_planned_transition
+            && construction
                 .planned_statement_transitions
                 .get(*planned_transition)
                 .is_some() =>
         {
-            let evidence = replay.planned_statement_transitions[*planned_transition].clone();
-            replay.proof_certificate_builder.lowering_planned_transition = true;
+            let evidence = construction.planned_statement_transitions[*planned_transition].clone();
+            construction
+                .proof_certificate_builder
+                .lowering_planned_transition = true;
             append_simple_proof_step_for_operation(
-                replay,
+                construction,
                 state,
                 available,
                 function_block,
@@ -1063,7 +1069,9 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }),
                 None,
             );
-            replay.proof_certificate_builder.lowering_planned_transition = false;
+            construction
+                .proof_certificate_builder
+                .lowering_planned_transition = false;
             let post_state = match &evidence.transition.outcome {
                 CStatementOutcome::Normal(state) | CStatementOutcome::Return { state, .. } => {
                     Some(state)
@@ -1079,7 +1087,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 {
                     continue;
                 }
-                let surface = replay
+                let surface = construction
                     .surface_propositions
                     .surface(&transport.target)
                     .ok()
@@ -1089,7 +1097,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             synthesize_surface_proposition(
                                 &crate::kernel::resolve_minted_load_variables(
                                     &transport.target,
-                                    &replay.effect_facts,
+                                    &construction.effect_facts,
                                 ),
                                 parameters,
                                 arguments,
@@ -1098,13 +1106,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                         })
                     });
                 let Some(surface) = surface else {
-                    replay.proof_certificate_builder.block(format!(
+                    construction.proof_certificate_builder.block(format!(
                         "statement-local frame witness has no checked surface form: {:?}",
                         transport.target
                     ));
                     continue;
                 };
-                replay
+                construction
                     .proof_certificate_builder
                     .push_have(surface, SourceProof::Script(vec![ProofTactic::Normalize]));
             }
@@ -1136,7 +1144,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     let Ok(lowered) = lower_surface_candidate_at_point(
-                        replay.view(replay.context),
+                        construction.view(construction.context),
                         &surface,
                         &evidence.transition.pure_facts,
                         parameters,
@@ -1150,18 +1158,18 @@ pub(super) fn append_simple_proof_step_for_operation(
                     if !exact_fact_is_available(&lowered, &evidence.transition.pure_facts) {
                         continue;
                     }
-                    if let Err(error) = replay
+                    if let Err(error) = construction
                         .surface_propositions
                         .record_lowering(&surface, &lowered)
                     {
-                        replay.proof_certificate_builder.block(format!(
+                        construction.proof_certificate_builder.block(format!(
                             "public opaque-call result fact has no stable surface form: {}",
                             error.message()
                         ));
                         continue;
                     }
                     emitted.push(surface.clone());
-                    replay
+                    construction
                         .proof_certificate_builder
                         .push_have(surface, SourceProof::Script(vec![ProofTactic::Assumption]));
                 }
@@ -1174,15 +1182,19 @@ pub(super) fn append_simple_proof_step_for_operation(
                 exact_premises,
                 planned_transition: Some(planned_transition),
             }),
-        ) if !replay.proof_certificate_builder.lowering_planned_transition
-            && replay
+        ) if !construction
+            .proof_certificate_builder
+            .lowering_planned_transition
+            && construction
                 .planned_statement_transitions
                 .get(*planned_transition)
                 .is_some() =>
         {
-            replay.proof_certificate_builder.lowering_planned_transition = true;
+            construction
+                .proof_certificate_builder
+                .lowering_planned_transition = true;
             append_simple_proof_step_for_operation(
-                replay,
+                construction,
                 state,
                 available,
                 function_block,
@@ -1198,14 +1210,16 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }),
                 _statement_uses_memory_context,
             );
-            replay.proof_certificate_builder.lowering_planned_transition = false;
+            construction
+                .proof_certificate_builder
+                .lowering_planned_transition = false;
         }
         (None, Some(ConstructionEvidence::CertifiedStatementStep { .. })) => {
-            replay.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
-                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+            construction.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(construction.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
-            replay
+            construction
                 .proof_certificate_builder
                 .push_step(SimpleProofStep::Step);
         }
@@ -1217,23 +1231,23 @@ pub(super) fn append_simple_proof_step_for_operation(
                 ..
             }),
         ) => {
-            let loop_index = replay
+            let loop_index = construction
                 .context
                 .constants
                 .source_layout
-                .statement(replay.frontier.next_statement_index)
+                .statement(construction.frontier.next_statement_index)
                 .and_then(|region| match region.kind {
                     SourceStatementKind::Loop { loop_index } => Some(loop_index),
                     SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
                 });
             let Some(loop_index) = loop_index else {
-                replay
+                construction
                     .proof_certificate_builder
-                    .block("certified loop-summary replay is not at a source loop entry");
+                    .block("certified loop-summary construction is not at a source loop entry");
                 return;
             };
-            replay.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
-                region: CodeRegionRef::Statement(replay.frontier.next_statement_index),
+            construction.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
+                region: CodeRegionRef::Statement(construction.frontier.next_statement_index),
                 kind: ProgramPointKind::Entry,
             });
             let mut surface_available = available.to_vec();
@@ -1280,7 +1294,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             .ok() else {
                                 return Vec::new();
                             };
-                            replay
+                            construction
                                 .surface_propositions
                                 .surfaces(kernel)
                                 .filter_map(|surface| {
@@ -1317,7 +1331,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         Err(_) => continue,
                     }
                     for (surface, kernel) in surface_unfoldings {
-                        if replay
+                        if construction
                             .surface_propositions
                             .record_lowering(&surface, &kernel)
                             .is_err()
@@ -1325,7 +1339,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             continue;
                         }
                     }
-                    replay
+                    construction
                         .proof_certificate_builder
                         .push_step(SimpleProofStep::UnfoldPredicate(name));
                 }
@@ -1336,7 +1350,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             return None;
                         }
                         let ClickProposition::Loadable { segment } =
-                            replay.surface_propositions.surface(kernel).ok()?
+                            construction.surface_propositions.surface(kernel).ok()?
                         else {
                             return None;
                         };
@@ -1358,10 +1372,12 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &surface_available,
                         parameters,
                         arguments,
-                        replay.context.old_reference_state(&replay.frontier, state),
+                        construction
+                            .context
+                            .old_reference_state(&construction.frontier, state),
                         state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
+                        &construction.program_point_states,
+                        &construction.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         &[],
@@ -1369,7 +1385,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     ) else {
                         continue;
                     };
-                    if replay
+                    if construction
                         .surface_propositions
                         .record_lowering(&have.proposition, &fact)
                         .is_err()
@@ -1386,7 +1402,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                         continue;
                     }
                     match surface_smart_have_certificate(
-                        replay.view(replay.context),
+                        construction.view(construction.context),
                         state,
                         &surface_available,
                         parameters,
@@ -1397,11 +1413,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &plan,
                         &[],
                     ) {
-                        Ok(certificate) => replay
+                        Ok(certificate) => construction
                             .proof_certificate_builder
                             .steps
                             .extend(certificate.steps().iter().cloned()),
-                        Err(error) => replay.proof_certificate_builder.block(error.message()),
+                        Err(error) => construction
+                            .proof_certificate_builder
+                            .block(error.message()),
                     }
                     surface_available.push(fact);
                 }
@@ -1437,10 +1455,12 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &surface_available,
                         parameters,
                         arguments,
-                        replay.context.old_reference_state(&replay.frontier, state),
+                        construction
+                            .context
+                            .old_reference_state(&construction.frontier, state),
                         state,
-                        &replay.program_point_states,
-                        &replay.surface_propositions,
+                        &construction.program_point_states,
+                        &construction.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         &[],
@@ -1457,18 +1477,18 @@ pub(super) fn append_simple_proof_step_for_operation(
                         loop_summary_premises.push((fact.clone(), have.proposition.clone()));
                     }
                     if !surface_available.contains(&fact) {
-                        if let Err(error) = replay
+                        if let Err(error) = construction
                             .surface_propositions
                             .record_lowering(&have.proposition, &fact)
                         {
-                            replay.proof_certificate_builder.block(format!(
+                            construction.proof_certificate_builder.block(format!(
                                 "could not record a loop invariant for its surface certificate: {}",
                                 error.message()
                             ));
                             return;
                         }
                         match surface_smart_have_certificate(
-                            replay.view(replay.context),
+                            construction.view(construction.context),
                             state,
                             &surface_available,
                             parameters,
@@ -1479,11 +1499,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                             &plan,
                             &[],
                         ) {
-                            Ok(certificate) => replay
+                            Ok(certificate) => construction
                                 .proof_certificate_builder
                                 .steps
                                 .extend(certificate.steps().iter().cloned()),
-                            Err(error) => replay.proof_certificate_builder.block(error.message()),
+                            Err(error) => construction
+                                .proof_certificate_builder
+                                .block(error.message()),
                         }
                         surface_available.push(fact);
                     }
@@ -1494,7 +1516,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     continue;
                 }
                 if let Ok((conclusion, proof)) = lower_surface_atomic_derivation(
-                    replay.view(replay.context),
+                    construction.view(construction.context),
                     derivation,
                     None,
                     None,
@@ -1505,7 +1527,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     predicate_environment,
                     click_function_environment,
                 ) {
-                    replay
+                    construction
                         .proof_certificate_builder
                         .push_have(conclusion, proof);
                     surface_available.push(derivation.conclusion().clone());
@@ -1581,16 +1603,17 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 Ok::<_, ClickError>(premises)
             };
-            let premises =
-                contextual_step(replay.view(replay.context), &needed).map(|mut premises| {
+            let premises = contextual_step(construction.view(construction.context), &needed).map(
+                |mut premises| {
                     for (_, surface) in &loop_summary_premises {
                         if !premises.contains(surface) {
                             premises.push(surface.clone());
                         }
                     }
                     premises
-                });
-            replay.proof_certificate_builder.block(match premises {
+                },
+            );
+            construction.proof_certificate_builder.block(match premises {
                 Ok(_) => "a detached loop-summary certificate has no surface form; use a frontier-local `loop { ... }` tactic".to_string(),
                 Err(error) => format!(
                     "could not express a loop-summary premise at the current proof point: {}",
@@ -1608,8 +1631,12 @@ pub(super) fn append_simple_proof_step_for_operation(
             {
                 return;
             }
-            let Some(step_entry) = replay.proof_certificate_builder.last_step_entry.clone() else {
-                replay
+            let Some(step_entry) = construction
+                .proof_certificate_builder
+                .last_step_entry
+                .clone()
+            else {
+                construction
                     .proof_certificate_builder
                     .block("fact transport has no preceding statement-entry snapshot");
                 return;
@@ -1617,7 +1644,7 @@ pub(super) fn append_simple_proof_step_for_operation(
             let transport_assumptions = assumptions_from_propositions(available);
             let mut base_surfaces = Vec::new();
             for proposition in [source, target] {
-                for surface in replay.surface_propositions.surfaces(proposition) {
+                for surface in construction.surface_propositions.surfaces(proposition) {
                     if !base_surfaces.contains(surface) {
                         base_surfaces.push(surface.clone());
                     }
@@ -1628,7 +1655,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 {
                     base_surfaces.push(surface);
                 }
-                for recorded in replay.surface_propositions.kernel_facts() {
+                for recorded in construction.surface_propositions.kernel_facts() {
                     let matches = recorded == proposition
                         || (memory_erased_comparison(recorded).is_some()
                             && memory_erased_comparison(recorded)
@@ -1639,13 +1666,13 @@ pub(super) fn append_simple_proof_step_for_operation(
                                     proposition,
                                     after,
                                     &transport_assumptions,
-                                    &replay.effect_facts,
+                                    &construction.effect_facts,
                                 )
                             }));
                     if !matches {
                         continue;
                     }
-                    for surface in replay.surface_propositions.surfaces(recorded) {
+                    for surface in construction.surface_propositions.surfaces(recorded) {
                         if !base_surfaces.contains(surface) {
                             base_surfaces.push(surface.clone());
                         }
@@ -1653,12 +1680,12 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
             }
             if base_surfaces.is_empty() {
-                replay.proof_certificate_builder.block(format!(
+                construction.proof_certificate_builder.block(format!(
                     "fact transport has no recorded or synthesized Click comparison form\n  source: {source:?}\n  target: {target:?}"
                 ));
                 return;
             }
-            let mut points = replay
+            let mut points = construction
                 .program_point_states
                 .keys()
                 .cloned()
@@ -1697,7 +1724,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 }
                 let lower = |candidate: &ClickProposition| {
                     lower_surface_candidate_at_point(
-                        replay.view(replay.context),
+                        construction.view(construction.context),
                         candidate,
                         available,
                         parameters,
@@ -1728,7 +1755,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                             expected,
                             after,
                             &transport_assumptions,
-                            &replay.effect_facts,
+                            &construction.effect_facts,
                         )
                     {
                         return Some((candidate.clone(), actual));
@@ -1741,11 +1768,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                     Some((surface_source, _)),
                     Some((surface_target, lowered_surface_target)),
                 ) if surface_source == surface_target => {
-                    if let Err(error) = replay
+                    if let Err(error) = construction
                         .surface_propositions
                         .record_lowering(&surface_target, &lowered_surface_target)
                     {
-                        replay.proof_certificate_builder.block(format!(
+                        construction.proof_certificate_builder.block(format!(
                             "could not retain the certified fact transport target form: {}",
                             error.message()
                         ));
@@ -1756,7 +1783,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                     Some((surface_target, lowered_surface_target)),
                 ) => {
                     let transition_facts =
-                        fact_transport_transition_facts(&replay.effect_facts, &lowered_surface_source);
+                        fact_transport_transition_facts(&construction.effect_facts, &lowered_surface_source);
                     match plan_explicit_fact_transport(
                         &surface_source,
                         &lowered_surface_source,
@@ -1765,22 +1792,22 @@ pub(super) fn append_simple_proof_step_for_operation(
                         &transition_facts,
                         parameters,
                         arguments,
-                        replay.view(replay.context),
+                        construction.view(construction.context),
                         state,
                         predicate_environment,
                         click_function_environment,
                     ) {
                         Ok(premises) => {
-                            replay.proof_certificate_builder.push_step(SimpleProofStep::TransportUsing {
+                            construction.proof_certificate_builder.push_step(SimpleProofStep::TransportUsing {
                                 source: surface_source,
                                 target: surface_target.clone(),
                                 premises,
                             });
-                            if let Err(error) = replay
+                            if let Err(error) = construction
                                 .surface_propositions
                                 .record_lowering(&surface_target, &lowered_surface_target)
                             {
-                                replay.proof_certificate_builder.block(format!(
+                                construction.proof_certificate_builder.block(format!(
                                     "could not retain the certified fact transport target form: {}",
                                     error.message()
                                 ));
@@ -1791,9 +1818,9 @@ pub(super) fn append_simple_proof_step_for_operation(
                             // from the post-state context of an opaque call.
                             // In that case make the exact statement-entry
                             // source a dependency of the preceding step, so
-                            // Selected transport replays it as part of the
+                            // Selected transport checks it as part of the
                             // statement certificate itself.
-                            let attached = replay
+                            let attached = construction
                                 .proof_certificate_builder
                                 .steps
                                 .iter_mut()
@@ -1804,33 +1831,33 @@ pub(super) fn append_simple_proof_step_for_operation(
                                 })
                                 .unwrap_or(false);
                             if attached {
-                                if let Err(record_error) = replay
+                                if let Err(record_error) = construction
                                     .surface_propositions
                                     .record_lowering(&surface_source, &lowered_surface_source)
                                     .and_then(|()| {
-                                        replay.surface_propositions.record_lowering(
+                                        construction.surface_propositions.record_lowering(
                                             &surface_target,
                                             &lowered_surface_target,
                                         )
                                     })
                                 {
-                                    replay.proof_certificate_builder.block(format!(
+                                    construction.proof_certificate_builder.block(format!(
                                         "could not retain the statement-attached fact transport form: {}",
                                         record_error.message()
                                     ));
                                 }
                             } else {
-                                replay.proof_certificate_builder.block(fact_transport_planning_failure(
+                                construction.proof_certificate_builder.block(fact_transport_planning_failure(
                                     &surface_source,
                                     &surface_target,
-                                    replay.unfolded_predicates,
+                                    construction.unfolded_predicates,
                                     &error,
                                 ));
                             }
                         }
                     }
                 }
-                _ => replay.proof_certificate_builder.block(format!(
+                _ => construction.proof_certificate_builder.block(format!(
                     "no placement of the comparison operands at the {} recorded program points lowered to the certified fact transport\n  certified source: {source:?}\n  certified target: {target:?}",
                     points.len()
                 )),
@@ -1849,7 +1876,7 @@ pub(super) fn append_simple_proof_step_for_operation(
         ) => {
             // Planning records the exact statement-entry point where the
             // branch decision was made. Keep that form here: alternatives
-            // can replay without their common statement-step prefix, so a
+            // can construction without their common statement-step prefix, so a
             // transient "last step" pointer is not a reliable anchor.
             let condition = condition.clone();
             let surface_fact = if *value {
@@ -1858,7 +1885,7 @@ pub(super) fn append_simple_proof_step_for_operation(
                 negate_click_proposition(&condition)
             };
             let lowered = lower_surface_candidate_at_point(
-                replay.view(replay.context),
+                construction.view(construction.context),
                 &surface_fact,
                 available,
                 parameters,
@@ -1877,11 +1904,11 @@ pub(super) fn append_simple_proof_step_for_operation(
                         .iter()
                         .find(|fact| path_condition_equivalent(fact, &kernel_fact))
                         .expect("the matching certified path fact was checked above");
-                    if let Err(error) = replay
+                    if let Err(error) = construction
                         .surface_propositions
                         .record_lowering(&surface_fact, certified_fact)
                     {
-                        replay.proof_certificate_builder.block(format!(
+                        construction.proof_certificate_builder.block(format!(
                             "could not retain the certified path-condition form: {}",
                             error.message()
                         ));
@@ -1889,39 +1916,39 @@ pub(super) fn append_simple_proof_step_for_operation(
                     }
                 }
                 Ok(kernel_fact) => {
-                    replay.proof_certificate_builder.block(format!(
+                    construction.proof_certificate_builder.block(format!(
                         "surface branch condition did not lower to a certified path fact\n  lowered: {kernel_fact:?}\n  certified facts: {facts:?}"
                     ));
                     return;
                 }
                 Err(error) => {
-                    replay.proof_certificate_builder.block(format!(
+                    construction.proof_certificate_builder.block(format!(
                         "could not lower the certified path condition: {}",
                         error.message()
                     ));
                     return;
                 }
             }
-            replay
+            construction
                 .proof_certificate_builder
                 .path_choices
                 .push(SurfacePathChoice {
                     occurrence: *occurrence,
                     condition,
                     value: *value,
-                    tactic_offset: replay.proof_certificate_builder.steps.len(),
+                    tactic_offset: construction.proof_certificate_builder.steps.len(),
                 });
         }
         (Some(tactic @ ProofTactic::Have(_)), None) => {
             match ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
-                Ok(_) => replay
+                Ok(_) => construction
                     .proof_certificate_builder
                     .push_source_tactic(tactic.clone()),
                 Err(_) => {
                     // A `have` with a smart body records nothing here. The
-                    // `ProofTactic::Have` replay arm generates a simple
+                    // `ProofTactic::Have` construction arm generates a simple
                     // certificate for the body once the smart proof has
-                    // produced its checked kernel fact, independently replays
+                    // produced its checked kernel fact, independently checks
                     // it, and pushes it — or fails the tactic.
                 }
             }
@@ -1929,18 +1956,18 @@ pub(super) fn append_simple_proof_step_for_operation(
         // A frontier-local loop is lowered after its initialization,
         // preservation, and effect certificates have been checked. Recording
         // the source block here would either retain smart defaults or mark
-        // the replay blocked before those certificates exist.
+        // the construction blocked before those certificates exist.
         (Some(ProofTactic::Loop(_)), None) => {}
         (Some(tactic), None) => match tactic.class() {
-            TacticClass::Simple(_) => replay
+            TacticClass::Simple(_) => construction
                 .proof_certificate_builder
                 .push_source_tactic(tactic.clone()),
             TacticClass::ControlFlow(_) => {
                 match ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
-                    Ok(_) => replay
+                    Ok(_) => construction
                         .proof_certificate_builder
                         .push_source_tactic(tactic.clone()),
-                    Err(error) => replay
+                    Err(error) => construction
                         .proof_certificate_builder
                         .block(format!("could not lower control-flow tactic: {error:?}")),
                 }
@@ -2054,7 +2081,7 @@ pub(super) fn surface_simp_plan_proof(
 }
 
 /// A restricted-`simp` premise's certificate form is exactly available in
-/// the replay-visible fact set; certificates cite it directly.
+/// the construction-visible fact set; certificates cite it directly.
 enum PremiseForm {
     ExactlyAvailable,
 }

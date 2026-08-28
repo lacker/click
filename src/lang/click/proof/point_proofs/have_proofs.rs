@@ -256,7 +256,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     unfolded_predicates: &[String],
     prelowered_goal: Option<&Proposition>,
 ) -> Result<(Proposition, SimpEvidence), ClickError> {
-    // Plan and replay this proof once. Surface expansion must lower this exact
+    // Plan and check this proof once. Surface expansion must lower this exact
     // plan; it must not search for a different proof if lowering is incomplete.
     // Snapshot transport belongs to the statement transition that changed the
     // memory and reaches a later `have` as an exact current-state assumption.
@@ -445,7 +445,7 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
     if matches!(normalize_proposition(&goal), SimpProposition::True) {
         return Ok((fact, SimpEvidence::Normalize));
     }
-    if quantified_replay_equivalent_available_fact(&goal, &reasoning_available).is_some() {
+    if quantified_equivalent_available_fact(&goal, &reasoning_available).is_some() {
         return Ok((fact, SimpEvidence::Assumption));
     }
     if let Some(equivalent) = reasoning_available
@@ -496,9 +496,9 @@ pub(in crate::lang::click::proof) fn plan_smart_have_at_current_point(
         }
         return Err(ClickError::new(message));
     };
-    if !replay_simp_certificate(&goal, &assumptions, &plan) {
+    if !check_simp_certificate(&goal, &assumptions, &plan) {
         return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {outer_tactic_index}: planned smart `have` certificate did not replay"
+            "`{claim_label}` tactic {outer_tactic_index}: planned smart `have` certificate failed validation"
         )));
     }
     Ok((fact, plan))
@@ -877,8 +877,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     // A listed universal premise re-lowers with fresh binder
                     // variables; recognize it up to binder renaming.
                     if !exact_fact_is_available(premise, &available)
-                        && quantified_replay_equivalent_available_fact(premise, &available)
-                            .is_none()
+                        && quantified_equivalent_available_fact(premise, &available).is_none()
                     {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `transport using` requires an exact available premise"
@@ -1138,8 +1137,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                     // variables; recognize it up to binder renaming, exactly
                     // as the quantified fact itself is recognized below.
                     if !exact_fact_is_available(premise, &available)
-                        && quantified_replay_equivalent_available_fact(premise, &available)
-                            .is_none()
+                        && quantified_equivalent_available_fact(premise, &available).is_none()
                     {
                         return Err(ClickError::new(format!(
                             "`{claim_label}` {proof_name} proof {outer_tactic_index}, tactic {inner_tactic_index}: `instantiate using` requires an exact available premise"
@@ -1155,7 +1153,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                 let quantified_fact = if exact_fact_is_available(&lowered_quantified, &available) {
                     lowered_quantified
                 } else if let Some(matched) =
-                    quantified_replay_equivalent_available_fact(&lowered_quantified, &available)
+                    quantified_equivalent_available_fact(&lowered_quantified, &available)
                 {
                     matched
                 } else {
@@ -1438,10 +1436,8 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             .ok()
                             .filter(|lowered| {
                                 exact_fact_is_available(lowered, &available)
-                                    || quantified_replay_equivalent_available_fact(
-                                        lowered, &available,
-                                    )
-                                    .is_some()
+                                    || quantified_equivalent_available_fact(lowered, &available)
+                                        .is_some()
                             })
                         })
                         .flatten();
@@ -1533,7 +1529,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
                             && !normalizes_context_free(&unfolded_goal)
                             && exactly_available_fact(&unfolded_goal, &available)
                                 .is_none()
-                            && quantified_replay_equivalent_available_fact(
+                            && quantified_equivalent_available_fact(
                                 &unfolded_goal,
                                 &available,
                             )
@@ -1760,7 +1756,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             }
             ProofTactic::Simp => use_simp = true,
             ProofTactic::If(_) | ProofTactic::Cases(_) => {
-                unreachable!("proof-level if and cases tactics are expanded before replay")
+                unreachable!("proof-level if and cases tactics are expanded before check")
             }
             _ => {
                 return Err(ClickError::new(format!(
@@ -1842,7 +1838,7 @@ pub(in crate::lang::click::proof) fn prove_pure_proposition_case_at_point(
             "`{claim_label}` {proof_name} proof {outer_tactic_index}: could not unfold pure goal: {message}"
         ))
     })?;
-    if pure_fact_is_replay_available(&goal, &available)
+    if pure_fact_is_available(&goal, &available)
         || (use_simp && matches!(simp_proposition(&goal, &assumptions), SimpProposition::True))
     {
         return Ok(fact);
@@ -1938,7 +1934,7 @@ fn add_have_case_assumptions(
                         describe_pure_fact(&lowered, parameters, arguments)
                     )));
                 };
-                if !pure_fact_is_replay_available(&lowered, available) {
+                if !pure_fact_is_available(&lowered, available) {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {outer_tactic_index}, `have` tactic {inner_tactic_index}: `cases` requires its exact disjunction as an available fact: {}",
                         describe_pure_fact(&lowered, parameters, arguments)
@@ -2057,7 +2053,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
             });
         }
     }
-    // A structured proof produced one replay context per logical case, and
+    // A structured proof produced one check context per logical case, and
     // each context's claim-level surface record covers only the execution
     // paths its case owns. Expansion synthesizes their provenance at the
     // recorded branch choices; a per-context record must not survive as the
@@ -2070,7 +2066,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
             || {
                 for (claim, builders) in claim_surface_builders {
                     // Contexts that recorded branch choices keep their surface `if`
-                    // even when every case produced the same steps: replay still
+                    // even when every case produced the same steps: check still
                     // needs the case split to cross the branch statement. Contexts
                     // without choices and identical records collapse to one record.
                     let merged = if builders.iter().all(|builder| {

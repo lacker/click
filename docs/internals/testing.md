@@ -319,7 +319,7 @@ nonempty all-simple body. Other `have` forms remain CONTROL. Timing, inventory,
 and expansion use that same source-site classification.
 
 If a project reaches its limit, the report classifies every active step and
-applies the same advice. This prevents slow compatibility checking from being
+applies the same advice. This prevents slow legacy fallbacking from being
 mistaken for smart search merely because it is nested inside a smart tactic.
 
 The category sections list only steps that crossed a tail threshold. `TIME

@@ -84,11 +84,12 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
-        crate::instrumentation::collect(|| {
-            verify_c0_sources(click_source, &[("transport.c", c_source)])
-        })
-    });
+    let ((verified, _events), planning_transitions) =
+        collect_planning_statement_transitions(|| {
+            crate::instrumentation::collect(|| {
+                verify_c0_sources(click_source, &[("transport.c", c_source)])
+            })
+        });
     let verified =
         verified.expect("transport should certify a source derived from exact snapshot facts");
     assert!(
@@ -101,15 +102,6 @@ fn explicit_fact_transport_can_certify_a_derived_source() {
             ),
         "the selected raw-memory step must search on a checked Proof descendant: \
          {planning_transitions:#?}"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "set_third_return_second.contract"
-                    && name == "smart tactic compatibility replay (tactic 1, source 1)"
-        )),
-        "the selected raw-memory step entered compatibility replay: {events:#?}"
     );
 
     let expanded = verified[0]
@@ -171,14 +163,8 @@ fn smart_step_starts_each_source_tactic_with_an_empty_step_delta() {
             }
         "#;
 
-    let (verified, replay_executions) = proof::count_internal_proof_executions(|| {
-        verify_c0_sources(click_source, &[("delta.c", c_source)])
-    });
+    let verified = { verify_c0_sources(click_source, &[("delta.c", c_source)]) };
     let verified = verified.expect("the flat proof should verify");
-    assert_eq!(
-        replay_executions, 0,
-        "this shape must be admitted by the direct driver so the rule is tested there"
-    );
     let expanded = verified[0]
         .expanded_proof_tactics()
         .expect("the checked smart steps should retain their expansion");
@@ -390,9 +376,9 @@ fn execute_step_records_a_point_checked_surface_expansion() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "increment.contract" && name == "surface certificate replay"
+                if claim == "increment.contract" && name == "generated certificate validation"
         )),
-        "a linear smart step must retain its checked Proof instead of ordinarily replaying it: {events:#?}"
+        "a linear smart step must retain its checked Proof instead of ordinarily checking it: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -428,7 +414,7 @@ fn execute_step_records_a_point_checked_surface_expansion() {
             .expect("the overflow-safe step should expand");
     assert!(rewritten.contains("x < 2147483647;"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("increment.c", c_source)])
-        .expect("the emitted numeric prerequisite should replay");
+        .expect("the emitted numeric prerequisite should check");
 }
 
 #[test]
@@ -461,9 +447,9 @@ fn no_premise_smart_step_searches_directly_on_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "zero.contract" && name == "surface certificate replay"
+                if claim == "zero.contract" && name == "generated certificate validation"
         )),
-        "the direct Proof successor must not pass through ordinary construction replay: {events:#?}"
+        "the direct Proof successor must not pass through ordinary construction check: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -501,22 +487,13 @@ fn scalar_root_facts_do_not_force_smart_step_planning() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = count_planning_statement_transitions(|| {
+    let ((verified, _events), planning_transitions) = count_planning_statement_transitions(|| {
         crate::instrumentation::collect(|| verify_c0_sources(click_source, &[("zero.c", c_source)]))
     });
     let verified = verified.expect("the unrelated scalar fact should remain shared by Proof");
     assert_eq!(
         planning_transitions, 0,
         "an unrelated scalar root fact must not force mutable step planning"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "zero.contract"
-                    && name == "smart tactic compatibility replay (tactic 0, source 0)"
-        )),
-        "the accepted checked step must bypass compatibility replay: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -569,9 +546,9 @@ fn fact_free_linear_smart_steps_search_directly_on_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "set_one.contract" && name == "surface certificate replay"
+                if claim == "set_one.contract" && name == "generated certificate validation"
         )),
-        "the retained Proof path must not pass through ordinary construction replay: {events:#?}"
+        "the retained Proof path must not pass through ordinary construction check: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -627,9 +604,9 @@ fn local_assignment_smart_step_selects_only_local_surface_dependencies() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "set_one.contract" && name == "surface certificate replay"
+                if claim == "set_one.contract" && name == "generated certificate validation"
         )),
-        "the retained Proof path must not pass through ordinary construction replay: {events:#?}"
+        "the retained Proof path must not pass through ordinary construction check: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -697,7 +674,7 @@ fn execute_rest_return_certificate_omits_unused_ambient_facts() {
     .expect("the return execution should expand");
     assert!(rewritten.contains("    step();"), "{rewritten}");
     verify_c0_sources(&rewritten, &[("return_x.c", c_source)])
-        .expect("the minimal return certificate should replay");
+        .expect("the minimal return certificate should check");
 }
 
 #[test]
@@ -730,9 +707,9 @@ fn linear_execute_retains_its_checked_execution_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "zero.contract" && name == "surface certificate replay"
+                if claim == "zero.contract" && name == "generated certificate validation"
         )),
-        "linear execute must not ordinarily replay its retained certificate: {events:#?}"
+        "linear execute must not ordinarily check its retained certificate: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -773,9 +750,9 @@ fn linear_execute_until_retains_its_checked_execution_proof() {
         events.iter().all(|event| !matches!(
             event,
             crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "zero.contract" && name == "surface certificate replay"
+                if claim == "zero.contract" && name == "generated certificate validation"
         )),
-        "linear execute_until must not ordinarily replay its retained certificate: {events:#?}"
+        "linear execute_until must not ordinarily check its retained certificate: {events:#?}"
     );
     let expanded = verified[0]
         .expanded_proof_tactics()
@@ -819,11 +796,12 @@ fn execute_step_omits_materialization_only_transport() {
             }
         "#;
 
-    let ((verified, events), planning_transitions) = collect_planning_statement_transitions(|| {
-        crate::instrumentation::collect(|| {
-            verify_c0_sources(click_source, &[("transport.c", c_source)])
-        })
-    });
+    let ((verified, _events), planning_transitions) =
+        collect_planning_statement_transitions(|| {
+            crate::instrumentation::collect(|| {
+                verify_c0_sources(click_source, &[("transport.c", c_source)])
+            })
+        });
     let verified = verified.expect("automatic snapshot transport should verify");
     assert!(
         planning_transitions.iter().all(|(claim, _, tactic)| claim
@@ -831,15 +809,6 @@ fn execute_step_omits_materialization_only_transport() {
             || tactic != "step"),
         "resource-sensitive smart steps must search only on checked Proof descendants: \
          {planning_transitions:#?}"
-    );
-    assert!(
-        events.iter().all(|event| !matches!(
-            event,
-            crate::instrumentation::VerificationEvent::OperationFinished { claim, name, .. }
-                if claim == "set_second_return_first.contract"
-                    && name.starts_with("smart tactic compatibility replay")
-        )),
-        "resource-sensitive smart steps must not enter compatibility replay: {events:#?}"
     );
     let expanded = verified[0].expanded_proof_tactics().unwrap_or_else(|| {
         panic!(
@@ -875,7 +844,7 @@ fn execute_step_omits_materialization_only_transport() {
             .expect("the statement expansion should print as surface Click");
     assert!(!expanded_source.contains("transport("), "{expanded_source}");
     verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
-        .expect("the statement expansion should replay without representational transport");
+        .expect("the statement expansion should check without representational transport");
 }
 
 #[test]
@@ -941,7 +910,7 @@ fn execute_step_omits_materialized_mixed_snapshot_transport() {
         expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
             .expect("the mixed-snapshot statement should expand");
     verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
-        .expect("the mixed-snapshot expansion should replay without representational transport");
+        .expect("the mixed-snapshot expansion should check without representational transport");
 }
 
 #[test]
@@ -1014,7 +983,7 @@ fn execute_step_omits_materialization_transport_across_statements() {
         expand_c0_tactic_source_at(click_source, &[("transport.c", c_source)], line, column)
             .expect("the first multi-statement step should expand");
     verify_c0_sources(&expanded_source, &[("transport.c", c_source)])
-        .expect("the multi-statement expansion should replay without representational transport");
+        .expect("the multi-statement expansion should check without representational transport");
 }
 
 #[test]

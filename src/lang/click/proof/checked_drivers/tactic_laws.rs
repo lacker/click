@@ -25,7 +25,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let unfolded_predicates: &[String] = &execution.unfolded_predicates;
 
     let _have_span =
-        crate::instrumentation::OperationTiming::new("have", claim_label, "contract have replay");
+        crate::instrumentation::OperationTiming::new("have", claim_label, "contract have check");
     let mut have_facts = pure_facts.clone();
     have_facts.extend(
         execution
@@ -492,7 +492,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
 /// The premise planner is only a query. The theorem application advances
 /// through `Proof::apply_step`, so the returned certificate is the provenance
 /// of the semantic work already performed, not a second representation that
-/// ordinary verification must replay.
+/// ordinary verification must check.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::lang::click::proof) fn checked_have_with_proof(
     have: &ProofHave,

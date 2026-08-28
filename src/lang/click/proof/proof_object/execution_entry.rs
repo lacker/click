@@ -6,7 +6,7 @@
 use super::*;
 
 impl<'a> Proof<'a> {
-    /// Creates an execution-frontier proof whose C state, replay metadata,
+    /// Creates an execution-frontier proof whose C state, check metadata,
     /// facts, and provenance are structurally shared by checked descendants.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::lang::click::proof) fn for_execution_frontier(
@@ -214,7 +214,9 @@ impl<'a> Proof<'a> {
         edit: impl FnOnce(&mut ProofState, &mut ExecutionProofState, &ProofFacts) -> R,
     ) -> Result<(Self, R), ClickError> {
         let Some(Goal::Frontier(goal)) = self.focused_goal().cloned() else {
-            return Err(self.step_error("replay cursor editing requires an execution frontier"));
+            return Err(
+                self.step_error("construction cursor editing requires an execution frontier")
+            );
         };
         let missing = self.step_error("execution-frontier proof lost its semantic state");
         let Self {
@@ -267,7 +269,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Borrows the terminal execution data needed by claim finalization
-    /// without exporting it into a mutable replay context.
+    /// without exporting it into a mutable check context.
     pub(in crate::lang::click::proof) fn finalization_view(
         &self,
     ) -> Result<ProofFinalizationView<'_>, ClickError> {

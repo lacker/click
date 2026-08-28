@@ -275,7 +275,7 @@ pub fn c_loop_invariants_hold_at_back_edge_using(
         assumptions,
         &mut ExecutionBudget::default(),
     )
-    .map_err(|error| format!("could not replay invariant closer: {error}"))
+    .map_err(|error| format!("could not check invariant closer: {error}"))
 }
 
 pub fn c_loop_invariant_obligations_at_entry(
@@ -742,7 +742,7 @@ pub fn c_function_entry_state(
 /// Produces the exact callee entry state used by contract verification.
 ///
 /// Composite requirements normally use their canonical contained resources.
-/// When proof replay has explicitly observed or unfolded part of a recursive
+/// When proof execution has explicitly observed or unfolded part of a recursive
 /// resource, independent certification preserves that equivalent form so
 /// both executions use the same boundary state.
 pub fn c_function_contract_entry_state(
@@ -775,7 +775,7 @@ pub fn c_function_contract_entry_state(
     }
 }
 
-/// Applies a function's already-checked resource effect to a concrete replay
+/// Applies a function's already-checked resource effect to a concrete body
 /// outcome. This changes only the contract-level resource/population state;
 /// the C value and memory come from the supplied body execution.
 pub fn apply_c_function_contract_resource_transition(
@@ -899,7 +899,7 @@ pub fn substitute_int32_variable_in_proposition(
 /// Planning evidence for certificate lowering: the guided instantiation
 /// values the atomic prover would try for one universally quantified int32
 /// fact against a target condition fact, plus every value of a
-/// constant-bounded binder range. Simple replay never calls this; the
+/// constant-bounded binder range. Simple check never calls this; the
 /// selected value is recorded explicitly in the emitted certificate.
 pub fn forall_instantiation_candidate_values(
     quantified: &Proposition,
@@ -1757,7 +1757,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment_and_budget(
 
 /// Verifies an exact function body from its declared contract-entry resources.
 ///
-/// Unlike ordinary proof replay, this canonicalizes composite requirements
+/// Unlike ordinary proof execution, this canonicalizes composite requirements
 /// before body execution. It is the independent execution used to certify
 /// opaque contract claims.
 pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
@@ -1912,7 +1912,7 @@ pub fn prove_pure_proposition_from_context(
     proposition: &Proposition,
 ) -> Option<Theorem> {
     let derivation = assumptions.derive_proposition(proposition)?;
-    if !derivation.replay(assumptions) {
+    if !derivation.check(assumptions) {
         return None;
     }
     let theorem = derivation
@@ -1982,7 +1982,7 @@ pub fn prove_owned_resource_quantity_nonnegative(
 /// Re-expresses a checked execution from a definitionally equal ghost-resource
 /// representation of the same concrete entry state.
 ///
-/// Resource folds, unfolds, and observations can leave proof replay with a
+/// Resource folds, unfolds, and observations can leave the proof state with a
 /// different `ResourceContext` than independently reconstructed contract
 /// entry. The program locals, memory, and counted populations must still be
 /// exactly identical, and the kernel's bounded resource equality relation
@@ -2499,7 +2499,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             {
                 continue;
             }
-            // Replay attached kernel derivations in certificate order. A
+            // Check attached kernel derivations in certificate order. A
             // later explicit theorem application may use a fact established
             // by an earlier one, but only selected evaluator prerequisites
             // escape into the reconstructed execution context.
@@ -3460,7 +3460,7 @@ fn rewrite_int32_term_by_exact_equality(
 /// Independently checks an explicit sequence of int32 equality rewrites and
 /// context-free normalization before issuing whole-contract authority.
 ///
-/// This is deliberately a certificate checker, not an algebraic search: each
+/// This is deliberately a certificate validator, not an algebraic search: each
 /// supplied equality must follow from the theorem requirements, must occur in
 /// the current equality goal, and is applied in the supplied orientation.
 pub fn prove_universally_quantified_pure_implication_by_int32_rewrites(

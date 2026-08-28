@@ -57,7 +57,7 @@ impl<'a> Proof<'a> {
     }
 
     /// Continues smart closure after direct logical candidates have either
-    /// missed or been deliberately rejected as non-replayable. When
+    /// missed or been deliberately rejected as non-checkable. When
     /// `exclude_exact_goal` is true, the atomic derivation query may not cite
     /// the goal's own ambient fact; every selected theorem step is still
     /// checked against this unchanged Proof.
@@ -588,7 +588,7 @@ impl<'a> Proof<'a> {
         Ok(None)
     }
 
-    /// Retains the kernel decision and every exact replayable surface form
+    /// Retains the kernel decision and every exact checkable surface form
     /// among its context premises. A typed evidence translator selects and
     /// requires its own exact premises from this subset; unrelated transitive
     /// search context need not be Surface-synthesizable. This is a read-only smart
@@ -619,7 +619,7 @@ impl<'a> Proof<'a> {
                     if let Some(point) = self.focused_outcome_point() {
                         (
                             &point.surface_propositions,
-                            // Entry-anchored premises can add a replay-equivalent
+                            // Entry-anchored premises can add a check-equivalent
                             // outcome fact without discharging the exact goal
                             // form. Keep the ordinary trailing assumption so
                             // the checked successor decides whether it is needed.
@@ -655,13 +655,13 @@ impl<'a> Proof<'a> {
         };
         let context_premises = derivation.context_premises();
         let resolve_premise = |premise: &Proposition, anchor: Option<&ProgramPointRef>| {
-            if let Some(surface) = self.replayable_surface_fact(surface_facts, anchor, premise) {
+            if let Some(surface) = self.available_surface_fact(surface_facts, anchor, premise) {
                 return Some((premise.clone(), surface));
             }
             condition_polarity_forms(premise)
                 .into_iter()
                 .find_map(|form| {
-                    let surface = self.replayable_surface_fact(surface_facts, anchor, &form);
+                    let surface = self.available_surface_fact(surface_facts, anchor, &form);
                     surface.map(|surface| (form, surface))
                 })
         };
@@ -699,7 +699,7 @@ impl<'a> Proof<'a> {
 
     /// Resolves one exact retained fact to a surface form that will lower
     /// back to that same kernel proposition when the selected simple step is
-    /// replayed. Historical locals are anchored before ordinary forms are
+    /// checked. Historical locals are anchored before ordinary forms are
     /// considered, so a same-written newer snapshot cannot be substituted.
     /// The point data a premise lookup spells against: the focused outcome
     /// point, or the frontier's own point view for a judgment stated
@@ -709,7 +709,7 @@ impl<'a> Proof<'a> {
             .or_else(|| self.execution_proposition_point_view())
     }
 
-    pub(super) fn replayable_surface_fact(
+    pub(super) fn available_surface_fact(
         &self,
         surface_facts: &SurfacePropositionMap,
         premise_anchor: Option<&ProgramPointRef>,
@@ -865,11 +865,11 @@ impl<'a> Proof<'a> {
         }
         // Quantified execution facts may be retained in the canonical memory
         // form used by the kernel while their recorded Surface form
-        // lowers to a replay-equivalent snapshot term. Probe only the
+        // lowers to a check-equivalent snapshot term. Probe only the
         // persistent alpha/canonical-form bucket for this selected premise;
-        // `InstantiateUsing` validates the same equivalence on replay.
+        // `InstantiateUsing` validates the same equivalence on check.
         if matches!(kernel, Proposition::ForAll { .. }) {
-            for candidate in self.facts().matching_quantified_replay_facts(kernel) {
+            for candidate in self.facts().matching_quantified_facts(kernel) {
                 for surface in surface_facts.surfaces(&candidate) {
                     let lowered = self
                         .lower_surface_proposition_direct(
@@ -877,11 +877,8 @@ impl<'a> Proof<'a> {
                             "typed quantified simp premise form",
                         )
                         .ok()?;
-                    if quantified_replay_equivalent_available_fact(
-                        kernel,
-                        std::slice::from_ref(&lowered),
-                    )
-                    .is_some()
+                    if quantified_equivalent_available_fact(kernel, std::slice::from_ref(&lowered))
+                        .is_some()
                     {
                         return Some(surface.clone());
                     }
@@ -949,7 +946,7 @@ impl<'a> Proof<'a> {
     /// The closure above; with `exclude_goal_fact`, the goal's own ambient
     /// fact (in either orientation) is not a rewrite candidate, matching the
     /// atomic derivation's rule when direct closure was rejected as
-    /// non-replayable.
+    /// non-checkable.
     pub(super) fn try_indexed_goal_equality_rewrite_closure_excluding(
         &self,
         exclude_goal_fact: bool,
@@ -998,7 +995,7 @@ impl<'a> Proof<'a> {
                     continue;
                 }
                 let Some(surface) =
-                    proof.replayable_surface_fact(surface_facts, premise_anchor, &equality)
+                    proof.available_surface_fact(surface_facts, premise_anchor, &equality)
                 else {
                     continue;
                 };
@@ -1382,7 +1379,7 @@ impl<'a> Proof<'a> {
 
     /// Applies a planner's flat explicit candidate directly to persistent
     /// `Proof` descendants. Planning may select surface operations, but only
-    /// their ordinary checked implementations can advance the proof.
+    /// their checked implementations can advance the proof.
     ///
     /// Generated candidates historically retain a final `assumption()` even
     /// when the preceding operation already discharged the goal. Ignore only
@@ -1406,7 +1403,7 @@ impl<'a> Proof<'a> {
         proof.is_complete().then_some(proof)
     }
 
-    /// Specializes one replayable universal premise selected by the atomic
+    /// Specializes one checkable universal premise selected by the atomic
     /// decision at the current goal. Planning only chooses the explicit
     /// quantified fact, argument, and guards; each selected operation advances
     /// this `Proof` directly.
@@ -1862,7 +1859,7 @@ impl<'a> Proof<'a> {
                     .into_iter()
                     .filter_map(|premise| {
                         proof
-                            .replayable_surface_fact(
+                            .available_surface_fact(
                                 &point.surface_propositions,
                                 point.premise_anchor.as_ref(),
                                 &premise,
@@ -1955,10 +1952,10 @@ impl<'a> Proof<'a> {
     ) -> Option<Self> {
         // A named restricted premise may be a leaf of one exact available
         // conjunction (commonly after `unfold(predicate)`). Materialize that
-        // leaf through the ordinary checked `extract` transition before
+        // leaf through the checked `extract` transition before
         // asking the restricted planner to use it. The returned descendant
         // therefore owns both the semantic fact and the Surface provenance;
-        // expansion does not need to reconstruct and replay a certificate to
+        // expansion does not need to reconstruct and check a certificate to
         // justify the premise later.
         let mut proof = self.clone();
         for surface in surfaces {
@@ -2357,7 +2354,7 @@ impl<'a> Proof<'a> {
     /// Smart tactics search for checked descendants while explicit tactics
     /// apply their named operation. The returned proof already owns both the
     /// semantic result and its exact provenance; no certificate is constructed
-    /// or replayed to establish acceptance.
+    /// or checked to establish acceptance.
     pub(in crate::lang::click::proof) fn try_linear_script(
         &self,
         tactics: &[ProofTactic],

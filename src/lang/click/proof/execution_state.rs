@@ -4,7 +4,7 @@ use crate::persistent::PersistentSet;
 use crate::persistent::persistent_node_allocations;
 use std::sync::Arc;
 
-/// Identifies the `close_invariants` step of a replayed certificate well
+/// Identifies the `close_invariants` step of a checked certificate well
 /// enough to emit a `click timing:` line for the work its caller does on its
 /// behalf: the same claim-relative indices the checked drivers use.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,11 +14,11 @@ pub(super) struct InvariantCloserStep {
     pub(super) statement_index: usize,
 }
 
-/// Clone-on-write storage for legacy replay collections.
+/// Clone-on-write storage for execution-metadata collections.
 ///
-/// This makes a read-only proof-state fork constant time. A legacy mutation
-/// still pays for its complete vector and remains an explicit migration
-/// target; migrated `Proof` steps avoid that mutable path altogether.
+/// This makes a read-only proof-state fork constant time. A mutation still
+/// pays for its complete vector; persistent `Proof` steps avoid that mutable
+/// path altogether.
 #[derive(Clone)]
 pub(super) struct SharedVec<T>(Arc<Vec<T>>);
 
@@ -82,10 +82,10 @@ impl<T: Clone> SharedVec<T> {
     }
 }
 
-/// Clone-on-write storage for one legacy replay value.
+/// Clone-on-write storage for one execution-metadata value.
 ///
-/// `Proof` successors can share replay metadata they do not modify. Legacy
-/// code still receives ordinary references through `Deref`, and the first
+/// `Proof` successors can share metadata they do not modify. Mutable consumers
+/// still receive ordinary references through `Deref`, and the first
 /// mutation makes the old complete-value copy explicit at that boundary.
 #[derive(Clone)]
 pub(super) struct SharedValue<T>(Arc<T>);
@@ -450,8 +450,8 @@ impl ProofFactStore {
 
 /// Environments a planning executor needs to construct the [`SimpleProofStep`]
 /// for each committed search move at the moment the move is made. Passing
-/// `None` runs the executor without surface construction (ordinary replay).
-/// The path's surface record: what the constructed certificate's own replay
+/// `None` runs the executor without surface-certificate construction.
+/// The path's surface record: what the constructed certificate's own check
 /// knows at this point. Planning sinks seed from it and write the anchor
 /// back; a proof-level case split records its choice here.
 #[derive(Clone, Default)]
@@ -461,11 +461,11 @@ pub(super) struct SurfaceRecord {
     pub(super) last_step_entry: Option<ProgramPointRef>,
     pub(super) path_choices: Vec<SurfacePathChoice>,
     pub(super) blocker: Option<String>,
-    /// The facts the constructed certificate's own replay will have at the
+    /// The facts the constructed certificate's own check will have at the
     /// current point. Planning executes with automatically transported facts,
-    /// but certificate replay carries only path facts, statement-local
+    /// but certificate validation carries only path facts, statement-local
     /// rewrites, and explicit surface transports across each step. Generated
-    /// evidence is written against this replay-visible set.
+    /// evidence is written against this certificate-visible set.
     pub(super) certificate_facts: ProofFactStore,
 }
 
@@ -1212,7 +1212,7 @@ pub(super) enum PostExecutionTactic {
     /// Surface-only control structure scheduled after terminal execution.
     /// The arms contain no semantic state: ordered finalization asks the
     /// focused outcome `Proof` to decide the condition, then applies only the
-    /// selected arm's ordinary checked operations to that same descendant.
+    /// selected arm's checked operations to that same descendant.
     If {
         condition: ClickProposition,
         then_tactics: Vec<DeferredPostExecutionTactic>,
@@ -1581,7 +1581,7 @@ impl ExecutionFrontier {
 /// candidate is accepted only by exact equality against the certified
 /// proposition, and a `MemoryLoad` carries its snapshot inside the term,
 /// so a candidate resolved to the wrong state cannot match: selecting the
-/// state by name adds a form to search, and the certificate check
+/// state by name adds a form to search, and the certificate validation
 /// remains the thing that validates it.
 ///
 /// Falling back to [`ExecutionFrontier::execution_start_state`] keeps every region that
@@ -1601,7 +1601,7 @@ pub(super) fn old_reference_state<'a>(
 /// the recorded program-point states, the surface spellings, the effect
 /// facts, and the state `old(...)` resolves to. Owners build it from
 /// wherever they keep those fields, so consumers do not depend on the
-/// replay bag's layout.
+/// check bag's layout.
 #[derive(Clone, Copy)]
 pub(super) struct ExecutionView<'a> {
     pub(super) frontier: &'a ExecutionFrontier,

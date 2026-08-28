@@ -618,7 +618,7 @@ struct SurfacePropositionStorage {
     by_kernel: PersistentMap<Proposition, KernelSurfaceForms>,
     /// Recorded kernel facts grouped by a structural key that forgets only
     /// memory snapshot identities. Typed proof steps use this to recover a
-    /// replay-equivalent surface form without scanning ambient facts.
+    /// check-equivalent surface form without scanning ambient facts.
     by_snapshot_blind:
         PersistentMap<proof::SnapshotBlindPropositionKey, PersistentSet<Proposition>>,
     // The debug form is a deterministic structural bucket key. Exact
@@ -1751,7 +1751,7 @@ pub struct CertifiedFactTransport {
     pub(crate) theorem: Theorem,
     pub(crate) statement_local: bool,
     /// Exact facts the bounded frame check consumed to carry `source`
-    /// across the statement effect; replay frames the fact from exactly
+    /// across the statement effect; check frames the fact from exactly
     /// these.
     pub(crate) frame_premises: Vec<Proposition>,
 }
@@ -2102,7 +2102,7 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
 /// A structured proof containing only surface-expressible simple tactics.
 ///
 /// Unlike [`ProofTactic`], this type cannot contain smart tactics or
-/// replay-only implementation operations. Smart tactics should ultimately
+/// internal-only implementation operations. Smart tactics should ultimately
 /// return this type directly; printing it is then a structural conversion
 /// back to ordinary `.click` syntax.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2789,7 +2789,7 @@ pub struct ProofIf {
     else_tactics: Vec<ProofTactic>,
 }
 
-/// Explicit elimination of a disjunctive fact: replay checks that the written
+/// Explicit elimination of a disjunctive fact: proof checking requires the written
 /// disjunction is an available fact, then checks each branch under exactly its
 /// assumed disjunct. Both branches are always written; nothing is searched.
 #[derive(Clone, Debug, Eq, PartialEq)]
