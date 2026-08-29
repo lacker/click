@@ -434,6 +434,16 @@ impl<'a> Proof<'a> {
         Ok((!execution.frontier.is_at_function_exit())
             .then_some(execution.frontier.next_statement_index))
     }
+
+    /// Returns the current source-layout frontier node, including the
+    /// function-exit node used to attribute terminal effect tactics.
+    pub(in crate::lang::click::proof) fn execution_frontier_index(
+        &self,
+    ) -> Result<usize, ClickError> {
+        self.execution()
+            .map(|execution| execution.frontier.next_statement_index)
+            .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))
+    }
 }
 
 /// The premise anchor of an execution frontier: the entry of the last

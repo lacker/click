@@ -17,7 +17,8 @@ mod proof_object;
 pub(in crate::lang::click) use proof_object::{
     count_checked_execution_interface_joins, count_checked_expanded_execution_ifs,
     count_execution_context_exports, count_explicit_linear_fallbacks,
-    count_smart_loop_effect_frame_candidates, count_source_certificate_checks,
+    count_finalization_view_constructions, count_smart_loop_effect_frame_candidates,
+    count_source_certificate_checks,
 };
 mod checked_drivers;
 mod execution_state;

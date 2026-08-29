@@ -30,6 +30,9 @@ thread_local! {
     static SMART_LOOP_EFFECT_FRAME_CANDIDATES: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    static FINALIZATION_VIEW_CONSTRUCTIONS: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
 }
 
 #[cfg(test)]
@@ -79,6 +82,16 @@ pub(in crate::lang::click) fn count_smart_loop_effect_frame_candidates<R>(
     let before = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
     let result = operation();
     let after = SMART_LOOP_EFFECT_FRAME_CANDIDATES.with(std::cell::Cell::get);
+    (result, after - before)
+}
+
+#[cfg(test)]
+pub(in crate::lang::click) fn count_finalization_view_constructions<R>(
+    operation: impl FnOnce() -> R,
+) -> (R, usize) {
+    let before = FINALIZATION_VIEW_CONSTRUCTIONS.with(std::cell::Cell::get);
+    let result = operation();
+    let after = FINALIZATION_VIEW_CONSTRUCTIONS.with(std::cell::Cell::get);
     (result, after - before)
 }
 

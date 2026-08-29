@@ -275,6 +275,8 @@ impl<'a> Proof<'a> {
     pub(in crate::lang::click::proof) fn finalization_view(
         &self,
     ) -> Result<ProofFinalizationView<'_>, ClickError> {
+        #[cfg(test)]
+        FINALIZATION_VIEW_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("proof does not own an execution frontier"));
         };

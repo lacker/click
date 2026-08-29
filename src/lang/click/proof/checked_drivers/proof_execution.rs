@@ -577,7 +577,7 @@ fn advance_checked_linear_continuation<'a>(
         check_verification_deadline()?;
         // Every source driver starts a tactic with an empty step delta.
         proof = proof.start_source_tactic()?;
-        let statement_index = proof.finalization_view()?.frontier.next_statement_index;
+        let statement_index = proof.execution_frontier_index()?;
         let terminal_frame = matches!(
             indexed.tactic,
             ProofTactic::SmartFrame(_) | ProofTactic::FrameUsing { .. }

@@ -492,12 +492,15 @@ fn targeted_certification_keeps_an_explicit_theorem_dependency() {
 #[test]
 fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
     for snapshot_claim in [false, true] {
+        let mut finalization_views = Vec::new();
         let samples = [8, 16, 32, 64]
             .into_iter()
             .map(|size| {
                 let (c_source, click_source) = straight_line_project(size, snapshot_claim);
-                let (verified, sample) = scaling_sample(size, || {
-                    verify_c0_sources(&click_source, &[("straight.c", c_source.as_str())])
+                let ((verified, view_count), sample) = scaling_sample(size, || {
+                    proof::count_finalization_view_constructions(|| {
+                        verify_c0_sources(&click_source, &[("straight.c", c_source.as_str())])
+                    })
                 });
                 verified.unwrap_or_else(|error| {
                     panic!(
@@ -505,9 +508,20 @@ fn straight_line_proof_steps_scale_near_linearly_with_retained_snapshots() {
                         error.message()
                     )
                 });
+                finalization_views.push(view_count);
                 sample
             })
             .collect::<Vec<_>>();
+        assert!(
+            finalization_views[0] > 0,
+            "straight-line verification must exercise terminal finalization"
+        );
+        assert!(
+            finalization_views
+                .iter()
+                .all(|count| *count == finalization_views[0]),
+            "terminal-view construction must not grow with explicit steps: {finalization_views:?}"
+        );
         assert_near_linear_scaling("straight-line proof steps", &samples);
     }
 }
