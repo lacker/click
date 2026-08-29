@@ -1,54 +1,5 @@
 # Working on Click
 
-## Work modes
-
-The user may select a collaboration mode with a short declaration such as
-`Day mode: ...` or `Overnight mode: ...`. The mode changes communication
-cadence and autonomy, never correctness standards, source-fidelity rules, or
-tooling-stability requirements. If no mode is declared, prefer day mode for
-interactive work.
-
-### Day mode
-
-Work in one independently understandable chunk at a time and discuss findings
-with the user frequently. Stop and check in before making a significant design
-decision, broadening scope, or beginning a response to an unexpected tooling
-problem. Preserve the failing case and a green checkpoint while waiting; do
-not work around the problem. Optimize for shared understanding rather than
-closing the entire task list quickly.
-
-### Overnight mode
-
-Continue autonomously for as long as useful, completing independent green
-chunks with focused commits and pushes. Treat the requested task list as a
-priority queue, not an obligation to force every item through. The declaration
-authorizes ordinary commits and pushes for completed in-scope chunks, but does
-not authorize unrelated work or destructive operations.
-
-Tooling instability is a stop condition for the affected feature. Never route
-around unexpected slowness, missed budgets, expansion/verification disagreement,
-misleading diagnostics, enormous states, or pressure to reshape C or example
-code. Do not raise limits, add arbitrary search caps, weaken examples, or
-change C to make a proof pass.
-
-If the underlying tooling fix is clear and bounded, fix it with a focused
-regression, commit and push the green chunk, and continue. If it requires a
-significant design decision, preserve a green checkpoint, write a detailed
-issue with the reproduction and acceptance criteria, and move to another
-genuinely independent task. Do not leave broken intermediate commits or
-running verifier processes.
-
-A prompt, bounded smart-tactic failure is not tooling instability. Smart
-tactics are incomplete heuristics, and overnight work must not turn each hard
-proof into a search-engine project. Split the proof into smaller operations or
-use explicit simple tactics and continue. Investigate the engine only when
-search misses its bound, produces misleading or enormous diagnostics, reports
-success without a verifiable expansion, behaves nondeterministically, or the
-needed proof cannot be expressed through the simple tactic surface.
-
-At the end of an overnight run, report completed work, remaining issues,
-important discoveries, and decisions that need discussion.
-
 ## Isolate work from the primary checkout
 
 Unless already operating in a task-specific worktree, create a dedicated Git
@@ -67,8 +18,7 @@ stop and coordinate if it is dirty or integration conflicts.
 
 Keep failed prototypes and incomplete investigations confined to their task
 worktree. Restore or replace them with a green checkpoint before committing,
-and do not merge or push them to the primary branch. These rules apply in both
-day and overnight mode.
+and do not merge or push them to the primary branch. These rules always apply.
 
 Run long-running Git operations that move `HEAD`, such as `git bisect`, in a
 throwaway worktree rather than the one holding the change. Bisecting in place
