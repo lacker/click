@@ -865,6 +865,106 @@ fn loop_semantics_explicitly_select_verification_or_verified_rules() {
 }
 
 #[test]
+fn statement_checks_share_one_execution_environment_variable_index() {
+    let reserved = Variable(1_000_000);
+    let indexed_function = c_function(
+        CType::Int32,
+        "indexed",
+        Vec::new(),
+        c_return(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(reserved),
+        ))),
+    );
+    let environment = CExecutionEnvironment::new().with_function(indexed_function);
+    let cloned_before_initialization = environment.clone();
+    assert_eq!(environment.variable_index.build_count(), 0);
+
+    for candidate in [environment.clone(), cloned_before_initialization] {
+        let execution = prove_symbolic_c_statement_verification_paths_with_environment(
+            CState::new(),
+            c_skip(),
+            PureFactContext::new(),
+            candidate,
+            CExecutionSemantics::EXECUTE_BODIES,
+        );
+        assert_eq!(execution.paths().len(), 1);
+    }
+
+    assert_eq!(
+        environment.variable_index.build_count(),
+        1,
+        "environment clones must share one derived symbolic-variable scan"
+    );
+    let indexed = execution_environment_variable_index(&environment);
+    assert!(indexed.contains(&reserved));
+    assert_eq!(environment.variable_index.build_count(), 1);
+    let mut generator = KernelVariableGenerator::fresh_for_with_shared_reservations(
+        1_000_000,
+        BTreeSet::from([Variable(1_000_001)]),
+        indexed,
+    );
+    assert_eq!(
+        generator.next(),
+        Variable(1_000_002),
+        "fresh variables must avoid both shared environment and local reservations"
+    );
+
+    let changed = environment.with_function(c_function(
+        CType::Int32,
+        "changed",
+        Vec::new(),
+        c_return(CExpression::Value(CValue::Int32(
+            Bitvector32Term::Variable(Variable(1_000_001)),
+        ))),
+    ));
+    assert_eq!(changed.variable_index.build_count(), 0);
+    let changed_index = execution_environment_variable_index(&changed);
+    assert!(changed_index.contains(&reserved));
+    assert!(changed_index.contains(&Variable(1_000_001)));
+    assert_eq!(changed.variable_index.build_count(), 1);
+}
+
+#[test]
+fn environment_variable_scans_do_not_multiply_by_statement_count() {
+    for size in [8, 32, 128, 512] {
+        let mut body = c_return(CExpression::Value(int32(0)));
+        for index in (0..size).rev() {
+            body = c_seq(
+                c_assign(
+                    "symbolic",
+                    CExpression::Value(CValue::Int32(Bitvector32Term::Variable(Variable(
+                        1_000_000 + index,
+                    )))),
+                ),
+                body,
+            );
+        }
+        let environment = CExecutionEnvironment::new().with_function(c_function(
+            CType::Int32,
+            format!("indexed_{size}"),
+            Vec::new(),
+            body,
+        ));
+
+        for _ in 0..size {
+            let execution = prove_symbolic_c_statement_verification_paths_with_environment(
+                CState::new(),
+                c_skip(),
+                PureFactContext::new(),
+                environment.clone(),
+                CExecutionSemantics::EXECUTE_BODIES,
+            );
+            assert_eq!(execution.paths().len(), 1);
+        }
+        assert_eq!(
+            environment.variable_index.build_count(),
+            1,
+            "size {size} rebuilt the environment variable index across statement checks"
+        );
+    }
+}
+
+#[test]
 fn perpetual_loop_verifies_safety_without_minting_a_concrete_exit() {
     let state = CState::new();
     let statement = c_while_with_invariant_checks(

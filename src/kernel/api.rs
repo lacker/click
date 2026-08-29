@@ -1304,8 +1304,11 @@ fn statement_kernel_variables(
     collect_c_state_bitvector_variables(state, &mut existing);
     collect_c_statement_bitvector_variables(statement, &mut existing);
     collect_assumption_variables(assumptions, &mut existing);
-    collect_execution_environment_variables(environment, &mut existing);
-    KernelVariableGenerator::fresh_for(lower_bound, existing)
+    KernelVariableGenerator::fresh_for_with_shared_reservations(
+        lower_bound,
+        existing,
+        execution_environment_variable_index(environment),
+    )
 }
 
 pub(crate) fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(

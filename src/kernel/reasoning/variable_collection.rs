@@ -739,6 +739,27 @@ pub(in crate::kernel) fn collect_execution_environment_variables(
     environment: &CExecutionEnvironment,
     variables: &mut BTreeSet<Variable>,
 ) {
+    variables.extend(
+        execution_environment_variable_index(environment)
+            .iter()
+            .copied(),
+    );
+}
+
+pub(in crate::kernel) fn execution_environment_variable_index(
+    environment: &CExecutionEnvironment,
+) -> std::sync::Arc<BTreeSet<Variable>> {
+    environment.variable_index.get_or_init(|| {
+        let mut variables = BTreeSet::new();
+        collect_execution_environment_variables_uncached(environment, &mut variables);
+        variables
+    })
+}
+
+fn collect_execution_environment_variables_uncached(
+    environment: &CExecutionEnvironment,
+    variables: &mut BTreeSet<Variable>,
+) {
     for function in environment.functions.values() {
         collect_c_function_bitvector_variables(function, variables);
     }

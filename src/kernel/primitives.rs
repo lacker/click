@@ -9,7 +9,7 @@ use super::reasoning::{
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 mod contracts;
 mod memory_state;
@@ -25,6 +25,43 @@ pub(super) const RANGE_FOLD_CONCRETE_UNROLL_LIMIT: i64 = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Variable(pub u64);
+
+/// A derived index of the free symbolic variables stored in one immutable
+/// execution-environment version. Environment clones share the initialized
+/// index; builder-style mutations replace it along with the changed semantic
+/// storage.
+#[derive(Clone, Default)]
+pub(super) struct CExecutionEnvironmentVariableIndex {
+    values: Arc<OnceLock<Arc<BTreeSet<Variable>>>>,
+    #[cfg(test)]
+    builds: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CExecutionEnvironmentVariableIndex {
+    pub(super) fn get_or_init(
+        &self,
+        initialize: impl FnOnce() -> BTreeSet<Variable>,
+    ) -> Arc<BTreeSet<Variable>> {
+        self.values
+            .get_or_init(|| {
+                #[cfg(test)]
+                self.builds
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Arc::new(initialize())
+            })
+            .clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn build_count(&self) -> usize {
+        self.builds.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.values, &other.values)
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum Sort {
@@ -544,14 +581,41 @@ pub struct CFunctionSpecification {
     pub(super) outcome: CFunctionOutcome,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Default)]
 pub struct CExecutionEnvironment {
     pub(super) functions: std::sync::Arc<BTreeMap<String, CFunction>>,
     pub(super) verified_function_rules: std::sync::Arc<BTreeMap<String, CVerifiedFunctionRule>>,
     pub(super) verified_function_termination_rules:
         std::sync::Arc<BTreeMap<String, CVerifiedFunctionTerminationRule>>,
     pub(super) verified_loop_rules: std::sync::Arc<Vec<CVerifiedLoopRule>>,
+    pub(super) variable_index: CExecutionEnvironmentVariableIndex,
 }
+
+impl std::fmt::Debug for CExecutionEnvironment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CExecutionEnvironment")
+            .field("functions", &self.functions)
+            .field("verified_function_rules", &self.verified_function_rules)
+            .field(
+                "verified_function_termination_rules",
+                &self.verified_function_termination_rules,
+            )
+            .field("verified_loop_rules", &self.verified_loop_rules)
+            .finish()
+    }
+}
+
+impl PartialEq for CExecutionEnvironment {
+    fn eq(&self, other: &Self) -> bool {
+        self.functions == other.functions
+            && self.verified_function_rules == other.verified_function_rules
+            && self.verified_function_termination_rules == other.verified_function_termination_rules
+            && self.verified_loop_rules == other.verified_loop_rules
+    }
+}
+
+impl Eq for CExecutionEnvironment {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CCallSemantics {
@@ -2135,6 +2199,7 @@ pub(super) struct CArgumentsPath {
 pub(super) struct KernelVariableGenerator {
     pub(super) next: u64,
     reserved: BTreeSet<Variable>,
+    shared_reserved: Option<Arc<BTreeSet<Variable>>>,
 }
 
 impl KernelVariableGenerator {
@@ -2147,6 +2212,19 @@ impl KernelVariableGenerator {
         Self {
             next: lower_bound,
             reserved: existing,
+            shared_reserved: None,
+        }
+    }
+
+    pub(super) fn fresh_for_with_shared_reservations(
+        lower_bound: u64,
+        existing: BTreeSet<Variable>,
+        shared_reserved: Arc<BTreeSet<Variable>>,
+    ) -> Self {
+        Self {
+            next: lower_bound,
+            reserved: existing,
+            shared_reserved: Some(shared_reserved),
         }
     }
 
@@ -2155,7 +2233,11 @@ impl KernelVariableGenerator {
         loop {
             let variable = Variable(self.next);
             self.next = self.next.wrapping_add(1);
-            if self.reserved.insert(variable) {
+            let shared_contains = self
+                .shared_reserved
+                .as_ref()
+                .is_some_and(|reserved| reserved.contains(&variable));
+            if !shared_contains && self.reserved.insert(variable) {
                 return variable;
             }
             assert!(
