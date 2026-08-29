@@ -29,6 +29,8 @@ Kernel files:
 - `eval.rs`: C expression/statement evaluation and memory operations.
 - `loops.rs`: loop verification, loop effects, loop havoc, and invariant
   helpers.
+- `proof.rs`: persistent proof-branch and split identities, allocation, and
+  structural topology shared by the checked proof object.
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 

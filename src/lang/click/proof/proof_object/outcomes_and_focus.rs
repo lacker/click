@@ -42,7 +42,7 @@ impl<'a> Proof<'a> {
     /// Every open goal in this proof, in stable id order.
     #[cfg(test)]
     pub(in crate::lang::click::proof) fn branches(&self) -> impl Iterator<Item = BranchId> + '_ {
-        self.state.open_branches.open.keys().copied()
+        self.state.open_branches.ids()
     }
 
     /// The open function-outcome goal derived for one checked path, if this
@@ -54,11 +54,10 @@ impl<'a> Proof<'a> {
     ) -> Option<BranchId> {
         self.state
             .open_branches
-            .open
             .iter()
             .find_map(|(id, branch)| match &branch.obligation {
                 Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {
-                    Some(*id)
+                    Some(id)
                 }
                 _ => None,
             })
@@ -310,37 +309,31 @@ impl<'a> Proof<'a> {
             }
             let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);
-            let id = BranchId(goals.next_id);
-            goals = OpenBranches {
-                open: goals.open.with_inserted(
-                    id,
-                    OpenBranch::function_outcome(
-                        OutcomeObligation {
-                            path_index,
-                            selection: effect_selection,
-                            checked_effects: Arc::new(Vec::new()),
-                            data: Arc::new(OutcomeProofData {
-                                result: Arc::new(result),
-                                state: state.into(),
-                                surface_propositions: provenance.surface_propositions,
-                                recorded_snapshots: provenance.recorded_snapshots,
-                                effect_facts: Arc::new(execution_facts),
-                                execution_pure_facts: Arc::new(path.facts().to_vec()),
-                                premise_anchor: frontier_anchor.clone(),
-                                requirement_facts: requirement_facts.clone(),
-                                requirement_surfaces: requirement_surfaces.clone(),
-                                branch_decisions: provenance.branch_decisions,
-                            }),
-                        },
-                        BranchState {
-                            facts,
-                            unfolded_predicates: frontier_unfolds.clone(),
-                            execution: frontier_snapshot.clone(),
-                        },
-                    ),
-                ),
-                next_id: goals.next_id + 1,
-            };
+            let (id, next_goals) = goals.push(OpenBranch::function_outcome(
+                OutcomeObligation {
+                    path_index,
+                    selection: effect_selection,
+                    checked_effects: Arc::new(Vec::new()),
+                    data: Arc::new(OutcomeProofData {
+                        result: Arc::new(result),
+                        state: state.into(),
+                        surface_propositions: provenance.surface_propositions,
+                        recorded_snapshots: provenance.recorded_snapshots,
+                        effect_facts: Arc::new(execution_facts),
+                        execution_pure_facts: Arc::new(path.facts().to_vec()),
+                        premise_anchor: frontier_anchor.clone(),
+                        requirement_facts: requirement_facts.clone(),
+                        requirement_surfaces: requirement_surfaces.clone(),
+                        branch_decisions: provenance.branch_decisions,
+                    }),
+                },
+                BranchState {
+                    facts,
+                    unfolded_predicates: frontier_unfolds.clone(),
+                    execution: frontier_snapshot.clone(),
+                },
+            ));
+            goals = next_goals;
             outcome_ids.push(id);
         }
         if outcome_ids.is_empty() {

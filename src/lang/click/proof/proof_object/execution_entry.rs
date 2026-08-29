@@ -233,10 +233,7 @@ impl<'a> Proof<'a> {
         let mut proof_state = Arc::unwrap_or_clone(state);
         // Release the goal map's reference first so the execution snapshot
         // is unique whenever this proof was.
-        proof_state.open_branches = OpenBranches {
-            open: proof_state.open_branches.open.without_key(&focused_branch),
-            next_id: proof_state.open_branches.next_id,
-        };
+        proof_state.open_branches = proof_state.open_branches.without_at(focused_branch);
         let selection = frontier.selection;
         let BranchState {
             facts,
@@ -245,20 +242,17 @@ impl<'a> Proof<'a> {
         } = goal.state;
         let mut execution = Arc::unwrap_or_clone(execution.ok_or(missing)?);
         let result = edit(&mut proof_state, &mut execution, &facts);
-        proof_state.open_branches = OpenBranches {
-            open: proof_state.open_branches.open.with_inserted(
-                focused_branch,
-                OpenBranch::frontier(
-                    selection,
-                    BranchState {
-                        facts,
-                        unfolded_predicates,
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
+        proof_state.open_branches = proof_state.open_branches.insert_existing_at(
+            focused_branch,
+            OpenBranch::frontier(
+                selection,
+                BranchState {
+                    facts,
+                    unfolded_predicates,
+                    execution: Some(Arc::new(execution)),
+                },
             ),
-            next_id: proof_state.open_branches.next_id,
-        };
+        );
         Ok((
             Self {
                 context,

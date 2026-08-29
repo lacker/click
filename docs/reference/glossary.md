@@ -427,8 +427,8 @@ for following common control flow.
 
 ### Kernel
 
-The small trusted checker and semantic core that validates primitive proof
-  steps. See [Kernel](../internals/kernel.md).
+The trusted checker and semantic core that validates proof transitions and
+  produces typed evidence. See [Kernel](../internals/kernel.md).
 
 ### Kernel Click
 

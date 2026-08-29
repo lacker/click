@@ -35,7 +35,7 @@ code and gates as follows:
 ## Summary
 
 Click needs one immutable checked proof object as the boundary between the
-megakernel and smart tactics. A smart tactic may inspect, cheaply clone, and
+kernel and smart tactics. A smart tactic may inspect, cheaply clone, and
 search over `Proof` values, but it must not advance a proof through private
 semantic operations. The only way to obtain a successor is to apply an
 explicit [`ProofStep`] through `Proof::apply_step`, or to use an
@@ -377,7 +377,7 @@ discussion:
   execution frontiers, resource obligations, and loop effects may be distinct
   goal variants.
 - **`ProofStep`**: one explicit deterministic certificate operation checked
-  by the megakernel. It is the checked output selected by either an explicit
+  by the kernel. It is the checked output selected by either an explicit
   simple tactic or an untrusted smart tactic; there is no `SmartProofStep`.
 - **`ProofCertificate`**: the structured proof-step derivation exposed by a
   `Proof` and rendered by expansion. It contains sequence, branch, and scope
@@ -578,19 +578,19 @@ Current smart tactics fit this model:
 
 If a smart tactic needs a semantic operation that no `ProofStep` can
 express, that is a missing certificate-language operation. Add a deterministic
-explicit step backed by the megakernel; do not add a private tactic escape
+explicit step backed by the kernel; do not add a private tactic escape
 hatch.
 
-## Megakernel boundary
+## Kernel boundary
 
-This design preserves the megakernel philosophy. Click may have many powerful
+Click's kernel may have many powerful
 `ProofStep` variants for C execution, checked arithmetic, memory,
 resources, contracts, function calls, loops, and domain-specific theorem
 schemas. One step may perform substantial specialized work.
 
 The boundary is not "small kernel versus powerful tactics." It is:
 
-- the megakernel owns trusted, deterministic state transitions and theorem
+- the kernel owns trusted, deterministic state transitions and theorem
   production; and
 - smart tactics own arbitrary heuristic selection and search over those
   transitions.

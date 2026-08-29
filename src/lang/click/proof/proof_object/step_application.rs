@@ -1034,7 +1034,7 @@ impl<'a> Proof<'a> {
             region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
-        let candidates = super::smart_closures::synthesize_surface_at_recorded_snapshots(
+        let candidates = super::planning::closures::synthesize_surface_at_recorded_snapshots(
             kernel,
             context.parsed_function.parameters(),
             context.arguments,

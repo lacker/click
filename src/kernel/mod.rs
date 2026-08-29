@@ -12,6 +12,7 @@ mod functions;
 mod loops;
 mod memory_provenance;
 mod primitives;
+pub(crate) mod proof;
 mod reasoning;
 mod spec;
 mod termination;

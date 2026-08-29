@@ -1839,31 +1839,23 @@ impl<'a> Proof<'a> {
         let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
-        let open = self
-            .state
-            .open_branches
-            .open
-            .without_key(&ids[0])
-            .without_key(&ids[1])
-            .with_inserted(
-                parent_goal,
-                OpenBranch::frontier(
-                    selection,
-                    BranchState {
-                        facts: parts.facts,
-                        unfolded_predicates: parts.unfolded_predicates,
-                        execution: Some(Arc::new(parts.execution)),
-                    },
-                ),
-            );
+        let open_branches = self.state.open_branches.join_reserved_at(
+            ids,
+            parent_goal,
+            OpenBranch::frontier(
+                selection,
+                BranchState {
+                    facts: parts.facts,
+                    unfolded_predicates: parts.unfolded_predicates,
+                    execution: Some(Arc::new(parts.execution)),
+                },
+            ),
+        );
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                open_branches: OpenBranches {
-                    open,
-                    next_id: self.state.open_branches.next_id,
-                },
+                open_branches,
                 added_facts: Arc::new(parts.common_added_facts.clone()),
                 checked_facts: Arc::new(parts.common_added_facts),
             }),
@@ -2471,16 +2463,10 @@ impl<'a> Proof<'a> {
             .execution
             .clone()
             .expect("the preparation requires an execution frontier");
-        let split = SplitId(self.state.open_branches.next_id);
-        let ids = [
-            BranchId(self.state.open_branches.next_id + 1),
-            BranchId(self.state.open_branches.next_id + 2),
-        ];
-        let mut open = self
+        let (split, ids, mut open_branches) = self
             .state
             .open_branches
-            .open
-            .without_key(&self.focused_branch);
+            .begin_split::<2>(self.focused_branch);
         let mut arm_ids: [Option<BranchId>; 2] = [None, None];
         let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
         let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
@@ -2496,7 +2482,7 @@ impl<'a> Proof<'a> {
             path_facts[arm_index] = Some(prepared_arm.path_facts);
             let execution = Arc::new(prepared_arm.execution);
             base_executions[arm_index] = Some(execution.clone());
-            open = open.with_inserted(
+            open_branches = open_branches.insert_existing_at(
                 ids[arm_index],
                 OpenBranch::frontier(
                     selection,
@@ -2524,10 +2510,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                open_branches: OpenBranches {
-                    open,
-                    next_id: self.state.open_branches.next_id + 3,
-                },
+                open_branches,
                 // The successor starts focused branch on the first feasible arm and
                 // carries that arm's path facts as its delta, exactly as the
                 // container's arm proof did; `focus_split_arm` installs the

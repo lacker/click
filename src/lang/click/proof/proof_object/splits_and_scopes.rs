@@ -650,16 +650,10 @@ impl<'a> Proof<'a> {
             .execution
             .clone()
             .expect("the execution frontier owns its semantic state");
-        let split = SplitId(self.state.open_branches.next_id);
-        let ids = [
-            BranchId(self.state.open_branches.next_id + 1),
-            BranchId(self.state.open_branches.next_id + 2),
-        ];
-        let mut open = self
+        let (split, ids, mut open_branches) = self
             .state
             .open_branches
-            .open
-            .without_key(&self.focused_branch);
+            .begin_split::<2>(self.focused_branch);
         let mut path_facts: [Vec<Proposition>; 2] = [Vec::new(), Vec::new()];
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
@@ -687,7 +681,7 @@ impl<'a> Proof<'a> {
                 }
             }
             path_facts[arm_index] = added_facts;
-            open = open.with_inserted(
+            open_branches = open_branches.insert_existing_at(
                 ids[arm_index],
                 OpenBranch::frontier(
                     selection,
@@ -703,10 +697,7 @@ impl<'a> Proof<'a> {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                open_branches: OpenBranches {
-                    open,
-                    next_id: self.state.open_branches.next_id + 3,
-                },
+                open_branches,
                 added_facts: Arc::new(path_facts[0].clone()),
                 checked_facts: Arc::new(path_facts[0].clone()),
             }),
@@ -849,32 +840,24 @@ impl<'a> Proof<'a> {
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join outcome `if`: the split marker lost its root")
         })?;
-        let open = self
-            .state
-            .open_branches
-            .open
-            .without_key(&record.arm_branches[0])
-            .without_key(&record.arm_branches[1])
-            .with_inserted(
-                parent_goal,
-                OpenBranch::frontier(
-                    EffectGoalSelection::None,
-                    BranchState {
-                        facts: record.parent_facts.clone(),
-                        unfolded_predicates: record.parent_unfolds.clone(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-            );
+        let open_branches = self.state.open_branches.join_at(
+            record.arm_branches,
+            parent_goal,
+            OpenBranch::frontier(
+                EffectGoalSelection::None,
+                BranchState {
+                    facts: record.parent_facts.clone(),
+                    unfolded_predicates: record.parent_unfolds.clone(),
+                    execution: Some(Arc::new(execution)),
+                },
+            ),
+        );
         let [then_certificate, else_certificate] = arm_certificates;
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
                 locals: self.state.locals.clone(),
-                open_branches: OpenBranches {
-                    open,
-                    next_id: self.state.open_branches.next_id,
-                },
+                open_branches,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
             }),

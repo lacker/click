@@ -1,8 +1,8 @@
 //! Smart closure search and linear script interpretation.
 
-use super::outcomes_and_focus::frontier_premise_anchor;
-use super::*;
-use fact_index::collect_surface_conjunct_leaves;
+use super::super::fact_index::collect_surface_conjunct_leaves;
+use super::super::outcomes_and_focus::frontier_premise_anchor;
+use super::super::*;
 
 impl<'a> Proof<'a> {
     /// A small shared search combinator for structural proposition closure.
@@ -61,7 +61,7 @@ impl<'a> Proof<'a> {
     /// `exclude_exact_goal` is true, the atomic derivation query may not cite
     /// the goal's own ambient fact; every selected theorem step is still
     /// checked against this unchanged Proof.
-    pub(super) fn try_simp_closure_after_direct(
+    pub(in crate::lang::click::proof::proof_object) fn try_simp_closure_after_direct(
         &self,
         exclude_exact_goal: bool,
     ) -> Result<Option<Self>, ClickError> {
@@ -944,7 +944,9 @@ impl<'a> Proof<'a> {
     /// equality is used at most once; structural goals keep only a closing
     /// rewrite so their recursive connective proof remains visible.
     #[cfg(test)]
-    pub(super) fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
+    pub(in crate::lang::click::proof::proof_object) fn try_indexed_goal_equality_rewrite_closure(
+        &self,
+    ) -> Option<Self> {
         self.try_indexed_goal_equality_rewrite_closure_excluding(false)
     }
 
@@ -1416,7 +1418,7 @@ impl<'a> Proof<'a> {
     /// decision at the current goal. Planning only chooses the explicit
     /// quantified fact, argument, and guards; each selected operation advances
     /// this `Proof` directly.
-    pub(super) fn try_selected_forall_instantiation(
+    pub(in crate::lang::click::proof::proof_object) fn try_selected_forall_instantiation(
         &self,
         goal: &Proposition,
         premise_pairs: &[(Proposition, ClickProposition)],
@@ -1429,7 +1431,9 @@ impl<'a> Proof<'a> {
     /// the atomic decision cannot name an instantiated premise. Candidate
     /// discovery is read-only; a specialization is retained only after the
     /// ordinary `InstantiateUsing` operation advances and closes this Proof.
-    pub(super) fn try_indexed_forall_instantiation(&self) -> Option<Self> {
+    pub(in crate::lang::click::proof::proof_object) fn try_indexed_forall_instantiation(
+        &self,
+    ) -> Option<Self> {
         let goal = self.goal()?;
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
             .then(|| self.outcome_fixed_state_view())
@@ -2612,7 +2616,7 @@ impl<'a> Proof<'a> {
 /// equality whose operands were read from different snapshots, one anchor per
 /// operand. Callers must re-lower each candidate and accept it only when it
 /// denotes exactly `kernel`.
-pub(super) fn synthesize_surface_at_recorded_snapshots(
+pub(in crate::lang::click::proof::proof_object) fn synthesize_surface_at_recorded_snapshots(
     kernel: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],

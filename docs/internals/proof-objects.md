@@ -13,6 +13,12 @@ that shares unchanged structure with its ancestor. A smart tactic can therefore
 branch, inspect alternatives, and abandon candidates without cloning the
 complete logical or execution state.
 
+The kernel owns branch and split identities and the persistent open-branch
+topology in `src/kernel/proof.rs`; the remaining checked representation is
+being moved across the same boundary incrementally. Untrusted smart selection
+is grouped under `proof_object/planning/` and may only publish descendants
+created by checked proof operations.
+
 Goals carry the facts, resources, and symbolic execution state relevant to one
 judgment. Typed scope, split, and join helpers preserve branch and loop
 structure. A focus is only a cursor into the owned goal structure; it isn't a

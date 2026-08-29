@@ -1,0 +1,42 @@
+# Put the checked proof object inside the kernel boundary
+
+The persistent `Proof` object owns soundness-critical state and transitions,
+but most of its implementation currently lives under `src/lang/click/proof/`
+beside smart search, Surface Click lowering, diagnostics, and certificate
+serialization. A bug in proof construction, `apply_step`, branch or scope
+joins, or completion can accept an invalid proof, while a bug in smart search
+must only reject a proof or choose an unhelpful checked path. The code layout
+does not make that trust distinction clear.
+
+The first extraction moved branch and split identities plus persistent branch
+topology to `src/kernel/proof.rs`, and grouped the still-coupled smart search
+under `proof_object/planning/`. The remaining proof representation and checked
+operations still need a kernel-owned API. Smart planning currently reads many
+private implementation details, so moving the files wholesale would put
+untrusted search inside the kernel rather than establish a boundary.
+
+## Intended regression
+
+Keep a focused module-boundary test or compile-time visibility check showing
+that code in the smart-planning layer can inspect a proof and request named
+checked operations, but cannot construct a proof state, branch identity,
+derivation node, semantic successor, or completed goal directly. Existing
+proof-object branch, scope, transaction, certificate, and deterministic-scaling
+tests must continue to pass without changing Surface Click or C fixtures.
+
+## Acceptance criteria
+
+- The opaque persistent `Proof` representation, branch and split topology,
+  checked logical/execution/resource transitions, structural split/scope/join
+  operations, and completion/finalization authority live under `src/kernel/`.
+- `src/lang/click/proof/` retains Surface `ProofStep` lowering, checked-driver
+  orchestration, smart planning, diagnostics, and certificate extraction or
+  rendering.
+- Smart tactics receive only read-only proof queries and named checked
+  operations. They cannot mutate semantic state or manufacture a successor.
+- `ProofStep` and `ProofCertificate` remain Surface Click provenance and
+  serialization, not kernel evidence or a second ordinary checking engine.
+- Technical code and architecture documentation call the soundness-critical
+  component the **kernel**, without introducing an alternate component name.
+- Verification behavior, diagnostics, expansion output, and the deterministic
+  scaling bounds remain unchanged, and `scripts/check.sh` passes.

@@ -1,13 +1,13 @@
 //! Smart execute-until search, fact transport, and theorem selection.
 
-use super::*;
+use super::super::*;
 
 impl<'a> Proof<'a> {
     /// Searches a straight-line prefix up to one named statement by applying
     /// every selected `Step` to the current checked descendant. The
     /// returned fact list is only the prefix's output delta; scope adapters
     /// use it to retain facts introduced inside their owned representation.
-    pub(super) fn try_linear_execute_until_descendant(
+    pub(in crate::lang::click::proof::proof_object) fn try_linear_execute_until_descendant(
         &self,
         region: &CodeRegionRef,
     ) -> Result<Option<(Self, Vec<Proposition>)>, ClickError> {
@@ -62,7 +62,7 @@ impl<'a> Proof<'a> {
     /// Straight-line statements and audited terminal C branches advance only
     /// through their Proof operations; a partial path is discarded unless it
     /// reaches function exit.
-    pub(super) fn try_linear_execute_descendant(
+    pub(in crate::lang::click::proof::proof_object) fn try_linear_execute_descendant(
         &self,
     ) -> Result<Option<(Self, Vec<Proposition>)>, ClickError> {
         let mut proof = self.clone();

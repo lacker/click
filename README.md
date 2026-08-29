@@ -5,7 +5,7 @@
 Click's goal is to make it easy to prove things about programs in other
 programming languages. Starting with C.
 
-## Megakernel Theory
+## Kernel design
 
 There's a traditional principle of theorem prover design that says you should
 build a small, trusted kernel.
@@ -18,8 +18,7 @@ Then you prove things outward from there.
 I claim that for the task of "systems engineering theorem proving", this
 is actually the wrong design.
 
-Instead, you should put a lot of stuff into the kernel.
-Call it a *megakernel*.
+Instead, you should put a lot of domain-specific machinery into the kernel.
 It is a good idea to have many data structures and axioms that are specific
 to systems engineering.
 The rationale is that it lets people develop faster.

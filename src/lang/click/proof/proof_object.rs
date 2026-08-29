@@ -1,5 +1,6 @@
 use super::pure_theorems::{PureTheoremContext, lower_pure_theorem_proposition};
 use super::*;
+use crate::kernel::proof::{BranchId, ProofBranches, SplitId};
 use crate::persistent::{PersistentMap, PersistentSet};
 
 #[cfg(test)]
@@ -902,74 +903,11 @@ struct ProofState {
     checked_facts: Arc<Vec<Proposition>>,
 }
 
-/// Identity of one open semantic branch within a proof lineage.
-///
-/// Allocation is monotonic per lineage. Ids allocated after divergent forks
-/// may collide numerically; identity comparison is meaningful only along one
-/// ancestry chain or against the recorded structure that allocated the id.
-/// See the branch and split identity rules in
-/// `design/proof-object-api.md`.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) struct BranchId(u64);
+type OpenBranches = ProofBranches<OpenBranch>;
 
-impl BranchId {
-    /// The id every fresh proof allocates for its root branch.
-    const ROOT: Self = Self(1);
-}
-
-/// Identity of one audited split within a proof lineage.
-///
-/// A split allocates this id and its labeled child branch ids together, in rule
-/// order, from the same lineage counter as ordinary branches. The recorded split
-/// structure — not id magnitude — is what joins verify: each arm additionally
-/// receives a unique entry provenance marker, so a checked descendant of one
-/// split instance cannot be joined by another.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct SplitId(u64);
-
-/// The persistent open-branch collection owned by one `ProofState`, paired
-/// with its lineage-local id allocator.
-///
-/// A fresh proof has one root branch. Checked splits replace one branch with
-/// labeled child branches, and checked joins replace those children with their
-/// common continuation. A branch id names one branch for its lifetime:
-/// focused branch refinements preserve it, closure retires it, and a retired id is
-/// never reused within its lineage. Candidate forks share the map root; one
-/// local update copies only logarithmic paths.
-#[derive(Clone)]
-struct OpenBranches {
-    open: PersistentMap<BranchId, OpenBranch>,
-    next_id: u64,
-}
-
-impl OpenBranches {
-    /// Creates a fresh proof's single root branch under
-    /// [`BranchId::ROOT`].
-    fn root(branch: OpenBranch) -> Self {
-        Self {
-            open: PersistentMap::default().with_inserted(BranchId::ROOT, branch),
-            next_id: BranchId::ROOT.0 + 1,
-        }
-    }
-
-    fn get(&self, at: BranchId) -> Option<&OpenBranch> {
-        self.open.get(&at)
-    }
-
+impl ProofBranches<OpenBranch> {
     fn obligation(&self, at: BranchId) -> Option<&Obligation> {
         Some(&self.get(at)?.obligation)
-    }
-
-    /// Replaces the addressed branch while preserving its identity.
-    fn replace_at(&self, at: BranchId, branch: OpenBranch) -> Self {
-        debug_assert!(
-            self.open.contains_key(&at),
-            "branch refinement requires the addressed open branch"
-        );
-        Self {
-            open: self.open.with_inserted(at, branch),
-            next_id: self.next_id,
-        }
     }
 
     /// Replaces only what the addressed branch must establish, preserving its
@@ -979,49 +917,6 @@ impl OpenBranches {
             unreachable!("obligation refinement requires the addressed open branch");
         };
         self.replace_at(at, branch.with_obligation(obligation))
-    }
-
-    /// Closes the addressed branch after its obligation is discharged. The id
-    /// is never reallocated within this lineage.
-    fn close_at(&self, at: BranchId) -> Self {
-        debug_assert!(
-            self.open.contains_key(&at),
-            "branch closure requires the addressed open branch"
-        );
-        Self {
-            open: self.open.without_key(&at),
-            next_id: self.next_id,
-        }
-    }
-
-    /// Replaces the addressed branch with labeled sibling branches in this
-    /// collection, in rule order: the parent id is retired by the split and
-    /// each arm owns its recorded fresh id (identity rule 1); the siblings
-    /// coexist in one state.
-    fn split_at<const ARMS: usize>(
-        &self,
-        at: BranchId,
-        arms: [OpenBranch; ARMS],
-    ) -> (SplitId, [BranchId; ARMS], Self) {
-        debug_assert!(
-            self.open.contains_key(&at),
-            "an audited split requires the addressed open branch"
-        );
-        let split = SplitId(self.next_id);
-        let ids: [BranchId; ARMS] =
-            std::array::from_fn(|arm| BranchId(self.next_id + 1 + arm as u64));
-        let mut open = self.open.without_key(&at);
-        for (id, branch) in ids.iter().zip(arms) {
-            open = open.with_inserted(*id, branch);
-        }
-        (
-            split,
-            ids,
-            Self {
-                open,
-                next_id: self.next_id + 1 + ARMS as u64,
-            },
-        )
     }
 
     /// Retains the addressed obligation under updated branch-local state.
@@ -1118,7 +1013,7 @@ impl OpenBranches {
     }
 
     fn is_discharged(&self) -> bool {
-        self.open.is_empty()
+        self.is_empty()
     }
 }
 
@@ -1910,7 +1805,7 @@ impl<'a> Proof<'a> {
 
     #[cfg(test)]
     fn branches_next_id(&self) -> u64 {
-        self.state.open_branches.next_id
+        self.state.open_branches.next_id_for_test()
     }
 
     #[cfg(test)]
@@ -2283,10 +2178,9 @@ mod execution_statements;
 mod fact_index;
 mod fixed_state_steps;
 mod outcomes_and_focus;
+mod planning;
 mod resource_steps;
 mod scope;
-mod smart_closures;
-mod smart_execution;
 mod splits_and_scopes;
 mod step_application;
 mod surface_lowering;
