@@ -741,6 +741,54 @@ impl ExecutionBudget {
         self
     }
 
+    /// Adds the evaluator work inherent in one selected C expression.
+    ///
+    /// The ordinary fixed allowance remains available for work repeated by
+    /// dynamic execution, such as short-circuit path amplification. Explicit
+    /// budgets supplied to `*_with_budget` APIs are intentionally not adjusted.
+    pub(crate) fn for_c_expression(expression: &CExpression) -> Self {
+        Self::default().with_c_source_cost(c_expression_source_cost(expression))
+    }
+
+    /// Adds the evaluator work inherent in one selected C statement tree.
+    pub(crate) fn for_c_statement(statement: &CStatement) -> Self {
+        Self::default().with_c_source_cost(c_statement_source_cost(statement))
+    }
+
+    /// Adds the structural work of the independent verification evaluator.
+    /// Ordinary leaf statements cross both its verification dispatcher and
+    /// the shared statement evaluator, so their baseline contains two visits.
+    pub(crate) fn for_c_statement_verification(statement: &CStatement) -> Self {
+        Self::default().with_c_source_cost(c_statement_verification_source_cost(statement))
+    }
+
+    /// Adds the evaluator work inherent in one selected whole-function
+    /// judgment, including evaluation of its caller-side arguments.
+    pub(crate) fn for_c_function(function: &CFunction, arguments: &[CExpression]) -> Self {
+        let mut cost = c_statement_source_cost(function.body());
+        for argument in arguments {
+            cost.add_expression(c_expression_source_cost(argument).expression_steps);
+        }
+        Self::default().with_c_source_cost(cost)
+    }
+
+    pub(crate) fn for_c_function_verification(
+        function: &CFunction,
+        arguments: &[CExpression],
+    ) -> Self {
+        let mut cost = c_statement_verification_source_cost(function.body());
+        for argument in arguments {
+            cost.add_expression(c_expression_source_cost(argument).expression_steps);
+        }
+        Self::default().with_c_source_cost(cost)
+    }
+
+    fn with_c_source_cost(mut self, cost: CSourceCost) -> Self {
+        self.expression_steps = self.expression_steps.saturating_add(cost.expression_steps);
+        self.statement_steps = self.statement_steps.saturating_add(cost.statement_steps);
+        self
+    }
+
     pub(crate) fn with_next_opaque_call(mut self, next_opaque_call: u64) -> Self {
         self.next_opaque_call = next_opaque_call;
         self
@@ -791,6 +839,203 @@ impl ExecutionBudget {
         }
         Ok(())
     }
+}
+
+/// Static evaluator visits attributable to the selected C syntax itself.
+///
+/// This is deliberately separate from `ExecutionBudget`: syntax contributes
+/// baseline capacity once, while repeated execution of that syntax continues
+/// to consume the fixed dynamic reserve and the independent call, loop, and
+/// path limits.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct CSourceCost {
+    expression_steps: usize,
+    statement_steps: usize,
+}
+
+impl CSourceCost {
+    fn expression(expression_steps: usize) -> Self {
+        Self {
+            expression_steps,
+            statement_steps: 0,
+        }
+    }
+
+    fn add_expression(&mut self, steps: usize) {
+        self.expression_steps = self.expression_steps.saturating_add(steps);
+    }
+}
+
+/// Expression visits made by one non-amplified rvalue evaluation.
+fn c_expression_source_cost(expression: &CExpression) -> CSourceCost {
+    CSourceCost::expression(c_expression_steps_for_mode(expression, false))
+}
+
+fn c_expression_source_steps(expression: &CExpression) -> usize {
+    c_expression_source_cost(expression).expression_steps
+}
+
+fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize {
+    let mut steps = 0usize;
+    let mut pending = vec![(expression, lvalue)];
+    while let Some((expression, lvalue)) = pending.pop() {
+        steps = steps.saturating_add(1);
+        if lvalue {
+            match expression {
+                CExpression::Load(pointer) | CExpression::TypedLoad { pointer, .. } => {
+                    pending.push((pointer, false));
+                }
+                CExpression::Index(base, index) => {
+                    pending.push((base, false));
+                    pending.push((index, false));
+                }
+                // Variables are complete lvalues. Invalid lvalue forms fail
+                // immediately after their one visit.
+                _ => {}
+            }
+            continue;
+        }
+        match expression {
+            CExpression::Value(_) => {}
+            // Scalar variables add an lvalue visit. Arrays skip it, so this is
+            // a safe structural allowance without consulting an execution
+            // state during budget construction.
+            CExpression::Variable(_) => pending.push((expression, true)),
+            CExpression::AddressOf(target) => pending.push((target, true)),
+            CExpression::PointerOffsetBytes { pointer, .. }
+            | CExpression::Not(pointer)
+            | CExpression::BitwiseNot(pointer) => pending.push((pointer, false)),
+            CExpression::LessThan(left, right)
+            | CExpression::LessEqual(left, right)
+            | CExpression::GreaterThan(left, right)
+            | CExpression::GreaterEqual(left, right)
+            | CExpression::Equal(left, right)
+            | CExpression::NotEqual(left, right)
+            | CExpression::And(left, right)
+            | CExpression::Or(left, right)
+            | CExpression::Add(left, right)
+            | CExpression::Subtract(left, right)
+            | CExpression::Multiply(left, right)
+            | CExpression::Divide(left, right)
+            | CExpression::Remainder(left, right)
+            | CExpression::ShiftLeft(left, right)
+            | CExpression::ShiftRight(left, right)
+            | CExpression::BitwiseAnd(left, right)
+            | CExpression::BitwiseOr(left, right)
+            | CExpression::BitwiseXor(left, right) => {
+                pending.push((left, false));
+                pending.push((right, false));
+            }
+            CExpression::Load(_) | CExpression::TypedLoad { .. } | CExpression::Index(_, _) => {
+                pending.push((expression, true))
+            }
+        }
+    }
+    steps
+}
+
+fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
+    let mut cost = CSourceCost::default();
+    let mut pending = vec![statement];
+    while let Some(statement) = pending.pop() {
+        if !matches!(statement, CStatement::Seq(_, _)) {
+            cost.statement_steps = cost.statement_steps.saturating_add(1);
+        }
+        match statement {
+            CStatement::Skip | CStatement::Declare { .. } => {}
+            CStatement::Assign { expression, .. } => {
+                cost.add_expression(1); // assignment target lvalue
+                cost.add_expression(c_expression_source_steps(expression));
+            }
+            CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+                for argument in arguments {
+                    cost.add_expression(c_expression_source_steps(argument));
+                }
+            }
+            CStatement::HeapAllocate { bytes, .. } => {
+                cost.add_expression(c_expression_source_steps(bytes));
+                // Successful allocation assigns a synthesized pointer value
+                // to a local: one lvalue and one value-expression visit.
+                cost.add_expression(2);
+            }
+            CStatement::HeapFree { pointer } => {
+                cost.add_expression(c_expression_source_steps(pointer));
+            }
+            CStatement::Assert { condition, .. } => {
+                cost.add_expression(c_expression_source_steps(condition));
+            }
+            CStatement::Seq(first, second) => {
+                pending.push(first);
+                pending.push(second);
+            }
+            CStatement::Return(expression) => {
+                cost.add_expression(c_expression_source_steps(expression));
+            }
+            CStatement::Store { pointer, value }
+            | CStatement::TypedStore { pointer, value, .. } => {
+                // The store target is evaluated as a synthesized load lvalue.
+                cost.add_expression(1usize.saturating_add(c_expression_source_steps(pointer)));
+                cost.add_expression(c_expression_source_steps(value));
+            }
+            CStatement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                cost.add_expression(c_expression_source_steps(condition));
+                pending.push(then_branch);
+                pending.push(else_branch);
+            }
+            CStatement::While {
+                condition, body, ..
+            } => {
+                cost.add_expression(c_expression_source_steps(condition));
+                pending.push(body);
+            }
+        }
+    }
+    cost
+}
+
+fn c_statement_verification_source_cost(statement: &CStatement) -> CSourceCost {
+    let mut cost = c_statement_source_cost(statement);
+    cost.statement_steps = c_statement_verification_source_steps(statement);
+    cost
+}
+
+fn c_statement_verification_source_steps(statement: &CStatement) -> usize {
+    let mut steps = 0usize;
+    let mut pending = vec![statement];
+    while let Some(statement) = pending.pop() {
+        match statement {
+            CStatement::Seq(first, second) => {
+                pending.push(first);
+                pending.push(second);
+            }
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                steps = steps.saturating_add(1);
+                pending.push(then_branch);
+                pending.push(else_branch);
+            }
+            CStatement::While {
+                invariant_checks,
+                effect_checks,
+                body,
+                ..
+            } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
+                steps = steps.saturating_add(1);
+                pending.push(body);
+            }
+            // The verification dispatcher charges once, then delegates an
+            // ordinary leaf to the shared evaluator, which charges again.
+            _ => steps = steps.saturating_add(2),
+        }
+    }
+    steps
 }
 
 pub(in crate::kernel) type ExecutionResult<T> = Result<T, ExecutionLimit>;

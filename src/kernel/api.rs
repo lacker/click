@@ -856,12 +856,9 @@ pub fn c_expression_definedness_proposition(
     state: &CState,
     expression: &CExpression,
 ) -> Result<Proposition, ExecutionLimit> {
-    let paths = evaluate_c_expression_paths(
-        state,
-        expression,
-        &PureFactContext::new(),
-        &mut ExecutionBudget::default(),
-    )?;
+    let mut budget = ExecutionBudget::for_c_expression(expression);
+    let paths =
+        evaluate_c_expression_paths(state, expression, &PureFactContext::new(), &mut budget)?;
     let mut normal_paths = paths.into_iter().filter_map(|path| {
         if !matches!(path.outcome, CExpressionOutcome::Value(_)) {
             return None;
@@ -996,12 +993,8 @@ pub fn c_max_lt_condition(a: Bitvector32Term, b: Bitvector32Term) -> ConditionTe
 }
 
 pub fn prove_c_expression_evaluation(state: CState, expression: CExpression) -> Option<Theorem> {
-    let outcome = evaluate_c_expression(
-        &state,
-        &expression,
-        &PureFactContext::new(),
-        &mut ExecutionBudget::default(),
-    )?;
+    let mut budget = ExecutionBudget::for_c_expression(&expression);
+    let outcome = evaluate_c_expression(&state, &expression, &PureFactContext::new(), &mut budget)?;
     Some(Theorem::new(Proposition::CExpressionEvaluates {
         state,
         expression,
@@ -1014,7 +1007,7 @@ pub fn prove_symbolic_c_condition_evaluation(
     condition: CExpression,
     assumptions: PureFactContext,
 ) -> SymbolicCConditionEvaluation {
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::for_c_expression(&condition);
     let expression_paths =
         match evaluate_c_expression_paths(&state, &condition, &assumptions, &mut budget) {
             Ok(paths) => paths,
@@ -1096,12 +1089,8 @@ pub fn prove_symbolic_c_execution(
     statement: CStatement,
     assumptions: PureFactContext,
 ) -> Option<Theorem> {
-    prove_symbolic_c_execution_with_budget(
-        state,
-        statement,
-        assumptions,
-        ExecutionBudget::default(),
-    )
+    let budget = ExecutionBudget::for_c_statement(&statement);
+    prove_symbolic_c_execution_with_budget(state, statement, assumptions, budget)
 }
 
 pub fn prove_symbolic_c_execution_with_budget(
@@ -1127,13 +1116,14 @@ pub fn prove_symbolic_c_execution_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
+    let budget = ExecutionBudget::for_c_statement(&statement);
     prove_symbolic_c_execution_with_environment_and_budget(
         state,
         statement,
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1169,12 +1159,8 @@ pub fn prove_symbolic_c_execution_paths(
     statement: CStatement,
     assumptions: PureFactContext,
 ) -> SymbolicCExecution {
-    prove_symbolic_c_execution_paths_with_budget(
-        state,
-        statement,
-        assumptions,
-        ExecutionBudget::default(),
-    )
+    let budget = ExecutionBudget::for_c_statement(&statement);
+    prove_symbolic_c_execution_paths_with_budget(state, statement, assumptions, budget)
 }
 
 pub fn prove_symbolic_c_execution_paths_with_budget(
@@ -1200,13 +1186,14 @@ pub fn prove_symbolic_c_execution_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
+    let budget = ExecutionBudget::for_c_statement(&statement);
     prove_symbolic_c_execution_paths_with_environment_and_budget(
         state,
         statement,
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1295,7 +1282,7 @@ pub fn prove_symbolic_c_statement_verification_paths_with_environment_and_loop_r
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
     prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
         state,
         statement,
@@ -1370,7 +1357,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     initialization_proven: bool,
     preservation_proven: bool,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
-    let mut budget = ExecutionBudget::default();
+    let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         state,
         statement,
@@ -1500,13 +1487,8 @@ pub fn prove_symbolic_c_function_execution(
     arguments: Vec<CExpression>,
     assumptions: PureFactContext,
 ) -> Option<Theorem> {
-    prove_symbolic_c_function_execution_with_budget(
-        state,
-        function,
-        arguments,
-        assumptions,
-        ExecutionBudget::default(),
-    )
+    let budget = ExecutionBudget::for_c_function(&function, &arguments);
+    prove_symbolic_c_function_execution_with_budget(state, function, arguments, assumptions, budget)
 }
 
 pub fn prove_symbolic_c_function_execution_with_budget(
@@ -1535,6 +1517,7 @@ pub fn prove_symbolic_c_function_execution_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> Option<Theorem> {
+    let budget = ExecutionBudget::for_c_function(&function, &arguments);
     prove_symbolic_c_function_execution_with_environment_and_budget(
         state,
         function,
@@ -1542,7 +1525,7 @@ pub fn prove_symbolic_c_function_execution_with_environment(
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1581,12 +1564,13 @@ pub fn prove_symbolic_c_function_execution_paths(
     arguments: Vec<CExpression>,
     assumptions: PureFactContext,
 ) -> SymbolicCExecution {
+    let budget = ExecutionBudget::for_c_function(&function, &arguments);
     prove_symbolic_c_function_execution_paths_with_budget(
         state,
         function,
         arguments,
         assumptions,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1616,6 +1600,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
+    let budget = ExecutionBudget::for_c_function(&function, &arguments);
     prove_symbolic_c_function_execution_paths_with_environment_and_budget(
         state,
         function,
@@ -1623,7 +1608,7 @@ pub fn prove_symbolic_c_function_execution_paths_with_environment(
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1724,6 +1709,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
+    let budget = ExecutionBudget::for_c_function_verification(&function, &arguments);
     prove_symbolic_c_function_verification_paths_with_environment_and_budget(
         state,
         function,
@@ -1731,7 +1717,7 @@ pub fn prove_symbolic_c_function_verification_paths_with_environment(
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
     )
 }
 
@@ -1769,6 +1755,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
 ) -> SymbolicCExecution {
+    let budget = ExecutionBudget::for_c_function_verification(&function, &arguments);
     prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(
         state,
         function,
@@ -1776,7 +1763,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
         assumptions,
         environment,
         execution_semantics,
-        ExecutionBudget::default(),
+        budget,
         true,
     )
 }
@@ -1803,7 +1790,7 @@ pub fn prove_checked_c_function_execution_with_environment(
                 assumptions.clone(),
                 environment.clone(),
                 execution_semantics,
-                ExecutionBudget::default(),
+                ExecutionBudget::for_c_function_verification(&function, &arguments),
                 true,
             )
         }
@@ -1815,7 +1802,7 @@ pub fn prove_checked_c_function_execution_with_environment(
                 assumptions.clone(),
                 environment.clone(),
                 execution_semantics,
-                ExecutionBudget::default(),
+                ExecutionBudget::for_c_function(&function, &arguments),
                 true,
             )
         }
@@ -2678,7 +2665,10 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                 assumptions,
                                 environment.clone(),
                                 execution_semantics,
-                                ExecutionBudget::default(),
+                                ExecutionBudget::for_c_function_verification(
+                                    &function,
+                                    &arguments,
+                                ),
                                 true,
                             )
                         }
@@ -2690,7 +2680,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                 assumptions,
                                 environment.clone(),
                                 execution_semantics,
-                                ExecutionBudget::default(),
+                                ExecutionBudget::for_c_function(&function, &arguments),
                                 true,
                             )
                         }

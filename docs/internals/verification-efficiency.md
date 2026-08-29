@@ -96,6 +96,28 @@ charged to visible semantic output rather than hidden ambient state:
   selected function's work. It must not multiply that work by the number of
   claims, unrelated functions, or globally declared theorems.
 
+## Execution capacity follows selected syntax
+
+The ordinary kernel execution APIs seed expression and statement capacity with
+the evaluator-visible structural cost of the selected C expression, statement,
+or function body. A whole-function seed also includes its caller-side argument
+expressions. This source allowance covers one non-amplified traversal of that
+syntax, including each evaluator layer structurally required by the selected
+judgment; it is not a fixed project-wide source-length cap.
+
+The existing fixed reserve remains separate and pays for repeated dynamic work:
+loop iterations, executed callee bodies, short-circuit or branch amplification,
+and any other evaluator visit beyond the selected syntax baseline. Function-call,
+loop-unroll, and maximum-path-width limits remain independently enforced.
+Consequently, adding explicit straight-line source increases capacity only in
+proportion to that source, while repeatedly executing a small source fragment
+still reaches a bound.
+
+APIs whose names end in `with_budget` preserve the caller's exact budget and do
+not add source capacity. These are the kernel escape hatch for adversarial and
+resource-constrained checks; changing the ordinary source-sized default does not
+weaken their limits.
+
 ## Representation requirements
 
 The complexity contract implies several design constraints:

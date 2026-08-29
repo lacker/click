@@ -18,8 +18,4 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 1
-
-- [Whole-function expression budget is a source-size cap](whole-function-expression-budget-is-a-source-size-cap.md):
-  straight-line certification fails at 3,333 assignments because explicit
-  source expressions consume a fixed global dynamic-execution allowance.
+## Other open issues: 0

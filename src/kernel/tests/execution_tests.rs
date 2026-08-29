@@ -1156,6 +1156,65 @@ fn executor_budgets_cap_steps_calls_and_paths() {
 }
 
 #[test]
+fn whole_function_default_budget_scales_with_selected_source() {
+    const ASSIGNMENTS: usize = 3_334;
+
+    let mut statements = (0..ASSIGNMENTS)
+        .map(|_| c_assign("x", c_variable("x")))
+        .chain(std::iter::once(c_return(c_variable("x"))))
+        .collect::<Vec<_>>();
+    while statements.len() > 1 {
+        let mut next = Vec::with_capacity(statements.len().div_ceil(2));
+        let mut pairs = statements.into_iter();
+        while let Some(first) = pairs.next() {
+            next.push(match pairs.next() {
+                Some(second) => c_seq(first, second),
+                None => first,
+            });
+        }
+        statements = next;
+    }
+    let function = c_function(
+        CType::Int32,
+        "large_identity",
+        vec![c_parameter("x", CType::Int32)],
+        statements.pop().expect("nonempty function body"),
+    );
+    let arguments = vec![c_int32_literal(1)];
+
+    let fixed_budget_execution =
+        prove_symbolic_c_function_verification_paths_with_environment_and_budget(
+            CState::new(),
+            function.clone(),
+            arguments.clone(),
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::EXECUTE_BODIES,
+            ExecutionBudget::default(),
+        );
+    assert_eq!(
+        fixed_budget_execution.limit(),
+        Some(ExecutionLimit::ExpressionSteps),
+        "explicit budgets remain exact and still bound evaluator work"
+    );
+
+    let source_sized_execution = prove_symbolic_c_function_verification_paths_with_environment(
+        CState::new(),
+        function,
+        arguments,
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+    );
+    assert_eq!(
+        source_sized_execution.limit(),
+        None,
+        "selected straight-line source should not exhaust the dynamic reserve"
+    );
+    assert_eq!(source_sized_execution.paths().len(), 1);
+}
+
+#[test]
 fn while_invariant_is_proof_obligation() {
     let pointer = Pointer {
         block: "block".into(),
