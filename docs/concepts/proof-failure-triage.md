@@ -79,14 +79,15 @@ or inserting irrelevant proof bookkeeping. See
 
 ## Classifying smart versus simple tactics
 
-Classify tactics by whether they select a proof rule, not by whether the user
-listed their input facts. A tactic that receives hints and chooses among
-normalization, rewriting, arithmetic, transport, framing, or other theories is
-smart and must expand. A simple tactic checks one named rule from explicit
-evidence with work proportional to that input and the proof-state delta. Simple
-checking must not fall through alternate strategies or reconstruct a proof
-from ambient history; if expansion cannot express the selected rule, that is
-an expansion-language issue.
+Classify tactics by whether they select or plan proof operations, not by whether
+the user listed every contextual input. A tactic that receives hints and
+chooses among normalization, rewriting, arithmetic, transport, framing, or
+other theories is smart and must expand. A simple tactic checks one selected
+operation deterministically, with work proportional to its relevant input,
+affected program operation, indexed context access, and proof-state delta.
+Simple checking must not fall through alternate strategies, search ambient
+history, or scan unrelated state; if expansion cannot express the selected
+operation, that is an expansion-language issue.
 
 ## Classification summary
 

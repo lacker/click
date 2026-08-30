@@ -12,9 +12,11 @@ resources are added is a verifier defect, even if it eventually succeeds.
 ## Complexity contract
 
 Let `N` be the size of the selected C source, Click source, imported
-definitions, and explicit proof text. Let `q` be the size of the input named by
-one tactic, and let `d` be the amount of new proof state or expanded proof text
-that the tactic must produce.
+definitions, and explicit proof text. Let `q` be the relevant input inspected
+by one tactic: its explicit operands and premises, the affected program
+operation or definition body, and indexed context entries needed by that
+operation. Let `d` be the amount of new proof state or expanded proof text that
+the tactic must produce.
 
 A simple tactic should take
 
@@ -42,10 +44,10 @@ resources that the tactic did not name.
 
 ## Simple means locally checkable
 
-A simple tactic checks one named proof rule from explicit evidence. Expansion
-removes smart search by producing such an explicit proof. It cannot repair a
-simple checker that performs global search, rebuilds its whole context, or
-copies the complete project state at every step.
+A simple tactic checks one selected proof operation deterministically, without
+planning or search. Expansion removes smart search by producing such an
+explicit proof. It cannot repair a simple checker that performs global search,
+rebuilds its whole context, or copies the complete project state at every step.
 
 Simple checking may perform bounded work over:
 

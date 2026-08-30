@@ -807,8 +807,11 @@ A `.click` file associated with existing C source. It adds specifications and
 
 ### Simple tactic
 
-A bounded, explicit operation whose requested proof-state transition is
-checked directly and retained in the proof object's provenance.
+A deterministic proof-state operation checked directly without heuristic
+planning or search and retained in the proof object's provenance. Its checking
+must be fast and output-sensitive, using indexed ambient context rather than
+scanning unrelated state. See [Smart and simple
+tactics](../concepts/smart-and-simple-tactics.md).
 
 ### Smart tactic
 

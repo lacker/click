@@ -46,6 +46,11 @@ engine defect. A prompt bounded smart failure has no successful proof to expand;
 decompose the proof unless the search missed its bound or produced a misleading
 diagnostic.
 
+Expansion removes the successful smart site's planning and search, not the
+unavoidable parsing and semantic checking of its emitted proof. The expanded
+proof should therefore approach the cost of direct simple checking; it is not a
+way to hide a slow simple operation.
+
 An incomplete or failing target never receives an expansion recommendation.
 Profile a non-verifying target only when a timeout or unexpected slowness is
 the problem being diagnosed.

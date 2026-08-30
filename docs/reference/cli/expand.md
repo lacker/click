@@ -6,6 +6,12 @@ verifies the complete rewritten source through the ordinary verification entry
 point before emitting it. Expansion is an optimization and audit operation on
 a correct proof; it is not a proof-repair command.
 
+The rewrite removes avoidable planning and search while retaining the
+unavoidable cost of parsing and directly checking the selected operations. A
+smart hotspot should become approximately as cheap as that explicit checked
+proof permits. A slow emitted simple operation is a verifier defect rather than
+another expansion candidate.
+
 ## Synopsis
 
 ```text

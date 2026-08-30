@@ -10,6 +10,11 @@ control-flow proof work. Thresholds filter categories for readability; they do
 not change whether a proof is valid. The total elapsed time also includes work
 that can't be charged cleanly to a single displayed site.
 
+A successful slow smart tactic is an expansion candidate because expansion can
+remove its planning and search. A slow simple tactic is already direct checked
+work and is therefore a verifier performance defect, not another expansion
+candidate.
+
 Interpret high work counts before comparing small wall-clock differences.
 Deterministic work exposes repeatable algorithmic cost, while elapsed time is
 affected by machine load and warm caches. For performance-sensitive changes,

@@ -684,6 +684,48 @@ fn tactic_form_inventory_is_bidirectional() {
 }
 
 #[test]
+fn simple_tactic_definition_includes_direct_checking_and_performance() {
+    let concept = fs::read_to_string(root().join("docs/concepts/smart-and-simple-tactics.md"))
+        .expect("read canonical tactic concept");
+    let normalized = concept.split_whitespace().collect::<Vec<_>>().join(" ");
+    for required in [
+        "one deterministic checked operation",
+        "without heuristic planning, premise selection, alternative-rule search, or speculative proof branching",
+        "Simple checking must also be fast and output-sensitive",
+        "approximately all cost that can conveniently be removed by making its choices explicit",
+    ] {
+        assert!(
+            normalized.contains(required),
+            "canonical simple-tactic definition lost `{required}`"
+        );
+    }
+
+    let reference = fs::read_to_string(root().join("docs/reference/tactics/index.md"))
+        .expect("read tactic reference");
+    let step_row = reference
+        .lines()
+        .find(|line| line.starts_with("| `step()` |"))
+        .expect("tactic reference must contain the step row");
+    assert!(
+        step_row.starts_with("| `step()` | simple |"),
+        "`step()` must remain a simple tactic in the public reference: {step_row}"
+    );
+
+    let proof_scripts = fs::read_to_string(root().join("docs/concepts/proof-scripts.md"))
+        .expect("read proof-script concept");
+    for retired_description in [
+        "`step()` for one smart transition",
+        "bare `step()`",
+        "`step()` is smart",
+    ] {
+        assert!(
+            !proof_scripts.contains(retired_description),
+            "proof-script concept classifies simple `step()` as smart through `{retired_description}`"
+        );
+    }
+}
+
+#[test]
 fn every_tactic_form_has_a_checked_positive_fixture() {
     let source = fs::read_to_string(root().join("docs/reference/tactics/fixtures.toml"))
         .expect("read tactic fixture inventory");

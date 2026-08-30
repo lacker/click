@@ -11,8 +11,9 @@ will have exactly the names used here.
   some of these would be called axiom schemas or trusted proof procedures, but
   Click uses the simpler word axiom.
 - A **theorem** is a proposition produced by axioms.
-- A **simple tactic** is a deterministic, bounded command that requests one
-  explicit checked transition.
+- A **simple tactic** requests one deterministic checked transition without
+  planning or search. Its checking must be fast and output-sensitive, with no
+  work over unrelated ambient state.
 - A **proof** is a `by` clause containing a tactic script or one smart tactic
   that can later be expanded into explicit simple tactics.
 - A **smart tactic** may search or orchestrate several rules. Logically it

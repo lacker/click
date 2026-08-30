@@ -20,9 +20,13 @@ parsing, and round-trip validation must agree on the resulting proof. An expansi
 failure, a rewrite that doesn't verify, or disagreement with profile or audit
 is a tooling defect to investigate.
 
-Expansion removes search from that site, which improves reproducibility and
-makes the chosen operations reviewable. It doesn't guarantee that the explicit
-proof is the clearest possible proof, and it doesn't remedy an inefficient
-simple checker.
+Expansion removes planning and search from that site, which improves
+reproducibility, makes the chosen operations reviewable, and should recover
+approximately all performance available from checking those choices directly.
+The explicit proof still pays for parsing its text and for the unavoidable
+semantic work of each operation, so a tiny smart tactic need not become
+measurably faster. Expansion doesn't guarantee that the explicit proof is the
+clearest possible proof, and it cannot remedy an inefficient simple checker;
+a materially slow simple leaf is a verifier defect.
 
 For syntax, selection, and output behavior, see [`click expand`](../reference/cli/expand.md).

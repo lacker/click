@@ -18,4 +18,6 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 0
+## Other open issues: 1
+
+- [Tactic taxonomy and reference audit](tactic-taxonomy-and-reference-audit.md)

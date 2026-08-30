@@ -6,8 +6,11 @@ either **smart**, **simple**, or **control flow**:
 - Smart tactics may inspect ambient facts, choose premises, split paths, or
   search for a proof. They are the tactics that `click profile` may recommend
   expanding.
-- Simple tactics perform one deterministic rule from explicitly named data.
-  They are the leaves emitted by `click expand` and should be fast.
+- Simple tactics request one deterministic checked operation without heuristic
+  planning or search. They may use indexed ambient context when that context is
+  an input to the operation, as it is for `step()`. They are the leaves emitted
+  by `click expand` and must be fast and output-sensitive: their work may scale
+  with relevant input and produced state, but not unrelated ambient state.
 - Control-flow tactics contain or join proof scripts. Their descendants, not
   the container itself, determine whether an expanded proof is simple.
 
@@ -178,6 +181,12 @@ Rust variants such as certified statement transitions are not a second user
 vocabulary. Expansion starts from a correct selected proof unit and verifies
 that complete proof unit again after rewriting it. It does not emit a partial
 rewrite when a later tactic in the same proof is failing.
+
+Expansion removes the selected tactic's avoidable planning and search cost; it
+does not remove the unavoidable work of checking the emitted operations or
+reading the longer explicit proof. A smart hotspot should therefore become
+approximately as cheap as its direct checked proof permits. A materially slow
+simple leaf is an engine defect rather than another expansion opportunity.
 
 `click expand --claim LABEL` applies the same checked rewrite to every smart
 tactic in one function claim. This avoids manual site-by-site work when the

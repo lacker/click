@@ -37,12 +37,13 @@ mutable p[0..n] by {
 
 ## Smart and simple tactics
 
-Smart tactics may inspect context or search. The most common are bare
-`step()`, `execute()`, `execute_until(...)`, `simp()`, bare
-`frame()`, bare `apply(...)`, and bare `transport(...)`.
+Smart tactics plan or search. The most common are `execute()`,
+`execute_until(...)`, `simp()`, bare `frame()`, bare `apply(...)`, and bare
+`transport(...)`.
 
-Simple tactics perform one explicit rule. Paired operations use `using` to
-mark that boundary:
+Simple tactics request one deterministic checked operation without planning or
+search, and their checkers must be fast and output-sensitive. Paired operations
+use `using` to mark that boundary:
 
 <!-- verified-example: mdtests/pure_theorem.md -->
 ```click
@@ -76,7 +77,7 @@ transform logical resources.
 An execution proof carries a C frontier. The execution vocabulary is:
 
 - `mark name;` to name the current state for later `at(name, ...)` expressions;
-- `step()` for one smart transition;
+- `step()` for one simple deterministic transition;
 - `execute_until(statement(N))` for a forward prefix;
 - `execute()` for the remainder of the function;
 - `branch { [ensuring { ... }] then { ... } else { ... } }` for the C `if` at
