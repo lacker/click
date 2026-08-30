@@ -262,6 +262,7 @@ impl<'a> Proof<'a> {
                     .publish_checked_frontier_split(
                         [(then_facts, then_execution), (else_facts, else_execution)],
                         [then_added, else_added],
+                        Vec::new(),
                     )
                     .map_err(|error| self.execution_update_error("proof `if`", error))?;
                 let (state, _, ids, _) = split.into_parts_with_facts();

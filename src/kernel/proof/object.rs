@@ -1034,6 +1034,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         &self,
         arms: [(ProofFacts, ProofExecutionState<S>); 2],
         introduced_facts: [Vec<Proposition>; 2],
+        focused_checked_facts: Vec<Proposition>,
     ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, ExecutionUpdateError>
     {
         let branch = self
@@ -1068,7 +1069,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                     locals: self.state.locals.clone(),
                     open_branches,
                     added_facts: Arc::new(introduced_facts[0].clone()),
-                    checked_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(focused_checked_facts),
                 },
                 branches[0],
             ),
@@ -1076,6 +1077,64 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             branches,
             introduced_facts,
         })
+    }
+
+    pub(crate) fn publish_checked_partial_frontier_split(
+        &self,
+        arms: [Option<(ProofFacts, Arc<ProofExecutionState<S>>)>; 2],
+        introduced_facts: [Option<Vec<Proposition>>; 2],
+    ) -> Result<(Self, super::SplitId, [Option<BranchId>; 2]), ExecutionUpdateError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        let ProofObligation::Frontier(frontier) = &branch.obligation else {
+            return Err(ExecutionUpdateError::NotFrontier);
+        };
+        if branch.state.execution.is_none() {
+            return Err(ExecutionUpdateError::MissingExecution);
+        }
+        let focused_arm = arms
+            .iter()
+            .position(Option::is_some)
+            .ok_or(ExecutionUpdateError::MissingExecution)?;
+        let (split, reserved, mut open_branches) = self
+            .state
+            .open_branches
+            .begin_split::<2>(self.focused_branch);
+        let mut branch_ids = [None, None];
+        for (index, arm) in arms.into_iter().enumerate() {
+            let Some((facts, execution)) = arm else {
+                continue;
+            };
+            branch_ids[index] = Some(reserved[index]);
+            open_branches = open_branches.insert_existing_at(
+                reserved[index],
+                ProofBranch::new(
+                    ProofObligation::Frontier(frontier.clone()),
+                    ProofBranchState {
+                        facts,
+                        unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                        execution: Some(execution),
+                    },
+                ),
+            );
+        }
+        let deltas = introduced_facts[focused_arm].clone().unwrap_or_default();
+        Ok((
+            Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(deltas.clone()),
+                    checked_facts: Arc::new(deltas),
+                },
+                reserved[focused_arm],
+            ),
+            split,
+            branch_ids,
+        ))
     }
 
     pub(crate) fn publish_checked_frontier_join(

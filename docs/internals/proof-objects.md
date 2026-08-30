@@ -80,6 +80,9 @@ state. Terminal branch-arm continuation uses the same operation.
 When loop preservation produces two feasible proof-level `if` arms, the kernel
 also allocates the sibling identities and records their split topology around
 the two checked frontier results.
+Structural C branches may publish only their feasible checked arms; the kernel
+reserves the full split identity range and focuses the first feasible sibling.
+Post-execution outcome partitions use the corresponding two-arm operation.
 At an execution or outcome join, the checked driver supplies the merged
 frontier while the kernel validates the child/parent lineage and restores the
 retired parent identity.

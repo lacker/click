@@ -89,6 +89,8 @@ The terminal branch-arm continuation uses that operation as well.
 Preservation `if` uses the corresponding kernel split operation, so the
 checked driver supplies feasible arm results but cannot allocate their branch
 identities or install their topology.
+The same is true for structural C branches with infeasible reserved arms and
+for two-way post-execution outcome partitions.
 Checked execution and outcome joins likewise submit only their merged frontier;
 the kernel validates the child/parent lineage and restores the parent branch.
 Outcome result refresh and fact resynchronization replace only the focused

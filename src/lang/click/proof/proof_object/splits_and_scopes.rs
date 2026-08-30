@@ -595,14 +595,13 @@ impl<'a> Proof<'a> {
         let arguments = checked.arguments().to_vec();
         let polarity_facts = [then_fact, else_fact];
         let polarity_surfaces = [condition.clone(), else_surface];
-        let Some(Obligation::Frontier(parent)) = self.focused_obligation() else {
+        let Some(Obligation::Frontier(_)) = self.focused_obligation() else {
             unreachable!("the execution frontier requirement was checked above")
         };
         let ProofContext::Execution(execution_context) = self.context.as_ref() else {
             unreachable!("the execution context requirement was checked above")
         };
         let expected_effects = self.selected_effect_indices(execution_context)?;
-        let selection = parent.selection;
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let parent_facts = branch_state.facts.clone();
         let parent_unfolds = branch_state.unfolded_predicates.clone();
@@ -610,11 +609,8 @@ impl<'a> Proof<'a> {
             .execution
             .clone()
             .expect("the execution frontier owns its semantic state");
-        let (split, ids, mut open_branches) = self
-            .state
-            .open_branches
-            .begin_split::<2>(self.focused_branch_id());
         let mut path_facts: [Vec<Proposition>; 2] = [Vec::new(), Vec::new()];
+        let mut arms = [None, None];
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
             let paths = std::mem::take(&mut partition_paths[arm_index]);
@@ -642,29 +638,20 @@ impl<'a> Proof<'a> {
                 }
             }
             path_facts[arm_index] = added_facts;
-            open_branches = open_branches.insert_existing_at(
-                ids[arm_index],
-                OpenBranch::frontier(
-                    selection,
-                    BranchState {
-                        facts,
-                        unfolded_predicates: parent_unfolds.clone(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-            );
+            arms[arm_index] = Some((facts, execution));
         }
+        let [Some(then_arm), Some(else_arm)] = arms else {
+            unreachable!("the checked outcome partition has exactly two arms")
+        };
+        let checked_facts = path_facts[0].clone();
+        let published = self
+            .state
+            .publish_checked_frontier_split([then_arm, else_arm], path_facts.clone(), checked_facts)
+            .map_err(|error| self.execution_update_error("outcome `if`", error))?;
+        let (state, split, ids, _) = published.into_parts_with_facts();
         let successor = Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(path_facts[0].clone()),
-                    checked_facts: Arc::new(path_facts[0].clone()),
-                },
-                ids[0],
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,

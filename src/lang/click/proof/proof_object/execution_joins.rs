@@ -2527,75 +2527,39 @@ impl<'a> Proof<'a> {
         &self,
     ) -> Result<(Self, ExecutionSplit<'a>), ClickError> {
         let prepared = self.prepare_execution_branch()?;
-        let Some(Obligation::Frontier(parent)) = self.focused_obligation() else {
+        let Some(Obligation::Frontier(_)) = self.focused_obligation() else {
             return Err(self.step_error("`branch` requires an open execution frontier"));
         };
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
-        let selection = parent.selection;
         let unfolds = branch_state.unfolded_predicates.clone();
         let parent_facts = branch_state.facts.clone();
         let parent_execution = branch_state
             .execution
             .clone()
             .expect("the preparation requires an execution frontier");
-        let (split, ids, mut open_branches) = self
-            .state
-            .open_branches
-            .begin_split::<2>(self.focused_branch_id());
-        let mut arm_ids: [Option<BranchId>; 2] = [None, None];
         let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
         let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
         let mut base_executions: [Option<Arc<ExecutionProofState>>; 2] = [None, None];
         let mut path_facts: [Option<Vec<Proposition>>; 2] = [None, None];
+        let mut arms = [None, None];
         for (arm_index, prepared_arm) in prepared.arms.into_iter().enumerate() {
             let Some(prepared_arm) = prepared_arm else {
                 continue;
             };
-            arm_ids[arm_index] = Some(ids[arm_index]);
             condition_theorems[arm_index] = Some(prepared_arm.condition_theorem);
             base_facts[arm_index] = Some(prepared_arm.facts.clone());
             path_facts[arm_index] = Some(prepared_arm.path_facts);
             let execution = Arc::new(prepared_arm.execution);
             base_executions[arm_index] = Some(execution.clone());
-            open_branches = open_branches.insert_existing_at(
-                ids[arm_index],
-                OpenBranch::frontier(
-                    selection,
-                    BranchState {
-                        facts: prepared_arm.facts,
-                        unfolded_predicates: unfolds.clone(),
-                        execution: Some(execution),
-                    },
-                ),
-            );
+            arms[arm_index] = Some((prepared_arm.facts, execution));
         }
-        let focused_branch = arm_ids
-            .iter()
-            .flatten()
-            .next()
-            .copied()
-            .expect("the preparation rejects branches with no feasible arm");
-        let first_path_facts = path_facts
-            .iter()
-            .flatten()
-            .next()
-            .cloned()
-            .expect("a feasible arm records its path facts");
+        let (state, split, arm_ids) = self
+            .state
+            .publish_checked_partial_frontier_split(arms, path_facts.clone())
+            .map_err(|error| self.execution_update_error("`branch`", error))?;
         let successor = Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    // The successor starts focused branch on the first feasible arm and
-                    // carries that arm's path facts as its delta, exactly as the
-                    // container's arm proof did; `focus_split_arm` installs the
-                    // matching delta when the driver moves to the other arm.
-                    added_facts: Arc::new(first_path_facts.clone()),
-                    checked_facts: Arc::new(first_path_facts),
-                },
-                focused_branch,
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
