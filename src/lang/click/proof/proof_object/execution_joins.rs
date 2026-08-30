@@ -1965,15 +1965,16 @@ impl<'a> Proof<'a> {
                 if take_then { "then" } else { "else" }
             )));
         };
-        let focused_branch = self.focus_branch(id)?;
         let path_facts = record.path_facts[arm_index]
             .clone()
             .expect("a recorded arm id has recorded path facts");
-        Ok(focused_branch.with_kernel_state(
-            focused_branch
-                .state
-                .with_fact_deltas(path_facts.clone(), path_facts),
-        ))
+        let state = self
+            .state
+            .focus_open_branch_with_fact_deltas(id, path_facts.clone(), path_facts)
+            .map_err(|ProofFocusError::NotOpen| {
+                self.step_error(format!("goal {id:?} is not open in this proof"))
+            })?;
+        Ok(self.with_kernel_state(state))
     }
 
     /// Focuses one proof-level execution case. No C transition is repeated;

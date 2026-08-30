@@ -65,6 +65,10 @@ pub(crate) enum ProofJoinError {
     ArmIncomplete(usize),
 }
 
+pub(crate) enum ProofFocusError {
+    NotOpen,
+}
+
 pub(crate) enum FrontierSplitError {
     Completed,
     NotFrontier,
@@ -148,10 +152,7 @@ impl<L, O, E> ProofObject<L, O, E> {
         }
     }
 
-    pub(crate) fn from_shared_state(
-        state: Arc<ProofState<L, O, E>>,
-        focused_branch: BranchId,
-    ) -> Self {
+    fn from_shared_state(state: Arc<ProofState<L, O, E>>, focused_branch: BranchId) -> Self {
         Self {
             state,
             focused_branch,
@@ -193,10 +194,6 @@ impl<L, O, E> ProofObject<L, O, E> {
         Self::new(state, self.focused_branch)
     }
 
-    pub(crate) fn focused_at(&self, focused_branch: BranchId) -> Self {
-        Self::from_shared_state(self.state.clone(), focused_branch)
-    }
-
     pub(crate) fn into_state(self) -> ProofState<L, O, E>
     where
         L: Clone,
@@ -208,6 +205,27 @@ impl<L, O, E> ProofObject<L, O, E> {
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn focus_open_branch(
+        &self,
+        focused_branch: BranchId,
+    ) -> Result<Self, ProofFocusError> {
+        if self.state.open_branches.get(focused_branch).is_none() {
+            return Err(ProofFocusError::NotOpen);
+        }
+        Ok(Self::from_shared_state(self.state.clone(), focused_branch))
+    }
+
+    pub(crate) fn focus_open_branch_with_fact_deltas(
+        &self,
+        focused_branch: BranchId,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofFocusError> {
+        Ok(self
+            .focus_open_branch(focused_branch)?
+            .with_fact_deltas(added_facts, checked_facts))
+    }
+
     pub(crate) fn with_fact_deltas(
         &self,
         added_facts: Vec<Proposition>,

@@ -216,11 +216,14 @@ impl<'a> Proof<'a> {
         &self,
         goal: BranchId,
     ) -> Result<Self, ClickError> {
-        if self.state().open_branches.get(goal).is_none() {
-            return Err(self.step_error(format!("goal {goal:?} is not open in this proof")));
-        }
         let mut focused = self.clone();
-        focused.state = focused.state.focused_at(goal);
+        focused.state =
+            focused
+                .state
+                .focus_open_branch(goal)
+                .map_err(|ProofFocusError::NotOpen| {
+                    self.step_error(format!("goal {goal:?} is not open in this proof"))
+                })?;
         Ok(focused)
     }
 

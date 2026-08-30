@@ -4,7 +4,7 @@ use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError, FrontierObligation,
     FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
     OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
-    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofJoinError,
+    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
     ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
     ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
     PropositionIntroduction, PropositionObligation as KernelPropositionObligation,

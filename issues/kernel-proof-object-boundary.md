@@ -72,7 +72,8 @@ presentation through a kernel operation that preserves the semantic core, and
 `close_invariants` validates and updates the loop-region flag inside the
 kernel. Fresh pure, fixed-state, execution, loop-effect, focused-outcome, and
 nested-`have` roots now use the kernel root constructor; arm focusing can only
-replace non-authoritative fact deltas. The generic whole-handle state
+address a kernel-validated open branch and replace non-authoritative fact
+deltas through the same named operation. The generic whole-handle state
 replacement helper is test-only.
 
 Language-only proof environments now live in

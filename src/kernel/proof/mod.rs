@@ -25,8 +25,8 @@ pub(crate) use fact_keys::{
 };
 pub(crate) use facts::ProofFacts;
 pub(crate) use object::{
-    ExecutionUpdateError, FrontierSplitError, ProofJoinError, ProofObject, ProofState,
-    PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
+    ExecutionUpdateError, FrontierSplitError, ProofFocusError, ProofJoinError, ProofObject,
+    ProofState, PropositionAssumptionContext, PropositionCloseError, PropositionIntroduction,
     PropositionSplitError,
 };
 pub(crate) use obligations::{

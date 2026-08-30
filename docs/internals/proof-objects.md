@@ -62,8 +62,10 @@ kernel operation that cannot replace the execution core, while loop invariant
 closure is a named semantic-core update checked by the kernel.
 Fresh language proof contexts supply an unproved root obligation to the kernel
 root constructor instead of assembling a complete `ProofState`. Re-focusing a
-checked arm may replace only its reported fact delta; production language code
-has no generic whole-handle state-replacement operation.
+checked arm is a kernel-validated cursor move that rejects retired, reserved,
+or unknown branch identities and may replace only its reported fact delta;
+production language code has no generic whole-handle state-replacement
+operation.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

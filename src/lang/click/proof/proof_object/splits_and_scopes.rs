@@ -695,10 +695,21 @@ impl<'a> Proof<'a> {
         record: &OutcomeSplit<'a>,
         arm_index: usize,
     ) -> Result<Self, ClickError> {
-        let focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let delta = record.path_facts[arm_index].clone();
-        Ok(focused_branch
-            .with_kernel_state(focused_branch.state.with_fact_deltas(delta.clone(), delta)))
+        let state = self
+            .state
+            .focus_open_branch_with_fact_deltas(
+                record.arm_branches[arm_index],
+                delta.clone(),
+                delta,
+            )
+            .map_err(|ProofFocusError::NotOpen| {
+                self.step_error(format!(
+                    "goal {:?} is not open in this proof",
+                    record.arm_branches[arm_index]
+                ))
+            })?;
+        Ok(self.with_kernel_state(state))
     }
 
     /// Joins two exhaustive terminal outcome partitions after both sibling
