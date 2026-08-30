@@ -1,5 +1,4 @@
 use super::*;
-use crate::persistent::PersistentSet;
 #[cfg(test)]
 use crate::persistent::persistent_node_allocations;
 use std::sync::Arc;
@@ -12,119 +11,6 @@ pub(super) struct InvariantCloserStep {
     pub(super) tactic_index: usize,
     pub(super) source_index: usize,
     pub(super) statement_index: usize,
-}
-
-/// Clone-on-write storage for execution-metadata collections.
-///
-/// This makes a read-only proof-state fork constant time. A mutation still
-/// pays for its complete vector; persistent `Proof` steps avoid that mutable
-/// path altogether.
-#[derive(Clone)]
-pub(super) struct SharedVec<T>(Arc<Vec<T>>);
-
-impl<T> Default for SharedVec<T> {
-    fn default() -> Self {
-        Self(Arc::new(Vec::new()))
-    }
-}
-
-impl<T> std::ops::Deref for SharedVec<T> {
-    type Target = Vec<T>;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
-    }
-}
-
-impl<T: Clone> std::ops::DerefMut for SharedVec<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::make_mut(&mut self.0)
-    }
-}
-
-impl<T> From<Vec<T>> for SharedVec<T> {
-    fn from(value: Vec<T>) -> Self {
-        Self(Arc::new(value))
-    }
-}
-
-impl<'a, T> IntoIterator for &'a SharedVec<T> {
-    type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<T: Clone> SharedVec<T> {
-    /// The entries appended after `ancestor`, by length suffix. Effect
-    /// histories only append within one execution lineage; the debug build
-    /// verifies the shared prefix element-wise, and `None` reports a
-    /// shorter-than-ancestor history (not a descendant).
-    pub(super) fn suffix_since(&self, ancestor: &Self) -> Option<&[T]>
-    where
-        T: PartialEq + std::fmt::Debug,
-    {
-        if self.0.len() < ancestor.0.len() {
-            return None;
-        }
-        debug_assert!(
-            self.0[..ancestor.0.len()] == ancestor.0[..],
-            "an effect history diverged from its claimed ancestor"
-        );
-        Some(&self.0[ancestor.0.len()..])
-    }
-
-    #[cfg(test)]
-    pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-/// Clone-on-write storage for one execution-metadata value.
-///
-/// `Proof` successors can share metadata they do not modify. Mutable consumers
-/// still receive ordinary references through `Deref`, and the first
-/// mutation makes the old complete-value copy explicit at that boundary.
-#[derive(Clone)]
-pub(super) struct SharedValue<T>(Arc<T>);
-
-impl<T: Default> Default for SharedValue<T> {
-    fn default() -> Self {
-        Self(Arc::new(T::default()))
-    }
-}
-
-impl<T> std::ops::Deref for SharedValue<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
-    }
-}
-
-impl<T: Clone> std::ops::DerefMut for SharedValue<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        Arc::make_mut(&mut self.0)
-    }
-}
-
-impl<T> From<T> for SharedValue<T> {
-    fn from(value: T) -> Self {
-        Self(Arc::new(value))
-    }
-}
-
-impl<T: Clone> SharedValue<T> {
-    pub(super) fn into_value(self) -> T {
-        Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
-    }
-
-    #[cfg(test)]
-    pub(super) fn shares_storage_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
 }
 
 /// Where a source tactic's expansion is being captured on this path: the
@@ -151,233 +37,6 @@ pub(super) struct CaseAssumption {
     pub(super) value: bool,
     pub(super) fact: Option<Proposition>,
     pub(super) at_function_entry: bool,
-}
-
-/// An append-only sequence whose forks share their complete history.
-///
-/// Execution proof branches inherit the enclosing case assumptions and add
-/// one local choice. A `Vec` makes that fork copy every enclosing choice even
-/// though neither branch can edit them. This parent-linked representation
-/// makes both the fork and the local append constant time. Iteration restores
-/// insertion order and therefore costs only the number of entries consumed.
-#[derive(Clone)]
-pub(super) struct PersistentSequence<T> {
-    tail: Option<Arc<PersistentSequenceNode<T>>>,
-    len: usize,
-}
-
-struct PersistentSequenceNode<T> {
-    parent: Option<Arc<PersistentSequenceNode<T>>>,
-    value: T,
-}
-
-impl<T> Default for PersistentSequence<T> {
-    fn default() -> Self {
-        Self { tail: None, len: 0 }
-    }
-}
-
-impl<T> Drop for PersistentSequence<T> {
-    fn drop(&mut self) {
-        // Dropping an `Arc`-owned parent chain recursively drops every unique
-        // parent and can exhaust the stack for ordinary large proof histories.
-        // Unwrap the unique suffix iteratively. At the first shared ancestor,
-        // releasing this sequence's reference is sufficient; whichever owner
-        // eventually becomes unique will perform the same iterative cleanup.
-        let mut tail = self.tail.take();
-        while let Some(node) = tail {
-            let Ok(node) = Arc::try_unwrap(node) else {
-                break;
-            };
-            tail = node.parent;
-        }
-    }
-}
-
-impl<T> PersistentSequence<T> {
-    pub(super) fn push(&mut self, value: T) {
-        self.tail = Some(Arc::new(PersistentSequenceNode {
-            parent: self.tail.clone(),
-            value,
-        }));
-        self.len += 1;
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.tail = None;
-        self.len = 0;
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.tail.is_none()
-    }
-
-    pub(super) fn len(&self) -> usize {
-        self.len
-    }
-
-    pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
-        let mut nodes = Vec::with_capacity(self.len);
-        let mut current = self.tail.as_deref();
-        while let Some(node) = current {
-            nodes.push(&node.value);
-            current = node.parent.as_deref();
-        }
-        nodes.reverse();
-        PersistentSequenceIter {
-            entries: nodes.into_iter(),
-        }
-    }
-
-    pub(super) fn to_vec(&self) -> Vec<T>
-    where
-        T: Clone,
-    {
-        self.iter().cloned().collect()
-    }
-
-    /// The entries appended after `ancestor`'s tail, oldest first.
-    ///
-    /// Returns `None` when `ancestor` is not a prefix of this sequence by
-    /// identity — pointer identity, not structural equality, proves the
-    /// shared history — and visits only the appended suffix.
-    pub(super) fn suffix_since(&self, ancestor: &Self) -> Option<Vec<T>>
-    where
-        T: Clone,
-    {
-        let mut suffix = Vec::with_capacity(self.len.saturating_sub(ancestor.len));
-        let mut current = self.tail.clone();
-        loop {
-            match (&current, &ancestor.tail) {
-                (Some(node), Some(ancestor_tail)) if Arc::ptr_eq(node, ancestor_tail) => break,
-                (None, None) => break,
-                (Some(node), _) => {
-                    suffix.push(node.value.clone());
-                    current = node.parent.clone();
-                }
-                (None, Some(_)) => return None,
-            }
-        }
-        suffix.reverse();
-        Some(suffix)
-    }
-
-    #[cfg(test)]
-    pub(super) fn shares_tail_with(&self, other: &Self) -> bool {
-        match (&self.tail, &other.tail) {
-            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-            (None, None) => true,
-            _ => false,
-        }
-    }
-}
-
-impl<T: Clone> PersistentSequence<T> {
-    /// Removes the newest entry while preserving any shared ancestor prefix.
-    pub(super) fn pop(&mut self) -> Option<T> {
-        let tail = self.tail.take()?;
-        let value = tail.value.clone();
-        self.tail = tail.parent.clone();
-        self.len -= 1;
-        Some(value)
-    }
-}
-
-pub(super) struct PersistentSequenceIter<'a, T> {
-    entries: std::vec::IntoIter<&'a T>,
-}
-
-impl<'a, T> Iterator for PersistentSequenceIter<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.entries.next()
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.entries.size_hint()
-    }
-}
-
-impl<T> ExactSizeIterator for PersistentSequenceIter<'_, T> {}
-
-impl<T> DoubleEndedIterator for PersistentSequenceIter<'_, T> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.entries.next_back()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a PersistentSequence<T> {
-    type Item = &'a T;
-    type IntoIter = PersistentSequenceIter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-/// A deterministic insertion-ordered set with persistent exact membership.
-///
-/// The sequence preserves certificate/certification order; the AVL index
-/// makes exact queries and one local insertion logarithmic. Both roots are
-/// shared by a clone, so search forks never copy unrelated entries.
-#[derive(Clone)]
-pub(super) struct PersistentOrderedSet<T> {
-    ordered: PersistentSequence<T>,
-    exact: PersistentSet<T>,
-}
-
-impl<T> Default for PersistentOrderedSet<T> {
-    fn default() -> Self {
-        Self {
-            ordered: PersistentSequence::default(),
-            exact: PersistentSet::default(),
-        }
-    }
-}
-
-impl<T: Clone + Ord> PersistentOrderedSet<T> {
-    /// The members inserted after `ancestor`, oldest first, by the same
-    /// pointer-identity suffix walk as the underlying sequence. `None` when
-    /// `ancestor` is not this set's ancestor.
-    pub(super) fn introduced_since(&self, ancestor: &Self) -> Option<Vec<T>> {
-        self.ordered.suffix_since(&ancestor.ordered)
-    }
-
-    pub(super) fn insert(&mut self, value: T) -> bool {
-        if self.exact.contains(&value) {
-            return false;
-        }
-        self.exact = self.exact.with_value(value.clone());
-        self.ordered.push(value);
-        true
-    }
-
-    pub(super) fn contains(&self, value: &T) -> bool {
-        self.exact.contains(value)
-    }
-
-    pub(super) fn len(&self) -> usize {
-        self.ordered.len()
-    }
-
-    pub(super) fn iter(&self) -> PersistentSequenceIter<'_, T> {
-        self.ordered.iter()
-    }
-
-    pub(super) fn to_vec(&self) -> Vec<T> {
-        self.iter().cloned().collect()
-    }
-}
-
-/// Ordered-set iteration follows accepted-step order rather than tree order.
-impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
-    type Item = &'a T;
-    type IntoIter = PersistentSequenceIter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
 }
 
 #[derive(Clone, Default)]
@@ -1296,7 +955,7 @@ mod proof_fact_store_tests {
             (0..=4096).collect::<Vec<_>>()
         );
         assert!(!sequence.shares_tail_with(&ancestor));
-        assert_eq!(ancestor.tail.as_ref().map(Arc::strong_count), Some(2));
+        assert_eq!(ancestor.tail_strong_count(), Some(2));
     }
 
     #[test]
@@ -1357,15 +1016,12 @@ mod proof_fact_store_tests {
                 remaining: Some(remaining.clone()),
                 next_statement_index: 2,
             });
-            let local_tail = frontier
-                .continuations
-                .tail
-                .as_ref()
-                .expect("local continuation");
-            assert!(Arc::ptr_eq(
-                local_tail.parent.as_ref().expect("shared parent"),
-                ancestor.continuations.tail.as_ref().expect("ancestor tail")
-            ));
+            assert!(
+                frontier
+                    .continuations
+                    .tail_parent_is(&ancestor.continuations),
+                "the local continuation should point to the shared ancestor tail"
+            );
             assert_eq!(ancestor.continuations.len(), 1);
             assert_eq!(frontier.continuations.len(), 2);
             assert_eq!(
@@ -1393,8 +1049,7 @@ mod proof_fact_store_tests {
                 assert!(set.insert(value));
             }
             let ancestor = set.clone();
-            assert!(set.exact.shares_root_with(&ancestor.exact));
-            assert!(set.ordered.shares_tail_with(&ancestor.ordered));
+            assert!(set.shares_storage_with(&ancestor));
 
             let before = persistent_node_allocations();
             assert!(set.insert(size));

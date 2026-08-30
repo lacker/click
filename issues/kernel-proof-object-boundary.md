@@ -14,8 +14,10 @@ topology to `src/kernel/proof/branches.rs`. Smart search now lives outside
 of the proof's private state, provenance node, focus, or constructors. The
 contextual Surface Click lowering has also moved out of `proof_object/`; the
 checked core retains only its derivation lineage and certificate attribution.
-The remaining proof representation and checked operations still need a
-kernel-owned API.
+The proof-specific persistent storage containers now live in
+`src/kernel/proof/storage.rs`; they carry no surface syntax or transition
+authority. The remaining proof representation and checked operations still
+need a kernel-owned API.
 
 ## Intended regression
 

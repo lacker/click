@@ -34,6 +34,9 @@ mod surface_synthesis;
 mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
+use crate::kernel::proof::{
+    PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
+};
 use claim_proofs::finish_ordered_proof;
 pub(super) use claim_proofs::{
     prove_claim_by_tactics, prove_claims_by_grouped_auto, prove_claims_by_grouped_script,

@@ -6,5 +6,9 @@
 //! independently green slices.
 
 mod branches;
+mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranches, SplitId};
+pub(crate) use storage::{
+    PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
+};

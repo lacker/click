@@ -30,7 +30,8 @@ Kernel files:
 - `loops.rs`: loop verification, loop effects, loop havoc, and invariant
   helpers.
 - `proof/`: persistent checked proof-object infrastructure. Its `branches.rs`
-  owns branch and split identities, allocation, and structural topology.
+  owns branch and split identities, allocation, and structural topology;
+  `storage.rs` owns the shared persistent containers used by proof forks.
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 

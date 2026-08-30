@@ -15,7 +15,9 @@ complete logical or execution state.
 
 The kernel owns branch and split identities and the persistent open-branch
 topology in `src/kernel/proof/branches.rs`; the remaining checked
-representation is being moved across the same boundary incrementally. Untrusted smart selection
+representation is being moved across the same boundary incrementally. Its
+surface-independent persistent containers already live in
+`src/kernel/proof/storage.rs`. Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
 Contextual Surface Click lowering likewise lives beside the language-layer
