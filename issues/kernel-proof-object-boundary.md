@@ -85,6 +85,9 @@ the frontier to record metadata.
 Checked statement steps, mid-execution `have`, frontier-local `loop`, and
 resource scope close publish their already checked result through the same
 frontier-shaped kernel operation instead of reconstructing `ProofState`.
+Preservation `if` uses the corresponding kernel split operation, so the
+checked driver supplies feasible arm results but cannot allocate their branch
+identities or install their topology.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back

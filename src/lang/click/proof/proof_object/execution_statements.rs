@@ -188,9 +188,6 @@ impl<'a> Proof<'a> {
         };
         let tactic_context = context.with_tactic_index(tactic_index);
         self.require_execution_frontier("proof `if`")?;
-        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
-            unreachable!("the frontier requirement was checked above")
-        };
         let mut base_execution = self
             .execution()
             .cloned()
@@ -209,7 +206,8 @@ impl<'a> Proof<'a> {
             tactic_index,
             "if",
         )?;
-        let mut arms: [Option<(OpenBranch, Vec<Proposition>)>; 2] = [None, None];
+        let mut arms: [Option<(ProofFacts, ExecutionProofState, Vec<Proposition>)>; 2] =
+            [None, None];
         for value in [true, false] {
             let mut arm_execution = base_execution.clone();
             let mut arm_facts = self.facts().to_vec();
@@ -244,41 +242,28 @@ impl<'a> Proof<'a> {
                     });
             }
             let added = arm_facts[base_facts..].to_vec();
-            let branch_state = &self.focused_branch().expect("focused branch exists").state;
-            let mut facts = branch_state.facts.clone();
+            let mut facts = self.facts().clone();
             for fact in &added {
                 facts = facts.with_fact(fact.clone());
             }
-            let execution = arm_execution;
-            arms[usize::from(!value)] = Some((
-                OpenBranch::frontier(
-                    frontier.selection,
-                    BranchState {
-                        facts,
-                        unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-                added,
-            ));
+            arms[usize::from(!value)] = Some((facts, arm_execution, added));
         }
         match arms {
-            [Some((then_goal, added)), Some((else_goal, _))] => {
-                let (_, ids, open_branches) = self
+            [
+                Some((then_facts, then_execution, then_added)),
+                Some((else_facts, else_execution, else_added)),
+            ] => {
+                let split = self
                     .state
-                    .open_branches
-                    .split_at(self.focused_branch_id(), [then_goal, else_goal]);
+                    .publish_checked_frontier_split(
+                        [(then_facts, then_execution), (else_facts, else_execution)],
+                        [then_added, else_added],
+                    )
+                    .map_err(|error| self.execution_update_error("proof `if`", error))?;
+                let (state, _, ids, _) = split.into_parts_with_facts();
                 let successor = Self {
                     context: self.context.clone(),
-                    state: KernelProofObject::new(
-                        ProofState {
-                            locals: self.state().locals.clone(),
-                            open_branches,
-                            added_facts: Arc::new(added),
-                            checked_facts: Arc::new(Vec::new()),
-                        },
-                        ids[0],
-                    ),
+                    state,
                     node: Arc::new(ProofNode {
                         parent: Some(self.node.clone()),
                         step: None,
@@ -289,7 +274,7 @@ impl<'a> Proof<'a> {
                 Ok((successor, [Some(ids[0]), Some(ids[1])]))
             }
             [then_arm, else_arm] => {
-                let (value, (goal, added)) = if let Some(arm) = then_arm {
+                let (value, (facts, execution, added)) = if let Some(arm) = then_arm {
                     (true, arm)
                 } else if let Some(arm) = else_arm {
                     (false, arm)
@@ -298,20 +283,13 @@ impl<'a> Proof<'a> {
                         "no feasible arm exists for this preservation `if` condition",
                     ));
                 };
+                let state = self
+                    .state
+                    .publish_checked_frontier_transition(facts, execution, added, Vec::new(), false)
+                    .map_err(|error| self.execution_update_error("proof `if`", error))?;
                 let successor = Self {
                     context: self.context.clone(),
-                    state: KernelProofObject::new(
-                        ProofState {
-                            locals: self.state().locals.clone(),
-                            open_branches: self
-                                .state
-                                .open_branches
-                                .replace_at(self.focused_branch_id(), goal),
-                            added_facts: Arc::new(added),
-                            checked_facts: Arc::new(Vec::new()),
-                        },
-                        self.focused_branch_id(),
-                    ),
+                    state,
                     node: self.node.clone(),
                 };
                 let mut ids = [None, None];

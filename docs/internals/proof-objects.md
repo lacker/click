@@ -76,6 +76,9 @@ path. The semantic core retains only the checked invariant-closure flag.
 Statement steps, mid-execution `have`, frontier-local `loop`, and resource
 scope closure submit their checked successors through a frontier-shaped kernel
 operation that preserves unrelated branches, the obligation, and unfold state.
+When loop preservation produces two feasible proof-level `if` arms, the kernel
+also allocates the sibling identities and records their split topology around
+the two checked frontier results.
 Structural loop-effect scopes may restore an already allocated retired cursor
 for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.

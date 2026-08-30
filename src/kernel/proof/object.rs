@@ -974,6 +974,58 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
+    /// Publishes two separately checked frontier successors as sibling proof
+    /// branches. The checked driver supplies each arm's semantic result; the
+    /// kernel preserves the current obligation and unfold state and owns the
+    /// branch identities and split topology.
+    pub(crate) fn publish_checked_frontier_split(
+        &self,
+        arms: [(ProofFacts, ProofExecutionState<S>); 2],
+        introduced_facts: [Vec<Proposition>; 2],
+    ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, ExecutionUpdateError>
+    {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        let ProofObligation::Frontier(frontier) = &branch.obligation else {
+            return Err(ExecutionUpdateError::NotFrontier);
+        };
+        if branch.state.execution.is_none() {
+            return Err(ExecutionUpdateError::MissingExecution);
+        }
+        let unfolded_predicates = branch.state.unfolded_predicates.clone();
+        let [then_arm, else_arm] = arms.map(|(facts, execution)| {
+            ProofBranch::new(
+                ProofObligation::Frontier(frontier.clone()),
+                ProofBranchState {
+                    facts,
+                    unfolded_predicates: unfolded_predicates.clone(),
+                    execution: Some(Arc::new(execution)),
+                },
+            )
+        });
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [then_arm, else_arm]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(introduced_facts[0].clone()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts,
+        })
+    }
+
     pub(crate) fn split_frontier_cases(
         &self,
         disjunction: Proposition,
