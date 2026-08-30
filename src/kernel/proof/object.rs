@@ -5,8 +5,8 @@
 //! attachments as evidence.
 
 use super::{
-    BranchId, OutcomeProofState, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState,
-    ProofFacts, ProofObligation,
+    BranchId, EffectGoalSelection, FrontierObligation, OutcomeProofState, PersistentOrderedSet,
+    ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState, ProofFacts, ProofObligation,
 };
 use crate::kernel::Proposition;
 use std::ops::Deref;
@@ -1024,6 +1024,108 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             branches,
             introduced_facts,
         })
+    }
+
+    pub(crate) fn publish_checked_frontier_join(
+        &self,
+        children: [BranchId; 2],
+        parent: BranchId,
+        selection: EffectGoalSelection,
+        facts: ProofFacts,
+        unfolded_predicates: PersistentOrderedSet<String>,
+        execution: ProofExecutionState<S>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofJoinError> {
+        self.publish_checked_frontier_join_inner(
+            children,
+            parent,
+            selection,
+            facts,
+            unfolded_predicates,
+            execution,
+            added_facts,
+            checked_facts,
+            false,
+        )
+    }
+
+    pub(crate) fn publish_reserved_checked_frontier_join(
+        &self,
+        children: [BranchId; 2],
+        parent: BranchId,
+        selection: EffectGoalSelection,
+        facts: ProofFacts,
+        unfolded_predicates: PersistentOrderedSet<String>,
+        execution: ProofExecutionState<S>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofJoinError> {
+        self.publish_checked_frontier_join_inner(
+            children,
+            parent,
+            selection,
+            facts,
+            unfolded_predicates,
+            execution,
+            added_facts,
+            checked_facts,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_checked_frontier_join_inner(
+        &self,
+        children: [BranchId; 2],
+        parent: BranchId,
+        selection: EffectGoalSelection,
+        facts: ProofFacts,
+        unfolded_predicates: PersistentOrderedSet<String>,
+        execution: ProofExecutionState<S>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+        reserved_children: bool,
+    ) -> Result<Self, ProofJoinError> {
+        let valid_children = if reserved_children {
+            children
+                .iter()
+                .all(|child| self.state.open_branches.has_allocated(*child))
+        } else {
+            children
+                .iter()
+                .all(|child| self.state.open_branches.get(*child).is_some())
+        };
+        if !valid_children
+            || !self.state.open_branches.has_allocated(parent)
+            || self.state.open_branches.get(parent).is_some()
+        {
+            return Err(ProofJoinError::InvalidSplit);
+        }
+        let branch = ProofBranch::new(
+            ProofObligation::Frontier(FrontierObligation::new(selection)),
+            ProofBranchState {
+                facts,
+                unfolded_predicates,
+                execution: Some(Arc::new(execution)),
+            },
+        );
+        let open_branches = if reserved_children {
+            self.state
+                .open_branches
+                .join_reserved_at(children, parent, branch)
+        } else {
+            self.state.open_branches.join_at(children, parent, branch)
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches,
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
+            },
+            parent,
+        ))
     }
 
     pub(crate) fn split_frontier_cases(

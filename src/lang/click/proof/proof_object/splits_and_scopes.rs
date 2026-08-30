@@ -813,30 +813,23 @@ impl<'a> Proof<'a> {
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join outcome `if`: the split marker lost its root")
         })?;
-        let open_branches = self.state().open_branches.join_at(
-            record.arm_branches,
-            parent_goal,
-            OpenBranch::frontier(
+        let state = self
+            .state
+            .publish_checked_frontier_join(
+                record.arm_branches,
+                parent_goal,
                 EffectGoalSelection::None,
-                BranchState {
-                    facts: record.parent_facts.clone(),
-                    unfolded_predicates: record.parent_unfolds.clone(),
-                    execution: Some(Arc::new(execution)),
-                },
-            ),
-        );
+                record.parent_facts.clone(),
+                record.parent_unfolds.clone(),
+                execution,
+                Vec::new(),
+                Vec::new(),
+            )
+            .map_err(|_| self.step_error("cannot join outcome `if`: invalid branch lineage"))?;
         let [then_certificate, else_certificate] = arm_certificates;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                parent_goal,
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
                 step: Some(Arc::new(ProofStep::If {

@@ -89,6 +89,8 @@ The terminal branch-arm continuation uses that operation as well.
 Preservation `if` uses the corresponding kernel split operation, so the
 checked driver supplies feasible arm results but cannot allocate their branch
 identities or install their topology.
+Checked execution and outcome joins likewise submit only their merged frontier;
+the kernel validates the child/parent lineage and restores the parent branch.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back

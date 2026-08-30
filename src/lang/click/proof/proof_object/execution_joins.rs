@@ -1916,29 +1916,22 @@ impl<'a> Proof<'a> {
         let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
-        let open_branches = self.state().open_branches.join_reserved_at(
-            ids,
-            parent_goal,
-            OpenBranch::frontier(
+        let state = self
+            .state
+            .publish_reserved_checked_frontier_join(
+                ids,
+                parent_goal,
                 selection,
-                BranchState {
-                    facts: parts.facts,
-                    unfolded_predicates: parts.unfolded_predicates,
-                    execution: Some(Arc::new(parts.execution)),
-                },
-            ),
-        );
+                parts.facts,
+                parts.unfolded_predicates,
+                parts.execution,
+                parts.common_added_facts.clone(),
+                parts.common_added_facts,
+            )
+            .map_err(|_| self.step_error("cannot join `branch`: invalid branch lineage"))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(parts.common_added_facts.clone()),
-                    checked_facts: Arc::new(parts.common_added_facts),
-                },
-                parent_goal,
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
                 step: Some(Arc::new(parts.step)),
