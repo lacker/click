@@ -153,7 +153,7 @@ impl<'a> Proof<'a> {
             };
             let mut arm_execution = execution.clone();
             record_statement_program_snapshot_state(
-                &mut arm_execution.recorded_snapshots,
+                &mut arm_execution.presentation.recorded_snapshots,
                 context.function_block,
                 statement_index,
                 ProgramPointKind::Entry,
@@ -183,7 +183,7 @@ impl<'a> Proof<'a> {
             arm_execution.core.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_snapshot_state(
-                    &mut arm_execution.recorded_snapshots,
+                    &mut arm_execution.presentation.recorded_snapshots,
                     context.function_block,
                     statement_index,
                     ProgramPointKind::Exit,
@@ -197,7 +197,7 @@ impl<'a> Proof<'a> {
             }
             record_current_statement_entry(
                 &arm_execution.core.frontier,
-                &mut arm_execution.recorded_snapshots,
+                &mut arm_execution.presentation.recorded_snapshots,
                 &arm_execution.core.state,
                 context.function_block,
                 context.function,
@@ -221,7 +221,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 &arm_execution.core.state,
                 None,
-                &arm_execution.recorded_snapshots,
+                &arm_execution.presentation.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -231,12 +231,15 @@ impl<'a> Proof<'a> {
                 ))
             })?;
             arm_execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&surface_path_fact, &kernel_path_fact)?;
             arm_execution
+                .presentation
                 .branch_surface_facts
                 .insert(kernel_path_fact.clone());
             arm_execution
+                .presentation
                 .branch_decisions
                 .push(ExecutionBranchDecision {
                     condition: surface_condition.clone(),
@@ -244,7 +247,7 @@ impl<'a> Proof<'a> {
                     proof_case: false,
                 });
             arm_execution.core.has_structured_branch_history = true;
-            arm_execution.branch_path.push(format!(
+            arm_execution.presentation.branch_path.push(format!(
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
             ));
@@ -310,14 +313,22 @@ impl<'a> Proof<'a> {
             || arm.execution.core.function_entry_derivations.len()
                 != parent_execution.core.function_entry_derivations.len()
                     + arm.introduced_derivations.len()
-            || arm.execution.frontier_loop_clauses.len()
-                != parent_execution.frontier_loop_clauses.len() + arm.introduced_loop_clauses.len()
+            || arm.execution.presentation.frontier_loop_clauses.len()
+                != parent_execution.presentation.frontier_loop_clauses.len()
+                    + arm.introduced_loop_clauses.len()
             || arm.execution.core.frontier_loop_rules.len()
                 != parent_execution.core.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
             || arm.execution.core.unfolded_predicates.len()
                 != parent_execution.core.unfolded_predicates.len() + arm.introduced_unfolds.len()
-            || arm.execution.planned_statement_transitions.len()
-                != parent_execution.planned_statement_transitions.len()
+            || arm
+                .execution
+                .presentation
+                .planned_statement_transitions
+                .len()
+                != parent_execution
+                    .presentation
+                    .planned_statement_transitions
+                    .len()
         {
             return Err(self.step_error(format!(
                 "{name} execution arm changed check metadata that the checked {variant} has not migrated"
@@ -379,16 +390,20 @@ impl<'a> Proof<'a> {
             None,
             false,
         )
-        .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
-        execution.branch_path = parent_execution.branch_path.clone();
-        execution.case_assumptions = parent_execution.case_assumptions.clone();
+        .map_err(|error| add_proof_branch_path(error, &execution.presentation.branch_path))?;
+        execution.presentation.branch_path = parent_execution.presentation.branch_path.clone();
+        execution.presentation.case_assumptions =
+            parent_execution.presentation.case_assumptions.clone();
 
         let mut added_facts = arm.introduced_facts.clone();
         for assertion in &assertions {
             let ProofAssertion::Fact(surface) = assertion else {
                 continue;
             };
-            if let Some(fact) = execution.surface_propositions.unique_kernel(surface)
+            if let Some(fact) = execution
+                .presentation
+                .surface_propositions
+                .unique_kernel(surface)
                 && !facts_before_interface.contains_top_level(fact)
                 && !added_facts.contains(fact)
             {
@@ -603,10 +618,11 @@ impl<'a> Proof<'a> {
         }
         let common_snapshots = arms[0]
             .execution
+            .presentation
             .recorded_snapshots
             .common_descendant(
-                &arms[1].execution.recorded_snapshots,
-                &parent_execution.recorded_snapshots,
+                &arms[1].execution.presentation.recorded_snapshots,
+                &parent_execution.presentation.recorded_snapshots,
             )
             .ok_or_else(|| {
                 self.step_error(
@@ -656,7 +672,7 @@ impl<'a> Proof<'a> {
                 &stable_join_locals,
                 Some(&sibling_join_states),
                 true)
-            .map_err(|error| add_proof_branch_path(error, &execution.branch_path))?;
+            .map_err(|error| add_proof_branch_path(error, &execution.presentation.branch_path))?;
             Ok((execution, facts))
         };
         let (mut then_abstract, then_interface_facts) = abstract_arm(&arms[0])?;
@@ -724,11 +740,12 @@ impl<'a> Proof<'a> {
             [&then_abstract, &else_abstract],
         )?;
         execution.core.state = abstract_state.clone().into();
-        execution.recorded_snapshots = common_snapshots;
+        execution.presentation.recorded_snapshots = common_snapshots;
         execution
+            .presentation
             .recorded_snapshots
             .insert(target, abstract_state.clone());
-        execution.recorded_snapshots.insert(
+        execution.presentation.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -758,7 +775,7 @@ impl<'a> Proof<'a> {
         execution.core.has_structured_branch_history = true;
         execution.core.execution_abstraction = true;
         execution.core.unfolded_predicates.clear();
-        execution.case_assumptions.clear();
+        execution.presentation.case_assumptions.clear();
         execution.core.next_opaque_call = then_abstract
             .core
             .next_opaque_call
@@ -798,12 +815,12 @@ impl<'a> Proof<'a> {
                 .insert(theorem.clone());
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.branch_path.clear();
+        execution.presentation.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
         record_statement_program_snapshot_state(
-            &mut execution.recorded_snapshots,
+            &mut execution.presentation.recorded_snapshots,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -811,7 +828,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.core.frontier,
-            &mut execution.recorded_snapshots,
+            &mut execution.presentation.recorded_snapshots,
             &execution.core.state,
             context.function_block,
             context.function,
@@ -835,6 +852,7 @@ impl<'a> Proof<'a> {
                     .any(|candidate| candidate == surface)
                 {
                     execution
+                        .presentation
                         .surface_propositions
                         .record_lowering(surface, fact)?;
                 }
@@ -944,10 +962,11 @@ impl<'a> Proof<'a> {
             for fact in introduced {
                 for surface in arm.surface_propositions.surfaces(&fact) {
                     execution
+                        .presentation
                         .surface_propositions
                         .record_lowering(surface, &fact)?;
                 }
-                execution.branch_surface_facts.insert(fact);
+                execution.presentation.branch_surface_facts.insert(fact);
             }
         }
         Ok(())
@@ -1047,14 +1066,14 @@ impl<'a> Proof<'a> {
         } else {
             terminal_certificate(&arms[1].certificate, empty_source_arms[1])
         };
-        let then_expansion = &arms[0].execution.expansion;
-        let else_expansion = &arms[1].execution.expansion;
+        let then_expansion = &arms[0].execution.presentation.expansion;
+        let else_expansion = &arms[1].execution.presentation.expansion;
         let common_snapshots = arms[0]
             .execution
-            .recorded_snapshots
+            .presentation.recorded_snapshots
             .common_descendant(
-                &arms[1].execution.recorded_snapshots,
-                &parent_execution.recorded_snapshots,
+                &arms[1].execution.presentation.recorded_snapshots,
+                &parent_execution.presentation.recorded_snapshots,
             )
             .ok_or_else(|| {
                 self.step_error(
@@ -1122,14 +1141,15 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.core.state = execution_start_state.clone().into();
-        execution.recorded_snapshots = common_snapshots;
+        execution.presentation.recorded_snapshots = common_snapshots;
         execution.core.frontier.continuations.clear();
         execution.core.frontier.execution_start_state = Some(execution_start_state);
         execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: outcomes,
         };
-        execution.branch_decisions = parent_execution.branch_decisions.clone();
-        execution.outcome_provenance = Arc::new(outcome_provenance);
+        execution.presentation.branch_decisions =
+            parent_execution.presentation.branch_decisions.clone();
+        execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
         execution.core.has_structured_branch_history = true;
         execution.core.next_opaque_call = arms[0]
             .execution
@@ -1181,15 +1201,20 @@ impl<'a> Proof<'a> {
             }
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.branch_path = parent_execution.branch_path.clone();
-        execution.case_assumptions = parent_execution.case_assumptions.clone();
+        execution.presentation.branch_path = parent_execution.presentation.branch_path.clone();
+        execution.presentation.case_assumptions =
+            parent_execution.presentation.case_assumptions.clone();
 
         // A selected-site capture is attribution metadata for one source
         // occurrence. It may be inherited unchanged by both arms, or begin
         // in exactly one arm. Retain that cursor across the audited join, but
         // reject two different captures rather than guessing which source
         // occurrence owns the eventual expansion.
-        let parent_capture = parent_execution.expansion.deferred_tactic_capture.as_ref();
+        let parent_capture = parent_execution
+            .presentation
+            .expansion
+            .deferred_tactic_capture
+            .as_ref();
         let then_capture = then_expansion.deferred_tactic_capture.as_ref();
         let else_capture = else_expansion.deferred_tactic_capture.as_ref();
         if parent_capture.is_some()
@@ -1199,35 +1224,36 @@ impl<'a> Proof<'a> {
                 self.step_error("terminal execution arm lost its inherited selected-tactic cursor")
             );
         }
-        execution.expansion.deferred_tactic_capture = match (then_capture, else_capture) {
-            (Some(then_capture), Some(else_capture)) if then_capture == else_capture => {
-                Some(then_capture.clone())
-            }
-            (Some(capture), None) if parent_capture.is_none() => {
-                let mut capture = capture.clone();
-                capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
-                    condition: surface_condition.clone(),
-                    then_tactics: capture.branch_skeleton,
-                    else_tactics: Vec::new(),
-                })];
-                Some(capture)
-            }
-            (None, Some(capture)) if parent_capture.is_none() => {
-                let mut capture = capture.clone();
-                capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
-                    condition: surface_condition.clone(),
-                    then_tactics: Vec::new(),
-                    else_tactics: capture.branch_skeleton,
-                })];
-                Some(capture)
-            }
-            (None, None) => None,
-            _ => {
-                return Err(self.step_error(
-                    "terminal execution arms retained different selected-tactic cursors",
-                ));
-            }
-        };
+        execution.presentation.expansion.deferred_tactic_capture =
+            match (then_capture, else_capture) {
+                (Some(then_capture), Some(else_capture)) if then_capture == else_capture => {
+                    Some(then_capture.clone())
+                }
+                (Some(capture), None) if parent_capture.is_none() => {
+                    let mut capture = capture.clone();
+                    capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
+                        condition: surface_condition.clone(),
+                        then_tactics: capture.branch_skeleton,
+                        else_tactics: Vec::new(),
+                    })];
+                    Some(capture)
+                }
+                (None, Some(capture)) if parent_capture.is_none() => {
+                    let mut capture = capture.clone();
+                    capture.branch_skeleton = vec![ProofTactic::If(ProofIf {
+                        condition: surface_condition.clone(),
+                        then_tactics: Vec::new(),
+                        else_tactics: capture.branch_skeleton,
+                    })];
+                    Some(capture)
+                }
+                (None, None) => None,
+                _ => {
+                    return Err(self.step_error(
+                        "terminal execution arms retained different selected-tactic cursors",
+                    ));
+                }
+            };
 
         // Terminal arm tactics are source-order cursors, not semantic state.
         // Preserve only the append-only suffix each checked arm added after
@@ -1238,8 +1264,9 @@ impl<'a> Proof<'a> {
         // C state, resources, or successor authority from this tree.
         let then_post_execution = arms[0]
             .execution
+            .presentation
             .post_execution_tactics
-            .suffix_since(&parent_execution.post_execution_tactics)
+            .suffix_since(&parent_execution.presentation.post_execution_tactics)
             .ok_or_else(|| {
                 self.step_error(
                     "terminal then-arm finalization cursor does not descend from the split root",
@@ -1247,8 +1274,9 @@ impl<'a> Proof<'a> {
             })?;
         let else_post_execution = arms[1]
             .execution
+            .presentation
             .post_execution_tactics
-            .suffix_since(&parent_execution.post_execution_tactics)
+            .suffix_since(&parent_execution.presentation.post_execution_tactics)
             .ok_or_else(|| {
                 self.step_error(
                     "terminal else-arm finalization cursor does not descend from the split root",
@@ -1282,14 +1310,21 @@ impl<'a> Proof<'a> {
             {
                 facts = facts.with_fact(fact.clone());
                 common_added_facts.push(fact.clone());
-                for surface in arms[0].execution.surface_propositions.surfaces(fact) {
+                for surface in arms[0]
+                    .execution
+                    .presentation
+                    .surface_propositions
+                    .surfaces(fact)
+                {
                     if arms[1]
                         .execution
+                        .presentation
                         .surface_propositions
                         .surfaces(fact)
                         .any(|candidate| candidate == surface)
                     {
                         execution
+                            .presentation
                             .surface_propositions
                             .record_lowering(surface, fact)?;
                     }
@@ -1364,7 +1399,7 @@ impl<'a> Proof<'a> {
             [arms[0].execution, arms[1].execution],
         )?;
         execution.core.state = (**then_state).clone().into();
-        execution.recorded_snapshots.insert(
+        execution.presentation.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
                 kind: ProgramPointKind::Exit,
@@ -1448,13 +1483,13 @@ impl<'a> Proof<'a> {
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
         migrate_arm_loop_proofs(&mut execution, &arms);
-        execution.branch_path.clear();
-        execution.case_assumptions.clear();
+        execution.presentation.branch_path.clear();
+        execution.presentation.case_assumptions.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
         };
         record_statement_program_snapshot_state(
-            &mut execution.recorded_snapshots,
+            &mut execution.presentation.recorded_snapshots,
             context.function_block,
             statement_index,
             ProgramPointKind::Exit,
@@ -1462,7 +1497,7 @@ impl<'a> Proof<'a> {
         );
         record_current_statement_entry(
             &execution.core.frontier,
-            &mut execution.recorded_snapshots,
+            &mut execution.presentation.recorded_snapshots,
             &execution.core.state,
             context.function_block,
             context.function,
@@ -1484,14 +1519,21 @@ impl<'a> Proof<'a> {
             {
                 facts = facts.with_fact(fact.clone());
                 common_added_facts.push(fact.clone());
-                for surface in arms[0].execution.surface_propositions.surfaces(fact) {
+                for surface in arms[0]
+                    .execution
+                    .presentation
+                    .surface_propositions
+                    .surfaces(fact)
+                {
                     if arms[1]
                         .execution
+                        .presentation
                         .surface_propositions
                         .surfaces(fact)
                         .any(|candidate| candidate == surface)
                     {
                         execution
+                            .presentation
                             .surface_propositions
                             .record_lowering(surface, fact)?;
                     }
@@ -1764,8 +1806,9 @@ impl<'a> Proof<'a> {
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_clauses = execution
+            .presentation
             .frontier_loop_clauses
-            .suffix_since(&delta_execution.frontier_loop_clauses)
+            .suffix_since(&delta_execution.presentation.frontier_loop_clauses)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_rules = execution
@@ -1829,7 +1872,8 @@ impl<'a> Proof<'a> {
         )?;
         let mut execution = view.execution.clone();
         self.install_parent_frontier_after_decided(&mut execution, record)?;
-        execution.branch_path = record.parent_execution.branch_path.clone();
+        execution.presentation.branch_path =
+            record.parent_execution.presentation.branch_path.clone();
         execution.core.has_empty_execution_branch_leaf = true;
         let parts = CheckedExecutionJoinParts {
             execution,
@@ -2609,13 +2653,17 @@ fn migrate_arm_loop_proofs(
             .zip(&arm.introduced_loop_rules)
         {
             if execution
+                .presentation
                 .frontier_loop_clauses
                 .iter()
                 .any(|existing: &StructuralClause| existing.region() == clause.region())
             {
                 continue;
             }
-            execution.frontier_loop_clauses.push(clause.clone());
+            execution
+                .presentation
+                .frontier_loop_clauses
+                .push(clause.clone());
             execution.core.frontier_loop_rules.push(rule.clone());
         }
     }

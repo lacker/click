@@ -19,10 +19,11 @@ The proof-specific persistent storage containers now live in
 authority. Typed execution frontiers and loop-effect obligations now live in
 `src/kernel/proof/execution.rs`. That module also owns `ExecutionProofCore`:
 the path's C state, checked execution facts and loop rules, semantic freshness,
-and loop/region flags. The language-layer `ExecutionProofState` is an explicit
-wrapper containing only snapshot selectors, source spellings, deferred Surface
-tactics, construction cursors, and provenance; it does not duplicate semantic
-execution state. Snapshot-blind and alpha-equivalence fact-index
+and loop/region flags. Kernel `ProofExecutionState` pairs that core with an
+opaque `ExecutionProofPresentation` containing only snapshot selectors, source
+spellings, deferred Surface tactics, construction cursors, and provenance; the
+presentation does not duplicate semantic execution state. Snapshot-blind and
+alpha-equivalence fact-index
 keys live in `src/kernel/proof/fact_keys.rs`, and surface-independent fact
 matching, transport, conflict, and equivalence rules live in
 `src/kernel/proof/fact_reasoning.rs`. Surface fact-selection policy,
@@ -38,9 +39,12 @@ outcome state, and checked frame authority live in
 strict frontier successors, obligation replacement, and conditional discharge
 are kernel state operations. The opaque kernel `ProofObject` handle now owns
 the shared semantic state and its focused branch cursor; the language `Proof`
-wrapper retains only checking context and Surface certificate lineage.
-Higher-level checked operations and finalization still need a kernel-owned
-API.
+wrapper retains only checking context and Surface certificate lineage. Kernel
+`ProofExecutionState` now pairs the semantic execution core with an opaque
+language presentation, allowing `ProofObject` alone to construct a typed
+function-exit finalization view. It also owns the completion witness required
+by terminal certificate extraction. Higher-level checked operations still
+need a kernel-owned API.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

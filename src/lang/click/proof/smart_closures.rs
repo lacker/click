@@ -634,7 +634,7 @@ impl<'a> Proof<'a> {
                         let execution = self.execution()?;
                         frontier_anchor = frontier_premise_anchor(execution);
                         (
-                            &execution.surface_propositions,
+                            &execution.presentation.surface_propositions,
                             false,
                             frontier_anchor.as_ref(),
                         )

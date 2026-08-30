@@ -3,8 +3,9 @@ use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
     FunctionOutcomeObligation, OutcomeProofCore, ProofBranch, ProofBranchState, ProofBranches,
-    ProofFacts, ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
-    ProofState as KernelProofState, PropositionObligation as KernelPropositionObligation, SplitId,
+    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofObject as KernelProofObject,
+    ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
+    PropositionObligation as KernelPropositionObligation, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -810,8 +811,7 @@ impl Default for ProofLocals {
 /// successors. Pure facts live in `ProofState::facts`; this contains only the
 /// frontier state, certificate-construction metadata, and persistent branch provenance.
 #[derive(Clone)]
-pub(in crate::lang::click::proof) struct ExecutionProofState {
-    pub(in crate::lang::click::proof) core: ExecutionProofCore,
+pub(in crate::lang::click::proof) struct ExecutionProofPresentation {
     /// The immutable states recorded under program points or proof marks,
     /// which `at(selector, ...)` premises resolve against.
     pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
@@ -864,15 +864,19 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     outcome_provenance: Arc<Vec<OutcomeProvenance>>,
 }
 
+pub(in crate::lang::click::proof) type ExecutionProofState =
+    KernelProofExecutionState<ExecutionProofPresentation>;
+
 impl ExecutionProofState {
     fn provenance_for_outcome(&self, path_index: usize) -> OutcomeProvenance {
-        self.outcome_provenance
+        self.presentation
+            .outcome_provenance
             .get(path_index)
             .cloned()
             .unwrap_or_else(|| OutcomeProvenance {
-                branch_decisions: self.branch_decisions.clone(),
-                surface_propositions: self.surface_propositions.clone(),
-                recorded_snapshots: self.recorded_snapshots.clone(),
+                branch_decisions: self.presentation.branch_decisions.clone(),
+                surface_propositions: self.presentation.surface_propositions.clone(),
+                recorded_snapshots: self.presentation.recorded_snapshots.clone(),
             })
     }
 
@@ -884,8 +888,8 @@ impl ExecutionProofState {
         ExecutionView::new(
             &self.core.frontier,
             &self.core.effect_facts,
-            &self.recorded_snapshots,
-            &self.surface_propositions,
+            &self.presentation.recorded_snapshots,
+            &self.presentation.surface_propositions,
             context.constants.function_entry_state.as_ref(),
         )
     }
@@ -899,22 +903,24 @@ impl ExecutionProofState {
         surface_propositions: SurfacePropositionMap,
         branch_path: PersistentSequence<String>,
     ) -> Self {
-        Self {
-            core: ExecutionProofCore::at_entry(state, frontier),
-            recorded_snapshots,
-            surface_propositions,
-            case_assumptions: PersistentSequence::default(),
-            frontier_loop_clauses: PersistentSequence::default(),
-            post_execution_tactics: PersistentSequence::default(),
-            surface_record: SurfaceRecord::default(),
-            invariant_closer_step: Default::default(),
-            planned_statement_transitions: Default::default(),
-            expansion: ExpansionCursor::default(),
-            branch_path,
-            branch_surface_facts: PersistentOrderedSet::default(),
-            branch_decisions: PersistentSequence::default(),
-            outcome_provenance: Arc::new(Vec::new()),
-        }
+        Self::new(
+            ExecutionProofCore::at_entry(state, frontier),
+            ExecutionProofPresentation {
+                recorded_snapshots,
+                surface_propositions,
+                case_assumptions: PersistentSequence::default(),
+                frontier_loop_clauses: PersistentSequence::default(),
+                post_execution_tactics: PersistentSequence::default(),
+                surface_record: SurfaceRecord::default(),
+                invariant_closer_step: Default::default(),
+                planned_statement_transitions: Default::default(),
+                expansion: ExpansionCursor::default(),
+                branch_path,
+                branch_surface_facts: PersistentOrderedSet::default(),
+                branch_decisions: PersistentSequence::default(),
+                outcome_provenance: Arc::new(Vec::new()),
+            },
+        )
     }
 }
 
@@ -932,7 +938,7 @@ struct ExecutionBranchDecision {
 /// finalization. This view carries no transition methods and owns no semantic
 /// state; the `Proof` remains alive as the sole authority while finalization
 /// checks its typed outcome goals.
-pub(super) struct ProofFinalizationView<'p> {
+pub(super) struct ProofExecutionView<'p> {
     pub(super) state: &'p CState,
     pub(super) facts: Vec<Proposition>,
     pub(super) frontier: &'p ExecutionFrontier,
@@ -943,7 +949,7 @@ pub(super) struct ProofFinalizationView<'p> {
     outcome_provenance: &'p [OutcomeProvenance],
 }
 
-impl ProofFinalizationView<'_> {
+impl ProofExecutionView<'_> {
     /// The proof-level case decisions recorded on one outcome path, in
     /// decision order: each is a surface condition and the arm taken.
     pub(super) fn path_case_decisions(&self, path_index: usize) -> Vec<(ClickProposition, bool)> {
@@ -1563,7 +1569,16 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn is_complete(&self) -> bool {
-        self.state().open_branches.is_discharged()
+        self.state.is_complete()
+    }
+
+    /// Extracts Surface provenance only after the kernel has witnessed that
+    /// every checked obligation is discharged.
+    pub(super) fn completed_certificate(&self) -> Result<ProofCertificate, ClickError> {
+        self.state
+            .completion()
+            .ok_or_else(|| self.step_error("cannot finalize a proof with open obligations"))?;
+        Ok(self.certificate())
     }
 
     pub(in crate::lang::click::proof) fn active_unfolded_predicates(&self) -> Vec<String> {
@@ -1752,7 +1767,8 @@ impl ExecutionProofState {
         source_index: usize,
         tactic: PostExecutionTactic,
     ) {
-        self.post_execution_tactics
+        self.presentation
+            .post_execution_tactics
             .push(DeferredPostExecutionTactic {
                 tactic_index,
                 source_index,
@@ -1769,7 +1785,8 @@ impl ExecutionProofState {
         source_index: usize,
         tactic: PostExecutionTactic,
     ) {
-        self.post_execution_tactics
+        self.presentation
+            .post_execution_tactics
             .push(DeferredPostExecutionTactic {
                 tactic_index,
                 source_index,

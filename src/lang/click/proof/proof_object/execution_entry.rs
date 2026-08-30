@@ -143,7 +143,7 @@ impl<'a> Proof<'a> {
             check: check.clone(),
             closed: false,
         });
-        execution.surface_record = SurfaceRecord::default();
+        execution.presentation.surface_record = SurfaceRecord::default();
         Ok(Proof {
             context: Arc::new(ProofContext::Execution(ExecutionProofContext {
                 claim_label,
@@ -267,28 +267,52 @@ impl<'a> Proof<'a> {
         ))
     }
 
-    /// Borrows the terminal execution data needed by claim finalization
-    /// without exporting it into a mutable check context.
+    /// Borrows a checked execution frontier without exporting mutable proof
+    /// state. Planning uses this at statement and region boundaries.
+    pub(in crate::lang::click::proof) fn execution_view(
+        &self,
+    ) -> Result<ProofExecutionView<'_>, ClickError> {
+        self.proof_execution_view(false)
+    }
+
+    /// Borrows the function-exit frontier accepted by claim finalization.
     pub(in crate::lang::click::proof) fn finalization_view(
         &self,
-    ) -> Result<ProofFinalizationView<'_>, ClickError> {
+    ) -> Result<ProofExecutionView<'_>, ClickError> {
+        self.proof_execution_view(true)
+    }
+
+    fn proof_execution_view(
+        &self,
+        require_function_exit: bool,
+    ) -> Result<ProofExecutionView<'_>, ClickError> {
         #[cfg(test)]
         FINALIZATION_VIEW_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("proof does not own an execution frontier"));
         };
-        let execution = self
-            .execution()
-            .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
-        Ok(ProofFinalizationView {
+        let checked = if require_function_exit {
+            self.state.finalization()
+        } else {
+            self.state.execution_view()
+        }
+        .ok_or_else(|| {
+            self.step_error(if require_function_exit {
+                "execution proof lost its terminal state"
+            } else {
+                "execution proof lost its checked frontier"
+            })
+        })?;
+        let execution = checked.execution();
+        Ok(ProofExecutionView {
             state: &execution.core.state,
-            facts: self.facts().to_vec(),
+            facts: checked.facts().to_vec(),
             frontier: &execution.core.frontier,
             execution,
             context,
             unfolded_predicates: &execution.core.unfolded_predicates,
-            branch_path: &execution.branch_path,
-            outcome_provenance: execution.outcome_provenance.as_ref(),
+            branch_path: &execution.presentation.branch_path,
+            outcome_provenance: execution.presentation.outcome_provenance.as_ref(),
         })
     }
 
@@ -333,28 +357,30 @@ impl<'a> Proof<'a> {
             if begin_tactic_expansion_capture(
                 expansion_capture,
                 nested_source_index,
-                &execution.expansion,
+                &execution.presentation.expansion,
                 context.constants.proof_site.as_ref(),
             ) {
-                execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
-                    tactic_index: nested_tactic_index,
-                    source_index: nested_source_index,
-                    post_execution_index: DeferredTacticCapture::NESTED,
-                    branch_skeleton: branch_skeleton(),
-                });
+                execution.presentation.expansion.deferred_tactic_capture =
+                    Some(DeferredTacticCapture {
+                        tactic_index: nested_tactic_index,
+                        source_index: nested_source_index,
+                        post_execution_index: DeferredTacticCapture::NESTED,
+                        branch_skeleton: branch_skeleton(),
+                    });
             }
         } else if begin_tactic_expansion_capture(
             expansion_capture,
             source_index,
-            &execution.expansion,
+            &execution.presentation.expansion,
             context.constants.proof_site.as_ref(),
         ) {
-            execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
-                tactic_index,
-                source_index,
-                post_execution_index: execution.post_execution_tactics.len(),
-                branch_skeleton: branch_skeleton(),
-            });
+            execution.presentation.expansion.deferred_tactic_capture =
+                Some(DeferredTacticCapture {
+                    tactic_index,
+                    source_index,
+                    post_execution_index: execution.presentation.post_execution_tactics.len(),
+                    branch_skeleton: branch_skeleton(),
+                });
         }
         execution.defer_post_execution(tactic_index, source_index, tactic);
         let mut state = (*self.state()).clone();

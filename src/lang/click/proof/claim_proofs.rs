@@ -1045,7 +1045,11 @@ pub(super) fn finish_ordered_proof<'a>(
     let direct_view = proof.finalization_view()?;
     let mut authoritative_outcome_haves = exact_empty_frame_outcome_segment(certificate_tactics).1;
     collect_post_execution_if_have_indices(
-        direct_view.execution.post_execution_tactics.iter(),
+        direct_view
+            .execution
+            .presentation
+            .post_execution_tactics
+            .iter(),
         &mut authoritative_outcome_haves,
     );
     let pure_facts = direct_view.facts.clone();
@@ -1060,7 +1064,7 @@ pub(super) fn finish_ordered_proof<'a>(
         direct_view.branch_path,
     );
     let retained_surface = {
-        let record = &proof_execution.surface_record;
+        let record = &proof_execution.presentation.surface_record;
         let mut retained = ProofCertificateBuilder {
             last_step_entry: record.last_step_entry.clone(),
             path_choices: record.path_choices.clone(),
@@ -1071,9 +1075,14 @@ pub(super) fn finish_ordered_proof<'a>(
         retained
     };
     let pre_state = frontier.execution_start_state(state);
-    let frontier_function_block = (!proof_execution.frontier_loop_clauses.is_empty()).then(|| {
-        function_block
-            .with_bound_frontier_loop_clauses(&proof_execution.frontier_loop_clauses.to_vec())
+    let frontier_function_block = (!proof_execution
+        .presentation
+        .frontier_loop_clauses
+        .is_empty())
+    .then(|| {
+        function_block.with_bound_frontier_loop_clauses(
+            &proof_execution.presentation.frontier_loop_clauses.to_vec(),
+        )
     });
     let frontier_function = frontier_function_block
         .as_ref()
@@ -1125,6 +1134,7 @@ pub(super) fn finish_ordered_proof<'a>(
         );
         certification_facts.extend(
             proof_execution
+                .presentation
                 .case_assumptions
                 .iter()
                 .filter(|case| case.at_function_entry)
@@ -1167,7 +1177,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             pre_state,
                             pre_state,
                             None,
-                            &proof_execution.recorded_snapshots,
+                            &proof_execution.presentation.recorded_snapshots,
                             predicate_environment,
                             click_function_environment,
                         )
@@ -1357,7 +1367,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 // path, or a recursive return known to equal zero can be paired
                 // with the unrelated base-case path merely because their final
                 // observable values coincide.
-                if !proof_execution.case_assumptions.is_empty() {
+                if !proof_execution.presentation.case_assumptions.is_empty() {
                     let CFunctionOutcome::Return {
                         value: result,
                         state: post_state,
@@ -1372,7 +1382,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             .iter()
                             .map(|fact| fact.proposition().clone()),
                     );
-                    for case in &proof_execution.case_assumptions {
+                    for case in &proof_execution.presentation.case_assumptions {
                         let case_fact = if let Some(fact) = &case.fact {
                             fact.clone()
                         } else {
@@ -1386,7 +1396,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &case.condition,
                                 predicate_environment,
                                 click_function_environment,
-                                &proof_execution.recorded_snapshots,
+                                &proof_execution.presentation.recorded_snapshots,
                             ) else {
                                 return false;
                             };
@@ -1458,7 +1468,7 @@ pub(super) fn finish_ordered_proof<'a>(
             // exit drain below skips it by the same case reasoning.
             let path_excluded_by_proof_branch =
             |proof_candidate: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
-                if proof_execution.case_assumptions.is_empty() {
+                if proof_execution.presentation.case_assumptions.is_empty() {
                     return Ok(false);
                 }
                 let CFunctionOutcome::Return {
@@ -1475,7 +1485,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         .iter()
                         .map(|fact| fact.proposition().clone()),
                 );
-                for case in &proof_execution.case_assumptions {
+                for case in &proof_execution.presentation.case_assumptions {
                     let fact = if let Some(fact) = &case.fact {
                         fact.clone()
                     } else {
@@ -1489,7 +1499,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &proof_execution.recorded_snapshots,
+                            &proof_execution.presentation.recorded_snapshots,
                         ) else {
                             return Ok(false);
                         };
@@ -1659,7 +1669,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         &proof_label,
                         "proof case path routing",
                     );
-                    if !proof_execution.case_assumptions.is_empty() {
+                    if !proof_execution.presentation.case_assumptions.is_empty() {
                         let CFunctionOutcome::Return {
                             value: result,
                             state: post_state,
@@ -1671,7 +1681,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         };
                         let mut routed_assumptions =
                             assumptions_from_propositions(&path_requirements);
-                        for case in &proof_execution.case_assumptions {
+                        for case in &proof_execution.presentation.case_assumptions {
                             let case_lowering_timing = crate::instrumentation::OperationTiming::new(
                                 function_block.signature().name(),
                                 &proof_label,
@@ -1690,7 +1700,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             &case.condition,
                             predicate_environment,
                             click_function_environment,
-                            &proof_execution.recorded_snapshots,
+                            &proof_execution.presentation.recorded_snapshots,
                         )
                         .map_err(|message| {
                             ClickError::new(format!(
@@ -1755,8 +1765,11 @@ pub(super) fn finish_ordered_proof<'a>(
                     // `None` marks a path-independent capture: an abstracted post-join
                     // path cannot decide the pre-join surface branches, and the tactic
                     // it carries belongs on every leaf.
-                    let deferred_capture_branch_path = if let Some(deferred) =
-                        proof_execution.expansion.deferred_tactic_capture.as_ref()
+                    let deferred_capture_branch_path = if let Some(deferred) = proof_execution
+                        .presentation
+                        .expansion
+                        .deferred_tactic_capture
+                        .as_ref()
                     {
                         match &outcome {
                             CFunctionOutcome::Return {
@@ -1773,7 +1786,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         result,
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         predicate_environment,
                                         click_function_environment,
                                     )
@@ -1848,7 +1861,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 vec![None::<Proposition>; claims.len()],
                                 vec![None::<Proposition>; claims.len()],
                                 path_requirements.clone(),
-                                proof_execution.surface_propositions.clone(),
+                                proof_execution.presentation.surface_propositions.clone(),
                             )
                         },
                     );
@@ -1902,11 +1915,12 @@ pub(super) fn finish_ordered_proof<'a>(
                     if let Some(branch_proof) = outcome_proof.as_ref() {
                         select_checked_post_execution_tactics(
                             branch_proof,
-                            proof_execution.post_execution_tactics.iter(),
+                            proof_execution.presentation.post_execution_tactics.iter(),
                             &mut selected_post_execution_tactics,
                         )?;
                     } else {
                         if proof_execution
+                            .presentation
                             .post_execution_tactics
                             .iter()
                             .any(|deferred| {
@@ -1918,7 +1932,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             )));
                         }
                         selected_post_execution_tactics
-                            .extend(proof_execution.post_execution_tactics.iter());
+                            .extend(proof_execution.presentation.post_execution_tactics.iter());
                     }
                     for (post_execution_index, deferred) in
                         selected_post_execution_tactics.into_iter().enumerate()
@@ -1982,7 +1996,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic,
@@ -2082,7 +2100,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2138,7 +2160,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2191,7 +2217,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::ApplyTheoremUsing {
@@ -2345,7 +2375,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     surface_have,
@@ -2464,7 +2498,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2497,7 +2535,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::Choose(choice.clone()),
@@ -2529,7 +2571,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::Witness(witness.clone()),
@@ -2558,7 +2604,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2625,7 +2671,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.recorded_snapshots,
+                                            &proof_execution.presentation.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2666,7 +2712,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2696,7 +2746,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2743,7 +2793,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.recorded_snapshots,
+                                            &proof_execution.presentation.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2782,7 +2832,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic.clone(),
@@ -2815,7 +2869,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         pre_state,
                                         post_state,
                                         Some(result),
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         &outcome_surface_propositions,
                                         predicate_environment,
                                         click_function_environment,
@@ -2849,7 +2903,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &outcome,
                                             predicate_environment,
                                             click_function_environment,
-                                            &proof_execution.recorded_snapshots,
+                                            &proof_execution.presentation.recorded_snapshots,
                                             &unfolded_predicates,
                                         )
                                         .map_err(|message| {
@@ -2898,7 +2952,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic,
@@ -2916,7 +2974,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     &outcome,
                                     predicate_environment,
                                     click_function_environment,
-                                    &proof_execution.recorded_snapshots,
+                                    &proof_execution.presentation.recorded_snapshots,
                                     &unfolded_predicates,
                                 ) {
                                     frame_certified_claim_goals[claim_index] = Some(goal.clone());
@@ -2995,7 +3053,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                     deferred.surface_recorded,
                                     &mut path_surface_post_tactics,
                                     &mut path_deferred_capture_tactics,
-                                    proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
                                     post_execution_index,
                                     *tactic_index,
                                     ProofTactic::FrameUsing {
@@ -3045,7 +3107,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         tactic,
@@ -3114,6 +3180,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             &mut path_surface_post_tactics,
                                             &mut path_deferred_capture_tactics,
                                             proof_execution
+                                                .presentation
                                                 .expansion
                                                 .deferred_tactic_capture
                                                 .as_ref(),
@@ -3127,7 +3194,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                         deferred.surface_recorded,
                                         &mut path_surface_post_tactics,
                                         &mut path_deferred_capture_tactics,
-                                        proof_execution.expansion.deferred_tactic_capture.as_ref(),
+                                        proof_execution
+                                            .presentation
+                                            .expansion
+                                            .deferred_tactic_capture
+                                            .as_ref(),
                                         post_execution_index,
                                         *tactic_index,
                                         ProofTactic::FrameUsing {
@@ -3142,6 +3213,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             ),
                             PostExecutionTactic::Simp => {
                                 let capturing_this_tactic = proof_execution
+                                    .presentation
                                     .expansion
                                     .deferred_tactic_capture
                                     .as_ref()
@@ -3389,9 +3461,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 pre_state,
                                                 post_state,
                                                 Some(result),
-                                                proof_execution.surface_record.last_step_entry
+                                                proof_execution.presentation.surface_record.last_step_entry
                                                     .as_ref(),
-                                                &proof_execution.recorded_snapshots,
+                                                &proof_execution.presentation.recorded_snapshots,
                                                 &outcome_surface_propositions,
                                                 predicate_environment,
                                                 click_function_environment,
@@ -3517,7 +3589,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     &outcome,
                                                     predicate_environment,
                                                     click_function_environment,
-                                                    &proof_execution.recorded_snapshots,
+                                                    &proof_execution.presentation.recorded_snapshots,
                                                     &unfolded_predicates,
                                                 ) {
                                                     return Err(error);
@@ -3691,7 +3763,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         &unfolded_predicates,
                                     ) {
                                         return Err(error);
@@ -3804,7 +3876,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 &outcome,
                                 predicate_environment,
                                 click_function_environment,
-                                &proof_execution.recorded_snapshots,
+                                &proof_execution.presentation.recorded_snapshots,
                                 &unfolded_predicates,
                             );
                             match result {
@@ -3914,7 +3986,10 @@ pub(super) fn finish_ordered_proof<'a>(
                             specification: specification.clone(),
                             theorem: theorem.clone(),
                             concrete_loop_execution: proof_execution.core.concrete_loop_execution,
-                            frontier_loop_clauses: proof_execution.frontier_loop_clauses.to_vec(),
+                            frontier_loop_clauses: proof_execution
+                                .presentation
+                                .frontier_loop_clauses
+                                .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
                             checked_execution: certified_executions[certified_path_index.0].clone(),
                         });
@@ -3954,7 +4029,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &proof_execution.recorded_snapshots,
+                                        &proof_execution.presentation.recorded_snapshots,
                                         &unfolded_predicates,
                                     )
                                     .is_ok()
@@ -4052,7 +4127,12 @@ pub(super) fn finish_ordered_proof<'a>(
             }
         }
         if tactic_expansion_capture_is_active(expansion_capture.as_deref()) {
-            let Some(deferred) = proof_execution.expansion.deferred_tactic_capture.as_ref() else {
+            let Some(deferred) = proof_execution
+                .presentation
+                .expansion
+                .deferred_tactic_capture
+                .as_ref()
+            else {
                 // Structured proofs produce one check context per logical
                 // case.  A selected deferred tactic activates the expansion
                 // capture while those contexts are being built, but contexts

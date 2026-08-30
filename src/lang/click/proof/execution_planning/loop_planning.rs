@@ -401,7 +401,7 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
             )));
         }
         steps += 1;
-        let view = proof.finalization_view()?;
+        let view = proof.execution_view()?;
         let is_branch = view
             .context
             .constants
@@ -432,13 +432,14 @@ pub(in crate::lang::click::proof) fn plan_automatic_loop_preservation_body(
     }
     let mut paths = Vec::new();
     for leaf in completed {
-        let context_execution = leaf.finalization_view()?.execution.clone();
-        if let Some(blocker) = &context_execution.surface_record.blocker {
+        let context_execution = leaf.execution_view()?.execution.clone();
+        if let Some(blocker) = &context_execution.presentation.surface_record.blocker {
             return Err(ClickError::new(format!(
                 "`{claim_label}` automatic preservation could not lower a body step: {blocker}"
             )));
         }
         let case_path = context_execution
+            .presentation
             .case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
@@ -1170,7 +1171,7 @@ fn verify_structural_effect_proof(
             "`{claim_label}` structural-effect proof did not close its checked Proof goal"
         )));
     }
-    Ok(checked.certificate())
+    checked.completed_certificate()
 }
 
 pub(in crate::lang::click::proof) struct LoopPreservationProofResult {
@@ -1368,9 +1369,10 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
     for leaf in leaves {
-        let context_execution = leaf.finalization_view()?.execution.clone();
-        let context_frontier = leaf.finalization_view()?.frontier.clone();
+        let context_execution = leaf.execution_view()?.execution.clone();
+        let context_frontier = leaf.execution_view()?.frontier.clone();
         let case_path = context_execution
+            .presentation
             .case_assumptions
             .iter()
             .map(|choice| ProofCaseChoice {
@@ -1380,16 +1382,11 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             .collect::<Vec<_>>();
         let source_tactics = leaf.path_certificate().to_proof_tactics();
         let region_simp = context_execution.core.region_simp;
-        let proof_site = leaf
-            .finalization_view()?
-            .context
-            .constants
-            .proof_site
-            .clone();
+        let proof_site = leaf.execution_view()?.context.constants.proof_site.clone();
         let invariants_already_closed = context_execution.core.region_invariants_closed;
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
-            if let Some(step) = context_execution.invariant_closer_step {
+            if let Some(step) = context_execution.presentation.invariant_closer_step {
                 (
                     step.tactic_index,
                     step.source_index,

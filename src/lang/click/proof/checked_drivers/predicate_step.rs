@@ -102,7 +102,11 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             let ClickProposition::PredicateCall {
                 name: surface_name,
                 arguments: surface_arguments,
-            } = execution.surface_propositions.surface(kernel).ok()?
+            } = execution
+                .presentation
+                .surface_propositions
+                .surface(kernel)
+                .ok()?
             else {
                 return None;
             };
@@ -122,6 +126,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
         .collect::<Vec<_>>();
     for (predicate, surface, kernel) in surface_unfoldings {
         execution
+            .presentation
             .surface_propositions
             .record_lowering(&surface, &kernel)?;
         let contract_unfolding = execution

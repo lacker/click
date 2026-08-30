@@ -44,7 +44,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     // recording its entry snapshot. Later facts may still name this boundary.
     record_current_statement_entry(
         &execution.core.frontier,
-        &mut execution.recorded_snapshots,
+        &mut execution.presentation.recorded_snapshots,
         state,
         function_block,
         function,
@@ -57,7 +57,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         .old_reference_state(&execution.core.frontier, state)
         .clone();
     let mut step_facts = Vec::new();
-    for case in &execution.case_assumptions {
+    for case in &execution.presentation.case_assumptions {
         let branch_fact = if let Some(fact) = &case.fact {
             fact.clone()
         } else {
@@ -69,7 +69,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
                 &pre_state,
                 state,
                 None,
-                &execution.recorded_snapshots,
+                &execution.presentation.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
             )

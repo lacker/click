@@ -34,8 +34,10 @@ Kernel files:
   `storage.rs` owns the shared persistent containers used by proof forks; and
   `execution.rs` owns `ExecutionProofCore`: the C state, typed execution
   frontier, checked execution facts and loop rules, semantic freshness, and
-  loop-effect and region state for one proof path. It contains no Surface
-  syntax, deferred tactic, expansion cursor, or diagnostic state.
+  loop-effect and region state for one proof path. `ProofExecutionState`
+  pairs that core with an opaque language presentation record, so the kernel
+  can validate terminal frontiers without depending on Surface syntax,
+  deferred tactics, expansion cursors, or diagnostic state.
   `obligations.rs` owns the branch-obligation enum, effect selections,
   frontier/proposition/outcome obligations, result-aware outcome state, and
   checked frame authority. Surface presentation is an opaque attachment.
@@ -46,7 +48,8 @@ Kernel files:
   Language attachments are opaque parameters and are never interpreted as
   evidence by these modules. Goal-preserving fact/execution successors,
   strict frontier successors, obligation replacement, and conditional
-  discharge are kernel state operations.
+  discharge are kernel state operations. Completion witnesses and terminal
+  execution-finalization views can be constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
   conflict, and availability rules used by the persistent fact store.

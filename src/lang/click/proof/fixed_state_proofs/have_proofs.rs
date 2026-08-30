@@ -1978,7 +1978,7 @@ pub(in crate::lang::click::proof) fn finish_ordered_proof_units<'a>(
         context_count += 1;
         let view = proof.finalization_view()?;
         let (cursor, proof_site) = (
-            &view.execution.expansion,
+            &view.execution.presentation.expansion,
             view.context.constants.proof_site.as_ref(),
         );
         let path_choices = cursor.deferred_expansion_path_choices.to_vec();

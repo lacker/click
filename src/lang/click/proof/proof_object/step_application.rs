@@ -284,9 +284,10 @@ impl<'a> Proof<'a> {
                 fact
             } else {
                 execution
+                    .presentation
                     .recorded_snapshots
                     .keys()
-                    .filter_map(|selector| execution.recorded_snapshots.get(selector))
+                    .filter_map(|selector| execution.presentation.recorded_snapshots.get(selector))
                     .filter_map(|snapshot_state| {
                         lower_fixed_state_proposition_with_assumptions(
                             surface,
@@ -296,7 +297,7 @@ impl<'a> Proof<'a> {
                             pre_state,
                             snapshot_state,
                             None,
-                            &execution.recorded_snapshots,
+                            &execution.presentation.recorded_snapshots,
                             context.predicate_environment,
                             context.click_function_environment,
                         )
@@ -400,6 +401,7 @@ impl<'a> Proof<'a> {
         let mut frame_facts = Vec::with_capacity(premises.len());
         for surface in premises {
             let fact = execution
+                .presentation
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
@@ -419,6 +421,7 @@ impl<'a> Proof<'a> {
                 )));
             }
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(surface, &fact)?;
             if !frame_facts.contains(&fact) {
@@ -489,11 +492,12 @@ impl<'a> Proof<'a> {
             // Loop effect clauses are declared by frontier-local `loop`
             // tactics. Bind the exact clauses already checked on this check
             // before resolving labels or validating the qualified frame.
-            let frame_function_block = (!execution.frontier_loop_clauses.is_empty()).then(|| {
-                context
-                    .function_block
-                    .with_bound_frontier_loop_clauses(&execution.frontier_loop_clauses.to_vec())
-            });
+            let frame_function_block = (!execution.presentation.frontier_loop_clauses.is_empty())
+                .then(|| {
+                    context.function_block.with_bound_frontier_loop_clauses(
+                        &execution.presentation.frontier_loop_clauses.to_vec(),
+                    )
+                });
             let frame_function_block = frame_function_block
                 .as_ref()
                 .unwrap_or(context.function_block);
@@ -900,6 +904,7 @@ impl<'a> Proof<'a> {
         let mut value_keys = Vec::new();
         for name in &dependency_names {
             for kernel in execution
+                .presentation
                 .surface_propositions
                 .current_c_variable_kernel_facts(name)
             {
@@ -1006,6 +1011,7 @@ impl<'a> Proof<'a> {
         let execution = self.execution()?;
         let matches = |surface: &ClickProposition| {
             let lowered = execution
+                .presentation
                 .surface_propositions
                 .available_kernel_matching(surface, |candidate| {
                     self.facts()
@@ -1021,6 +1027,7 @@ impl<'a> Proof<'a> {
             })
         };
         if let Some(surface) = execution
+            .presentation
             .surface_propositions
             .surfaces(kernel)
             .find(|surface| matches(surface))
@@ -1046,7 +1053,7 @@ impl<'a> Proof<'a> {
             kernel,
             context.parsed_function.parameters(),
             context.arguments,
-            &execution.recorded_snapshots,
+            &execution.presentation.recorded_snapshots,
             &anchor,
         );
         candidates.into_iter().find(|surface| matches(surface))

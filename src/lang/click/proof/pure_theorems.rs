@@ -678,8 +678,7 @@ fn check_direct_pure_goal_with_proof(
     let Some(proof) = root.try_simp_closure()? else {
         return Ok(None);
     };
-    debug_assert!(proof.is_complete());
-    Ok(Some(proof.certificate()))
+    Ok(Some(proof.completed_certificate()?))
 }
 
 fn verify_kernel_standard_theorem_axiom(

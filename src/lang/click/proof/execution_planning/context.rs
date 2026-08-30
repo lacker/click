@@ -417,7 +417,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
     arguments: &[CExpression],
     mut construction: Option<Construction<'_>>,
 ) -> Vec<ConstructionEvidence> {
-    let planned_transition = execution.planned_statement_transitions.len();
+    let planned_transition = execution.presentation.planned_statement_transitions.len();
     let statement_operation = match loop_step_policy {
         LoopStepPolicy::EnterBody => ConstructionEvidence::CertifiedStatementStep {
             planned_transition: Some(planned_transition),
@@ -440,7 +440,11 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
                 }
             }
             for fact in &transition.path_facts {
-                if execution.surface_record.certificate_facts.contains(fact)
+                if execution
+                    .presentation
+                    .surface_record
+                    .certificate_facts
+                    .contains(fact)
                     && !exact_premises.contains(fact)
                 {
                     exact_premises.push(fact.clone());
@@ -454,6 +458,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         }
     };
     execution
+        .presentation
         .planned_statement_transitions
         .push(PlannedStatementTransition {
             transition: transition.clone(),
@@ -477,7 +482,7 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         // step, adds the transition's path facts, and rewrites
         // statement-local transports; automatic planning transports stay out
         // of the certificate-visible set.
-        let certificate_facts = &mut execution.surface_record.certificate_facts;
+        let certificate_facts = &mut execution.presentation.surface_record.certificate_facts;
         for fact in &transition.path_facts {
             certificate_facts.insert(fact.clone());
         }
@@ -584,7 +589,7 @@ pub(in crate::lang::click::proof) fn append_condition_transition_certificate(
     // A condition step introduces evaluation guards and path facts without
     // touching memory; extend the certificate-visible set with exactly what this
     // transition adds over the planning context.
-    let certificate_facts = &mut execution.surface_record.certificate_facts;
+    let certificate_facts = &mut execution.presentation.surface_record.certificate_facts;
     for fact in &transition.pure_facts {
         if !available.contains(fact) {
             certificate_facts.insert(fact.clone());

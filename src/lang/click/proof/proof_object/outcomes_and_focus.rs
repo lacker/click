@@ -458,11 +458,13 @@ pub(in crate::lang::click::proof) fn frontier_premise_anchor(
     execution: &ExecutionProofState,
 ) -> Option<ProgramPointRef> {
     let anchor = execution
+        .presentation
         .surface_record
         .last_step_entry
         .clone()
         .or_else(|| {
             execution
+                .presentation
                 .recorded_snapshots
                 .keys()
                 .rev()
@@ -480,6 +482,7 @@ pub(in crate::lang::click::proof) fn frontier_premise_anchor(
     };
     Some(
         execution
+            .presentation
             .recorded_snapshots
             .contains_key(&entry)
             .then_some(entry)

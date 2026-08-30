@@ -34,7 +34,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             .iter()
             .map(|fact| fact.proposition().clone()),
     );
-    for fact in execution.surface_propositions.kernel_facts() {
+    for fact in execution.presentation.surface_propositions.kernel_facts() {
         if !have_facts.contains(fact) {
             have_facts.push(fact.clone());
         }
@@ -54,11 +54,11 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         ExecutionView::new(
             &execution.core.frontier,
             &execution.core.effect_facts,
-            &execution.recorded_snapshots,
-            &execution.surface_propositions,
+            &execution.presentation.recorded_snapshots,
+            &execution.presentation.surface_propositions,
             proof_context.constants.function_entry_state.as_ref(),
         ),
-        &execution.surface_propositions,
+        &execution.presentation.surface_propositions,
         predicate_environment,
         click_function_environment,
         function_block.requires(),
@@ -76,8 +76,8 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             ExecutionView::new(
                 &execution.core.frontier,
                 &execution.core.effect_facts,
-                &execution.recorded_snapshots,
-                &execution.surface_propositions,
+                &execution.presentation.recorded_snapshots,
+                &execution.presentation.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
             ),
             &state,
@@ -111,11 +111,11 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         ExecutionView::new(
         &execution.core.frontier,
         &execution.core.effect_facts,
-        &execution.recorded_snapshots,
-        &execution.surface_propositions,
+        &execution.presentation.recorded_snapshots,
+        &execution.presentation.surface_propositions,
         proof_context.constants.function_entry_state.as_ref(),
     ),
-                        &execution.surface_propositions,
+                        &execution.presentation.surface_propositions,
                         predicate_environment,
                         click_function_environment,
                         function_block.requires(),
@@ -142,8 +142,8 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 arguments,
                 proof_context.old_reference_state(&execution.core.frontier, state),
                 &state,
-                &execution.recorded_snapshots,
-                &execution.surface_propositions,
+                &execution.presentation.recorded_snapshots,
+                &execution.presentation.surface_propositions,
                 predicate_environment,
                 click_function_environment,
                 function_block.requires(),
@@ -173,7 +173,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 arguments,
                 proof_context.old_reference_state(&execution.core.frontier, state),
                 &state,
-                &execution.recorded_snapshots,
+                &execution.presentation.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
                 &have_facts,
@@ -195,6 +195,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     // it earlier could make a nontrivial snapshot equality appear
     // reflexive and circularly validate `normalize()`.
     execution
+        .presentation
         .surface_propositions
         .record_lowering(&have.proposition, &fact)?;
     if execution
@@ -257,6 +258,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         )));
     };
     if execution
+        .presentation
         .frontier_loop_clauses
         .iter()
         .any(|clause| clause.region() == &CodeRegion::Loop(loop_index))
@@ -265,8 +267,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             "`{claim_label}` tactic {tactic_index}: loop({loop_index}) already has a frontier-local proof on this execution path"
         )));
     }
-    let function_with_prior_loops =
-        function_block.with_bound_frontier_loop_clauses(&execution.frontier_loop_clauses.to_vec());
+    let function_with_prior_loops = function_block
+        .with_bound_frontier_loop_clauses(&execution.presentation.frontier_loop_clauses.to_vec());
     let bound_function_block =
         function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
@@ -323,12 +325,13 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         theorem_environment,
         function: &annotated,
         arguments,
-        surface_propositions: &execution.surface_propositions,
+        surface_propositions: &execution.presentation.surface_propositions,
         source_layout: &source_layout,
         frontier_loop_certificates: Some(&loop_certificates),
         frontier_loop_source: Some(&loop_source),
     };
     let case_path = execution
+        .presentation
         .case_assumptions
         .iter()
         .map(|choice| ProofCaseChoice {
@@ -363,8 +366,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         vec![PlanningExecutionContext {
             state: state.clone(),
             pure_facts: loop_pure_facts,
-            surface_propositions: execution.surface_propositions.clone(),
-            recorded_snapshots: execution.recorded_snapshots.clone(),
+            surface_propositions: execution.presentation.surface_propositions.clone(),
+            recorded_snapshots: execution.presentation.recorded_snapshots.clone(),
             case_path,
             next_opaque_call: execution.core.next_opaque_call,
             next_kernel_variable: execution.core.next_kernel_variable,
@@ -472,7 +475,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             &initial_state,
             state,
             None,
-            &execution.recorded_snapshots,
+            &execution.presentation.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         )
@@ -484,11 +487,13 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         if available_pure_facts.contains(&lowered_exit_condition) {
             let exit_surface = surface_at_snapshot(&exit_condition, &exit_point)?;
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&exit_surface, &lowered_exit_condition)?;
         }
     }
     execution
+        .presentation
         .frontier_loop_clauses
         .push(loop_template.bound_to_loop(loop_index));
     execution.core.frontier_loop_rules.push(loop_rule);
@@ -612,7 +617,7 @@ pub(in crate::lang::click::proof) fn checked_have_with_proof(
             "`{claim_label}` have proof {tactic_index}: checked proof retained an open goal"
         )));
     }
-    let body = proof.certificate();
+    let body = proof.completed_certificate()?;
     let certificate = ProofCertificate::from_steps(vec![ProofStep::Have {
         proposition: have.proposition.clone(),
         proof: Box::new(body),

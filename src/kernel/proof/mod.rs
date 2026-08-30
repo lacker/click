@@ -17,7 +17,7 @@ mod storage;
 pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
 pub(crate) use execution::{
     ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
-    ProofExecutionContinuation, old_reference_state,
+    ProofExecutionContinuation, ProofExecutionState, old_reference_state,
 };
 pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,

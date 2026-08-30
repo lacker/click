@@ -39,6 +39,9 @@ live in `src/kernel/proof/obligations.rs`; proposition and outcome presentation
 are opaque parameters. Goal-preserving fact or execution updates, strict
 frontier updates, obligation replacement, and conditional discharge are
 implemented on the kernel branch store rather than in the Click proof driver.
+The kernel handle is also the sole constructor of completion witnesses and of
+the typed finalization view proving that the focused obligation is an
+execution frontier at function exit.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
@@ -79,13 +82,14 @@ and continuations), checked execution facts and loop rules, function-entry
 prerequisites and derivations, freshness counters, loop-effect goal, region
 flags, structured-branch flags, and unfolded kernel predicates.
 
-Language-layer `ExecutionProofState` wraps that core with only Surface Click
-construction data: recorded snapshots and their selectors, source spellings,
+Kernel `ProofExecutionState` pairs that core with an opaque language
+`ExecutionProofPresentation` containing only Surface Click construction data:
+recorded snapshots and their selectors, source spellings,
 case assumptions, frontier loop clauses, planned statement transitions,
 branch and outcome provenance, deferred post-execution tactics, and the
 `SurfaceRecord` used for certificate extraction. Its `ExpansionCursor` records
 where a source tactic's expansion is being captured and holds no semantic
-state. Core access is explicit as `execution.core`; the wrapper does not
+state. Core access is explicit as `execution.core`; the presentation does not
 duplicate the C state, frontier, resources, checked facts, or semantic flags.
 The checked
 drivers no longer mirror surface steps into that builder: a tactic's expansion
@@ -110,7 +114,7 @@ small roots and changed map paths rather than materializing the whole state.
 Lowering and fixed-state proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded snapshots, surface
 spellings, execution facts, and the `old(...)` reference state. It is built from
-the wrapper and its kernel core (`ExecutionProofState::view`, or
+the presentation and its kernel core (`ExecutionProofState::view`, or
 `ExecutionView::new` for a
 planner's scratch state); nothing in it borrows a cursor.
 

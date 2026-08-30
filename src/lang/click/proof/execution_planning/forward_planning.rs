@@ -572,7 +572,7 @@ pub(in crate::lang::click::proof) fn plan_fixed_state_pure_goal_certificate(
                     "`{claim_label}` proof {proof_index}: checked fixed-state proof retained an open goal"
                 )));
             }
-            let certificate = checked.certificate();
+            let certificate = checked.completed_certificate()?;
             if let Some(source_index) =
                 selected_tactic_index_for_site(expansion_capture.as_deref(), proof_site)
             {

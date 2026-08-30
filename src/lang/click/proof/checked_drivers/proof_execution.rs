@@ -1292,8 +1292,8 @@ fn defer_post_exit_outcome_tactic<'a>(
             return Err(smart_frame_miss_error(&proof));
         };
         let certificate = framed.certificate_since(&checkpoint)?;
-        let (_, deferred) =
-            framed.edit_execution(|execution, _| execution.post_execution_tactics.pop())?;
+        let (_, deferred) = framed
+            .edit_execution(|execution, _| execution.presentation.post_execution_tactics.pop())?;
         let Some(mut deferred) = deferred else {
             return decline();
         };
@@ -1317,17 +1317,18 @@ fn defer_post_exit_outcome_tactic<'a>(
             if begin_tactic_expansion_capture(
                 capture.take(),
                 source_index,
-                &execution.expansion,
+                &execution.presentation.expansion,
                 proof_site.as_ref(),
             ) {
-                execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
-                    tactic_index,
-                    source_index,
-                    post_execution_index: execution.post_execution_tactics.len(),
-                    branch_skeleton,
-                });
+                execution.presentation.expansion.deferred_tactic_capture =
+                    Some(DeferredTacticCapture {
+                        tactic_index,
+                        source_index,
+                        post_execution_index: execution.presentation.post_execution_tactics.len(),
+                        branch_skeleton,
+                    });
             }
-            execution.post_execution_tactics.push(deferred);
+            execution.presentation.post_execution_tactics.push(deferred);
         })?;
         return Ok(Some(framed));
     }
@@ -1674,8 +1675,9 @@ fn advance_focused_execution_arm<'a>(
                     return Err(smart_frame_miss_error(&proof));
                 };
                 let certificate = framed.certificate_since(&checkpoint)?;
-                let (_, deferred) =
-                    framed.edit_execution(|execution, _| execution.post_execution_tactics.pop())?;
+                let (_, deferred) = framed.edit_execution(|execution, _| {
+                    execution.presentation.post_execution_tactics.pop()
+                })?;
                 let Some(mut deferred) = deferred else {
                     return decline();
                 };
@@ -1700,17 +1702,21 @@ fn advance_focused_execution_arm<'a>(
                     if begin_tactic_expansion_capture(
                         capture.take(),
                         source_index,
-                        &execution.expansion,
+                        &execution.presentation.expansion,
                         proof_site.as_ref(),
                     ) {
-                        execution.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
-                            tactic_index,
-                            source_index,
-                            post_execution_index: execution.post_execution_tactics.len(),
-                            branch_skeleton,
-                        });
+                        execution.presentation.expansion.deferred_tactic_capture =
+                            Some(DeferredTacticCapture {
+                                tactic_index,
+                                source_index,
+                                post_execution_index: execution
+                                    .presentation
+                                    .post_execution_tactics
+                                    .len(),
+                                branch_skeleton,
+                            });
                     }
-                    execution.post_execution_tactics.push(deferred);
+                    execution.presentation.post_execution_tactics.push(deferred);
                 })?;
                 proof = next;
                 continue;
@@ -2806,10 +2812,12 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         let positive_surface = condition.clone();
         let negative_surface = negate_click_proposition(condition);
         let positive = execution
+            .presentation
             .surface_propositions
             .available_kernel_matching(&positive_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
         let negative = execution
+            .presentation
             .surface_propositions
             .available_kernel_matching(&negative_surface, |kernel| pure_facts.contains(kernel))
             .cloned();
@@ -2825,15 +2833,19 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 negative_surface
             };
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
-            execution.case_assumptions.push(CaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: Some(kernel_fact),
-                at_function_entry: execution.core.frontier.is_at_function_entry(),
-            });
+            execution
+                .presentation
+                .case_assumptions
+                .push(CaseAssumption {
+                    tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(kernel_fact),
+                    at_function_entry: execution.core.frontier.is_at_function_entry(),
+                });
             return Ok(true);
         }
     }
@@ -2855,7 +2867,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
             &execution.core.state,
             None,
-            &execution.recorded_snapshots,
+            &execution.presentation.recorded_snapshots,
             predicate_environment,
             click_function_environment,
         ) {
@@ -2882,27 +2894,34 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 return Ok(false);
             }
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&surface_fact, &kernel_fact)?;
             pure_facts.push(kernel_fact.clone());
-            execution.case_assumptions.push(CaseAssumption {
-                tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: Some(kernel_fact),
-                at_function_entry: false,
-            });
+            execution
+                .presentation
+                .case_assumptions
+                .push(CaseAssumption {
+                    tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(kernel_fact),
+                    at_function_entry: false,
+                });
             return Ok(true);
         }
     }
     if execution.core.frontier.is_at_function_exit() {
-        execution.case_assumptions.push(CaseAssumption {
-            tactic_index,
-            condition: condition.clone(),
-            value,
-            fact: None,
-            at_function_entry: false,
-        });
+        execution
+            .presentation
+            .case_assumptions
+            .push(CaseAssumption {
+                tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: None,
+                at_function_entry: false,
+            });
         return Ok(true);
     }
     let at_function_entry = execution.core.frontier.is_at_function_entry();
@@ -2914,7 +2933,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
         &execution.core.state,
         None,
-        &execution.recorded_snapshots,
+        &execution.presentation.recorded_snapshots,
         predicate_environment,
         click_function_environment,
     )
@@ -2946,16 +2965,20 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         return Ok(false);
     }
     execution
+        .presentation
         .surface_propositions
         .record_lowering(&surface_fact, &kernel_fact)?;
     pure_facts.push(kernel_fact.clone());
-    execution.case_assumptions.push(CaseAssumption {
-        tactic_index,
-        condition: condition.clone(),
-        value,
-        fact: Some(kernel_fact),
-        at_function_entry,
-    });
+    execution
+        .presentation
+        .case_assumptions
+        .push(CaseAssumption {
+            tactic_index,
+            condition: condition.clone(),
+            value,
+            fact: Some(kernel_fact),
+            at_function_entry,
+        });
     Ok(true)
 }
 

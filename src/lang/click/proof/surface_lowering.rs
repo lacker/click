@@ -104,7 +104,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.core.state,
                     None,
-                    &execution.recorded_snapshots,
+                    &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )
@@ -176,7 +176,7 @@ impl<'a> Proof<'a> {
                     pre_state,
                     &execution.core.state,
                     None,
-                    &execution.recorded_snapshots,
+                    &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                 )

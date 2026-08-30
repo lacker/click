@@ -46,6 +46,7 @@ impl<'a> Proof<'a> {
                 }
                 let _ = checked
                     .execution
+                    .presentation
                     .surface_propositions
                     .record_lowering(&surface, fact);
             }
@@ -93,10 +94,15 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let selector = SnapshotSelector::Mark(name.to_string());
-        if execution.recorded_snapshots.contains_key(&selector) {
+        if execution
+            .presentation
+            .recorded_snapshots
+            .contains_key(&selector)
+        {
             return Err(self.step_error(format!("duplicate proof mark `{name}`")));
         }
         execution
+            .presentation
             .recorded_snapshots
             .insert(selector, (*execution.core.state).clone());
         Ok(ProofState {
@@ -224,7 +230,7 @@ impl<'a> Proof<'a> {
         // form lowers, exactly as the checked `if` did.
         record_current_statement_entry(
             &base_execution.core.frontier,
-            &mut base_execution.recorded_snapshots,
+            &mut base_execution.presentation.recorded_snapshots,
             &base_execution.core.state,
             context.function_block,
             context.function,
@@ -251,12 +257,13 @@ impl<'a> Proof<'a> {
             }
             // Record where this proof-level case split sits in the path's
             // surface record, exactly as the checked form recorded it.
-            if arm_execution.surface_record.blocker.is_none() {
+            if arm_execution.presentation.surface_record.blocker.is_none() {
                 // The split sits after the Proof's own top-level steps: surface
                 // synthesis splits sibling paths at this offset, so it is
                 // measured on the checked derivation, not a mirrored record.
                 let tactic_offset = self.certificate().steps().len();
                 arm_execution
+                    .presentation
                     .surface_record
                     .path_choices
                     .push(SurfacePathChoice {
@@ -367,7 +374,11 @@ impl<'a> Proof<'a> {
         let facts_vec = self.facts().to_vec();
         planning.surface_record.certificate_facts = ProofFactStore::from_ordered(facts_vec.clone());
         let mut sink = ProofCertificateBuilder {
-            last_step_entry: execution.surface_record.last_step_entry.clone(),
+            last_step_entry: execution
+                .presentation
+                .surface_record
+                .last_step_entry
+                .clone(),
             ..ProofCertificateBuilder::default()
         };
         let mut planning_facts = facts_vec;
@@ -414,7 +425,10 @@ impl<'a> Proof<'a> {
                 .execution()
                 .cloned()
                 .ok_or_else(|| proof.step_error("smart `step` lost its semantic state"))?;
-            successor_execution.surface_record.last_step_entry = construction.last_step_entry;
+            successor_execution
+                .presentation
+                .surface_record
+                .last_step_entry = construction.last_step_entry;
             return Ok(Self {
                 context: proof.context.clone(),
                 state: KernelProofObject::new(
@@ -466,7 +480,7 @@ impl<'a> Proof<'a> {
         };
         let claim_label = context.claim_label;
         let premises = {
-            let view = self.finalization_view()?;
+            let view = self.execution_view()?;
             let (state, frontier, facts) = (view.state, view.frontier, &view.facts);
             if frontier.is_at_function_entry() || frontier.is_at_function_exit() {
                 return Err(ClickError::new(format!(
@@ -483,7 +497,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &view.execution.recorded_snapshots,
+                &view.execution.presentation.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -513,7 +527,7 @@ impl<'a> Proof<'a> {
                 pre_state,
                 state,
                 None,
-                &view.execution.recorded_snapshots,
+                &view.execution.presentation.recorded_snapshots,
                 context.predicate_environment,
                 context.click_function_environment,
             )
@@ -585,7 +599,7 @@ impl<'a> Proof<'a> {
             )));
         };
         let (mut planning, mut planning_facts, mut sink) = {
-            let view = self.finalization_view()?;
+            let view = self.execution_view()?;
             let mut planning = self.execution().cloned().ok_or_else(|| {
                 self.step_error("execution-frontier proof lost its semantic state")
             })?;
@@ -593,7 +607,12 @@ impl<'a> Proof<'a> {
             planning.surface_record.certificate_facts =
                 ProofFactStore::from_ordered(view.facts.clone());
             let sink = ProofCertificateBuilder {
-                last_step_entry: view.execution.surface_record.last_step_entry.clone(),
+                last_step_entry: view
+                    .execution
+                    .presentation
+                    .surface_record
+                    .last_step_entry
+                    .clone(),
                 ..ProofCertificateBuilder::default()
             };
             (planning, view.facts, sink)
@@ -634,7 +653,8 @@ impl<'a> Proof<'a> {
                 executed = executed.apply_step(step.clone())?;
             }
             let (recorded, ()) = executed.edit_execution(|execution, _| {
-                execution.surface_record.last_step_entry = construction.last_step_entry;
+                execution.presentation.surface_record.last_step_entry =
+                    construction.last_step_entry;
             })?;
             Ok(recorded)
         } else if let Some(blocker) = construction.blocker {
@@ -665,7 +685,11 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let facts_vec = self.facts().to_vec();
         let planning_sink = || ProofCertificateBuilder {
-            last_step_entry: execution.surface_record.last_step_entry.clone(),
+            last_step_entry: execution
+                .presentation
+                .surface_record
+                .last_step_entry
+                .clone(),
             ..ProofCertificateBuilder::default()
         };
         let construction_environments = ConstructionEnvironments {
@@ -754,7 +778,10 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| proof.step_error("smart `execute` lost its semantic state"))?;
-        successor_execution.surface_record.last_step_entry = construction.last_step_entry;
+        successor_execution
+            .presentation
+            .surface_record
+            .last_step_entry = construction.last_step_entry;
         Ok(Self {
             context: proof.context.clone(),
             state: KernelProofObject::new(
@@ -799,7 +826,7 @@ impl<'a> Proof<'a> {
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
-            &execution.expansion,
+            &execution.presentation.expansion,
             context.constants.proof_site.as_ref(),
         );
         let smart_certificate =
@@ -888,7 +915,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.invariant_closer_step = Some(InvariantCloserStep {
+        execution.presentation.invariant_closer_step = Some(InvariantCloserStep {
             tactic_index,
             source_index,
             statement_index: execution.core.frontier.next_statement_index,
@@ -978,7 +1005,7 @@ impl<'a> Proof<'a> {
         let capture_this_tactic = begin_tactic_expansion_capture(
             expansion_capture.as_deref_mut(),
             source_index,
-            &execution.expansion,
+            &execution.presentation.expansion,
             context.constants.proof_site.as_ref(),
         );
         let _timing = TacticTiming::new(

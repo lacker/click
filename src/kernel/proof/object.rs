@@ -4,7 +4,10 @@
 //! The kernel owns the persistent state shape and never treats those
 //! attachments as evidence.
 
-use super::{BranchId, ProofBranch, ProofBranchState, ProofBranches, ProofFacts, ProofObligation};
+use super::{
+    BranchId, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState, ProofFacts,
+    ProofObligation,
+};
 use crate::kernel::Proposition;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -28,6 +31,28 @@ pub(crate) struct ProofState<L, O, E> {
 pub(crate) struct ProofObject<L, O, E> {
     state: Arc<ProofState<L, O, E>>,
     focused_branch: BranchId,
+}
+
+/// Borrowed authority that the focused goal is an execution frontier owning
+/// checked execution state. Only the kernel can construct this view.
+pub(crate) struct ProofExecutionView<'a, S> {
+    facts: &'a ProofFacts,
+    execution: &'a ProofExecutionState<S>,
+}
+
+/// Kernel witness that no checked obligations remain open.
+pub(crate) struct ProofCompletion<'a> {
+    _proof: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a, S> ProofExecutionView<'a, S> {
+    pub(crate) fn facts(&self) -> &'a ProofFacts {
+        self.facts
+    }
+
+    pub(crate) fn execution(&self) -> &'a ProofExecutionState<S> {
+        self.execution
+    }
 }
 
 impl<L, O, E> ProofObject<L, O, E> {
@@ -60,6 +85,24 @@ impl<L, O, E> ProofObject<L, O, E> {
         Arc::ptr_eq(&self.state, &other.state)
     }
 
+    pub(crate) fn is_complete(&self) -> bool
+    where
+        O: Clone,
+        E: Clone,
+    {
+        self.state.open_branches.is_empty()
+    }
+
+    pub(crate) fn completion(&self) -> Option<ProofCompletion<'_>>
+    where
+        O: Clone,
+        E: Clone,
+    {
+        self.is_complete().then_some(ProofCompletion {
+            _proof: std::marker::PhantomData,
+        })
+    }
+
     pub(crate) fn with_state(&self, state: ProofState<L, O, E>) -> Self {
         Self::new(state, self.focused_branch)
     }
@@ -75,6 +118,31 @@ impl<L, O, E> ProofObject<L, O, E> {
         E: Clone,
     {
         Arc::unwrap_or_clone(self.state)
+    }
+}
+
+impl<L, P: Clone, O: Clone, S: Clone>
+    ProofObject<L, ProofObligation<P, O>, ProofExecutionState<S>>
+{
+    pub(crate) fn execution_view(&self) -> Option<ProofExecutionView<'_, S>> {
+        let branch = self.state.open_branches.get(self.focused_branch)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return None;
+        }
+        let execution = branch.state.execution.as_deref()?;
+        Some(ProofExecutionView {
+            facts: &branch.state.facts,
+            execution,
+        })
+    }
+
+    pub(crate) fn finalization(&self) -> Option<ProofExecutionView<'_, S>> {
+        let view = self.execution_view()?;
+        view.execution
+            .core
+            .frontier
+            .is_at_function_exit()
+            .then_some(view)
     }
 }
 

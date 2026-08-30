@@ -7529,7 +7529,10 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
             .execution()
             .expect("the terminal open retains execution state");
         assert!(terminal_execution.core.frontier.is_at_function_exit());
-        assert_eq!(terminal_execution.post_execution_tactics.len(), 1);
+        assert_eq!(
+            terminal_execution.presentation.post_execution_tactics.len(),
+            1
+        );
         assert_eq!(
             terminal.certificate().steps(),
             &[ProofStep::Open {
@@ -7644,7 +7647,8 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             "transport does not copy unrelated effect history"
         );
         assert_eq!(
-            root_execution.surface_propositions, successor_execution.surface_propositions,
+            root_execution.presentation.surface_propositions,
+            successor_execution.presentation.surface_propositions,
             "an identity transport does not change the recorded surface lowerings"
         );
     }
@@ -8193,7 +8197,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
             .expect("the successor retains execution state");
         assert!(execution.core.region_invariants_closed);
         assert!(
-            execution.invariant_closer_step.is_none(),
+            execution.presentation.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the check adapter boundary"
         );
         assert!(closed.apply_step(ProofStep::CloseInvariants).is_err());
@@ -8558,6 +8562,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             .expect("joined proof should own its continuation");
         assert!(
             execution
+                .presentation
                 .recorded_snapshots
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Statement(0),
@@ -8565,7 +8570,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
                 })
                 .is_some()
         );
-        assert_eq!(execution.branch_path.len(), 0);
+        assert_eq!(execution.presentation.branch_path.len(), 0);
         let completed = joined
             .apply_step(ProofStep::Step)
             .expect("the joined continuation should execute its return");
@@ -9519,6 +9524,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             .expect("nested join should retain execution");
         assert!(
             execution
+                .presentation
                 .recorded_snapshots
                 .get(&ProgramPointRef {
                     region: CodeRegionRef::Statement(nested_statement),
@@ -9935,12 +9941,13 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
             .paths();
         assert_eq!(outcome_paths.len(), 2);
         assert_eq!(
-            execution.outcome_provenance.len(),
+            execution.presentation.outcome_provenance.len(),
             outcome_paths.len(),
             "every terminal outcome must retain one atomic provenance record"
         );
         assert!(
             execution
+                .presentation
                 .outcome_provenance
                 .iter()
                 .all(|provenance| !provenance.branch_decisions.is_empty())
@@ -9957,7 +9964,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         } else {
             expected_outcome_fact_sizes = Some(outcome_fact_sizes);
         }
-        assert_eq!(execution.branch_path.len(), 0);
+        assert_eq!(execution.presentation.branch_path.len(), 0);
 
         // The in-`Proof` terminal join: both siblings return on their
         // own lineage and rejoin as a logical `If` whose outcome paths

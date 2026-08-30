@@ -172,8 +172,8 @@ impl<'a> Proof<'a> {
             &pre_state,
             &execution.core.state,
             None,
-            &execution.recorded_snapshots,
-            &execution.surface_propositions,
+            &execution.presentation.recorded_snapshots,
+            &execution.presentation.surface_propositions,
             &execution.core.unfolded_predicates,
             &execution.core.effect_facts,
             context.predicate_environment,
@@ -786,8 +786,8 @@ impl<'a> Proof<'a> {
             pre_state: context.old_reference_state(&execution.core.frontier, &execution.core.state),
             state: &execution.core.state,
             result: None,
-            recorded_snapshots: &execution.recorded_snapshots,
-            surface_propositions: &execution.surface_propositions,
+            recorded_snapshots: &execution.presentation.recorded_snapshots,
+            surface_propositions: &execution.presentation.surface_propositions,
             predicate_environment: context.predicate_environment,
             click_function_environment: context.click_function_environment,
             theorem_environment: context.theorem_environment,
@@ -994,7 +994,7 @@ impl<'a> Proof<'a> {
         execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: candidates,
         };
-        execution.outcome_provenance = Arc::new(outcome_provenance);
+        execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
         let mut state = (*self.state()).clone();
         state.open_branches = state.open_branches.replace_execution_at(
             self.focused_branch_id(),
@@ -1240,15 +1240,17 @@ impl<'a> Proof<'a> {
             &pre_state,
             &execution.core.state,
             None,
-            &execution.recorded_snapshots,
-            &execution.surface_propositions,
+            &execution.presentation.recorded_snapshots,
+            &execution.presentation.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
         )?;
         execution
+            .presentation
             .surface_propositions
             .record_lowering(source, &checked.source)?;
         execution
+            .presentation
             .surface_propositions
             .record_lowering(target, &checked.target)?;
         let mut facts = self.facts().clone();

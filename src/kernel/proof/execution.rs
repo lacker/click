@@ -9,6 +9,7 @@ use crate::kernel::{
     CFunctionExecutionCandidates, CLoopEffectCheck, CState, CStatement, CVerifiedLoopRule,
     ExecutionPureFact, Proposition, Theorem,
 };
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 /// The typed identity of the execution region a frontier executes.
@@ -69,6 +70,36 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) has_empty_execution_branch_leaf: bool,
     pub(crate) has_structured_branch_history: bool,
     pub(crate) unfolded_predicates: SharedVec<String>,
+}
+
+/// One checked execution branch combines kernel semantic state with an opaque
+/// language presentation record. The kernel can validate the semantic
+/// frontier without depending on Surface Click data; language code can carry
+/// that data without treating it as evidence.
+#[derive(Clone)]
+pub(crate) struct ProofExecutionState<S> {
+    pub(crate) core: ExecutionProofCore,
+    pub(crate) presentation: S,
+}
+
+impl<S> ProofExecutionState<S> {
+    pub(crate) fn new(core: ExecutionProofCore, presentation: S) -> Self {
+        Self { core, presentation }
+    }
+}
+
+impl<S> Deref for ProofExecutionState<S> {
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        &self.presentation
+    }
+}
+
+impl<S> DerefMut for ProofExecutionState<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.presentation
+    }
 }
 
 impl ExecutionProofCore {

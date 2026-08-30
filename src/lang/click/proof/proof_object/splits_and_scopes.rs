@@ -214,15 +214,19 @@ impl<'a> Proof<'a> {
             let facts = branch_state.facts.with_fact(fact.clone());
             let mut execution = (*parent_execution).clone();
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&surface_fact, &fact)?;
-            execution.case_assumptions.push(CaseAssumption {
-                tactic_index: context.tactic_index,
-                condition: condition.clone(),
-                value,
-                fact: Some(fact.clone()),
-                at_function_entry,
-            });
+            execution
+                .presentation
+                .case_assumptions
+                .push(CaseAssumption {
+                    tactic_index: context.tactic_index,
+                    condition: condition.clone(),
+                    value,
+                    fact: Some(fact.clone()),
+                    at_function_entry,
+                });
             Ok((
                 OpenBranch::frontier(
                     frontier.selection,
@@ -668,6 +672,7 @@ impl<'a> Proof<'a> {
                 ),
             };
             execution
+                .presentation
                 .surface_propositions
                 .record_lowering(&polarity_surfaces[arm_index], &polarity_facts[arm_index])?;
 
@@ -722,7 +727,7 @@ impl<'a> Proof<'a> {
             parent_facts,
             parent_unfolds,
             parent_execution,
-            root_post_execution_count: root_execution.post_execution_tactics.len(),
+            root_post_execution_count: root_execution.presentation.post_execution_tactics.len(),
         };
         Ok((successor, record))
     }
@@ -793,6 +798,7 @@ impl<'a> Proof<'a> {
                 )));
             }
             let mut added = execution
+                .presentation
                 .post_execution_tactics
                 .iter()
                 .skip(record.root_post_execution_count);
@@ -1089,7 +1095,7 @@ impl<'a> Proof<'a> {
             context.arguments,
             (*execution.core.state).clone(),
             self.facts().clone(),
-            &mut execution.surface_propositions,
+            &mut execution.presentation.surface_propositions,
             context.predicate_environment,
             context.click_function_environment,
             context.claim_label,

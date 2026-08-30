@@ -988,7 +988,7 @@ pub(super) fn construct_proof_step_for_planned_operation(
     environments: ConstructionEnvironments<'_>,
     operation: &ConstructionEvidence,
 ) {
-    let available = std::mem::take(&mut execution.surface_record.certificate_facts);
+    let available = std::mem::take(&mut execution.presentation.surface_record.certificate_facts);
     let available_facts = available.to_vec();
     {
         // Planner construction runs on a construction context that carries no typed
@@ -1010,7 +1010,7 @@ pub(super) fn construct_proof_step_for_planned_operation(
             None,
         );
     }
-    execution.surface_record.certificate_facts = available;
+    execution.presentation.surface_record.certificate_facts = available;
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -921,9 +921,11 @@ impl<'a> ProofScope<'a> {
         script: Option<&[ProofTactic]>,
     ) -> Result<(), ClickError> {
         execution
+            .presentation
             .surface_propositions
             .record_lowering(proposition, kernel)?;
         execution
+            .presentation
             .surface_record
             .certificate_facts
             .insert(kernel.clone());
@@ -952,7 +954,7 @@ impl<'a> ProofScope<'a> {
                     context.arguments,
                     &pre_state,
                     &execution.core.state,
-                    &execution.recorded_snapshots,
+                    &execution.presentation.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
                     assumptions,
