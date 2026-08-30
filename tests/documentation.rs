@@ -19,6 +19,49 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+#[test]
+fn language_proof_code_cannot_rebuild_the_kernel_proof_object() {
+    let kernel = fs::read_to_string(root().join("src/kernel/proof/object.rs"))
+        .expect("read kernel proof object");
+    assert!(
+        !kernel.contains("pub(crate) fn new(state: ProofState"),
+        "the raw proof-object constructor must remain private to its kernel module"
+    );
+    for field in [
+        "pub(crate) locals:",
+        "pub(crate) open_branches:",
+        "pub(crate) added_facts:",
+        "pub(crate) checked_facts:",
+    ] {
+        assert!(
+            !kernel.contains(field),
+            "the raw proof-state field `{field}` must remain private"
+        );
+    }
+
+    let directory = root().join("src/lang/click/proof/proof_object");
+    let mut files = Vec::new();
+    files_with_extension(&directory, "rs", &mut files);
+    files.push(root().join("src/lang/click/proof/proof_object.rs"));
+    for path in files {
+        if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs") {
+            continue;
+        }
+        let source = fs::read_to_string(&path).expect("read language proof source");
+        for escape_hatch in [
+            "KernelProofState {",
+            "KernelProofObject::new(",
+            ".into_state(",
+        ] {
+            assert!(
+                !source.contains(escape_hatch),
+                "{} reconstructs kernel proof state through `{escape_hatch}`",
+                path.display()
+            );
+        }
+    }
+}
+
 fn files_with_extension(directory: &Path, extension: &str, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(directory).expect("read directory") {
         let path = entry.expect("read directory entry").path();

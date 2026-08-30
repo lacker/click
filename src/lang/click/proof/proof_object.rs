@@ -1283,7 +1283,7 @@ impl<'a> Proof<'a> {
     /// The open branch addressed by this handle. Focus is only a cursor;
     /// sibling branches remain in the same immutable proof state.
     fn focused_branch(&self) -> Option<&OpenBranch> {
-        self.state().open_branches.get(self.focused_branch_id())
+        self.state().open_branches().get(self.focused_branch_id())
     }
 
     fn focused_obligation(&self) -> Option<&Obligation> {
@@ -1322,7 +1322,7 @@ impl<'a> Proof<'a> {
                 .with_state(state)
         });
         CheckedFocusedTransition::replacing(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             branch,
             added_facts,
             checked_facts,
@@ -1356,7 +1356,7 @@ impl<'a> Proof<'a> {
         &self,
         name: &String,
     ) -> Option<&ContractExpression> {
-        self.state().locals.values.get(name)
+        self.state().locals().values.get(name)
     }
 
     /// Whether the obligation this handle addresses has been discharged. On
@@ -1365,7 +1365,7 @@ impl<'a> Proof<'a> {
     /// the sibling legitimately remains open.
     pub(super) fn focused_discharged(&self) -> bool {
         self.state()
-            .open_branches
+            .open_branches()
             .get(self.focused_branch_id())
             .is_none()
     }
@@ -1452,7 +1452,7 @@ impl<'a> Proof<'a> {
 
     #[cfg(test)]
     fn branches_next_id(&self) -> u64 {
-        self.state().open_branches.next_id_for_test()
+        self.state().open_branches().next_id_for_test()
     }
 
     #[cfg(test)]
@@ -1538,7 +1538,7 @@ impl<'a> Proof<'a> {
         let facts = self.facts().with_selected_resource_separation(&goal);
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::root(self.state().locals.clone(), {
+            state: KernelProofObject::root(self.state().locals().clone(), {
                 let context = BranchState {
                     facts,
                     unfolded_predicates: match &outcome {

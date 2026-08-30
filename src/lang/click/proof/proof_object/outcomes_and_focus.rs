@@ -42,7 +42,7 @@ impl<'a> Proof<'a> {
     /// Every open goal in this proof, in stable id order.
     #[cfg(test)]
     pub(in crate::lang::click::proof) fn branches(&self) -> impl Iterator<Item = BranchId> + '_ {
-        self.state().open_branches.ids()
+        self.state().open_branches().ids()
     }
 
     /// The open function-outcome goal derived for one checked path, if this
@@ -53,7 +53,7 @@ impl<'a> Proof<'a> {
         path_index: usize,
     ) -> Option<BranchId> {
         self.state()
-            .open_branches
+            .open_branches()
             .iter()
             .find_map(|(id, branch)| match &branch.obligation {
                 Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {

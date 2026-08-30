@@ -16,8 +16,7 @@ alternatives, and abandon candidates without cloning the complete logical or
 execution state.
 
 The kernel owns branch and split identities and the persistent open-branch
-topology in `src/kernel/proof/branches.rs`; the remaining checked transitions
-are being moved across the same boundary incrementally. Its
+topology in `src/kernel/proof/branches.rs`. Its
 surface-independent persistent containers already live in
 `src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
 `src/kernel/proof/execution.rs`. That module now owns the complete
@@ -96,8 +95,13 @@ for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.
 Resource scope close currently hands its separately checked facts and
 execution result to a frontier-only kernel publication operation. This
-migration seam preserves the obligation, unfold set, and unrelated branches;
-typed resource-transition evidence will replace its raw checked inputs.
+migration seam preserves the obligation, unfold set, and unrelated branches.
+Fixed-state theorem, rewrite, transport, frame, and resource rules use the
+same boundary shape: the language checker returns only a focused result, and
+the kernel replaces or closes that branch while preserving siblings, topology,
+and focus. The kernel's raw `ProofState` fields and `ProofObject` constructor
+are private; production language code has read-only state accessors and cannot
+assemble or install a whole semantic state.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

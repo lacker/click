@@ -148,7 +148,7 @@ impl<'a> Proof<'a> {
             })
         };
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             branch: Some(goal),
             added_facts: checked.added_facts.clone(),
             checked_facts: checked.added_facts,
@@ -232,7 +232,7 @@ impl<'a> Proof<'a> {
                 .with_state(goal_context),
         };
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             // A nested proposition proof stated at this frontier unfolds its
             // own goal through the same checked operation. Other execution
             // goals retain their kind while installing the updated snapshot
@@ -285,7 +285,7 @@ impl<'a> Proof<'a> {
                 execution: Some(Arc::new(execution)),
             });
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             branch: Some(branch),
             added_facts: checked.added_facts.clone(),
             checked_facts: checked.added_facts,
@@ -331,7 +331,7 @@ impl<'a> Proof<'a> {
                 execution: Some(Arc::new(execution)),
             });
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             branch: Some(branch),
             added_facts: checked.added_facts.clone(),
             checked_facts: checked.added_facts,
@@ -382,7 +382,7 @@ impl<'a> Proof<'a> {
                 execution: Some(Arc::new(execution)),
             });
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             branch: Some(branch),
             added_facts: Vec::new(),
             checked_facts: Vec::new(),
@@ -444,7 +444,7 @@ impl<'a> Proof<'a> {
             execution: branch_state.execution.clone(),
         };
         Ok(CheckedFocusedTransition {
-            locals: self.state().locals.clone(),
+            locals: self.state().locals().clone(),
             branch: Some(OpenBranch::function_outcome(updated, state)),
             added_facts: Vec::new(),
             checked_facts: Vec::new(),

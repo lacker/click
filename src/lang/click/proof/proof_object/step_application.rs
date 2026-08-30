@@ -391,7 +391,7 @@ impl<'a> Proof<'a> {
             .expect("an outcome frame transition requires an open branch")
             .with_obligation(Obligation::FunctionOutcome(updated));
         Ok(CheckedFocusedTransition::replacing(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             Some(branch),
             Vec::new(),
             frame_facts,
@@ -496,7 +496,7 @@ impl<'a> Proof<'a> {
                 None
             };
             return Ok(CheckedFocusedTransition::replacing(
-                self.state().locals.clone(),
+                self.state().locals().clone(),
                 branch,
                 Vec::new(),
                 frame_facts,
@@ -591,7 +591,7 @@ impl<'a> Proof<'a> {
             },
         );
         Ok(CheckedFocusedTransition::replacing(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             Some(OpenBranch::frontier(
                 EffectGoalSelection::None,
                 BranchState {

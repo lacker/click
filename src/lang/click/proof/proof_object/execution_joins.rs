@@ -32,7 +32,7 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(false);
         };
-        if self.state().open_branches.is_discharged()
+        if self.state().open_branches().is_discharged()
             || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Ok(false);
@@ -82,7 +82,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
-        if self.state().open_branches.is_discharged()
+        if self.state().open_branches().is_discharged()
             || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Err(self.step_error("`branch` requires an open execution frontier"));
@@ -1744,7 +1744,7 @@ impl<'a> Proof<'a> {
         delta_execution: &'v ExecutionProofState,
         condition_theorem: Option<&'v Theorem>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
-        let Some(branch) = self.state().open_branches.get(id) else {
+        let Some(branch) = self.state().open_branches().get(id) else {
             return Err(self.step_error(format!(
                 "cannot join `branch`: the {name} arm is not an open execution frontier"
             )));
@@ -2478,7 +2478,7 @@ impl<'a> Proof<'a> {
     ) -> bool {
         record.arm_id(take_then).is_some_and(|id| {
             self.state()
-                .open_branches
+                .open_branches()
                 .get(id)
                 .and_then(|branch| branch.state.execution.as_deref())
                 .is_some_and(|execution| execution.core.frontier.is_at_function_exit())
@@ -2492,7 +2492,7 @@ impl<'a> Proof<'a> {
         record.sole_feasible_arm().is_none()
             && record.arm_branches.iter().flatten().all(|id| {
                 self.state()
-                    .open_branches
+                    .open_branches()
                     .get(*id)
                     .and_then(|branch| branch.state.execution.as_deref())
                     .is_some_and(|execution| execution.core.frontier.is_at_function_exit())

@@ -375,14 +375,14 @@ impl<'a> Proof<'a> {
     /// Enclosing proof infrastructure can incorporate this output-sensitive
     /// delta without traversing or cloning the proof's complete fact set.
     pub(in crate::lang::click::proof) fn added_facts(&self) -> &[Proposition] {
-        self.state().added_facts.as_ref()
+        self.state().added_facts()
     }
 
     /// Exact semantic facts selected or established by the latest step, in
     /// step-defined order. This lets enclosing surface bookkeeping record the
     /// checker-owned forms without re-lowering them.
     pub(in crate::lang::click::proof) fn checked_facts(&self) -> &[Proposition] {
-        self.state().checked_facts.as_ref()
+        self.state().checked_facts()
     }
 }
 

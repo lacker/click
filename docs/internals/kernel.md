@@ -61,7 +61,10 @@ Kernel files:
   is checked as a named core update. Fresh proof contexts enter through a
   kernel root constructor, and focused-arm bookkeeping can replace only
   non-authoritative fact deltas; generic handle state replacement is confined
-  to kernel tests.
+  to kernel tests. The raw proof-state fields and handle constructor are
+  private to `object.rs`. Checked language drivers publish fixed-state,
+  resource, frame, and execution results through focused or frontier-shaped
+  operations that preserve unrelated branch topology.
   Completion witnesses and terminal execution-finalization views can be
   constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and

@@ -318,7 +318,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         .split_focused_cases(disjunction.clone())
         .expect("the exact disjunction splits in-proof");
     assert_eq!(split_proof.branches().collect::<Vec<_>>(), ids);
-    assert!(split_proof.state.open_branches.get(root_goal).is_none());
+    assert!(split_proof.state.open_branches().get(root_goal).is_none());
     let marker = split_proof.checkpoint();
 
     // Arms are proven by focusing each recorded id on one lineage; the
@@ -328,7 +328,7 @@ fn focused_case_split_partitions_by_attribution_and_rejects_foreign_joins() {
         .expect("the left sibling is open")
         .apply_step(ProofStep::Assumption)
         .expect("the shared disjunction fact closes the left claim");
-    assert!(left_closed.state.open_branches.get(ids[1]).is_some());
+    assert!(left_closed.state.open_branches().get(ids[1]).is_some());
     let both_closed = left_closed
         .focus_branch(ids[1])
         .expect("the right sibling is still open")
@@ -1871,14 +1871,14 @@ fn universal_intro_binding_is_local_to_its_focused_sibling_branch() {
         .apply_step(ProofStep::Intro)
         .expect("the universal binder should refine the first sibling");
 
-    let binding_count = |id| match introduced.state.open_branches.obligation(id) {
+    let binding_count = |id| match introduced.state.open_branches().obligation(id) {
         Some(Obligation::Proposition(goal)) => goal.surface_bindings.len(),
         _ => panic!("the split should retain proposition siblings"),
     };
     assert_eq!(binding_count(ids[0]), 1);
     assert_eq!(binding_count(ids[1]), 0);
-    assert!(root.state.locals.values.is_empty());
-    assert!(introduced.state.locals.values.is_empty());
+    assert!(root.state.locals().values.is_empty());
+    assert!(introduced.state.locals().values.is_empty());
 }
 
 #[test]
@@ -1988,8 +1988,8 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
             chosen.certificate().steps(),
             &[ProofStep::Choose(choice.clone())]
         );
-        assert_eq!(chosen.state.locals.values.len(), 1);
-        assert!(root.state.locals.values.is_empty());
+        assert_eq!(chosen.state.locals().values.len(), 1);
+        assert!(root.state.locals().values.is_empty());
 
         let duplicate = chosen
             .apply_step(ProofStep::Choose(choice.clone()))
@@ -2634,9 +2634,10 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
 
         let mut indexed_root = root.clone();
         let mut indexed_state = indexed_root.state.clone().into_state();
-        indexed_state.open_branches = indexed_state
-            .open_branches
+        let indexed_branches = indexed_state
+            .open_branches()
             .with_facts_at(indexed_root.focused_branch_id(), unfolded_facts);
+        *indexed_state.open_branches_mut() = indexed_branches;
         indexed_root.state = indexed_root.state.with_state(indexed_state);
         let before = fact_node_allocations();
         let selected = indexed_root
@@ -8883,14 +8884,14 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         assert!(
             both_stepped
                 .state
-                .open_branches
+                .open_branches()
                 .get(sibling_ids[0])
                 .is_some()
         );
         assert!(
             both_stepped
                 .state
-                .open_branches
+                .open_branches()
                 .get(sibling_ids[1])
                 .is_some()
         );
@@ -9091,7 +9092,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     assert!(
         then_stepped
             .state
-            .open_branches
+            .open_branches()
             .get(sibling_ids[1])
             .is_some()
     );
@@ -9168,14 +9169,14 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     assert!(
         both_stepped
             .state
-            .open_branches
+            .open_branches()
             .get(sibling_ids[0])
             .is_some()
     );
     assert!(
         both_stepped
             .state
-            .open_branches
+            .open_branches()
             .get(sibling_ids[1])
             .is_some()
     );
@@ -9274,7 +9275,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             .expect("else arm should independently fold its ready resource");
         let arm_execution = |take_then: bool| {
             let id = record.arm_id(take_then).expect("both arms are feasible");
-            let Some(branch) = branches.state.open_branches.get(id) else {
+            let Some(branch) = branches.state.open_branches().get(id) else {
                 panic!("both arms should remain open execution frontiers");
             };
             let Obligation::Frontier(_) = &branch.obligation else {

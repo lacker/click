@@ -220,11 +220,11 @@ impl<'a> Proof<'a> {
             })?
             .into_parts_with_facts();
         let then_branch = state
-            .open_branches
+            .open_branches()
             .get(ids[0])
             .expect("the kernel returned its open then branch");
         let else_branch = state
-            .open_branches
+            .open_branches()
             .get(ids[1])
             .expect("the kernel returned its open else branch");
         let then_facts = then_branch.state.facts.clone();
@@ -514,7 +514,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, OutcomeSplit<'a>), ClickError> {
-        if self.state().open_branches.is_discharged() {
+        if self.state().open_branches().is_discharged() {
             return Err(self.step_error("execution outcome `if` follows a completed proof"));
         }
         let ProofContext::Execution(_) = self.context.as_ref() else {
@@ -723,7 +723,7 @@ impl<'a> Proof<'a> {
             ("then", record.arm_branches[0]),
             ("else", record.arm_branches[1]),
         ] {
-            let Some(branch) = self.state().open_branches.get(id) else {
+            let Some(branch) = self.state().open_branches().get(id) else {
                 return Err(self.step_error(format!(
                     "execution outcome {name} arm is not an open execution frontier"
                 )));
@@ -843,7 +843,7 @@ impl<'a> Proof<'a> {
         &self,
         proposition: ClickProposition,
     ) -> Result<ProofScope<'a>, ClickError> {
-        if self.state().open_branches.is_discharged() {
+        if self.state().open_branches().is_discharged() {
             return Err(self.step_error("`have` follows a completed proof"));
         }
         match (self.focused_obligation(), self.context.as_ref()) {
@@ -983,7 +983,7 @@ impl<'a> Proof<'a> {
         }
         let body = Proof {
             context: self.context.clone(),
-            state: KernelProofObject::root(self.state().locals.clone(), body_goal),
+            state: KernelProofObject::root(self.state().locals().clone(), body_goal),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,

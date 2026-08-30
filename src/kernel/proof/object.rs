@@ -12,13 +12,38 @@ use crate::kernel::Proposition;
 use std::ops::Deref;
 use std::sync::Arc;
 
-/// The immutable state shared by checked proof successors.
+/// The immutable state shared by checked proof successors. Its fields stay
+/// private so code outside this module can inspect the state but cannot
+/// assemble a whole semantic successor.
 #[derive(Clone)]
 pub(crate) struct ProofState<L, O, E> {
-    pub(crate) locals: L,
-    pub(crate) open_branches: ProofBranches<ProofBranch<O, E>>,
-    pub(crate) added_facts: Arc<Vec<Proposition>>,
-    pub(crate) checked_facts: Arc<Vec<Proposition>>,
+    locals: L,
+    open_branches: ProofBranches<ProofBranch<O, E>>,
+    added_facts: Arc<Vec<Proposition>>,
+    checked_facts: Arc<Vec<Proposition>>,
+}
+
+impl<L, O, E> ProofState<L, O, E> {
+    pub(crate) fn locals(&self) -> &L {
+        &self.locals
+    }
+
+    pub(crate) fn open_branches(&self) -> &ProofBranches<ProofBranch<O, E>> {
+        &self.open_branches
+    }
+
+    pub(crate) fn added_facts(&self) -> &[Proposition] {
+        &self.added_facts
+    }
+
+    pub(crate) fn checked_facts(&self) -> &[Proposition] {
+        &self.checked_facts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_branches_mut(&mut self) -> &mut ProofBranches<ProofBranch<O, E>> {
+        &mut self.open_branches
+    }
 }
 
 /// Opaque handle to one immutable checked proof state and the open branch it

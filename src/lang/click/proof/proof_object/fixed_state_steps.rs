@@ -88,7 +88,7 @@ impl<'a> Proof<'a> {
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(self.checked_fact_transition(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             facts,
             complete,
             added_facts.clone(),
@@ -125,7 +125,7 @@ impl<'a> Proof<'a> {
         )?;
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(self.checked_fact_transition(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             checked.facts,
             complete,
             checked.added_facts.clone(),
@@ -222,7 +222,7 @@ impl<'a> Proof<'a> {
         self.proposition_goal("`choose` requires a proposition goal")?;
         if choice.name == "result"
             || view.state.locals().contains_name(&choice.name)
-            || self.state().locals.values.contains_key(&choice.name)
+            || self.state().locals().values.contains_key(&choice.name)
         {
             return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
         }
@@ -271,9 +271,10 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("only int32 existential choices are supported"));
         }
 
-        let chosen = Bitvector32Term::Variable(Variable(self.state().locals.next_choice_variable));
+        let chosen =
+            Bitvector32Term::Variable(Variable(self.state().locals().next_choice_variable));
         let chosen_fact = substitute_int32_variable_in_proposition(&body, var, chosen.clone());
-        let mut locals = self.state().locals.clone();
+        let mut locals = self.state().locals().clone();
         locals.values = locals.values.with_inserted(
             choice.name.clone(),
             ContractExpression::CFragment(CExpression::Value(CValue::Int32(chosen))),
@@ -409,7 +410,7 @@ impl<'a> Proof<'a> {
         };
         let context = self.refined_branch_state(self.facts().clone());
         Ok(CheckedFocusedTransition::replacing(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             Some(self.refined_proposition(context, goal, surface_goal)),
             Vec::new(),
             Vec::new(),
@@ -659,7 +660,7 @@ impl<'a> Proof<'a> {
         });
         let context = self.refined_branch_state(self.facts().clone());
         Ok(CheckedFocusedTransition::replacing(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             Some(self.refined_proposition(context, rewritten, surface_goal)),
             Vec::new(),
             Vec::new(),
@@ -1125,7 +1126,7 @@ impl<'a> Proof<'a> {
                 execution: branch_state.execution.clone(),
             };
             return Ok(CheckedFocusedTransition::replacing(
-                self.state().locals.clone(),
+                self.state().locals().clone(),
                 Some(OpenBranch::function_outcome(updated, state)),
                 added_facts,
                 checked_facts,
@@ -1133,7 +1134,7 @@ impl<'a> Proof<'a> {
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(self.checked_fact_transition(
-            self.state().locals.clone(),
+            self.state().locals().clone(),
             facts,
             complete,
             added_facts,
