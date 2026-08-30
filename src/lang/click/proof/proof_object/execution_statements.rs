@@ -633,9 +633,8 @@ impl<'a> Proof<'a> {
             for step in &construction.steps {
                 executed = executed.apply_step(step.clone())?;
             }
-            let (recorded, ()) = executed.edit_execution(|execution, _| {
-                execution.presentation.surface_record.last_step_entry =
-                    construction.last_step_entry;
+            let (recorded, ()) = executed.edit_execution_presentation(|presentation| {
+                presentation.surface_record.last_step_entry = construction.last_step_entry;
             })?;
             Ok(recorded)
         } else if let Some(blocker) = construction.blocker {

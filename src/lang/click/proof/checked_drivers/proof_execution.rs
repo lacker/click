@@ -1292,8 +1292,9 @@ fn defer_post_exit_outcome_tactic<'a>(
             return Err(smart_frame_miss_error(&proof));
         };
         let certificate = framed.certificate_since(&checkpoint)?;
-        let (_, deferred) = framed
-            .edit_execution(|execution, _| execution.presentation.post_execution_tactics.pop())?;
+        let (_, deferred) = framed.edit_execution_presentation(|presentation| {
+            presentation.post_execution_tactics.pop()
+        })?;
         let Some(mut deferred) = deferred else {
             return decline();
         };
@@ -1313,22 +1314,21 @@ fn defer_post_exit_outcome_tactic<'a>(
             .execution_context()
             .and_then(|context| context.constants.proof_site.clone());
         let mut capture = expansion_capture.as_deref_mut();
-        let (framed, _) = proof.edit_execution(|execution, _| {
+        let (framed, _) = proof.edit_execution_presentation(|presentation| {
             if begin_tactic_expansion_capture(
                 capture.take(),
                 source_index,
-                &execution.presentation.expansion,
+                &presentation.expansion,
                 proof_site.as_ref(),
             ) {
-                execution.presentation.expansion.deferred_tactic_capture =
-                    Some(DeferredTacticCapture {
-                        tactic_index,
-                        source_index,
-                        post_execution_index: execution.presentation.post_execution_tactics.len(),
-                        branch_skeleton,
-                    });
+                presentation.expansion.deferred_tactic_capture = Some(DeferredTacticCapture {
+                    tactic_index,
+                    source_index,
+                    post_execution_index: presentation.post_execution_tactics.len(),
+                    branch_skeleton,
+                });
             }
-            execution.presentation.post_execution_tactics.push(deferred);
+            presentation.post_execution_tactics.push(deferred);
         })?;
         return Ok(Some(framed));
     }
@@ -1675,8 +1675,8 @@ fn advance_focused_execution_arm<'a>(
                     return Err(smart_frame_miss_error(&proof));
                 };
                 let certificate = framed.certificate_since(&checkpoint)?;
-                let (_, deferred) = framed.edit_execution(|execution, _| {
-                    execution.presentation.post_execution_tactics.pop()
+                let (_, deferred) = framed.edit_execution_presentation(|presentation| {
+                    presentation.post_execution_tactics.pop()
                 })?;
                 let Some(mut deferred) = deferred else {
                     return decline();
@@ -1698,25 +1698,22 @@ fn advance_focused_execution_arm<'a>(
                     .execution_context()
                     .and_then(|context| context.constants.proof_site.clone());
                 let mut capture = expansion_capture.as_deref_mut();
-                let (next, _) = proof.edit_execution(|execution, _| {
+                let (next, _) = proof.edit_execution_presentation(|presentation| {
                     if begin_tactic_expansion_capture(
                         capture.take(),
                         source_index,
-                        &execution.presentation.expansion,
+                        &presentation.expansion,
                         proof_site.as_ref(),
                     ) {
-                        execution.presentation.expansion.deferred_tactic_capture =
+                        presentation.expansion.deferred_tactic_capture =
                             Some(DeferredTacticCapture {
                                 tactic_index,
                                 source_index,
-                                post_execution_index: execution
-                                    .presentation
-                                    .post_execution_tactics
-                                    .len(),
+                                post_execution_index: presentation.post_execution_tactics.len(),
                                 branch_skeleton,
                             });
                     }
-                    execution.presentation.post_execution_tactics.push(deferred);
+                    presentation.post_execution_tactics.push(deferred);
                 })?;
                 proof = next;
                 continue;

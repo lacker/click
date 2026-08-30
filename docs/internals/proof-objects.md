@@ -65,7 +65,9 @@ root constructor instead of assembling a complete `ProofState`. Re-focusing a
 checked arm is a kernel-validated cursor move that rejects retired, reserved,
 or unknown branch identities and may replace only its reported fact delta;
 production language code has no generic whole-handle state-replacement
-operation.
+operation. Metadata capture consumes a frontier handle through a separate
+kernel operation that exposes only the opaque Surface presentation attachment;
+the callback cannot mutate the checked execution core or branch state.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

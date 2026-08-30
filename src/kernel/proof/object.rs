@@ -786,6 +786,50 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
+    /// Applies a language-only metadata edit without exposing or replacing
+    /// the checked execution core, branch facts, obligation, or proof deltas.
+    ///
+    /// Consuming the handle preserves the existing copy-on-write behavior:
+    /// uniquely owned state and presentation roots are edited without an
+    /// otherwise unnecessary clone.
+    pub(crate) fn edit_frontier_presentation<R>(
+        self,
+        edit: impl FnOnce(&mut S) -> R,
+    ) -> Result<(Self, R), ExecutionUpdateError> {
+        let focused_branch = self.focused_branch;
+        let goal = self
+            .state
+            .open_branches
+            .get(focused_branch)
+            .cloned()
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        let ProofObligation::Frontier(frontier) = goal.obligation else {
+            return Err(ExecutionUpdateError::NotFrontier);
+        };
+        let mut state = Arc::unwrap_or_clone(self.state);
+        state.open_branches = state.open_branches.without_at(focused_branch);
+        let ProofBranchState {
+            facts,
+            unfolded_predicates,
+            execution,
+        } = goal.state;
+        let mut execution =
+            Arc::unwrap_or_clone(execution.ok_or(ExecutionUpdateError::MissingExecution)?);
+        let result = edit(&mut execution.presentation);
+        state.open_branches = state.open_branches.insert_existing_at(
+            focused_branch,
+            ProofBranch::new(
+                ProofObligation::Frontier(frontier),
+                ProofBranchState {
+                    facts,
+                    unfolded_predicates,
+                    execution: Some(Arc::new(execution)),
+                },
+            ),
+        );
+        Ok((Self::new(state, focused_branch), result))
+    }
+
     pub(crate) fn close_frontier_invariants(&self) -> Result<Self, ExecutionUpdateError> {
         let (branch, execution) = self.focused_frontier_execution()?;
         if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {

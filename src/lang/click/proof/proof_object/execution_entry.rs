@@ -179,77 +179,42 @@ impl<'a> Proof<'a> {
     /// Starts one source tactic on a threaded execution Proof by clearing the
     /// checked and newly added facts reported for the preceding step.
     pub(in crate::lang::click::proof) fn start_source_tactic(self) -> Result<Self, ClickError> {
-        let (proof, ()) = self.edit_frontier_in_place(|state, _, _| {
-            Self::clear_step_facts(state);
-        })?;
-        Ok(proof)
+        let state = self.state.with_fact_deltas(Vec::new(), Vec::new());
+        Ok(self.with_kernel_state(state))
     }
 
-    fn clear_step_facts(state: &mut ProofState) {
-        state.added_facts = Arc::new(Vec::new());
-        state.checked_facts = Arc::new(Vec::new());
-    }
-
-    /// Edits the focused branch frontier's execution snapshot in place and returns
-    /// the edit's result alongside the updated proof.
-    pub(in crate::lang::click::proof) fn edit_execution<R>(
+    /// Edits only the focused execution frontier's opaque Surface metadata.
+    /// The kernel preserves the checked execution core, facts, obligation,
+    /// and proof deltas and never exposes them to the callback.
+    pub(in crate::lang::click::proof) fn edit_execution_presentation<R>(
         self,
-        edit: impl FnOnce(&mut ExecutionProofState, &ProofFacts) -> R,
+        edit: impl FnOnce(&mut ExecutionProofPresentation) -> R,
     ) -> Result<(Self, R), ClickError> {
-        self.edit_frontier_in_place(|_, execution, facts| edit(execution, facts))
-    }
-
-    /// Edits the focused branch frontier goal's execution snapshot in place. The
-    /// proof is consumed so a uniquely owned snapshot is edited without a
-    /// per-tactic clone; a shared snapshot is copied on write.
-    fn edit_frontier_in_place<R>(
-        self,
-        edit: impl FnOnce(&mut ProofState, &mut ExecutionProofState, &ProofFacts) -> R,
-    ) -> Result<(Self, R), ClickError> {
-        let Some(goal) = self.focused_branch().cloned() else {
-            return Err(
-                self.step_error("construction cursor editing requires an execution frontier")
-            );
-        };
-        let Obligation::Frontier(frontier) = goal.obligation else {
-            return Err(
-                self.step_error("construction cursor editing requires an execution frontier")
-            );
-        };
-        let missing = self.step_error("execution-frontier proof lost its semantic state");
         let Self {
             context,
             state,
             node,
         } = self;
-        let focused_branch = state.focused_branch();
-        let mut proof_state = state.into_state();
-        // Release the goal map's reference first so the execution snapshot
-        // is unique whenever this proof was.
-        proof_state.open_branches = proof_state.open_branches.without_at(focused_branch);
-        let selection = frontier.selection;
-        let BranchState {
-            facts,
-            unfolded_predicates,
-            execution,
-        } = goal.state;
-        let mut execution = Arc::unwrap_or_clone(execution.ok_or(missing)?);
-        let result = edit(&mut proof_state, &mut execution, &facts);
-        proof_state.open_branches = proof_state.open_branches.insert_existing_at(
-            focused_branch,
-            OpenBranch::frontier(
-                selection,
-                BranchState {
-                    facts,
-                    unfolded_predicates,
-                    execution: Some(Arc::new(execution)),
-                },
-            ),
-        );
+        let (state, result) = state.edit_frontier_presentation(edit).map_err(|error| {
+            let message = match error {
+                ExecutionUpdateError::NotFrontier => {
+                    "construction cursor editing requires an execution frontier"
+                }
+                ExecutionUpdateError::MissingExecution => {
+                    "execution-frontier proof lost its semantic state"
+                }
+                ExecutionUpdateError::ClosedLoopEffect
+                | ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed => {
+                    unreachable!("presentation editing checks only frontier ownership")
+                }
+            };
+            ClickError::new(message)
+        })?;
         Ok((
             Self {
                 context,
-                state: KernelProofObject::new(proof_state, focused_branch),
+                state,
                 node,
             },
             result,

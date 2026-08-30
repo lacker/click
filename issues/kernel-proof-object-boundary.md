@@ -74,7 +74,9 @@ kernel. Fresh pure, fixed-state, execution, loop-effect, focused-outcome, and
 nested-`have` roots now use the kernel root constructor; arm focusing can only
 address a kernel-validated open branch and replace non-authoritative fact
 deltas through the same named operation. The generic whole-handle state
-replacement helper is test-only.
+replacement helper is test-only. Checked drivers can edit execution-frontier
+Surface metadata only through a kernel operation whose callback cannot access
+or replace the semantic execution core, facts, obligation, or proof deltas.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
