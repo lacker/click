@@ -93,6 +93,12 @@ impl<B: Clone> ProofBranches<B> {
         self.open.get(&at)
     }
 
+    /// Whether this lineage has allocated the identity, including identities
+    /// that are currently retired or reserved by a structural split.
+    pub(crate) fn has_allocated(&self, at: BranchId) -> bool {
+        at.0 >= BranchId::ROOT.0 && at.0 < self.next_id
+    }
+
     #[cfg(test)]
     pub(crate) fn ids(&self) -> impl Iterator<Item = BranchId> + '_ {
         self.open.keys().copied()

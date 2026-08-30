@@ -67,6 +67,7 @@ pub(crate) enum ProofJoinError {
 
 pub(crate) enum ProofFocusError {
     NotOpen,
+    NotAllocated,
 }
 
 pub(crate) enum FrontierSplitError {
@@ -84,6 +85,7 @@ pub(crate) enum ExecutionUpdateError {
     ClosedLoopEffect,
     NotLoopBody,
     InvariantsAlreadyClosed,
+    LoopEffectNotClosed,
 }
 
 #[derive(Clone, Copy)]
@@ -194,6 +196,7 @@ impl<L, O, E> ProofObject<L, O, E> {
         Self::new(state, self.focused_branch)
     }
 
+    #[cfg(test)]
     pub(crate) fn into_state(self) -> ProofState<L, O, E>
     where
         L: Clone,
@@ -224,6 +227,29 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
         Ok(self
             .focus_open_branch(focused_branch)?
             .with_fact_deltas(added_facts, checked_facts))
+    }
+
+    /// Restores a provenance cursor that was allocated earlier in this
+    /// branch lineage, including a now-retired parent identity. This changes
+    /// no semantic state and may replace only reporting deltas.
+    pub(crate) fn restore_allocated_cursor_with_fact_deltas(
+        &self,
+        focused_branch: BranchId,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofFocusError> {
+        if !self.state.open_branches.has_allocated(focused_branch) {
+            return Err(ProofFocusError::NotAllocated);
+        }
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.clone(),
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
+            },
+            focused_branch,
+        ))
     }
 
     pub(crate) fn with_fact_deltas(
@@ -857,6 +883,92 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                     .with_branch_state_at(self.focused_branch, state),
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(Vec::new()),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    /// Retires a sealed structural loop-effect frontier only after a checked
+    /// frame operation has marked its kernel-owned goal closed.
+    pub(crate) fn discharge_closed_loop_effect(&self) -> Result<Self, ExecutionUpdateError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err(ExecutionUpdateError::NotFrontier);
+        }
+        let execution = branch
+            .state
+            .execution
+            .as_deref()
+            .ok_or(ExecutionUpdateError::MissingExecution)?;
+        if !execution
+            .core
+            .loop_effect_goal
+            .as_ref()
+            .is_some_and(|goal| goal.closed)
+        {
+            return Err(ExecutionUpdateError::LoopEffectNotClosed);
+        }
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.close_at(self.focused_branch),
+                added_facts: self.state.added_facts.clone(),
+                checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    /// Publishes the result of a separately checked frontier transition while
+    /// preserving every unrelated branch and the focused frontier's
+    /// obligation and unfold set. This deliberately narrow migration seam is
+    /// replaced by typed transition evidence as resource checking moves into
+    /// the kernel boundary.
+    pub(crate) fn publish_checked_frontier_transition(
+        &self,
+        facts: ProofFacts,
+        execution: ProofExecutionState<S>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+        discharge_closed_loop_effect: bool,
+    ) -> Result<Self, ExecutionUpdateError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err(ExecutionUpdateError::NotFrontier);
+        }
+        if branch.state.execution.is_none() {
+            return Err(ExecutionUpdateError::MissingExecution);
+        }
+        if discharge_closed_loop_effect
+            && !execution
+                .core
+                .loop_effect_goal
+                .as_ref()
+                .is_some_and(|goal| goal.closed)
+        {
+            return Err(ExecutionUpdateError::LoopEffectNotClosed);
+        }
+        let mut open_branches =
+            self.state
+                .open_branches
+                .replace_frontier_at(self.focused_branch, facts, execution);
+        if discharge_closed_loop_effect {
+            open_branches = open_branches.close_at(self.focused_branch);
+        }
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches,
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
             },
             self.focused_branch,
         ))

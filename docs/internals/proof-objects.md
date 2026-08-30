@@ -68,6 +68,13 @@ production language code has no generic whole-handle state-replacement
 operation. Metadata capture consumes a frontier handle through a separate
 kernel operation that exposes only the opaque Surface presentation attachment;
 the callback cannot mutate the checked execution core or branch state.
+Structural loop-effect scopes may restore an already allocated retired cursor
+for provenance, but cannot invent a branch identity; the kernel also refuses
+to retire their frontier until its loop-effect goal is checked closed.
+Resource scope close currently hands its separately checked facts and
+execution result to a frontier-only kernel publication operation. This
+migration seam preserves the obligation, unfold set, and unrelated branches;
+typed resource-transition evidence will replace its raw checked inputs.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

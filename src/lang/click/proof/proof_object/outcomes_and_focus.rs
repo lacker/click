@@ -217,13 +217,17 @@ impl<'a> Proof<'a> {
         goal: BranchId,
     ) -> Result<Self, ClickError> {
         let mut focused = self.clone();
-        focused.state =
-            focused
-                .state
-                .focus_open_branch(goal)
-                .map_err(|ProofFocusError::NotOpen| {
+        focused.state = focused
+            .state
+            .focus_open_branch(goal)
+            .map_err(|error| match error {
+                ProofFocusError::NotOpen => {
                     self.step_error(format!("goal {goal:?} is not open in this proof"))
-                })?;
+                }
+                ProofFocusError::NotAllocated => {
+                    unreachable!("open-branch focus reports only whether the branch is open")
+                }
+            })?;
         Ok(focused)
     }
 

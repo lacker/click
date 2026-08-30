@@ -205,7 +205,8 @@ impl<'a> Proof<'a> {
                 }
                 ExecutionUpdateError::ClosedLoopEffect
                 | ExecutionUpdateError::NotLoopBody
-                | ExecutionUpdateError::InvariantsAlreadyClosed => {
+                | ExecutionUpdateError::InvariantsAlreadyClosed
+                | ExecutionUpdateError::LoopEffectNotClosed => {
                     unreachable!("presentation editing checks only frontier ownership")
                 }
             };

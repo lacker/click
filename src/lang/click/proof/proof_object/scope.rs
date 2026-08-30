@@ -478,12 +478,24 @@ impl<'a> ProofScope<'a> {
             }
         }
         let introduced_facts = introduced_facts.to_vec();
-        let mut state = joined.state.clone().into_state();
-        state.added_facts = Arc::new(introduced_facts.clone());
-        state.checked_facts = Arc::new(introduced_facts);
+        let state = joined
+            .state
+            .restore_allocated_cursor_with_fact_deltas(
+                outer.root.focused_branch_id(),
+                introduced_facts.clone(),
+                introduced_facts,
+            )
+            .map_err(|error| match error {
+                ProofFocusError::NotAllocated => outer
+                    .root
+                    .step_error("open-scope join lost its allocated parent branch"),
+                ProofFocusError::NotOpen => {
+                    unreachable!("allocated-cursor restoration does not require an open branch")
+                }
+            })?;
         Ok(Proof {
             context: outer.root.context.clone(),
-            state: KernelProofObject::new(state, outer.root.focused_branch_id()),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(outer.root.node.clone()),
                 step: Some(Arc::new(ProofStep::Open {
@@ -590,14 +602,29 @@ impl<'a> ProofScope<'a> {
             facts = checked.facts;
             execution.core.state = checked.state.into();
         }
-        let mut state = body.state.clone().into_state();
-        state.open_branches =
-            state
-                .open_branches
-                .replace_frontier_at(body.focused_branch_id(), facts, execution);
+        let state = body
+            .state
+            .publish_checked_frontier_transition(
+                facts,
+                execution,
+                body.added_facts().to_vec(),
+                body.checked_facts().to_vec(),
+                false,
+            )
+            .map_err(|error| match error {
+                ExecutionUpdateError::NotFrontier | ExecutionUpdateError::MissingExecution => self
+                    .root
+                    .step_error("open resource branch lost its execution frontier"),
+                ExecutionUpdateError::LoopEffectNotClosed
+                | ExecutionUpdateError::ClosedLoopEffect
+                | ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed => unreachable!(
+                    "resource close publication preserves an open loop-effect frontier"
+                ),
+            })?;
         Ok(Proof {
             context: body.context.clone(),
-            state: KernelProofObject::new(state, body.focused_branch_id()),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
@@ -614,16 +641,25 @@ impl<'a> ProofScope<'a> {
         &self,
         body: Proof<'a>,
     ) -> Result<Proof<'a>, ClickError> {
-        if !body.focused_loop_effect_closed() {
-            return Err(self
-                .root
-                .step_error("cannot discharge an unfinished loop-effect branch"));
-        }
-        let mut state = body.state.clone().into_state();
-        state.open_branches = state.open_branches.close_at(body.focused_branch_id());
+        let state = body
+            .state
+            .discharge_closed_loop_effect()
+            .map_err(|error| match error {
+                ExecutionUpdateError::LoopEffectNotClosed => self
+                    .root
+                    .step_error("cannot discharge an unfinished loop-effect branch"),
+                ExecutionUpdateError::NotFrontier | ExecutionUpdateError::MissingExecution => self
+                    .root
+                    .step_error("loop-effect branch lost its execution frontier"),
+                ExecutionUpdateError::ClosedLoopEffect
+                | ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed => {
+                    unreachable!("loop-effect discharge checks only frontier ownership and closure")
+                }
+            })?;
         Ok(Proof {
             context: body.context.clone(),
-            state: KernelProofObject::new(state, body.focused_branch_id()),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
@@ -1095,7 +1131,6 @@ impl<'a> ProofScope<'a> {
                             .step_error("open scope body lost its execution frontier")
                     })?;
                 let mut facts = self.body.facts().clone();
-                let mut state = self.body.state.clone().into_state();
                 if execution.core.frontier.is_at_function_exit() {
                     execution.defer_post_execution(
                         context.tactic_index,
@@ -1127,23 +1162,36 @@ impl<'a> ProofScope<'a> {
                     facts = checked.facts;
                     execution.core.state = checked.state.into();
                 }
-                state.open_branches = state.open_branches.replace_frontier_at(
-                    self.body.focused_branch_id(),
-                    facts,
-                    execution,
-                );
-                if discharge_closed_loop_effect && loop_effect_closed {
-                    state.open_branches =
-                        state.open_branches.close_at(self.body.focused_branch_id());
-                }
-                state.added_facts = Arc::new(self.introduced_facts.clone());
-                state.checked_facts = Arc::new(self.introduced_facts);
+                let state = self
+                    .body
+                    .state
+                    .publish_checked_frontier_transition(
+                        facts,
+                        execution,
+                        self.introduced_facts.clone(),
+                        self.introduced_facts,
+                        discharge_closed_loop_effect && loop_effect_closed,
+                    )
+                    .map_err(|error| match error {
+                        ExecutionUpdateError::NotFrontier
+                        | ExecutionUpdateError::MissingExecution => self
+                            .root
+                            .step_error("open scope body lost its execution frontier"),
+                        ExecutionUpdateError::LoopEffectNotClosed => self
+                            .root
+                            .step_error("cannot discharge an unfinished loop-effect branch"),
+                        ExecutionUpdateError::ClosedLoopEffect
+                        | ExecutionUpdateError::NotLoopBody
+                        | ExecutionUpdateError::InvariantsAlreadyClosed => unreachable!(
+                            "open-scope publication checks only frontier ownership and closure"
+                        ),
+                    })?;
                 // The successor's goal map came from the scope body, whose
                 // cursor may have moved through a decided branch.
                 let focused_branch = self.body.focused_branch_id();
                 Ok(Proof {
                     context: self.root.context.clone(),
-                    state: KernelProofObject::new(state, focused_branch),
+                    state,
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
                         step: Some(Arc::new(ProofStep::Open {

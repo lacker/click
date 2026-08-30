@@ -703,11 +703,14 @@ impl<'a> Proof<'a> {
                 delta.clone(),
                 delta,
             )
-            .map_err(|ProofFocusError::NotOpen| {
-                self.step_error(format!(
+            .map_err(|error| match error {
+                ProofFocusError::NotOpen => self.step_error(format!(
                     "goal {:?} is not open in this proof",
                     record.arm_branches[arm_index]
-                ))
+                )),
+                ProofFocusError::NotAllocated => {
+                    unreachable!("open-branch focus reports only whether the branch is open")
+                }
             })?;
         Ok(self.with_kernel_state(state))
     }

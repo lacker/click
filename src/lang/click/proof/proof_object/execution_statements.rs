@@ -129,6 +129,9 @@ impl<'a> Proof<'a> {
             ExecutionUpdateError::InvariantsAlreadyClosed => {
                 self.step_error("the invariant bundle was closed more than once on one path")
             }
+            ExecutionUpdateError::LoopEffectNotClosed => {
+                unreachable!("execution and invariant updates do not discharge loop-effect goals")
+            }
         }
     }
 

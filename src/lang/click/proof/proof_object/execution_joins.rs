@@ -1971,8 +1971,13 @@ impl<'a> Proof<'a> {
         let state = self
             .state
             .focus_open_branch_with_fact_deltas(id, path_facts.clone(), path_facts)
-            .map_err(|ProofFocusError::NotOpen| {
-                self.step_error(format!("goal {id:?} is not open in this proof"))
+            .map_err(|error| match error {
+                ProofFocusError::NotOpen => {
+                    self.step_error(format!("goal {id:?} is not open in this proof"))
+                }
+                ProofFocusError::NotAllocated => {
+                    unreachable!("open-branch focus reports only whether the branch is open")
+                }
             })?;
         Ok(self.with_kernel_state(state))
     }

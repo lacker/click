@@ -77,6 +77,13 @@ deltas through the same named operation. The generic whole-handle state
 replacement helper is test-only. Checked drivers can edit execution-frontier
 Surface metadata only through a kernel operation whose callback cannot access
 or replace the semantic execution core, facts, obligation, or proof deltas.
+The kernel also validates restoration of retired scope cursors and owns the
+operation that retires a structural loop-effect branch after its checked goal
+is closed. Production language code no longer consumes a kernel handle back
+into a mutable whole `ProofState`; resource scope close publishes its
+separately checked result through a frontier-only migration seam. Replacing
+that raw checked result with typed kernel evidence remains part of the resource
+transition migration.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
