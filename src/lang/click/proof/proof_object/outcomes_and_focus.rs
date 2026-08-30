@@ -399,7 +399,7 @@ impl<'a> Proof<'a> {
 
     /// Resolves a Surface Click statement region against this proof's source
     /// layout without exposing the mutable frontier or check metadata.
-    pub(super) fn resolve_statement_target(
+    pub(in crate::lang::click::proof) fn resolve_statement_target(
         &self,
         region: &CodeRegionRef,
     ) -> Result<usize, ClickError> {
@@ -420,7 +420,9 @@ impl<'a> Proof<'a> {
 
     /// Returns the current source-statement frontier for a checked execution
     /// proof, or `None` after function exit.
-    pub(super) fn current_statement_index(&self) -> Result<Option<usize>, ClickError> {
+    pub(in crate::lang::click::proof) fn current_statement_index(
+        &self,
+    ) -> Result<Option<usize>, ClickError> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
@@ -446,7 +448,9 @@ impl<'a> Proof<'a> {
 /// spelling; a retained Proof may carry the equivalent exit snapshot as its most
 /// recent provenance marker. Outcomes and mid-execution judgments
 /// anchor their premises by this one law.
-pub(super) fn frontier_premise_anchor(execution: &ExecutionProofState) -> Option<ProgramPointRef> {
+pub(in crate::lang::click::proof) fn frontier_premise_anchor(
+    execution: &ExecutionProofState,
+) -> Option<ProgramPointRef> {
     let anchor = execution
         .surface_record
         .last_step_entry

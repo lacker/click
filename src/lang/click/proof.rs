@@ -24,6 +24,8 @@ mod checked_drivers;
 mod execution_state;
 mod pure_theorems;
 mod resources;
+mod smart_closures;
+mod smart_execution;
 mod structural;
 mod surface_certificates;
 mod surface_construction;

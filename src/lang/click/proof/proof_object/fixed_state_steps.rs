@@ -741,7 +741,9 @@ impl<'a> Proof<'a> {
     /// fixed-state view: outcome goals own their result, post-state, surface
     /// lowerings, and effect facts, and borrow the frontier snapshot for the
     /// remaining program-outcome proof data.
-    pub(super) fn outcome_fixed_state_view(&self) -> Option<FixedStateOperationView<'_>> {
+    pub(in crate::lang::click::proof) fn outcome_fixed_state_view(
+        &self,
+    ) -> Option<FixedStateOperationView<'_>> {
         self.outcome_fixed_state_view_with_effects(OutcomeEffectContext::Path)
     }
 
@@ -750,7 +752,7 @@ impl<'a> Proof<'a> {
     /// frontier snapshot solely for lowering and requirement selection;
     /// checked fixed-state steps can refine only that proposition and proof-local
     /// bindings.
-    pub(super) fn execution_proposition_fixed_state_view(
+    pub(in crate::lang::click::proof) fn execution_proposition_fixed_state_view(
         &self,
     ) -> Option<FixedStateOperationView<'_>> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -786,7 +788,9 @@ impl<'a> Proof<'a> {
     /// The focused branch judgment's result-aware outcome proof data: a function-outcome
     /// goal owns its data, and a proposition judgment stated at an outcome
     /// borrows that outcome's data by identity.
-    pub(super) fn focused_outcome_data(&self) -> Option<&Arc<OutcomeProofData>> {
+    pub(in crate::lang::click::proof) fn focused_outcome_data(
+        &self,
+    ) -> Option<&Arc<OutcomeProofData>> {
         match self.focused_obligation()? {
             Obligation::FunctionOutcome(goal) => Some(&goal.data),
             Obligation::Proposition(goal) => goal.outcome.as_ref(),
@@ -1027,7 +1031,7 @@ impl<'a> Proof<'a> {
     /// Resolves the view with the caller's effect-availability context: the
     /// transport checker consumes the path's own execution facts, while the
     /// theorem checker consumes the frontier-wide effect set.
-    pub(super) fn outcome_fixed_state_view_with_effects(
+    pub(in crate::lang::click::proof) fn outcome_fixed_state_view_with_effects(
         &self,
         effects: OutcomeEffectContext,
     ) -> Option<FixedStateOperationView<'_>> {

@@ -3,6 +3,12 @@
 use super::*;
 
 impl ProofFacts {
+    pub(in crate::lang::click::proof) fn predicate_unfolded_universal_facts(
+        &self,
+    ) -> impl Iterator<Item = &Proposition> {
+        self.predicate_unfolded_universal_facts.iter()
+    }
+
     pub(in crate::lang::click::proof) fn from_ordered(facts: &[Proposition]) -> Self {
         let mut ordered = PersistentSequence::default();
         let mut top_level_exact = PersistentSet::default();
@@ -288,7 +294,7 @@ impl ProofFacts {
     /// syntax selection needs the retained fact, not merely a yes/no answer:
     /// its recorded surface form may carry a statement snapshot that the
     /// freshly lowered theorem requirement no longer exposes.
-    pub(super) fn matching_fact_across_effects(
+    pub(in crate::lang::click::proof) fn matching_fact_across_effects(
         &self,
         required: &Proposition,
         framing: &[ExecutionPureFact],
@@ -354,7 +360,10 @@ impl ProofFacts {
         self.matching_quantified_facts(required).into_iter().next()
     }
 
-    pub(super) fn matching_quantified_facts(&self, required: &Proposition) -> Vec<Proposition> {
+    pub(in crate::lang::click::proof) fn matching_quantified_facts(
+        &self,
+        required: &Proposition,
+    ) -> Vec<Proposition> {
         quantified_equivalence_index_key(required)
             .and_then(|key| self.by_quantified_equivalence.get(&key))
             .into_iter()
@@ -432,7 +441,7 @@ impl ProofFacts {
     /// Returns exact equality facts attached to terms occurring in this
     /// proposition. Selection cost follows the proposition and the matching
     /// equality buckets; unrelated ambient equalities are never visited.
-    pub(super) fn bitvector_equalities_mentioning(
+    pub(in crate::lang::click::proof) fn bitvector_equalities_mentioning(
         &self,
         proposition: &Proposition,
     ) -> Vec<Proposition> {
@@ -758,7 +767,7 @@ pub(super) fn index_proper_conjuncts(
     index
 }
 
-pub(super) fn collect_surface_conjunct_leaves(
+pub(in crate::lang::click::proof) fn collect_surface_conjunct_leaves(
     proposition: &ClickProposition,
     leaves: &mut Vec<ClickProposition>,
 ) {

@@ -1,8 +1,7 @@
 //! Smart closure search and linear script interpretation.
 
-use super::super::fact_index::collect_surface_conjunct_leaves;
-use super::super::outcomes_and_focus::frontier_premise_anchor;
-use super::super::*;
+use super::*;
+use proof_object::{collect_surface_conjunct_leaves, frontier_premise_anchor};
 
 impl<'a> Proof<'a> {
     /// A small shared search combinator for structural proposition closure.
@@ -61,7 +60,7 @@ impl<'a> Proof<'a> {
     /// `exclude_exact_goal` is true, the atomic derivation query may not cite
     /// the goal's own ambient fact; every selected theorem step is still
     /// checked against this unchanged Proof.
-    pub(in crate::lang::click::proof::proof_object) fn try_simp_closure_after_direct(
+    pub(super) fn try_simp_closure_after_direct(
         &self,
         exclude_exact_goal: bool,
     ) -> Result<Option<Self>, ClickError> {
@@ -944,9 +943,7 @@ impl<'a> Proof<'a> {
     /// equality is used at most once; structural goals keep only a closing
     /// rewrite so their recursive connective proof remains visible.
     #[cfg(test)]
-    pub(in crate::lang::click::proof::proof_object) fn try_indexed_goal_equality_rewrite_closure(
-        &self,
-    ) -> Option<Self> {
+    pub(super) fn try_indexed_goal_equality_rewrite_closure(&self) -> Option<Self> {
         self.try_indexed_goal_equality_rewrite_closure_excluding(false)
     }
 
@@ -1418,7 +1415,7 @@ impl<'a> Proof<'a> {
     /// decision at the current goal. Planning only chooses the explicit
     /// quantified fact, argument, and guards; each selected operation advances
     /// this `Proof` directly.
-    pub(in crate::lang::click::proof::proof_object) fn try_selected_forall_instantiation(
+    pub(super) fn try_selected_forall_instantiation(
         &self,
         goal: &Proposition,
         premise_pairs: &[(Proposition, ClickProposition)],
@@ -1431,15 +1428,13 @@ impl<'a> Proof<'a> {
     /// the atomic decision cannot name an instantiated premise. Candidate
     /// discovery is read-only; a specialization is retained only after the
     /// ordinary `InstantiateUsing` operation advances and closes this Proof.
-    pub(in crate::lang::click::proof::proof_object) fn try_indexed_forall_instantiation(
-        &self,
-    ) -> Option<Self> {
+    pub(super) fn try_indexed_forall_instantiation(&self) -> Option<Self> {
         let goal = self.goal()?;
         let outcome_view = matches!(self.context.as_ref(), ProofContext::Execution(_))
             .then(|| self.outcome_fixed_state_view())
             .flatten();
-        let bound_variable_names = match self.focused_obligation() {
-            Some(Obligation::Proposition(goal)) => goal
+        let bound_variable_names = match self.proposition_obligation() {
+            Some(goal) => goal
                 .surface_bindings
                 .iter()
                 .filter_map(|(name, binding)| match binding {
@@ -1493,7 +1488,7 @@ impl<'a> Proof<'a> {
             };
             recorded.or(synthesized)
         };
-        for quantified in self.facts().predicate_unfolded_universal_facts.iter() {
+        for quantified in self.facts().predicate_unfolded_universal_facts() {
             // Reject shape-incompatible universals before Surface lookup or
             // synthesis. Candidate extraction is structural and bounded by
             // this one indexed fact and the focused branch goal; the expensive
@@ -1639,8 +1634,7 @@ impl<'a> Proof<'a> {
                             CExpression::Value(CValue::Int32(Bitvector32Term::Constant(*bits))),
                         )),
                         Bitvector32Term::Variable(variable) => {
-                            let Some(Obligation::Proposition(goal)) = self.focused_obligation()
-                            else {
+                            let Some(goal) = self.proposition_obligation() else {
                                 continue;
                             };
                             goal.surface_bindings.iter().find_map(|(name, binding)| {
@@ -2376,7 +2370,7 @@ impl<'a> Proof<'a> {
             // path. Smart-script failures retain their checked diagnostic.
             Err(_) if !contains_search && !crate::instrumentation::deadline_exceeded() => {
                 #[cfg(test)]
-                EXPLICIT_LINEAR_FALLBACKS.with(|fallbacks| fallbacks.set(fallbacks.get() + 1));
+                record_explicit_linear_fallback();
                 Ok(None)
             }
             result => result,
@@ -2616,7 +2610,7 @@ impl<'a> Proof<'a> {
 /// equality whose operands were read from different snapshots, one anchor per
 /// operand. Callers must re-lower each candidate and accept it only when it
 /// denotes exactly `kernel`.
-pub(in crate::lang::click::proof::proof_object) fn synthesize_surface_at_recorded_snapshots(
+pub(super) fn synthesize_surface_at_recorded_snapshots(
     kernel: &Proposition,
     parameters: &[syntax::C0Parameter],
     arguments: &[CExpression],

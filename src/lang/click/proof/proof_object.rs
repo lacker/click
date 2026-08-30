@@ -67,6 +67,11 @@ pub(in crate::lang::click) fn count_explicit_linear_fallbacks<R>(
 }
 
 #[cfg(test)]
+pub(in crate::lang::click::proof) fn record_explicit_linear_fallback() {
+    EXPLICIT_LINEAR_FALLBACKS.with(|fallbacks| fallbacks.set(fallbacks.get() + 1));
+}
+
+#[cfg(test)]
 pub(in crate::lang::click) fn count_execution_context_exports<R>(
     operation: impl FnOnce() -> R,
 ) -> (R, usize) {
@@ -134,7 +139,7 @@ pub(in crate::lang::click) fn count_checked_expanded_execution_ifs<R>(
 /// proposition, fixed-state, and execution-frontier goals use the same boundary.
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
-    context: Arc<ProofContext<'a>>,
+    pub(in crate::lang::click::proof) context: Arc<ProofContext<'a>>,
     state: Arc<ProofState>,
     node: Arc<ProofNode>,
     /// The open goal this handle addresses. Focus is a cursor, not semantic
@@ -391,7 +396,9 @@ enum ProofScopeStructure {
     },
 }
 
-fn explicit_linear_step(tactic: &ProofTactic) -> Option<ProofStep> {
+pub(in crate::lang::click::proof) fn explicit_linear_step(
+    tactic: &ProofTactic,
+) -> Option<ProofStep> {
     match tactic {
         ProofTactic::ApplyTheoremUsing {
             application,
@@ -558,7 +565,7 @@ fn branch_arm_is_supported(tactics: &[ProofTactic]) -> bool {
     linear_script_is_supported(tactics)
 }
 
-fn source_proof_is_supported(proof: &SourceProof) -> bool {
+pub(in crate::lang::click::proof) fn source_proof_is_supported(proof: &SourceProof) -> bool {
     match proof {
         SourceProof::Default | SourceProof::Tactic(SmartTactic::Auto | SmartTactic::Simp) => true,
         SourceProof::Script(tactics) => linear_script_is_supported(tactics),
@@ -762,7 +769,7 @@ fn reverse_surface_comparison(proposition: &ClickProposition) -> Option<ClickPro
     }
 }
 
-fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
+pub(in crate::lang::click::proof) fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
     !tactics.is_empty()
         && tactics
             .iter()
@@ -786,40 +793,41 @@ fn linear_script_is_supported(tactics: &[ProofTactic]) -> bool {
             })
 }
 
-enum ProofContext<'a> {
+pub(in crate::lang::click::proof) enum ProofContext<'a> {
     Pure(PureProofContext<'a>),
     FixedState(FixedStateProofContext<'a>),
     Execution(ExecutionProofContext<'a>),
 }
 
-struct PureProofContext<'a> {
-    claim_label: &'a str,
-    theorem_context: &'a PureTheoremContext,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
+pub(in crate::lang::click::proof) struct PureProofContext<'a> {
+    pub(in crate::lang::click::proof) claim_label: &'a str,
+    pub(in crate::lang::click::proof) theorem_context: &'a PureTheoremContext,
+    pub(in crate::lang::click::proof) predicate_environment: &'a PredicateEnvironment,
+    pub(in crate::lang::click::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::lang::click::proof) theorem_environment: &'a TheoremEnvironment,
 }
 
-struct FixedStateProofContext<'a> {
-    claim_label: &'a str,
-    tactic_index: usize,
-    parameters: &'a [syntax::C0Parameter],
-    arguments: &'a [CExpression],
-    pre_state: &'a CState,
-    state: &'a CState,
-    result: Option<&'a CValue>,
-    premise_anchor: Option<ProgramPointRef>,
-    recorded_snapshots: &'a RecordedSnapshots,
-    surface_propositions: &'a SurfacePropositionMap,
-    predicate_environment: &'a PredicateEnvironment,
-    click_function_environment: &'a ClickFunctionEnvironment,
-    theorem_environment: &'a TheoremEnvironment,
-    unfolded_predicates: &'a [String],
-    effect_facts: &'a [ExecutionPureFact],
-    lowering_context: Arc<Vec<Proposition>>,
-    original_requirements: &'a [Requirement],
-    requirement_label_indices: Option<&'a BTreeMap<String, usize>>,
-    requirement_facts: &'a [Proposition],
+pub(in crate::lang::click::proof) struct FixedStateProofContext<'a> {
+    pub(in crate::lang::click::proof) claim_label: &'a str,
+    pub(in crate::lang::click::proof) tactic_index: usize,
+    pub(in crate::lang::click::proof) parameters: &'a [syntax::C0Parameter],
+    pub(in crate::lang::click::proof) arguments: &'a [CExpression],
+    pub(in crate::lang::click::proof) pre_state: &'a CState,
+    pub(in crate::lang::click::proof) state: &'a CState,
+    pub(in crate::lang::click::proof) result: Option<&'a CValue>,
+    pub(in crate::lang::click::proof) premise_anchor: Option<ProgramPointRef>,
+    pub(in crate::lang::click::proof) recorded_snapshots: &'a RecordedSnapshots,
+    pub(in crate::lang::click::proof) surface_propositions: &'a SurfacePropositionMap,
+    pub(in crate::lang::click::proof) predicate_environment: &'a PredicateEnvironment,
+    pub(in crate::lang::click::proof) click_function_environment: &'a ClickFunctionEnvironment,
+    pub(in crate::lang::click::proof) theorem_environment: &'a TheoremEnvironment,
+    pub(in crate::lang::click::proof) unfolded_predicates: &'a [String],
+    pub(in crate::lang::click::proof) effect_facts: &'a [ExecutionPureFact],
+    pub(in crate::lang::click::proof) lowering_context: Arc<Vec<Proposition>>,
+    pub(in crate::lang::click::proof) original_requirements: &'a [Requirement],
+    pub(in crate::lang::click::proof) requirement_label_indices:
+        Option<&'a BTreeMap<String, usize>>,
+    pub(in crate::lang::click::proof) requirement_facts: &'a [Proposition],
 }
 
 /// The per-proof constants of an execution proof: which claim is being
@@ -1329,29 +1337,30 @@ enum Obligation {
 /// Which effect-availability context an outcome-goal fixed-state operation
 /// consumes; each migrated tactic matches its legacy drain input exactly.
 #[derive(Clone, Copy)]
-enum OutcomeEffectContext {
+pub(in crate::lang::click::proof) enum OutcomeEffectContext {
     Path,
     Frontier,
 }
 
 #[derive(Clone, Copy)]
-struct FixedStateOperationView<'p> {
-    claim_label: &'p str,
-    tactic_index: usize,
-    effect_facts: &'p [ExecutionPureFact],
-    parameters: &'p [syntax::C0Parameter],
-    arguments: &'p [CExpression],
-    pre_state: &'p CState,
-    state: &'p CState,
-    result: Option<&'p CValue>,
-    recorded_snapshots: &'p RecordedSnapshots,
-    surface_propositions: &'p SurfacePropositionMap,
-    predicate_environment: &'p PredicateEnvironment,
-    click_function_environment: &'p ClickFunctionEnvironment,
-    theorem_environment: &'p TheoremEnvironment,
-    original_requirements: &'p [Requirement],
-    requirement_label_indices: Option<&'p BTreeMap<String, usize>>,
-    requirement_facts: &'p [Proposition],
+pub(in crate::lang::click::proof) struct FixedStateOperationView<'p> {
+    pub(in crate::lang::click::proof) claim_label: &'p str,
+    pub(in crate::lang::click::proof) tactic_index: usize,
+    pub(in crate::lang::click::proof) effect_facts: &'p [ExecutionPureFact],
+    pub(in crate::lang::click::proof) parameters: &'p [syntax::C0Parameter],
+    pub(in crate::lang::click::proof) arguments: &'p [CExpression],
+    pub(in crate::lang::click::proof) pre_state: &'p CState,
+    pub(in crate::lang::click::proof) state: &'p CState,
+    pub(in crate::lang::click::proof) result: Option<&'p CValue>,
+    pub(in crate::lang::click::proof) recorded_snapshots: &'p RecordedSnapshots,
+    pub(in crate::lang::click::proof) surface_propositions: &'p SurfacePropositionMap,
+    pub(in crate::lang::click::proof) predicate_environment: &'p PredicateEnvironment,
+    pub(in crate::lang::click::proof) click_function_environment: &'p ClickFunctionEnvironment,
+    pub(in crate::lang::click::proof) theorem_environment: &'p TheoremEnvironment,
+    pub(in crate::lang::click::proof) original_requirements: &'p [Requirement],
+    pub(in crate::lang::click::proof) requirement_label_indices:
+        Option<&'p BTreeMap<String, usize>>,
+    pub(in crate::lang::click::proof) requirement_facts: &'p [Proposition],
 }
 
 impl<'p> FixedStateOperationView<'p> {
@@ -1408,27 +1417,28 @@ struct OutcomeObligation {
 /// its checked return value, post-outcome state, recorded surface
 /// lowerings, and effect-availability facts.
 #[derive(Clone)]
-struct OutcomeProofData {
-    result: Arc<CValue>,
-    state: SharedValue<CState>,
-    surface_propositions: SurfacePropositionMap,
-    recorded_snapshots: RecordedSnapshots,
-    effect_facts: Arc<Vec<ExecutionPureFact>>,
+pub(in crate::lang::click::proof) struct OutcomeProofData {
+    pub(in crate::lang::click::proof) result: Arc<CValue>,
+    pub(in crate::lang::click::proof) state: SharedValue<CState>,
+    pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
+    pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
+    pub(in crate::lang::click::proof) effect_facts: Arc<Vec<ExecutionPureFact>>,
     /// The path's non-effect execution facts, matching the resource-fold law's
     /// historical input exactly.
-    execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
+    pub(in crate::lang::click::proof) execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
     /// The statement-entry anchor for premises naming a C local after it
     /// left scope, captured from the frontier at derivation.
-    premise_anchor: Option<ProgramPointRef>,
+    pub(in crate::lang::click::proof) premise_anchor: Option<ProgramPointRef>,
     /// The lowered function-requirement facts in declaration order, captured
     /// as the raw prefix of the drain's working set at derivation: `choose`
     /// selects its source by requirement index, which persistent
     /// deduplication would misalign.
-    requirement_facts: Arc<Vec<Proposition>>,
+    pub(in crate::lang::click::proof) requirement_facts: Arc<Vec<Proposition>>,
     /// Original proposition requirements keyed by their checked entry fact.
     /// Typed outcome evidence uses this persistent index to recover an exact
     /// function-entry Surface premise without scanning unrelated facts.
-    requirement_surfaces: Arc<PersistentMap<Proposition, ClickProposition>>,
+    pub(in crate::lang::click::proof) requirement_surfaces:
+        Arc<PersistentMap<Proposition, ClickProposition>>,
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
 }
 
@@ -1464,18 +1474,18 @@ struct FrontierObligation {
 /// structural goals. Both values belong to the same immutable Proof state;
 /// smart search must not carry a second caller-owned description of its goal.
 #[derive(Clone)]
-struct PropositionObligation {
-    kernel: Arc<Proposition>,
-    surface: Option<Arc<ClickProposition>>,
+pub(in crate::lang::click::proof) struct PropositionObligation {
+    pub(in crate::lang::click::proof) kernel: Arc<Proposition>,
+    pub(in crate::lang::click::proof) surface: Option<Arc<ClickProposition>>,
     /// Surface names introduced while refining this exact proposition goal.
     /// Universal binders are goal-local: sibling goals share the persistent
     /// map root at a split, then refine independently without leaking names.
-    surface_bindings: PersistentMap<String, ContractExpression>,
+    pub(in crate::lang::click::proof) surface_bindings: PersistentMap<String, ContractExpression>,
     /// Result-aware proof data borrowed by identity from the function
     /// outcome this judgment was stated at, when it was. The judgment can
     /// read the outcome's result, state, and lowerings; it can never
     /// publish a changed outcome through this reference.
-    outcome: Option<Arc<OutcomeProofData>>,
+    pub(in crate::lang::click::proof) outcome: Option<Arc<OutcomeProofData>>,
 }
 
 impl OpenBranch {
@@ -1685,7 +1695,9 @@ enum BitvectorEqualityAtomKey {
 /// reflexivity as an explicit transport source. Keep this selector
 /// intentionally syntactic: the fixed-state checker remains the authority for
 /// whether execution effects and result provenance permit the transport.
-fn old_reflexive_transport_source(goal: &ClickProposition) -> Option<ClickProposition> {
+pub(in crate::lang::click::proof) fn old_reflexive_transport_source(
+    goal: &ClickProposition,
+) -> Option<ClickProposition> {
     let ClickProposition::Comparison {
         left,
         operator: ComparisonOperator::Equal,
@@ -1717,6 +1729,15 @@ impl<'a> Proof<'a> {
         Some(&self.focused_branch()?.obligation)
     }
 
+    pub(in crate::lang::click::proof) fn proposition_obligation(
+        &self,
+    ) -> Option<&PropositionObligation> {
+        match self.focused_obligation()? {
+            Obligation::Proposition(goal) => Some(goal),
+            _ => None,
+        }
+    }
+
     /// Whether the obligation this handle addresses has been discharged. On
     /// a single-goal proof this coincides with completion; inside a sibling
     /// split, only the focused branch obligation's discharge is an arm's success —
@@ -1732,7 +1753,9 @@ impl<'a> Proof<'a> {
     }
 
     /// The focused branch branch's path-local unfold delta.
-    fn focused_branch_unfolds(&self) -> &PersistentOrderedSet<String> {
+    pub(in crate::lang::click::proof) fn focused_branch_unfolds(
+        &self,
+    ) -> &PersistentOrderedSet<String> {
         &self
             .focused_branch()
             .expect("unfold queries require an open goal")
@@ -1743,7 +1766,7 @@ impl<'a> Proof<'a> {
     /// The focused branch goal's path-local fact context. Every caller is a
     /// checked operation or search query on an open goal: `apply_step` and
     /// the structural operations reject discharged proofs first.
-    fn facts(&self) -> &ProofFacts {
+    pub(in crate::lang::click::proof) fn facts(&self) -> &ProofFacts {
         match self.focused_branch() {
             Some(branch) => &branch.state.facts,
             None => unreachable!("fact queries require an open goal"),
@@ -1799,7 +1822,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    fn execution(&self) -> Option<&ExecutionProofState> {
+    pub(in crate::lang::click::proof) fn execution(&self) -> Option<&ExecutionProofState> {
         self.branch_execution().map(Arc::as_ref)
     }
 
@@ -1823,7 +1846,7 @@ impl<'a> Proof<'a> {
         }
     }
 
-    fn surface_goal(&self) -> Option<&ClickProposition> {
+    pub(in crate::lang::click::proof) fn surface_goal(&self) -> Option<&ClickProposition> {
         match self.focused_obligation() {
             Some(Obligation::Proposition(goal)) => goal.surface.as_deref(),
             _ => None,
@@ -2008,7 +2031,7 @@ impl<'a> Proof<'a> {
         self.state.open_branches.is_discharged()
     }
 
-    fn active_unfolded_predicates(&self) -> Vec<String> {
+    pub(in crate::lang::click::proof) fn active_unfolded_predicates(&self) -> Vec<String> {
         let inherited = match self.context.as_ref() {
             ProofContext::Pure(_) => &[][..],
             ProofContext::FixedState(context) => context.unfolded_predicates,
@@ -2115,7 +2138,10 @@ impl<'a> Proof<'a> {
         }
     }
 
-    fn step_error(&self, message: impl Into<String>) -> ClickError {
+    pub(in crate::lang::click::proof) fn step_error(
+        &self,
+        message: impl Into<String>,
+    ) -> ClickError {
         ClickError::new(format!(
             "`{}` proof step {}: {}",
             self.context.claim_label(),
@@ -2178,7 +2204,6 @@ mod execution_statements;
 mod fact_index;
 mod fixed_state_steps;
 mod outcomes_and_focus;
-mod planning;
 mod resource_steps;
 mod scope;
 mod splits_and_scopes;
@@ -2187,6 +2212,9 @@ mod surface_lowering;
 
 #[cfg(test)]
 mod tests;
+
+pub(in crate::lang::click::proof) use fact_index::collect_surface_conjunct_leaves;
+pub(in crate::lang::click::proof) use outcomes_and_focus::frontier_premise_anchor;
 
 impl ExecutionProofState {
     pub(in crate::lang::click::proof) fn defer_post_execution(

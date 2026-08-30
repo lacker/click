@@ -9,11 +9,12 @@ must only reject a proof or choose an unhelpful checked path. The code layout
 does not make that trust distinction clear.
 
 The first extraction moved branch and split identities plus persistent branch
-topology to `src/kernel/proof.rs`, and grouped the still-coupled smart search
-under `proof_object/planning/`. The remaining proof representation and checked
-operations still need a kernel-owned API. Smart planning currently reads many
-private implementation details, so moving the files wholesale would put
-untrusted search inside the kernel rather than establish a boundary.
+topology to `src/kernel/proof.rs`. Smart search now lives outside
+`proof_object/` and consumes an immutable internal planning interface instead
+of the proof's private state, provenance node, focus, or constructors. The
+remaining proof representation and checked operations still need a
+kernel-owned API; moving the old directory wholesale would also move Surface
+Click lowering and certificate serialization into the kernel.
 
 ## Intended regression
 

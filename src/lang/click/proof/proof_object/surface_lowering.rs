@@ -51,7 +51,7 @@ impl<'a> Proof<'a> {
         Ok(ProofCertificate::from_steps(steps))
     }
 
-    pub(super) fn lower_surface_proposition(
+    pub(in crate::lang::click::proof) fn lower_surface_proposition(
         &self,
         surface: &ClickProposition,
         description: &str,
@@ -171,7 +171,7 @@ impl<'a> Proof<'a> {
     /// lowered when the retained `apply` step runs. In particular, a local
     /// that has left scope must be written through `at(...)` rather than
     /// merely associated with an indexed historical fact.
-    pub(super) fn lower_surface_proposition_direct(
+    pub(in crate::lang::click::proof) fn lower_surface_proposition_direct(
         &self,
         surface: &ClickProposition,
         description: &str,

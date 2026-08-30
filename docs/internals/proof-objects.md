@@ -16,8 +16,8 @@ complete logical or execution state.
 The kernel owns branch and split identities and the persistent open-branch
 topology in `src/kernel/proof.rs`; the remaining checked representation is
 being moved across the same boundary incrementally. Untrusted smart selection
-is grouped under `proof_object/planning/` and may only publish descendants
-created by checked proof operations.
+lives outside `proof_object/` and may inspect its read-only planning interface
+or publish descendants created by checked proof operations.
 
 Goals carry the facts, resources, and symbolic execution state relevant to one
 judgment. Typed scope, split, and join helpers preserve branch and loop
