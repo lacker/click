@@ -667,18 +667,48 @@ fn tactic_form_inventory_is_bidirectional() {
 
     let reference = fs::read_to_string(root().join("docs/reference/tactics/index.md"))
         .expect("read tactic reference");
+    let rows = reference
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .filter(|line| line.matches('|').count() >= 6)
+        .filter_map(|line| {
+            let mut cells = line.split('|').map(str::trim);
+            let _empty = cells.next()?;
+            Some((cells.next()?, cells.next()?, line))
+        })
+        .collect::<Vec<_>>();
     for form in PUBLIC_TACTIC_FORMS {
+        let matches_surface = |surface: &str| match form.id {
+            "frame" => surface == "`frame()` / `frame(region)`",
+            "frame-using" => surface == "`frame() using { P; ... }`",
+            "apply-induction" => surface == "`apply(ih(m))`",
+            "apply-induction-using" => surface == "`apply(ih(m)) using { P; ... }`",
+            "apply-theorem" => surface == "`apply(theorem(args))`",
+            "apply-theorem-using" => surface == "`apply(theorem(args)) using { P; ... }`",
+            "arithmetic" => surface == "`arithmetic()`",
+            "arithmetic-using" => surface == "`arithmetic() using { P; ... }`",
+            "transport" => surface == "`transport(P, Q)`",
+            "transport-using" => surface == "`transport(P, Q) using { R; ... }`",
+            "simp" => surface == "`simp()`",
+            "simp-using" => surface == "`simp() using { P; ... }`",
+            _ => surface.contains(form.syntax),
+        };
+        let matching = rows
+            .iter()
+            .filter(|(surface, _, _)| matches_surface(surface))
+            .collect::<Vec<_>>();
         assert!(
-            reference.contains(form.syntax),
-            "tactic form `{}` is missing canonical syntax `{}`",
+            matching.len() == 1,
+            "tactic form `{}` must map to exactly one reference row through `{}`; matches: {:?}",
             form.id,
-            form.syntax
+            form.syntax,
+            matching.iter().map(|(_, _, row)| row).collect::<Vec<_>>(),
         );
-        assert!(
-            reference.contains(form.class),
-            "tactic form `{}` is missing class `{}`",
+        let &(_, documented_class, row) = matching[0];
+        assert_eq!(
+            documented_class, form.class,
+            "tactic form `{}` has the wrong class in its own reference row: {row}",
             form.id,
-            form.class
         );
     }
 }
@@ -774,6 +804,27 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
             assert!(
                 fixture.contains("```expect"),
                 "tactic fixture `{id}` has no mdtest expectation in {path}"
+            );
+            let mut in_click = false;
+            let mut checked_click = String::new();
+            for line in fixture.lines() {
+                if line.trim() == "```click" {
+                    in_click = true;
+                    continue;
+                }
+                if in_click && line.trim() == "```" {
+                    in_click = false;
+                    checked_click.push('\n');
+                    continue;
+                }
+                if in_click {
+                    checked_click.push_str(line);
+                    checked_click.push('\n');
+                }
+            }
+            assert!(
+                checked_click.contains(&needle),
+                "tactic fixture `{id}` needle occurs outside a checked Click fence in {path}: {needle}"
             );
         } else {
             assert!(

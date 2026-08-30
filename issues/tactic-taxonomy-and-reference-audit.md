@@ -1,9 +1,10 @@
 # Tactic taxonomy and reference audit
 
-The public tactic vocabulary is mostly coherent, but its implementation,
-reference documentation, profiling classification, and expansion model do not
-yet agree at every boundary. This issue records the complete audit so the
-remaining cleanups can land independently without losing the overall design.
+The nonsemantic taxonomy and reference cleanup from this audit is complete.
+The simple, smart, and control definitions now agree; intrinsic tactic class
+is distinct from source-site ownership of omitted automation; the tactic table
+is checked row by row; and the affected reference entries have focused positive
+coverage. One semantic question remains: the boundary of `assumption()`.
 
 ## Violated invariants
 
@@ -21,7 +22,7 @@ remaining cleanups can land independently without losing the overall design.
 
 ## Audit findings
 
-### The definition of simple is inconsistent
+### The definition of simple is inconsistent (resolved)
 
 The tactic reference says that a simple tactic operates from explicitly named
 data. That excludes `step()`, which deterministically checks one selected C
@@ -43,20 +44,60 @@ cost of checking the emitted operations.
 `step()` as smart and later describing it as both simple and "one smart
 transition".
 
-### `assumption()` is more permissive than its reference entry
+### `assumption()` is more permissive than its reference entry (open)
 
-The reference says `assumption()` performs exact lookup and rejects merely
-derivable or differently spelled facts. Depending on proof context, the kernel
-also accepts quantified-equivalent facts, context-free normalization,
-discharged implication consequents, and facts available across certified
-effects. This blurs the boundary among `assumption()`, `normalize()`,
-`extract()`, and explicit transport.
+The reference says `assumption()` performs exact lookup. Depending on proof
+context, the kernel also accepts an alpha-equivalent quantified fact, a
+context-free normalization, a discharged implication consequent, or an exact
+fact modulo condition polarity and certified resource-separation identity.
+Normalization and implication discharge overlap `normalize()` and `extract()`;
+the other equivalences can reasonably be part of semantic fact identity.
 
-The preferred design is for `assumption()` to perform exact semantic lookup and
-for the other derivations to remain explicit, but narrowing it changes visible
-proof behavior and requires a separate decision and regression review.
+Alpha-equivalent quantified facts are different in kind: binder identity is an
+internal representation detail. Accepting alpha-equivalence is compatible with
+an "exact semantic fact" contract even though structural set lookup misses it.
 
-### A second source-site classification obscures intrinsic tactic class
+#### Corpus diagnostic
+
+`assumption()` has 584 checked source occurrences across 33 mdtest, example,
+and surface-test files (including generated test-source strings). A throwaway
+kernel switch independently removed each convenience while running the
+ordinary fixture and unit gates:
+
+- removing quantified equivalence breaks two of 411 mdtests; retaining it while
+  removing all other conveniences makes all 411 pass;
+- removing condition-polarity/resource-separation matching breaks one of 1,213
+  library tests, where checked outcome `simp` depends on the polarity-equivalent
+  loop-exit bound;
+- removing discharged implication extraction leaves all 1,213 library tests,
+  all mdtests, and all examples green;
+- removing context-free normalization breaks five library tests (three direct
+  proof patterns plus two duplicate example-pipeline checks) and at least two
+  examples, `bounded-pool` and `owned-string`. These sites use `assumption()`
+  to prove a proposition from the current symbolic state rather than reuse a
+  stored fact, so `normalize()` is the natural explicit operation.
+
+The diagnostic switch lives only in a throwaway worktree and is not part of
+the proposed change.
+
+#### Design options
+
+1. Keep the implementation and broaden the documentation. This avoids proof
+   migration, but leaves one lookup tactic overlapping three explicit proof
+   operations and changing meaning by context.
+2. Make `assumption()` exact semantic lookup: accept an available fact modulo
+   alpha-renaming, condition polarity, and certified resource-separation
+   identity, but require `normalize()` for symbolic evaluation and `extract()`
+   for implication discharge. This is the preferred boundary. The known
+   normalization sites require a small proof migration; no C changes are
+   needed.
+3. Require structural identity only. This exposes binder and lowering details
+   to proofs and already breaks two mdtests.
+4. Preserve the broad operation under a second tactic name while narrowing
+   `assumption()`. The corpus evidence does not currently justify another
+   public tactic.
+
+### A second source-site classification obscures intrinsic tactic class (resolved)
 
 `ProofTactic::class()` gives each AST form an intrinsic simple, smart, or
 control class. `source_tactic_class()` separately reclassifies source
@@ -70,7 +111,7 @@ behavior. Containers should remain intrinsically control. The separate concept
 should be named for what it does, such as an *expandable source site* or
 *automation source anchor*, rather than being another tactic class.
 
-### Several reference descriptions are incomplete or too strict
+### Several reference descriptions are incomplete or too strict (resolved)
 
 - `cases` also works at an execution frontier: each branch retains the same
   checked C state, receives its exact disjunct, and checks subsequent execution
@@ -88,7 +129,7 @@ The resource-operation descriptions themselves are otherwise accurate:
 resource, `unfold` exposes one body layer, `fold` consumes the body to recreate
 the named resource, and `open` scopes an unfold/fold transition.
 
-### The mechanically checked documentation coverage is weaker than advertised
+### The mechanically checked documentation coverage is weaker than advertised (resolved)
 
 The form-inventory test checks that each syntax string and class word occurs
 somewhere on the complete reference page. It does not associate the registered
@@ -101,31 +142,26 @@ that the file belongs to an ordinary test suite. Some needles, including
 still the checked use. The test does not structurally associate a Rust source
 occurrence with the particular `#[test]` that verifies it.
 
-## Intended regressions
+## Remaining intended regressions
 
-1. A documentation regression rejects any normative page that classifies
-   `step()` as smart.
-2. Focused semantic tests pin the chosen exact behavior of `assumption()`,
-   `contradiction()`, and condition-polarity disjunction introduction.
-3. A reference-inventory regression associates every public form ID with the
-   class in its own table row.
-4. Each positive-fixture mapping uses a distinctive complete tactic spelling
-   inside a test that verifies that proof.
+1. `assumption()` closes a goal from a semantically identical available fact,
+   including alpha-equivalent quantified binders.
+2. `assumption()` does not normalize an otherwise unavailable proposition;
+   `normalize()` proves the same goal.
+3. `assumption()` does not extract a discharged implication consequent;
+   `extract()` makes it available explicitly.
+4. `assumption()` accepts condition-polarity and certified
+   resource-separation identity, but does not derive an otherwise unavailable
+   mutable fact across an effect; `transport()` does so explicitly.
+5. The migrated example and all existing tactic fixtures verify.
 
-## Acceptance criteria
+## Remaining acceptance criteria
 
-- The canonical simple/smart/control definition includes the performance and
-  expansion contract and is used consistently throughout public and internal
-  documentation.
-- `step()` is documented everywhere as a simple deterministic statement
-  transition over indexed ambient context.
-- `assumption()`, `contradiction()`, `left()`, and `right()` either match their
-  exact documented semantics or their documentation explicitly states the
-  accepted equivalences; any semantic change has focused regressions.
-- `cases`, all three `unfold` forms, and omitted loop automation are described
-  accurately.
-- Intrinsic tactic class and source-location ownership of automation have
-  distinct names and responsibilities.
-- Reference and positive-fixture tests fail on a per-form class mismatch or a
-  stale/non-distinctive checked use.
+- Choose and document one context-independent semantic contract for
+  `assumption()`.
+- The kernel implements that contract without a linear scan of unrelated
+  facts.
+- Focused positive and negative regressions distinguish lookup from
+  normalization, extraction, and transport.
+- Any affected checked proofs are migrated without changing their C.
 - `scripts/check.sh` passes.

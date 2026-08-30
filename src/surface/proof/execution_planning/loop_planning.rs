@@ -224,7 +224,7 @@ pub(in crate::surface::proof) fn verify_loop_initialization_pure_proof(
             for (certificate_index, tactic) in certificate.to_proof_tactics().iter().enumerate() {
                 // Certificate validation for the initialize phase never reaches
                 // the checked drivers' tactic loop, so time each step here in
-                // the same format and let `source_tactic_class` classify it.
+                // the same format and let `source_site_kind` classify it.
                 let _timing = TacticTiming::new(
                     &claim_label,
                     certificate_index,

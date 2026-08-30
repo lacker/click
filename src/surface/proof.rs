@@ -106,7 +106,7 @@ pub(super) use surface_synthesis::{
 };
 use theorem_application::*;
 use timing::TacticTiming;
-pub(super) use timing::{SourceTacticClass, source_tactic_class};
+pub(super) use timing::{SourceSiteKind, source_site_kind};
 
 /// Checked kernel evidence used as the input to constructing one
 /// [`ProofStep`]. Evidence never forms an ordered checkable program of
@@ -1134,7 +1134,7 @@ mod certificate_tests {
             proof: SourceProof::Script(vec![ProofTactic::Assumption]),
         });
 
-        assert_eq!(source_tactic_class(&have), SourceTacticClass::Simple);
+        assert_eq!(source_site_kind(&have), SourceSiteKind::SimpleOperation);
     }
 
     #[test]
@@ -1153,8 +1153,14 @@ mod certificate_tests {
             proof: SourceProof::Script(Vec::new()),
         });
 
-        assert_eq!(source_tactic_class(&smart), SourceTacticClass::Smart);
-        assert_eq!(source_tactic_class(&structural), SourceTacticClass::Control);
+        assert_eq!(
+            source_site_kind(&smart),
+            SourceSiteKind::ExpandableAutomation
+        );
+        assert_eq!(
+            source_site_kind(&structural),
+            SourceSiteKind::ControlContainer
+        );
     }
 
     #[test]

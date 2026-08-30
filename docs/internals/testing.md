@@ -313,10 +313,13 @@ that class to prescribe the next action:
 - `CONTROL` steps are proof containers. Inspect their nested smart and simple
   timings rather than optimizing the container row by itself.
 
-`have` is structurally a proof container, but the complete selectable source
-occurrence inherits SMART from a supported smart body and SIMPLE from a
-nonempty all-simple body. Other `have` forms remain CONTROL. Timing, inventory,
-and expansion use that same source-site classification.
+Intrinsic tactic class and selectable source-site kind are separate. `have`
+is structurally a control container, but its complete selectable source site
+is expandable automation for a supported smart body and a simple operation for
+a nonempty all-simple body. Other `have` sites remain control containers. A
+`loop` also remains intrinsically control when its keyword owns omitted phase
+or effect automation. Timing renders the source-site kinds as SMART, SIMPLE,
+and CONTROL; inventory and expansion use the same site-kind decision.
 
 If a project reaches its limit, the report classifies every active step and
 applies the same advice. This prevents slow legacy fallbacking from being

@@ -95,7 +95,7 @@ needle = "have result == 1 by simp;"
 [[form]]
 id = "open"
 path = "mdtests/resource_population_open.md"
-needle = "open("
+needle = "open(object_ref(obj)) {"
 
 [[form]]
 id = "if"
@@ -119,8 +119,8 @@ needle = "loop {"
 
 [[form]]
 id = "observe-resource"
-path = "mdtests/composite_resource_folded_nested_fact_projection.md"
-needle = "observe("
+path = "mdtests/composite_resource_observe_nested_fact.md"
+needle = "observe(live_fd(fd));"
 
 [[form]]
 id = "witness"
@@ -194,8 +194,8 @@ needle = "transport(old(p[0]) == 7, p[0] == 7);"
 
 [[form]]
 id = "transport-using"
-path = "mdtests/field_derived_precise_effect_after_metadata_write.md"
-needle = ") using {"
+path = "src/surface/tests/tactic_tests/statement_steps.rs"
+needle = "transport(old(p[0]) == 7, p[0] == 7) using {"
 
 [[form]]
 id = "instantiate-using"

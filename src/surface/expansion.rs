@@ -257,7 +257,7 @@ fn collect_smart_script_sites(
 ) {
     let mut source_index = source_index_offset;
     for tactic in tactics {
-        if source_tactic_class(tactic) == SourceTacticClass::Smart {
+        if source_site_kind(tactic) == SourceSiteKind::ExpandableAutomation {
             sites.push(SmartTacticSourceSite {
                 claim_label: claim_label.to_string(),
                 source_index,

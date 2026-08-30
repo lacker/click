@@ -12,26 +12,31 @@ pub(super) struct TacticTiming {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::surface) enum SourceTacticClass {
-    Simple,
-    Smart,
-    Control,
+pub(in crate::surface) enum SourceSiteKind {
+    SimpleOperation,
+    ExpandableAutomation,
+    ControlContainer,
 }
 
-impl SourceTacticClass {
-    fn label(self) -> &'static str {
+impl SourceSiteKind {
+    fn profiling_label(self) -> &'static str {
         match self {
-            Self::Simple => "simple",
-            Self::Smart => "smart",
-            Self::Control => "control",
+            Self::SimpleOperation => "simple",
+            Self::ExpandableAutomation => "smart",
+            Self::ControlContainer => "control",
         }
     }
 }
 
-pub(in crate::surface) fn source_tactic_class(tactic: &ProofTactic) -> SourceTacticClass {
+/// Classifies a selectable source location for profiling and expansion.
+///
+/// This differs from [`ProofTactic::class`]: a control container can own the
+/// source location for nested or omitted automation without changing its
+/// intrinsic tactic class.
+pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKind {
     if let ProofTactic::Have(have) = tactic {
         if smart_simp_unfold_prefix(&have.proof).is_some() {
-            return SourceTacticClass::Smart;
+            return SourceSiteKind::ExpandableAutomation;
         }
         if let SourceProof::Script(tactics) = &have.proof
             && !tactics.is_empty()
@@ -39,7 +44,7 @@ pub(in crate::surface) fn source_tactic_class(tactic: &ProofTactic) -> SourceTac
                 .iter()
                 .all(|tactic| matches!(tactic.class(), TacticClass::Simple(_)))
         {
-            return SourceTacticClass::Simple;
+            return SourceSiteKind::SimpleOperation;
         }
     }
     if let ProofTactic::Loop(loop_clause) = tactic
@@ -53,12 +58,12 @@ pub(in crate::surface) fn source_tactic_class(tactic: &ProofTactic) -> SourceTac
         // The loop keyword is the shared source anchor for every omitted
         // phase/effect proof in this block. Expanding it materializes all of
         // those defaults together.
-        return SourceTacticClass::Smart;
+        return SourceSiteKind::ExpandableAutomation;
     }
     match tactic.class() {
-        TacticClass::Simple(_) => SourceTacticClass::Simple,
-        TacticClass::Smart(_) => SourceTacticClass::Smart,
-        TacticClass::ControlFlow(_) => SourceTacticClass::Control,
+        TacticClass::Simple(_) => SourceSiteKind::SimpleOperation,
+        TacticClass::Smart(_) => SourceSiteKind::ExpandableAutomation,
+        TacticClass::ControlFlow(_) => SourceSiteKind::ControlContainer,
     }
 }
 
@@ -104,7 +109,7 @@ impl TacticTiming {
             return None;
         }
         crate::instrumentation::enabled().then(|| {
-            let tactic_class = source_tactic_class(tactic).label();
+            let tactic_class = source_site_kind(tactic).profiling_label();
             if crate::instrumentation::starts_enabled() {
                 crate::instrumentation::emit(
                     crate::instrumentation::VerificationEvent::TacticStarted(

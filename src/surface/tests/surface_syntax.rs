@@ -514,6 +514,20 @@ fn verifies_explicit_structural_logic_tactics() {
             }
         }
 
+        theorem left_condition_polarity_rule(x: int32, y: int32) {
+            requires not (x < y);
+            ensures x >= y or x == y by {
+                left();
+            }
+        }
+
+        theorem right_condition_polarity_rule(x: int32, y: int32) {
+            requires not (x < y);
+            ensures x == y or x >= y by {
+                right();
+            }
+        }
+
         theorem double_negation_rule(x: int32) {
             requires x == x;
             ensures not (not (x == x)) by {
@@ -562,7 +576,7 @@ fn verifies_explicit_structural_logic_tactics() {
     "#;
 
     let verified = verify_click_theorems(source).expect("logical tactics should verify");
-    assert_eq!(verified.len(), 9);
+    assert_eq!(verified.len(), 11);
     assert!(verified.iter().all(|theorem| {
         theorem.proof_kind == ProofKind::TacticScript && theorem.proof_certificate().is_ok()
     }));
