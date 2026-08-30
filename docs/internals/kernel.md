@@ -33,7 +33,9 @@ Kernel files:
   owns branch and split identities, allocation, and structural topology;
   `storage.rs` owns the shared persistent containers used by proof forks; and
   `execution.rs` owns typed execution frontiers and loop-effect obligations.
-  `fact_keys.rs` owns structural fact-index keys over kernel propositions.
+  `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
+  `fact_reasoning.rs` owns the surface-independent equivalence, transport,
+  conflict, and availability rules used by the persistent fact store.
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 

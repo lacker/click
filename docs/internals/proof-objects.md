@@ -19,7 +19,11 @@ representation is being moved across the same boundary incrementally. Its
 surface-independent persistent containers already live in
 `src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
 `src/kernel/proof/execution.rs` and the persistent fact store's structural keys
-live in `src/kernel/proof/fact_keys.rs`. Untrusted smart selection
+live in `src/kernel/proof/fact_keys.rs`. The fact store's semantic matching,
+transport, conflict, and snapshot-equivalence rules live beside those keys in
+`src/kernel/proof/fact_reasoning.rs`; Surface Click fact selection, diagnostic
+rendering, and budgeted smart premise search remain in the language layer.
+Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
 Contextual Surface Click lowering likewise lives beside the language-layer

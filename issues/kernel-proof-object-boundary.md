@@ -18,8 +18,12 @@ The proof-specific persistent storage containers now live in
 `src/kernel/proof/storage.rs`; they carry no surface syntax or transition
 authority. Typed execution frontiers and loop-effect obligations now live in
 `src/kernel/proof/execution.rs`; snapshot-blind and alpha-equivalence fact-index
-keys live in `src/kernel/proof/fact_keys.rs`. The remaining proof representation
-and checked operations still need a kernel-owned API.
+keys live in `src/kernel/proof/fact_keys.rs`, and surface-independent fact
+matching, transport, conflict, and equivalence rules live in
+`src/kernel/proof/fact_reasoning.rs`. Surface fact-selection policy,
+diagnostics, and budgeted smart premise search remain in the language layer.
+The remaining proof representation and checked operations still need a
+kernel-owned API.
 
 ## Intended regression
 

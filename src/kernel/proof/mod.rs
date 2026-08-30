@@ -8,6 +8,7 @@
 mod branches;
 mod execution;
 mod fact_keys;
+pub(crate) mod fact_reasoning;
 mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranches, SplitId};
