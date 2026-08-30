@@ -56,7 +56,7 @@ impl<'a> Proof<'a> {
             .open_branches
             .iter()
             .find_map(|(id, branch)| match &branch.obligation {
-                Obligation::FunctionOutcome(outcome) if outcome.core.path_index == path_index => {
+                Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {
                     Some(id)
                 }
                 _ => None,
@@ -81,14 +81,10 @@ impl<'a> Proof<'a> {
         let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("frame authority requires a focused outcome goal"));
         };
-        if !matches!(goal.core.selection, EffectGoalSelection::None)
-            || goal.core.checked_effects.is_empty()
-        {
+        if !matches!(goal.selection, EffectGoalSelection::None) || goal.checked_effects.is_empty() {
             return Err(self.step_error("the focused outcome has no checked frame authority"));
         }
-        Ok(CheckedFrameAuthority::new(
-            (*goal.core.checked_effects).clone(),
-        ))
+        Ok(CheckedFrameAuthority::new((*goal.checked_effects).clone()))
     }
 
     /// Updates the focused branch outcome goal's immutable result/state snapshot
@@ -314,9 +310,10 @@ impl<'a> Proof<'a> {
             let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);
             let (id, next_goals) = goals.push(OpenBranch::function_outcome(
-                OutcomeObligation {
-                    core: FunctionOutcomeObligation::new(path_index, effect_selection),
-                    data: Arc::new(OutcomeProofData {
+                OutcomeObligation::new(
+                    path_index,
+                    effect_selection,
+                    Arc::new(OutcomeProofData {
                         core: OutcomeProofCore {
                             result: Arc::new(result),
                             state: state.into(),
@@ -330,7 +327,7 @@ impl<'a> Proof<'a> {
                         requirement_surfaces: requirement_surfaces.clone(),
                         branch_decisions: provenance.branch_decisions,
                     }),
-                },
+                ),
                 BranchState {
                     facts,
                     unfolded_predicates: frontier_unfolds.clone(),

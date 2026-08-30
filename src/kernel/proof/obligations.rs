@@ -4,6 +4,7 @@
 //! no Surface Click syntax, source selector, diagnostic data, or smart-plan
 //! state.
 
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use super::storage::SharedValue;
@@ -33,21 +34,37 @@ impl FrontierObligation {
     }
 }
 
-/// The kernel meaning of one proposition branch obligation.
+/// One proposition branch obligation with opaque presentation data.
 #[derive(Clone)]
-pub(crate) struct PropositionObligation {
+pub(crate) struct PropositionObligation<S> {
     proposition: Arc<Proposition>,
+    pub(crate) presentation: S,
 }
 
-impl PropositionObligation {
-    pub(crate) fn new(proposition: Proposition) -> Self {
+impl<S> PropositionObligation<S> {
+    pub(crate) fn new(proposition: Proposition, presentation: S) -> Self {
         Self {
             proposition: Arc::new(proposition),
+            presentation,
         }
     }
 
     pub(crate) fn proposition(&self) -> &Proposition {
         &self.proposition
+    }
+}
+
+impl<S> Deref for PropositionObligation<S> {
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        &self.presentation
+    }
+}
+
+impl<S> DerefMut for PropositionObligation<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.presentation
     }
 }
 
@@ -61,22 +78,36 @@ pub(crate) struct OutcomeProofCore {
     pub(crate) requirement_facts: Arc<Vec<Proposition>>,
 }
 
-/// The remaining semantic obligation for one checked returning path.
+/// The remaining obligation for one checked returning path, paired with
+/// opaque result-presentation data.
 #[derive(Clone)]
-pub(crate) struct FunctionOutcomeObligation {
+pub(crate) struct FunctionOutcomeObligation<S> {
     pub(crate) path_index: usize,
     pub(crate) selection: EffectGoalSelection,
     pub(crate) checked_effects: Arc<Vec<usize>>,
+    pub(crate) data: S,
 }
 
-impl FunctionOutcomeObligation {
-    pub(crate) fn new(path_index: usize, selection: EffectGoalSelection) -> Self {
+impl<S> FunctionOutcomeObligation<S> {
+    pub(crate) fn new(path_index: usize, selection: EffectGoalSelection, data: S) -> Self {
         Self {
             path_index,
             selection,
             checked_effects: Arc::new(Vec::new()),
+            data,
         }
     }
+}
+
+/// What one open proof branch currently has to establish.
+///
+/// `P` and `O` are untrusted presentation attachments. Variant identity and
+/// every semantic payload remain kernel-owned.
+#[derive(Clone)]
+pub(crate) enum ProofObligation<P, O> {
+    Proposition(PropositionObligation<P>),
+    Frontier(FrontierObligation),
+    FunctionOutcome(FunctionOutcomeObligation<O>),
 }
 
 /// Private authority that ordered outcome finalization may consume without

@@ -31,9 +31,12 @@ Kernel `ProofState`, `ProofBranch`, and `ProofBranchState` now own the
 persistent state and open-branch shapes. Surface-local names, obligation
 presentation, and execution presentation are opaque type parameters during
 the remaining transition migration; the kernel containers never inspect them
-or accept them as evidence. Frontier effect selections, proposition meaning,
-result-aware outcome state, and checked frame authority live in
-`src/kernel/proof/obligations.rs`.
+or accept them as evidence. The proposition/frontier/outcome obligation enum,
+effect selections, result-aware outcome state, and checked frame authority
+live in `src/kernel/proof/obligations.rs`; proposition and outcome presentation
+are opaque parameters. Goal-preserving fact or execution updates, strict
+frontier updates, obligation replacement, and conditional discharge are
+implemented on the kernel branch store rather than in the Click proof driver.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.

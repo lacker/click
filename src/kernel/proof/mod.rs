@@ -27,7 +27,7 @@ pub(crate) use facts::ProofFacts;
 pub(crate) use object::ProofState;
 pub(crate) use obligations::{
     CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FunctionOutcomeObligation,
-    OutcomeProofCore, PropositionObligation,
+    OutcomeProofCore, ProofObligation, PropositionObligation,
 };
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,

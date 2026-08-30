@@ -34,12 +34,7 @@ impl<'a> Proof<'a> {
         };
         let arm = |disjunct: Proposition| {
             OpenBranch::new(
-                Obligation::Proposition(PropositionObligation {
-                    core: goal.core.clone(),
-                    surface: goal.surface.clone(),
-                    surface_bindings: goal.surface_bindings.clone(),
-                    outcome: goal.outcome.clone(),
-                }),
+                Obligation::Proposition(goal.clone()),
                 BranchState {
                     facts: branch_state.facts.with_fact(disjunct),
                     unfolded_predicates: branch_state.unfolded_predicates.clone(),
@@ -95,12 +90,7 @@ impl<'a> Proof<'a> {
         let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
         let arm = |fact: Proposition| {
             OpenBranch::new(
-                Obligation::Proposition(PropositionObligation {
-                    core: goal.core.clone(),
-                    surface: goal.surface.clone(),
-                    surface_bindings: goal.surface_bindings.clone(),
-                    outcome: goal.outcome.clone(),
-                }),
+                Obligation::Proposition(goal.clone()),
                 BranchState {
                     facts: branch_state.facts.with_fact(fact),
                     unfolded_predicates: branch_state.unfolded_predicates.clone(),

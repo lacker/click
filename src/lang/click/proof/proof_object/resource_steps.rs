@@ -409,7 +409,7 @@ impl<'a> Proof<'a> {
             context.resource_environment,
             resource,
             context.claim_label,
-            goal.core.path_index,
+            goal.path_index,
             &goal.data.core.execution_pure_facts,
             self.facts().clone(),
             &goal.data.surface_propositions,

@@ -152,7 +152,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Vec<usize>, ClickError> {
         let selection = match self.focused_obligation() {
             Some(Obligation::Frontier(FrontierObligation { selection, .. })) => *selection,
-            Some(Obligation::FunctionOutcome(outcome)) => outcome.core.selection,
+            Some(Obligation::FunctionOutcome(outcome)) => outcome.selection,
             _ => {
                 return Err(self.step_error("`frame using` requires an execution effect goal"));
             }
@@ -330,7 +330,7 @@ impl<'a> Proof<'a> {
                 function_claim_label(context.function_block.signature().name(), &claim);
             check_effect_claim_exact(
                 &claim_label,
-                goal.core.path_index,
+                goal.path_index,
                 &data.core.effect_facts,
                 &frame_facts,
                 &claim,
@@ -367,8 +367,8 @@ impl<'a> Proof<'a> {
         data.core.result = Arc::new(value);
         data.core.state = state.into();
         let mut updated = goal.clone();
-        updated.core.selection = EffectGoalSelection::None;
-        updated.core.checked_effects = Arc::new(effect_indices);
+        updated.selection = EffectGoalSelection::None;
+        updated.checked_effects = Arc::new(effect_indices);
         updated.data = Arc::new(data);
         Ok(ProofState {
             locals: self.state.locals.clone(),

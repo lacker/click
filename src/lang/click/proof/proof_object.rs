@@ -3,7 +3,7 @@ use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
     FunctionOutcomeObligation, OutcomeProofCore, ProofBranch, ProofBranchState, ProofBranches,
-    ProofFacts, ProofState as KernelProofState,
+    ProofFacts, ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
     PropositionObligation as KernelPropositionObligation, SplitId,
 };
 use crate::persistent::PersistentMap;
@@ -792,118 +792,6 @@ pub(in crate::lang::click::proof) fn linear_script_is_supported(tactics: &[Proof
 type OpenBranches = ProofBranches<OpenBranch>;
 type ProofState = KernelProofState<ProofLocals, Obligation, ExecutionProofState>;
 
-impl ProofBranches<OpenBranch> {
-    fn obligation(&self, at: BranchId) -> Option<&Obligation> {
-        Some(&self.get(at)?.obligation)
-    }
-
-    /// Replaces only what the addressed branch must establish, preserving its
-    /// branch-local state.
-    fn replace_obligation_at(&self, at: BranchId, obligation: Obligation) -> Self {
-        let Some(branch) = self.get(at) else {
-            unreachable!("obligation refinement requires the addressed open branch");
-        };
-        self.replace_at(at, branch.with_obligation(obligation))
-    }
-
-    /// Retains the addressed obligation under updated branch-local state.
-    fn with_branch_state_at(&self, at: BranchId, state: BranchState) -> Self {
-        let Some(branch) = self.get(at) else {
-            unreachable!("a state successor requires the addressed open branch");
-        };
-        self.replace_at(at, branch.with_state(state))
-    }
-
-    /// Retains the addressed goal under updated facts, preserving any
-    /// execution snapshot it already borrowed.
-    fn with_facts_at(&self, at: BranchId, facts: ProofFacts) -> Self {
-        let Some(branch) = self.get(at) else {
-            unreachable!("a fact successor requires the addressed open branch");
-        };
-        self.with_branch_state_at(
-            at,
-            BranchState {
-                facts,
-                unfolded_predicates: branch.state.unfolded_predicates.clone(),
-                execution: branch.state.execution.clone(),
-            },
-        )
-    }
-
-    /// Retains the addressed goal under an updated execution snapshot and
-    /// facts. The successor preserves the goal's kind: a nested proposition
-    /// judgment stated at a frontier may also refine facts.
-    fn replace_execution_at(
-        &self,
-        at: BranchId,
-        facts: ProofFacts,
-        execution: ExecutionProofState,
-    ) -> Self {
-        let Some(branch) = self.get(at) else {
-            unreachable!("an execution successor requires the addressed open branch");
-        };
-        self.with_branch_state_at(
-            at,
-            BranchState {
-                facts,
-                unfolded_predicates: branch.state.unfolded_predicates.clone(),
-                execution: Some(Arc::new(execution)),
-            },
-        )
-    }
-
-    /// The strict frontier successor: the addressed goal must be an
-    /// execution frontier. C-advancing rules use this shape; rules legal on
-    /// nested proposition judgments use [`Self::replace_execution_at`].
-    fn replace_frontier_at(
-        &self,
-        at: BranchId,
-        facts: ProofFacts,
-        execution: ExecutionProofState,
-    ) -> Self {
-        let Some(OpenBranch {
-            obligation: Obligation::Frontier(_),
-            ..
-        }) = self.get(at)
-        else {
-            unreachable!("a frontier transition requires the addressed frontier goal");
-        };
-        self.replace_execution_at(at, facts, execution)
-    }
-
-    /// Discharges the addressed goal when `complete` holds; otherwise the
-    /// goal is retained under the updated facts. This is the successor shape
-    /// of a fact-adding rule whose new fact may exactly close a proposition
-    /// goal.
-    fn discharged_if_at(&self, at: BranchId, complete: bool, facts: ProofFacts) -> Self {
-        if complete {
-            self.close_at(at)
-        } else {
-            self.with_facts_at(at, facts)
-        }
-    }
-
-    /// Discharges the addressed goal when its proposition was established;
-    /// otherwise retains it under the updated facts and execution snapshot.
-    fn discharged_if_or_execution_at(
-        &self,
-        at: BranchId,
-        complete: bool,
-        facts: ProofFacts,
-        execution: ExecutionProofState,
-    ) -> Self {
-        if complete {
-            self.close_at(at)
-        } else {
-            self.replace_execution_at(at, facts, execution)
-        }
-    }
-
-    fn is_discharged(&self) -> bool {
-        self.is_empty()
-    }
-}
-
 /// Proof-local surface names introduced by checked refinements such as
 /// `choose`. The persistent map makes forks and one local binding logarithmic;
 /// the counter is branch-local scalar freshness state.
@@ -1119,13 +1007,9 @@ struct OutcomeProvenance {
     recorded_snapshots: RecordedSnapshots,
 }
 
-/// What one open branch currently has to establish.
-#[derive(Clone)]
-enum Obligation {
-    Proposition(PropositionObligation),
-    Frontier(FrontierObligation),
-    FunctionOutcome(OutcomeObligation),
-}
+type Obligation = KernelBranchObligation<PropositionPresentation, Arc<OutcomeProofData>>;
+type PropositionObligation = KernelPropositionObligation<PropositionPresentation>;
+type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 
 /// The fixed-state data a result-aware checker consumes, resolved from
 /// either a fixed-state proof's borrowed context or a focused function-outcome
@@ -1189,16 +1073,6 @@ impl<'p> FixedStateOperationView<'p> {
 /// context, and borrows the function-exit frontier's snapshot by identity
 /// for lowering. Result and effect operations will consume these goals
 /// directly instead of converting through a mutable execution-context adapter.
-#[derive(Clone)]
-struct OutcomeObligation {
-    core: FunctionOutcomeObligation,
-    /// The outcome's result-aware proof data. Behind one `Arc` so a nested
-    /// proposition judgment stated at this outcome borrows it by identity;
-    /// a checked operation that records new lowerings installs a fresh
-    /// shared value atomically with its fact successor.
-    data: Arc<OutcomeProofData>,
-}
-
 /// The result-aware data one function outcome supplies to fixed-state operations:
 /// its checked return value, post-outcome state, recorded surface
 /// lowerings, and effect-availability facts.
@@ -1230,8 +1104,7 @@ type OpenBranch = ProofBranch<Obligation, ExecutionProofState>;
 /// structural goals. Both values belong to the same immutable Proof state;
 /// smart search must not carry a second caller-owned description of its goal.
 #[derive(Clone)]
-pub(in crate::lang::click::proof) struct PropositionObligation {
-    core: KernelPropositionObligation,
+pub(in crate::lang::click::proof) struct PropositionPresentation {
     pub(in crate::lang::click::proof) surface: Option<Arc<ClickProposition>>,
     /// Surface names introduced while refining this exact proposition goal.
     /// Universal binders are goal-local: sibling goals share the persistent
@@ -1244,9 +1117,9 @@ pub(in crate::lang::click::proof) struct PropositionObligation {
     pub(in crate::lang::click::proof) outcome: Option<Arc<OutcomeProofData>>,
 }
 
-impl PropositionObligation {
+impl KernelPropositionObligation<PropositionPresentation> {
     fn kernel(&self) -> &Proposition {
-        self.core.proposition()
+        self.proposition()
     }
 }
 
@@ -1270,12 +1143,14 @@ trait OpenBranchConstruction {
 impl OpenBranchConstruction for OpenBranch {
     fn proposition_in(state: BranchState, kernel: Proposition) -> Self {
         Self::new(
-            Obligation::Proposition(PropositionObligation {
-                core: KernelPropositionObligation::new(kernel),
-                surface: None,
-                surface_bindings: PersistentMap::default(),
-                outcome: None,
-            }),
+            Obligation::Proposition(PropositionObligation::new(
+                kernel,
+                PropositionPresentation {
+                    surface: None,
+                    surface_bindings: PersistentMap::default(),
+                    outcome: None,
+                },
+            )),
             state,
         )
     }
@@ -1297,12 +1172,14 @@ impl OpenBranchConstruction for OpenBranch {
         surface: ClickProposition,
     ) -> Self {
         Self::new(
-            Obligation::Proposition(PropositionObligation {
-                core: KernelPropositionObligation::new(kernel),
-                surface: Some(Arc::new(surface)),
-                surface_bindings: PersistentMap::default(),
-                outcome: None,
-            }),
+            Obligation::Proposition(PropositionObligation::new(
+                kernel,
+                PropositionPresentation {
+                    surface: Some(Arc::new(surface)),
+                    surface_bindings: PersistentMap::default(),
+                    outcome: None,
+                },
+            )),
             state,
         )
     }
@@ -1316,12 +1193,14 @@ impl OpenBranchConstruction for OpenBranch {
         surface: ClickProposition,
     ) -> Self {
         Self::new(
-            Obligation::Proposition(PropositionObligation {
-                core: KernelPropositionObligation::new(kernel),
-                surface: Some(Arc::new(surface)),
-                surface_bindings: PersistentMap::default(),
-                outcome: Some(outcome),
-            }),
+            Obligation::Proposition(PropositionObligation::new(
+                kernel,
+                PropositionPresentation {
+                    surface: Some(Arc::new(surface)),
+                    surface_bindings: PersistentMap::default(),
+                    outcome: Some(outcome),
+                },
+            )),
             state,
         )
     }
@@ -1442,15 +1321,17 @@ impl<'a> Proof<'a> {
             _ => None,
         };
         OpenBranch::new(
-            Obligation::Proposition(PropositionObligation {
-                core: KernelPropositionObligation::new(kernel),
-                surface: surface.map(Arc::new),
-                surface_bindings: match self.focused_obligation() {
-                    Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
-                    _ => PersistentMap::default(),
+            Obligation::Proposition(PropositionObligation::new(
+                kernel,
+                PropositionPresentation {
+                    surface: surface.map(Arc::new),
+                    surface_bindings: match self.focused_obligation() {
+                        Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
+                        _ => PersistentMap::default(),
+                    },
+                    outcome,
                 },
-                outcome,
-            }),
+            )),
             state,
         )
     }
@@ -1573,12 +1454,14 @@ impl<'a> Proof<'a> {
                         },
                     };
                     OpenBranch::new(
-                        Obligation::Proposition(PropositionObligation {
-                            core: KernelPropositionObligation::new(goal),
-                            surface: surface_goal.map(Arc::new),
-                            surface_bindings: PersistentMap::default(),
-                            outcome,
-                        }),
+                        Obligation::Proposition(PropositionObligation::new(
+                            goal,
+                            PropositionPresentation {
+                                surface: surface_goal.map(Arc::new),
+                                surface_bindings: PersistentMap::default(),
+                                outcome,
+                            },
+                        )),
                         context,
                     )
                 }),
