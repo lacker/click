@@ -36,16 +36,26 @@ impl FrontierObligation {
 
 /// One proposition branch obligation with opaque presentation data.
 #[derive(Clone)]
-pub(crate) struct PropositionObligation<S> {
+pub(crate) struct PropositionObligation<S, O> {
     proposition: Arc<Proposition>,
     pub(crate) presentation: S,
+    pub(crate) outcome: Option<O>,
 }
 
-impl<S> PropositionObligation<S> {
+impl<S, O> PropositionObligation<S, O> {
     pub(crate) fn new(proposition: Proposition, presentation: S) -> Self {
         Self {
             proposition: Arc::new(proposition),
             presentation,
+            outcome: None,
+        }
+    }
+
+    pub(crate) fn at_outcome(proposition: Proposition, presentation: S, outcome: O) -> Self {
+        Self {
+            proposition: Arc::new(proposition),
+            presentation,
+            outcome: Some(outcome),
         }
     }
 
@@ -54,7 +64,7 @@ impl<S> PropositionObligation<S> {
     }
 }
 
-impl<S> Deref for PropositionObligation<S> {
+impl<S, O> Deref for PropositionObligation<S, O> {
     type Target = S;
 
     fn deref(&self) -> &Self::Target {
@@ -62,7 +72,7 @@ impl<S> Deref for PropositionObligation<S> {
     }
 }
 
-impl<S> DerefMut for PropositionObligation<S> {
+impl<S, O> DerefMut for PropositionObligation<S, O> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.presentation
     }
@@ -76,6 +86,33 @@ pub(crate) struct OutcomeProofCore {
     pub(crate) effect_facts: Arc<Vec<ExecutionPureFact>>,
     pub(crate) execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
     pub(crate) requirement_facts: Arc<Vec<Proposition>>,
+}
+
+/// One checked function outcome paired with opaque language presentation.
+#[derive(Clone)]
+pub(crate) struct OutcomeProofState<S> {
+    pub(crate) core: OutcomeProofCore,
+    pub(crate) presentation: S,
+}
+
+impl<S> OutcomeProofState<S> {
+    pub(crate) fn new(core: OutcomeProofCore, presentation: S) -> Self {
+        Self { core, presentation }
+    }
+}
+
+impl<S> Deref for OutcomeProofState<S> {
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        &self.presentation
+    }
+}
+
+impl<S> DerefMut for OutcomeProofState<S> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.presentation
+    }
 }
 
 /// The remaining obligation for one checked returning path, paired with
@@ -105,7 +142,7 @@ impl<S> FunctionOutcomeObligation<S> {
 /// every semantic payload remain kernel-owned.
 #[derive(Clone)]
 pub(crate) enum ProofObligation<P, O> {
-    Proposition(PropositionObligation<P>),
+    Proposition(PropositionObligation<P, O>),
     Frontier(FrontierObligation),
     FunctionOutcome(FunctionOutcomeObligation<O>),
 }

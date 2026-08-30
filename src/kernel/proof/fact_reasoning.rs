@@ -1,5 +1,12 @@
 use crate::kernel::*;
 
+pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
+    PureFactContext::new()
+        .derive_atomic_proposition(goal)
+        .or_else(|| PureFactContext::new().derive_proposition(goal))
+        .is_some()
+}
+
 fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContext {
     propositions
         .iter()

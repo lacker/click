@@ -12,8 +12,8 @@ kernel semantic core, and command-line orchestration.
 | `src/lang/click/validation/` | Resolve declarations and enforce source-level type and form rules. |
 | `src/lang/click/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
 | `src/lang/click/checking/` | Evaluate contract forms and connect them to kernel structures. |
-| `src/lang/click/proof/` | Construct persistent checked proofs, interpret tactics, run smart search, and synthesize surface expansions. |
-| `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, and memory reasoning. |
+| `src/lang/click/proof/` | Interpret tactics, orchestrate checked proof operations, run smart search, and synthesize surface expansions. |
+| `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, memory reasoning, and the persistent checked proof object. |
 | `src/cli.rs` | Shared CLI parsing, target selection, durations, and user-facing command metadata. |
 | `src/bin/` | Thin entry points and command-specific reporting for verify, profile, expand, and audit. |
 | `src/instrumentation.rs` | Work attribution, deadlines, budgets, and profiler events. |
@@ -28,12 +28,14 @@ The C and Click parsers retain source spans. Validation builds a
 Lowering records the relationship between surface propositions and kernel
 propositions so diagnostics and expansion can return to source language.
 
-The persistent `Proof` object owns typed goals, facts, symbolic C execution,
-resources, focus, and the checked provenance of each successor. Explicit
-tactics request named simple or structural operations. Smart planners try the
-same operations transactionally on persistent `Proof` descendants; they can't
-construct semantic successors directly. Kernel APIs expose the primitive
-logical, execution, memory, and resource operations needed for that checking.
+The kernel's persistent `ProofObject` owns typed obligations, facts, symbolic
+C execution, resources, focus, and checked successor authority. A
+language-layer `Proof` pairs that opaque handle with checking context and
+Surface provenance. Explicit tactics request named simple or structural
+operations. Smart planners try the same operations transactionally on
+persistent `Proof` descendants; they can't construct semantic successors
+directly. Kernel APIs expose the primitive logical, execution, memory, and
+resource operations needed for that checking.
 
 The checked drivers are the single verification engine: a source or generated
 proof tree is checked by advancing a persistent `Proof`, and a shape no driver

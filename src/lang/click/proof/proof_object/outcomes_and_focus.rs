@@ -316,20 +316,22 @@ impl<'a> Proof<'a> {
                 OutcomeObligation::new(
                     path_index,
                     effect_selection,
-                    Arc::new(OutcomeProofData {
-                        core: OutcomeProofCore {
+                    Arc::new(OutcomeProofData::new(
+                        OutcomeProofCore {
                             result: Arc::new(result),
                             state: state.into(),
                             effect_facts: Arc::new(execution_facts),
                             execution_pure_facts: Arc::new(path.facts().to_vec()),
                             requirement_facts: requirement_facts.clone(),
                         },
-                        surface_propositions: provenance.surface_propositions,
-                        recorded_snapshots: provenance.recorded_snapshots,
-                        premise_anchor: frontier_anchor.clone(),
-                        requirement_surfaces: requirement_surfaces.clone(),
-                        branch_decisions: provenance.branch_decisions,
-                    }),
+                        OutcomeProofPresentation {
+                            surface_propositions: provenance.surface_propositions,
+                            recorded_snapshots: provenance.recorded_snapshots,
+                            premise_anchor: frontier_anchor.clone(),
+                            requirement_surfaces: requirement_surfaces.clone(),
+                            branch_decisions: provenance.branch_decisions,
+                        },
+                    )),
                 ),
                 BranchState {
                     facts,

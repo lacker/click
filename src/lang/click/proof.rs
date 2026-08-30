@@ -837,11 +837,7 @@ pub(super) fn plan_restricted_simp_goal(
 }
 
 pub(in crate::lang::click) fn normalizes_context_free(goal: &Proposition) -> bool {
-    matches!(normalize_proposition(goal), SimpProposition::True)
-        || PureFactContext::new()
-            .derive_atomic_proposition(goal)
-            .or_else(|| PureFactContext::new().derive_proposition(goal))
-            .is_some()
+    crate::kernel::proof::fact_reasoning::normalizes_context_free(goal)
 }
 
 fn pure_goal_proof_certificate_gateway<T>(

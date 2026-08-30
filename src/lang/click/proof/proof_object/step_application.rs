@@ -57,6 +57,28 @@ impl<'a> Proof<'a> {
             return self.apply_execution_statement_step(step);
         }
 
+        let checked_proposition_successor = match &step {
+            ProofStep::Assumption => Some(self.apply_assumption()),
+            ProofStep::Normalize => Some(self.apply_normalize()),
+            ProofStep::Split => Some(self.apply_split()),
+            ProofStep::Left => Some(self.apply_left()),
+            ProofStep::Right => Some(self.apply_right()),
+            ProofStep::Enumerate => Some(self.apply_enumerate()),
+            _ => None,
+        };
+        if let Some(successor) = checked_proposition_successor {
+            return Ok(Self {
+                context: self.context.clone(),
+                state: successor?,
+                node: Arc::new(ProofNode {
+                    parent: Some(self.node.clone()),
+                    step: Some(Arc::new(step)),
+                    focused_branch: self.focused_branch_id(),
+                    depth: self.node.depth + 1,
+                }),
+            });
+        }
+
         let next_state = match &step {
             ProofStep::Mark(name) => self.apply_execution_mark(name),
             ProofStep::ApplyTheoremUsing {
@@ -89,13 +111,7 @@ impl<'a> Proof<'a> {
             } => self.apply_fixed_state_instantiate_using(quantified, argument, premises),
             ProofStep::Extract(proposition) => self.apply_extract(proposition),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
-            ProofStep::Assumption => self.apply_assumption(),
-            ProofStep::Normalize => self.apply_normalize(),
             ProofStep::Intro => self.apply_intro(),
-            ProofStep::Split => self.apply_split(),
-            ProofStep::Left => self.apply_left(),
-            ProofStep::Right => self.apply_right(),
-            ProofStep::Enumerate => self.apply_enumerate(),
             ProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             ProofStep::CloseInvariants => self.apply_close_invariants(),
             ProofStep::FrameUsing { region, premises } => {
@@ -1063,59 +1079,37 @@ impl<'a> Proof<'a> {
     // payload cannot enlarge every `apply_step` dispatch frame. This is part
     // of the expansion check stack budget documented in testing-click.md.
     #[inline(never)]
-    pub(super) fn apply_assumption(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`assumption` requires a proposition goal")?;
-        let available = match self.context.as_ref() {
-            ProofContext::FixedState(_) => {
-                self.facts().pure_assumption_available(goal) || normalizes_context_free(goal)
-            }
-            // A judgment stated at a function outcome closes with the same
-            // fixed-state check availability its legacy fixed-state root used.
-            // A judgment stated at a function outcome closes on a fact
-            // available across the path's recorded effects: a fact about a
-            // cell that ownership proves untouched by a later call keeps its
-            // meaning although the outcome reads the cell under a new epoch
-            // name. This is the frame's availability rule.
-            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
-                let data = self
-                    .focused_outcome_data()
-                    .expect("the guard resolved the outcome data");
-                self.facts().pure_assumption_available(goal)
-                    || self
-                        .facts()
-                        .available_across_effects(goal, &data.core.effect_facts)
-                    || normalizes_context_free(goal)
-            }
-            // A nested proposition judgment stated at an execution frontier
-            // is the fixed-state proof of its `have`: it closes on an exact
-            // materialized fact or a context-free tautology, never by
-            // search.
-            ProofContext::Execution(_)
-                if matches!(self.focused_obligation(), Some(Obligation::Proposition(_))) =>
-            {
-                self.facts().materialization_available(goal)
-                    || self
-                        .facts()
-                        .contains_discharged_implication_consequent(goal)
-                    || normalizes_context_free(goal)
-            }
-            ProofContext::Pure(_) | ProofContext::Execution(_) => self.facts().contains(goal),
+    pub(super) fn apply_assumption(&self) -> Result<KernelProofHandle, ClickError> {
+        let context = match self.context.as_ref() {
+            ProofContext::FixedState(_) => PropositionAssumptionContext::Pure,
+            ProofContext::Execution(_) => PropositionAssumptionContext::Materialized,
+            ProofContext::Pure(_) => PropositionAssumptionContext::Exact,
         };
-        if !available {
-            return Err(self
-                .step_error("`assumption` requires the exact current goal as an available fact"));
-        }
-        Ok(self.closed_state())
+        self.state
+            .apply_assumption(context)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("`assumption` requires a proposition goal")
+                }
+                PropositionCloseError::Unavailable => self.step_error(
+                    "`assumption` requires the exact current goal as an available fact",
+                ),
+                _ => unreachable!("kernel returned an unrelated assumption error"),
+            })
     }
 
     // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
-    pub(super) fn apply_normalize(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`normalize` requires a proposition goal")?;
-        if !normalizes_context_free(goal) {
-            return Err(self.step_error("`normalize` goal did not normalize to true"));
-        }
-        Ok(self.closed_state())
+    pub(super) fn apply_normalize(&self) -> Result<KernelProofHandle, ClickError> {
+        self.state.apply_normalize().map_err(|error| match error {
+            PropositionCloseError::NotProposition => {
+                self.step_error("`normalize` requires a proposition goal")
+            }
+            PropositionCloseError::DoesNotNormalize => {
+                self.step_error("`normalize` goal did not normalize to true")
+            }
+            _ => unreachable!("kernel returned an unrelated normalize error"),
+        })
     }
 
     // Preserve the rule/dispatcher frame boundary described above; `intro`
@@ -1193,81 +1187,70 @@ impl<'a> Proof<'a> {
 
     // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
-    pub(super) fn apply_split(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`split` requires a proposition goal")?;
-        let Proposition::And(left, right) = goal else {
-            return Err(
+    pub(super) fn apply_split(&self) -> Result<KernelProofHandle, ClickError> {
+        self.state.apply_split().map_err(|error| match error {
+            PropositionCloseError::NotProposition => {
+                self.step_error("`split` requires a proposition goal")
+            }
+            PropositionCloseError::ExpectedConjunction(goal) => {
                 self.step_error(format!("`split` requires a conjunction goal, got {goal:?}"))
-            );
-        };
-        if !self.facts().contains(left) || !self.facts().contains(right) {
-            return Err(self.step_error(format!(
+            }
+            PropositionCloseError::MissingConjuncts(left, right) => self.step_error(format!(
                 "`split` requires both conjuncts as exact facts: {left:?} and {right:?}"
-            )));
-        }
-        Ok(self.closed_state())
+            )),
+            _ => unreachable!("kernel returned an unrelated split error"),
+        })
     }
 
     // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
-    pub(super) fn apply_left(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`left` requires a proposition goal")?;
-        let Proposition::Or(left, _) = goal else {
-            return Err(
-                self.step_error(format!("`left` requires a disjunction goal, got {goal:?}"))
-            );
-        };
-        if !self.facts().contains(left)
-            && !condition_polarity_forms(left)
-                .iter()
-                .any(|form| self.facts().contains(form))
-        {
-            return Err(self.step_error(format!(
-                "`left` requires its selected disjunct as an exact fact: {left:?}"
-            )));
-        }
-        Ok(self.closed_state())
+    pub(super) fn apply_left(&self) -> Result<KernelProofHandle, ClickError> {
+        self.apply_disjunct(true, "left")
     }
 
     // Preserve the rule/dispatcher frame boundary described above.
     #[inline(never)]
-    pub(super) fn apply_right(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`right` requires a proposition goal")?;
-        let Proposition::Or(_, right) = goal else {
-            return Err(
-                self.step_error(format!("`right` requires a disjunction goal, got {goal:?}"))
-            );
-        };
-        if !self.facts().contains(right)
-            && !condition_polarity_forms(right)
-                .iter()
-                .any(|form| self.facts().contains(form))
-        {
-            return Err(self.step_error(format!(
-                "`right` requires its selected disjunct as an exact fact: {right:?}"
-            )));
-        }
-        Ok(self.closed_state())
+    pub(super) fn apply_right(&self) -> Result<KernelProofHandle, ClickError> {
+        self.apply_disjunct(false, "right")
+    }
+
+    fn apply_disjunct(
+        &self,
+        take_left: bool,
+        step_name: &str,
+    ) -> Result<KernelProofHandle, ClickError> {
+        self.state
+            .apply_disjunct(take_left)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error(format!("`{step_name}` requires a proposition goal"))
+                }
+                PropositionCloseError::ExpectedDisjunction(goal) => self.step_error(format!(
+                    "`{step_name}` requires a disjunction goal, got {goal:?}"
+                )),
+                PropositionCloseError::MissingDisjunct(selected) => self.step_error(format!(
+                    "`{step_name}` requires its selected disjunct as an exact fact: {selected:?}"
+                )),
+                _ => unreachable!("kernel returned an unrelated disjunction error"),
+            })
     }
 
     // Preserve the rule/dispatcher frame boundary described above; instance
     // materialization is local to this rule.
     #[inline(never)]
-    pub(super) fn apply_enumerate(&self) -> Result<ProofState, ClickError> {
-        let goal = self.proposition_goal("`enumerate` requires a proposition goal")?;
-        let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
-            return Err(
-                self.step_error("`enumerate` requires a universal goal with constant bounds")
-            );
-        };
-        for (_, instance) in instances {
-            if !normalizes_context_free(&instance) && !self.facts().contains(&instance) {
-                return Err(self.step_error(
-                    "`enumerate` requires each in-range instance as an exact available fact",
-                ));
+    pub(super) fn apply_enumerate(&self) -> Result<KernelProofHandle, ClickError> {
+        self.state.apply_enumerate().map_err(|error| match error {
+            PropositionCloseError::NotProposition => {
+                self.step_error("`enumerate` requires a proposition goal")
             }
-        }
-        Ok(self.closed_state())
+            PropositionCloseError::ExpectedFiniteUniversal => {
+                self.step_error("`enumerate` requires a universal goal with constant bounds")
+            }
+            PropositionCloseError::MissingFiniteInstance => self.step_error(
+                "`enumerate` requires each in-range instance as an exact available fact",
+            ),
+            _ => unreachable!("kernel returned an unrelated enumerate error"),
+        })
     }
 }
 

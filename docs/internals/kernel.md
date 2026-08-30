@@ -40,7 +40,8 @@ Kernel files:
   deferred tactics, expansion cursors, or diagnostic state.
   `obligations.rs` owns the branch-obligation enum, effect selections,
   frontier/proposition/outcome obligations, result-aware outcome state, and
-  checked frame authority. Surface presentation is an opaque attachment.
+  checked frame authority. Result-aware outcome semantics are paired with an
+  opaque Surface presentation just like execution semantics.
   `object.rs` owns the immutable proof-state shape and the opaque
   `ProofObject` handle that keeps one shared state together with its focused
   branch cursor; branch-local state and the open-branch representation live
@@ -48,8 +49,10 @@ Kernel files:
   Language attachments are opaque parameters and are never interpreted as
   evidence by these modules. Goal-preserving fact/execution successors,
   strict frontier successors, obligation replacement, and conditional
-  discharge are kernel state operations. Completion witnesses and terminal
-  execution-finalization views can be constructed only by `ProofObject`.
+  discharge are kernel state operations. Primitive proposition-closing rules
+  are named `ProofObject` operations that return opaque checked successors.
+  Completion witnesses and terminal execution-finalization views can be
+  constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
   conflict, and availability rules used by the persistent fact store.

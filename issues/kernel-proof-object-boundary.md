@@ -43,8 +43,17 @@ wrapper retains only checking context and Surface certificate lineage. Kernel
 `ProofExecutionState` now pairs the semantic execution core with an opaque
 language presentation, allowing `ProofObject` alone to construct a typed
 function-exit finalization view. It also owns the completion witness required
-by terminal certificate extraction. Higher-level checked operations still
-need a kernel-owned API.
+by terminal certificate extraction. The same core-plus-opaque-presentation
+shape now applies to result-aware function outcomes: the kernel owns the
+result, state, execution facts, requirements, and crossed effects used by
+outcome rules. The language attachment retains only Surface proposition
+records, selectors, and diagnostic provenance. Primitive proposition-closing
+rules (`assumption`, `normalize`, `split`, disjunction selection, and finite
+enumeration) are named `ProofObject` operations. They check the focused
+obligation and return an opaque kernel successor directly; the language
+dispatcher only selects the operation, translates its typed failure into the
+existing diagnostic, and records Surface provenance. Higher-level checked
+operations still need the same kernel-owned API treatment.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

@@ -5,8 +5,8 @@
 //! attachments as evidence.
 
 use super::{
-    BranchId, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState, ProofFacts,
-    ProofObligation,
+    BranchId, OutcomeProofState, ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState,
+    ProofFacts, ProofObligation,
 };
 use crate::kernel::Proposition;
 use std::ops::Deref;
@@ -43,6 +43,25 @@ pub(crate) struct ProofExecutionView<'a, S> {
 /// Kernel witness that no checked obligations remain open.
 pub(crate) struct ProofCompletion<'a> {
     _proof: std::marker::PhantomData<&'a ()>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PropositionAssumptionContext {
+    Exact,
+    Pure,
+    Materialized,
+}
+
+pub(crate) enum PropositionCloseError {
+    NotProposition,
+    Unavailable,
+    DoesNotNormalize,
+    ExpectedConjunction(Proposition),
+    MissingConjuncts(Proposition, Proposition),
+    ExpectedDisjunction(Proposition),
+    MissingDisjunct(Proposition),
+    ExpectedFiniteUniversal,
+    MissingFiniteInstance,
 }
 
 impl<'a, S> ProofExecutionView<'a, S> {
@@ -143,6 +162,135 @@ impl<L, P: Clone, O: Clone, S: Clone>
             .frontier
             .is_at_function_exit()
             .then_some(view)
+    }
+}
+
+impl<L: Clone, P: Clone, S: Clone, E: Clone>
+    ProofObject<L, ProofObligation<P, Arc<OutcomeProofState<S>>>, E>
+{
+    fn focused_proposition(
+        &self,
+    ) -> Option<(
+        &super::PropositionObligation<P, Arc<OutcomeProofState<S>>>,
+        &ProofFacts,
+    )> {
+        let branch = self.state.open_branches.get(self.focused_branch)?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return None;
+        };
+        Some((goal, &branch.state.facts))
+    }
+
+    fn closed_focused(&self) -> Self {
+        Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.close_at(self.focused_branch),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            self.focused_branch,
+        )
+    }
+
+    pub(crate) fn apply_assumption(
+        &self,
+        context: PropositionAssumptionContext,
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let proposition = goal.proposition();
+        let available = if let Some(outcome) = goal.outcome.as_deref() {
+            facts.pure_assumption_available(proposition)
+                || facts.available_across_effects(proposition, &outcome.core.effect_facts)
+                || super::fact_reasoning::normalizes_context_free(proposition)
+        } else {
+            match context {
+                PropositionAssumptionContext::Exact => facts.contains(proposition),
+                PropositionAssumptionContext::Pure => {
+                    facts.pure_assumption_available(proposition)
+                        || super::fact_reasoning::normalizes_context_free(proposition)
+                }
+                PropositionAssumptionContext::Materialized => {
+                    facts.materialization_available(proposition)
+                        || facts.contains_discharged_implication_consequent(proposition)
+                        || super::fact_reasoning::normalizes_context_free(proposition)
+                }
+            }
+        };
+        available
+            .then(|| self.closed_focused())
+            .ok_or(PropositionCloseError::Unavailable)
+    }
+
+    pub(crate) fn apply_normalize(&self) -> Result<Self, PropositionCloseError> {
+        let (goal, _) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        super::fact_reasoning::normalizes_context_free(goal.proposition())
+            .then(|| self.closed_focused())
+            .ok_or(PropositionCloseError::DoesNotNormalize)
+    }
+
+    pub(crate) fn apply_split(&self) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let Proposition::And(left, right) = goal.proposition() else {
+            return Err(PropositionCloseError::ExpectedConjunction(
+                goal.proposition().clone(),
+            ));
+        };
+        if !facts.contains(left) || !facts.contains(right) {
+            return Err(PropositionCloseError::MissingConjuncts(
+                left.as_ref().clone(),
+                right.as_ref().clone(),
+            ));
+        }
+        Ok(self.closed_focused())
+    }
+
+    pub(crate) fn apply_disjunct(&self, take_left: bool) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let Proposition::Or(left, right) = goal.proposition() else {
+            return Err(PropositionCloseError::ExpectedDisjunction(
+                goal.proposition().clone(),
+            ));
+        };
+        let selected = if take_left {
+            left.as_ref()
+        } else {
+            right.as_ref()
+        };
+        if !facts.contains(selected)
+            && !super::fact_reasoning::condition_polarity_forms(selected)
+                .iter()
+                .any(|form| facts.contains(form))
+        {
+            return Err(PropositionCloseError::MissingDisjunct(selected.clone()));
+        }
+        Ok(self.closed_focused())
+    }
+
+    pub(crate) fn apply_enumerate(&self) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let Some(instances) = crate::kernel::finite_forall_goal_instances(goal.proposition())
+        else {
+            return Err(PropositionCloseError::ExpectedFiniteUniversal);
+        };
+        for (_, instance) in instances {
+            if !super::fact_reasoning::normalizes_context_free(&instance)
+                && !facts.contains(&instance)
+            {
+                return Err(PropositionCloseError::MissingFiniteInstance);
+            }
+        }
+        Ok(self.closed_focused())
     }
 }
 

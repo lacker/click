@@ -2,9 +2,10 @@ use super::pure_theorems::PureTheoremContext;
 use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
-    FunctionOutcomeObligation, OutcomeProofCore, ProofBranch, ProofBranchState, ProofBranches,
-    ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofObject as KernelProofObject,
-    ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
+    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState as KernelOutcomeProofState,
+    ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState as KernelProofExecutionState,
+    ProofFacts, ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
+    ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
     PropositionObligation as KernelPropositionObligation, SplitId,
 };
 use crate::persistent::PersistentMap;
@@ -146,7 +147,7 @@ pub(in crate::lang::click) fn count_checked_expanded_execution_ifs<R>(
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
     pub(in crate::lang::click::proof) context: Arc<ProofContext<'a>>,
-    state: KernelProofObject<ProofLocals, Obligation, ExecutionProofState>,
+    state: KernelProofHandle,
     node: Arc<ProofNode>,
 }
 
@@ -1010,7 +1011,10 @@ struct OutcomeProvenance {
 }
 
 type Obligation = KernelBranchObligation<PropositionPresentation, Arc<OutcomeProofData>>;
-type PropositionObligation = KernelPropositionObligation<PropositionPresentation>;
+
+type KernelProofHandle = KernelProofObject<ProofLocals, Obligation, ExecutionProofState>;
+type PropositionObligation =
+    KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>>;
 type OutcomeObligation = FunctionOutcomeObligation<Arc<OutcomeProofData>>;
 
 /// The fixed-state data a result-aware checker consumes, resolved from
@@ -1079,8 +1083,7 @@ impl<'p> FixedStateOperationView<'p> {
 /// its checked return value, post-outcome state, recorded surface
 /// lowerings, and effect-availability facts.
 #[derive(Clone)]
-pub(in crate::lang::click::proof) struct OutcomeProofData {
-    core: OutcomeProofCore,
+pub(in crate::lang::click::proof) struct OutcomeProofPresentation {
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
     pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
     /// The statement-entry anchor for premises naming a C local after it
@@ -1098,6 +1101,9 @@ pub(in crate::lang::click::proof) struct OutcomeProofData {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
 }
 
+pub(in crate::lang::click::proof) type OutcomeProofData =
+    KernelOutcomeProofState<OutcomeProofPresentation>;
+
 type BranchState = ProofBranchState<ExecutionProofState>;
 type OpenBranch = ProofBranch<Obligation, ExecutionProofState>;
 
@@ -1112,14 +1118,9 @@ pub(in crate::lang::click::proof) struct PropositionPresentation {
     /// Universal binders are goal-local: sibling goals share the persistent
     /// map root at a split, then refine independently without leaking names.
     pub(in crate::lang::click::proof) surface_bindings: PersistentMap<String, ContractExpression>,
-    /// Result-aware proof data borrowed by identity from the function
-    /// outcome this judgment was stated at, when it was. The judgment can
-    /// read the outcome's result, state, and lowerings; it can never
-    /// publish a changed outcome through this reference.
-    pub(in crate::lang::click::proof) outcome: Option<Arc<OutcomeProofData>>,
 }
 
-impl KernelPropositionObligation<PropositionPresentation> {
+impl KernelPropositionObligation<PropositionPresentation, Arc<OutcomeProofData>> {
     fn kernel(&self) -> &Proposition {
         self.proposition()
     }
@@ -1150,7 +1151,6 @@ impl OpenBranchConstruction for OpenBranch {
                 PropositionPresentation {
                     surface: None,
                     surface_bindings: PersistentMap::default(),
-                    outcome: None,
                 },
             )),
             state,
@@ -1179,7 +1179,6 @@ impl OpenBranchConstruction for OpenBranch {
                 PropositionPresentation {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
-                    outcome: None,
                 },
             )),
             state,
@@ -1195,13 +1194,13 @@ impl OpenBranchConstruction for OpenBranch {
         surface: ClickProposition,
     ) -> Self {
         Self::new(
-            Obligation::Proposition(PropositionObligation::new(
+            Obligation::Proposition(PropositionObligation::at_outcome(
                 kernel,
                 PropositionPresentation {
                     surface: Some(Arc::new(surface)),
                     surface_bindings: PersistentMap::default(),
-                    outcome: Some(outcome),
                 },
+                outcome,
             )),
             state,
         )
@@ -1333,20 +1332,18 @@ impl<'a> Proof<'a> {
             Some(Obligation::FunctionOutcome(goal)) => Some(goal.data.clone()),
             _ => None,
         };
-        OpenBranch::new(
-            Obligation::Proposition(PropositionObligation::new(
-                kernel,
-                PropositionPresentation {
-                    surface: surface.map(Arc::new),
-                    surface_bindings: match self.focused_obligation() {
-                        Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
-                        _ => PersistentMap::default(),
-                    },
-                    outcome,
-                },
-            )),
-            state,
-        )
+        let presentation = PropositionPresentation {
+            surface: surface.map(Arc::new),
+            surface_bindings: match self.focused_obligation() {
+                Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
+                _ => PersistentMap::default(),
+            },
+        };
+        let obligation = match outcome {
+            Some(outcome) => PropositionObligation::at_outcome(kernel, presentation, outcome),
+            None => PropositionObligation::new(kernel, presentation),
+        };
+        OpenBranch::new(Obligation::Proposition(obligation), state)
     }
 
     /// The execution proof's per-proof context, when this is one.
@@ -1467,17 +1464,17 @@ impl<'a> Proof<'a> {
                                 None => None,
                             },
                         };
-                        OpenBranch::new(
-                            Obligation::Proposition(PropositionObligation::new(
-                                goal,
-                                PropositionPresentation {
-                                    surface: surface_goal.map(Arc::new),
-                                    surface_bindings: PersistentMap::default(),
-                                    outcome,
-                                },
-                            )),
-                            context,
-                        )
+                        let presentation = PropositionPresentation {
+                            surface: surface_goal.map(Arc::new),
+                            surface_bindings: PersistentMap::default(),
+                        };
+                        let obligation = match outcome.clone() {
+                            Some(outcome) => {
+                                PropositionObligation::at_outcome(goal, presentation, outcome)
+                            }
+                            None => PropositionObligation::new(goal, presentation),
+                        };
+                        OpenBranch::new(Obligation::Proposition(obligation), context)
                     }),
                     added_facts: Arc::new(Vec::new()),
                     checked_facts: Arc::new(Vec::new()),

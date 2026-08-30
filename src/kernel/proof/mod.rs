@@ -24,10 +24,12 @@ pub(crate) use fact_keys::{
     snapshot_blind_proposition_key,
 };
 pub(crate) use facts::ProofFacts;
-pub(crate) use object::{ProofObject, ProofState};
+pub(crate) use object::{
+    ProofObject, ProofState, PropositionAssumptionContext, PropositionCloseError,
+};
 pub(crate) use obligations::{
     CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FunctionOutcomeObligation,
-    OutcomeProofCore, ProofObligation, PropositionObligation,
+    OutcomeProofCore, OutcomeProofState, ProofObligation, PropositionObligation,
 };
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,

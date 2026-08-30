@@ -16,8 +16,8 @@ alternatives, and abandon candidates without cloning the complete logical or
 execution state.
 
 The kernel owns branch and split identities and the persistent open-branch
-topology in `src/kernel/proof/branches.rs`; the remaining checked
-representation is being moved across the same boundary incrementally. Its
+topology in `src/kernel/proof/branches.rs`; the remaining checked transitions
+are being moved across the same boundary incrementally. Its
 surface-independent persistent containers already live in
 `src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
 `src/kernel/proof/execution.rs`. That module now owns the complete
@@ -41,7 +41,12 @@ frontier updates, obligation replacement, and conditional discharge are
 implemented on the kernel branch store rather than in the Click proof driver.
 The kernel handle is also the sole constructor of completion witnesses and of
 the typed finalization view proving that the focused obligation is an
-execution frontier at function exit.
+execution frontier at function exit. Primitive proposition-closing operations
+check availability and logical shape on that handle and return an opaque
+successor directly. Result-aware outcome state uses the same split as execution
+state: the kernel owns its result, C state, facts, requirements, and crossed
+effects, while Surface proposition records and diagnostic provenance remain an
+opaque language presentation.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
