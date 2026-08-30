@@ -11,6 +11,7 @@ mod cursor_execution;
 mod execution_planning;
 pub(in crate::lang::click) mod fact_reasoning;
 mod fixed_state_proofs;
+mod language_context;
 mod proof_object;
 
 #[cfg(test)]
@@ -75,6 +76,7 @@ pub(super) use fact_reasoning::{
     condition_polarity_equivalent, exactly_available_fact, search_condition_derivation,
 };
 use fixed_state_proofs::*;
+use language_context::*;
 #[cfg(test)]
 pub(in crate::lang::click) use proof_object::collect_execution_context_export_labels;
 use proof_object::*;

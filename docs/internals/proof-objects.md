@@ -33,6 +33,12 @@ Contextual Surface Click lowering likewise lives beside the language-layer
 proof drivers; the checked core retains only the derivation lineage from which
 surface certificate provenance is extracted.
 
+The borrowed parser, project-environment, lowering, and diagnostic inputs are
+grouped in `src/lang/click/proof/language_context.rs`. They are language
+context, not persistent proof state. Surface `ProofStep` lineage and checkpoint
+extraction are isolated in `proof_object/provenance.rs`; that lineage records
+checked successors but does not own semantic state or successor authority.
+
 Goals carry the facts, resources, and symbolic execution state relevant to one
 judgment. Typed scope, split, and join helpers preserve branch and loop
 structure. A focus is only a cursor into the owned goal structure; it isn't a

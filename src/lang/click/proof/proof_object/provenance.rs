@@ -2,6 +2,36 @@
 
 use super::*;
 
+/// An opaque position in one `Proof` derivation.
+///
+/// This retains no semantic state. Structured joins use it to extract only the
+/// already-checked descendant steps for an arm.
+#[derive(Clone)]
+pub(in crate::lang::click::proof) struct ProofCheckpoint<'a> {
+    pub(super) context: Arc<ProofContext<'a>>,
+    pub(super) node: Arc<ProofNode>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ProofStepOrigin {
+    pub(super) tactic_index: usize,
+    pub(super) source_index: usize,
+}
+
+/// Private persistent surface-provenance node.
+///
+/// This lineage serializes already-checked operations; it does not own the
+/// semantic state or grant authority to construct a successor.
+pub(super) struct ProofNode {
+    pub(super) parent: Option<Arc<ProofNode>>,
+    pub(super) step: Option<Arc<ProofStep>>,
+    /// The goal the step advanced (or, for markers, introduced). Certificate
+    /// extraction partitions an interleaved multi-goal derivation by this
+    /// recorded attribution; it never infers ownership from final states.
+    pub(super) focused_branch: BranchId,
+    pub(super) depth: usize,
+}
+
 impl<'a> Proof<'a> {
     /// The certificate of the focused branch goal's own lineage. Steps in the
     /// derivation are attributed to the goal they advanced; on an unjoined

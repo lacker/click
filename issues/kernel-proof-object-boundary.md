@@ -27,6 +27,11 @@ The persistent `ProofFacts` store and its semantic indexes now live in
 persistent successor operations. The remaining proof representation and
 checked operations still need a kernel-owned API.
 
+Language-only proof environments now live in
+`src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
+checkpoints live in `proof_object/provenance.rs`. This leaves the persistent
+checked state visibly separate from both dependencies before its final move.
+
 ## Intended regression
 
 Keep a focused module-boundary test or compile-time visibility check showing
