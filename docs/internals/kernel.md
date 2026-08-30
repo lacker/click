@@ -31,7 +31,8 @@ Kernel files:
   helpers.
 - `proof/`: persistent checked proof-object infrastructure. Its `branches.rs`
   owns branch and split identities, allocation, and structural topology;
-  `storage.rs` owns the shared persistent containers used by proof forks.
+  `storage.rs` owns the shared persistent containers used by proof forks; and
+  `execution.rs` owns typed execution frontiers and loop-effect obligations.
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 

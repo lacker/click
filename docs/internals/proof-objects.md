@@ -17,7 +17,8 @@ The kernel owns branch and split identities and the persistent open-branch
 topology in `src/kernel/proof/branches.rs`; the remaining checked
 representation is being moved across the same boundary incrementally. Its
 surface-independent persistent containers already live in
-`src/kernel/proof/storage.rs`. Untrusted smart selection
+`src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
+`src/kernel/proof/execution.rs`. Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
 Contextual Surface Click lowering likewise lives beside the language-layer
@@ -46,7 +47,7 @@ during ordinary verification in the intended architecture.
 ## Execution state inside a proof
 
 `ExecutionProofState` owns every semantic path fact: the `CState`, the
-execution frontier (program point, region, region start state, continuations),
+kernel-owned execution frontier (program point, region, region start state, continuations),
 the snapshots recorded on the path, the surface spellings the path
 has lowered, case assumptions, execution facts, frontier-local loop clauses
 and rules, function-entry prerequisites and derivations, planned statement

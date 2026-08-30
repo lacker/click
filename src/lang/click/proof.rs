@@ -35,7 +35,9 @@ mod theorem_application;
 mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
 use crate::kernel::proof::{
-    PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
+    ExecutionFrontier, ExecutionRegionKind, FrontierPosition, LoopEffectGoal, PersistentOrderedSet,
+    PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation, SharedValue, SharedVec,
+    old_reference_state,
 };
 use claim_proofs::finish_ordered_proof;
 pub(super) use claim_proofs::{

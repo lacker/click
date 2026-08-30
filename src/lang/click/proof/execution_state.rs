@@ -1,6 +1,7 @@
 use super::*;
 #[cfg(test)]
 use crate::persistent::persistent_node_allocations;
+#[cfg(test)]
 use std::sync::Arc;
 
 /// Identifies the `close_invariants` step of a checked certificate well
@@ -21,13 +22,6 @@ pub(super) struct InvariantCloserStep {
 pub(super) struct ExpansionCursor {
     pub(super) deferred_tactic_capture: Option<DeferredTacticCapture>,
     pub(super) deferred_expansion_path_choices: PersistentSequence<SurfacePathChoice>,
-}
-
-#[derive(Clone)]
-pub(super) struct LoopEffectGoal {
-    pub(super) before_state: CState,
-    pub(super) check: CLoopEffectCheck,
-    pub(super) closed: bool,
 }
 
 #[derive(Clone)]
@@ -1138,114 +1132,6 @@ pub(super) fn post_execution_tactic_timing(
             ("frame", "simple")
         }
         PostExecutionTactic::If { .. } => ("if", "control"),
-    }
-}
-
-/// The typed identity of the execution region a frontier executes. A
-/// whole-function frontier must end at a `return`; a loop-preservation
-/// frontier owns exactly the loop body's statement tree, so exhausting that
-/// tree reaches the typed back-edge boundary instead of erring. The region
-/// kind is declared at frontier construction and never changes.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum ExecutionRegionKind {
-    #[default]
-    Function,
-    LoopBody,
-    /// One arm of a C `if`: the arm frontier owns exactly the arm's own
-    /// statement tree, so its join composes on the typed boundary without a
-    /// completed-region set or continuation-depth bookkeeping.
-    BranchArm,
-}
-
-#[derive(Clone, Default)]
-pub(super) struct ExecutionFrontier {
-    pub(super) position: FrontierPosition,
-    pub(super) region: ExecutionRegionKind,
-    pub(super) execution_start_state: Option<CState>,
-    pub(super) next_statement_index: usize,
-    pub(super) continuations: PersistentSequence<ProofExecutionContinuation>,
-}
-
-#[derive(Clone)]
-pub(super) struct ProofExecutionContinuation {
-    pub(super) remaining: Option<Arc<CStatement>>,
-    pub(super) next_statement_index: usize,
-}
-
-#[derive(Clone, Default)]
-pub(super) enum FrontierPosition {
-    #[default]
-    FunctionEntry,
-    StatementEntry {
-        remaining: Arc<CStatement>,
-    },
-    FunctionExit {
-        execution: CFunctionExecutionCandidates,
-    },
-    /// Execution exhausted a bounded region's own statement tree with no
-    /// enclosing continuation: the typed loop back-edge boundary. The
-    /// frontier owns no code at this point, so executing past the boundary
-    /// is unrepresentable rather than detected after the fact.
-    RegionBoundary,
-}
-impl ExecutionFrontier {
-    pub(super) fn is_at_function_exit(&self) -> bool {
-        matches!(self.position, FrontierPosition::FunctionExit { .. })
-    }
-
-    pub(super) fn is_at_function_entry(&self) -> bool {
-        matches!(self.position, FrontierPosition::FunctionEntry)
-    }
-
-    /// Execution reached the typed back-edge boundary of a bounded region:
-    /// the region's own statement tree is exhausted and no enclosing
-    /// continuation remains.
-    pub(super) fn is_at_region_boundary(&self) -> bool {
-        matches!(self.position, FrontierPosition::RegionBoundary)
-    }
-
-    pub(super) fn execution(&self) -> Option<&CFunctionExecutionCandidates> {
-        match &self.position {
-            FrontierPosition::FunctionEntry
-            | FrontierPosition::StatementEntry { .. }
-            | FrontierPosition::RegionBoundary => None,
-            FrontierPosition::FunctionExit { execution, .. } => Some(execution),
-        }
-    }
-
-    pub(super) fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
-        self.execution_start_state.as_ref().unwrap_or(current_state)
-    }
-}
-
-/// The state that `old(...)` and `at(function.entry, ...)` resolve to when
-/// a contract clause is lowered here.
-///
-/// This is the one place that answers "which memory does `old` mean", so
-/// the answer is a *named* snapshot rather than whichever state happens to
-/// sit at the enclosing frame's `pre_state` position. When the region
-/// recorded its function-entry snapshot, that snapshot is the answer —
-/// it is the same `CState` the Click -> Spec lowering used as
-/// `SpecMemory::Fixed(entry_memory)` for every `old` operand in this
-/// function's contracts, so both sides name the same interned node.
-///
-/// Nothing here is trusted on the strength of the naming alone. A lowered
-/// candidate is accepted only by exact equality against the certified
-/// proposition, and a `MemoryLoad` carries its snapshot inside the term,
-/// so a candidate resolved to the wrong state cannot match: selecting the
-/// state by name adds a form to search, and the certificate validation
-/// remains the thing that validates it.
-///
-/// Falling back to [`ExecutionFrontier::execution_start_state`] keeps every region that
-/// records no function-entry snapshot on its previous behaviour.
-pub(super) fn old_reference_state<'a>(
-    function_entry_state: Option<&'a CState>,
-    frontier: &'a ExecutionFrontier,
-    current_state: &'a CState,
-) -> &'a CState {
-    match function_entry_state {
-        Some(entry_state) => entry_state,
-        None => frontier.execution_start_state(current_state),
     }
 }
 

@@ -6,9 +6,14 @@
 //! independently green slices.
 
 mod branches;
+mod execution;
 mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranches, SplitId};
+pub(crate) use execution::{
+    ExecutionFrontier, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
+    ProofExecutionContinuation, old_reference_state,
+};
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
 };
