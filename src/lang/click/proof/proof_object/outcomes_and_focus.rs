@@ -273,11 +273,7 @@ impl<'a> Proof<'a> {
             _ => PersistentMap::default(),
         };
         let requirement_surfaces = Arc::new(requirement_surfaces);
-        let mut goals = self
-            .state()
-            .open_branches
-            .close_at(self.focused_branch_id());
-        let mut outcome_ids = Vec::new();
+        let mut goals = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
             // One checked statement may produce several candidate outcomes.
             // The enclosing Proof facts select the feasible successors; an
@@ -312,7 +308,7 @@ impl<'a> Proof<'a> {
             }
             let execution_facts = path.execution_facts();
             let provenance = execution.provenance_for_outcome(path_index);
-            let (id, next_goals) = goals.push(OpenBranch::function_outcome(
+            goals.push(OpenBranch::function_outcome(
                 OutcomeObligation::new(
                     path_index,
                     effect_selection,
@@ -339,24 +335,17 @@ impl<'a> Proof<'a> {
                     execution: frontier_snapshot.clone(),
                 },
             ));
-            goals = next_goals;
-            outcome_ids.push(id);
         }
-        if outcome_ids.is_empty() {
+        if goals.is_empty() {
             return Err(self.step_error("outcome goals require at least one returning path"));
         }
+        let (state, outcome_ids) = self
+            .state
+            .replace_focused_with_checked_branches(goals)
+            .map_err(|_| self.step_error("outcome goals require an open execution frontier"))?;
         let successor = Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-
-                    open_branches: goals,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                outcome_ids[0],
-            ),
+            state,
             // A structural marker records the derivation; the certificate
             // step vocabulary for consuming outcome goals arrives with the
             // drain migration.

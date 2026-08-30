@@ -1040,13 +1040,17 @@ impl<'a> ProofScope<'a> {
                 let body = self.body.certificate();
                 let mut facts = self.root.facts().clone();
                 facts = facts.with_fact(kernel.clone());
-                let mut goals = match (self.root.context.as_ref(), self.root.focused_obligation()) {
+                let mut obligation =
+                    self.root.focused_obligation().cloned().ok_or_else(|| {
+                        self.root.step_error("`have` scope goal is no longer open")
+                    })?;
+                let execution = match (self.root.context.as_ref(), &obligation) {
                     // A `have` at an execution frontier publishes what the
                     // shared mid-execution law publishes: the proposition's
                     // lowering, its certificate fact, and any function-entry
                     // authority the checked fact or an explicit theorem
                     // application establishes for later statement checks.
-                    (ProofContext::Execution(context), Some(Obligation::Frontier(_))) => {
+                    (ProofContext::Execution(context), Obligation::Frontier(_)) => {
                         let mut execution = self
                             .root
                             .branch_execution()
@@ -1064,42 +1068,38 @@ impl<'a> ProofScope<'a> {
                             &kernel,
                             script.as_deref(),
                         )?;
-                        self.root.state.open_branches.replace_frontier_at(
-                            self.root.focused_branch_id(),
-                            facts,
-                            execution,
-                        )
+                        Some(Arc::new(execution))
                     }
                     _ => self
                         .root
+                        .focused_branch()
+                        .expect("the checked scope has an open focused branch")
                         .state
-                        .open_branches
-                        .with_facts_at(self.root.focused_branch_id(), facts),
+                        .execution
+                        .clone(),
                 };
-                if let Some(Obligation::FunctionOutcome(outcome)) =
-                    goals.obligation(self.root.focused_branch_id()).cloned()
-                {
-                    let mut updated = outcome;
+                if let Obligation::FunctionOutcome(outcome) = &obligation {
+                    let mut updated = outcome.clone();
                     let mut data = (*updated.data).clone();
                     data.surface_propositions
                         .record_lowering(&proposition, &kernel)?;
                     updated.data = Arc::new(data);
-                    goals = goals.replace_obligation_at(
-                        self.root.focused_branch_id(),
-                        Obligation::FunctionOutcome(updated),
-                    );
+                    obligation = Obligation::FunctionOutcome(updated);
                 }
+                let state = self
+                    .root
+                    .state
+                    .publish_checked_focused_transition(
+                        obligation,
+                        facts,
+                        execution,
+                        vec![kernel.clone()],
+                        vec![kernel],
+                    )
+                    .map_err(|_| self.root.step_error("`have` scope goal is no longer open"))?;
                 Ok(Proof {
                     context: self.root.context.clone(),
-                    state: KernelProofObject::new(
-                        ProofState {
-                            locals: self.root.state.locals.clone(),
-                            open_branches: goals,
-                            added_facts: Arc::new(vec![kernel.clone()]),
-                            checked_facts: Arc::new(vec![kernel]),
-                        },
-                        self.root.focused_branch_id(),
-                    ),
+                    state,
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
                         step: Some(Arc::new(ProofStep::Have {

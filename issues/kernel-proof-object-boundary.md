@@ -95,6 +95,9 @@ Checked execution and outcome joins likewise submit only their merged frontier;
 the kernel validates the child/parent lineage and restores the parent branch.
 Outcome result refresh and fact resynchronization replace only the focused
 branch through kernel operations; they cannot rebuild sibling state or focus.
+Function-exit outcome-goal fanout and checked `have` publication are likewise
+focused kernel transitions: the language supplies checked branch payloads but
+cannot allocate their identities or replace sibling state.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back

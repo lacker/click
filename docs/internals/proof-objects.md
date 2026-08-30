@@ -88,6 +88,9 @@ frontier while the kernel validates the child/parent lineage and restores the
 retired parent identity.
 Post-execution result refresh and fact resynchronization similarly replace
 only the focused obligation and its facts through kernel operations.
+Function-exit outcome fanout lets the kernel allocate one identity per checked
+returning path. A completed `have` scope publishes only its focused obligation,
+facts, and optional execution attachment through the kernel.
 Structural loop-effect scopes may restore an already allocated retired cursor
 for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.

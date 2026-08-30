@@ -270,6 +270,34 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn replace_focused_with_checked_branches(
+        &self,
+        branches: Vec<ProofBranch<O, E>>,
+    ) -> Result<(Self, Vec<BranchId>), ProofFocusError> {
+        if self.state.open_branches.get(self.focused_branch).is_none() || branches.is_empty() {
+            return Err(ProofFocusError::NotOpen);
+        }
+        let mut open_branches = self.state.open_branches.close_at(self.focused_branch);
+        let mut ids = Vec::with_capacity(branches.len());
+        for branch in branches {
+            let (id, next) = open_branches.push(branch);
+            ids.push(id);
+            open_branches = next;
+        }
+        Ok((
+            Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                ids[0],
+            ),
+            ids,
+        ))
+    }
+
     pub(crate) fn replace_focused_obligation(
         &self,
         obligation: O,
@@ -317,6 +345,40 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
                     .replace_at(self.focused_branch, ProofBranch::new(obligation, state)),
                 added_facts: self.state.added_facts.clone(),
                 checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    pub(crate) fn publish_checked_focused_transition(
+        &self,
+        obligation: O,
+        facts: ProofFacts,
+        execution: Option<Arc<E>>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofFocusError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ProofFocusError::NotOpen)?;
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.replace_at(
+                    self.focused_branch,
+                    ProofBranch::new(
+                        obligation,
+                        ProofBranchState {
+                            facts,
+                            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                            execution,
+                        },
+                    ),
+                ),
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
             },
             self.focused_branch,
         ))
@@ -1368,6 +1430,7 @@ impl<L, O, E> Deref for ProofObject<L, O, E> {
 }
 
 impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, O>, E>> {
+    #[cfg(test)]
     pub(crate) fn obligation(&self, at: BranchId) -> Option<&ProofObligation<P, O>> {
         Some(&self.get(at)?.obligation)
     }
