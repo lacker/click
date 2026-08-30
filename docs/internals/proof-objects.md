@@ -74,8 +74,9 @@ Region-level smart-closer attribution and the final construction cursor for
 smart step/execute are stored and updated through the same presentation-only
 path. The semantic core retains only the checked invariant-closure flag.
 Statement steps, mid-execution `have`, frontier-local `loop`, and resource
-scope closure submit their checked successors through a frontier-shaped kernel
-operation that preserves unrelated branches, the obligation, and unfold state.
+scope entry/closure submit their checked successors through a frontier-shaped
+kernel operation that preserves unrelated branches, the obligation, and unfold
+state. Terminal branch-arm continuation uses the same operation.
 When loop preservation produces two feasible proof-level `if` arms, the kernel
 also allocates the sibling identities and records their split topology around
 the two checked frontier results.

@@ -1058,22 +1058,19 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = checked.state.into();
         let introduced_facts = checked.added_facts.clone();
+        let state = self
+            .state
+            .publish_checked_frontier_transition(
+                checked.facts,
+                execution,
+                checked.added_facts.clone(),
+                checked.added_facts,
+                false,
+            )
+            .map_err(|error| self.execution_update_error("`open`", error))?;
         let body = Proof {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        checked.facts,
-                        execution,
-                    ),
-                    added_facts: Arc::new(checked.added_facts.clone()),
-                    checked_facts: Arc::new(checked.added_facts),
-                },
-                self.focused_branch_id(),
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,

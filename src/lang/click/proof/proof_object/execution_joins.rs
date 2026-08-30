@@ -2427,21 +2427,19 @@ impl<'a> Proof<'a> {
         }
         let mut execution = execution.clone();
         self.install_parent_frontier_after_decided(&mut execution, record)?;
+        let state = self
+            .state
+            .publish_checked_frontier_transition(
+                self.facts().clone(),
+                execution,
+                Vec::new(),
+                Vec::new(),
+                false,
+            )
+            .map_err(|error| self.execution_update_error("continue branch arm", error))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        self.facts().clone(),
-                        execution,
-                    ),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                self.focused_branch_id(),
-            ),
+            state,
             node: self.node.clone(),
         })
     }

@@ -100,7 +100,11 @@ impl<'a> Proof<'a> {
             .map_err(|error| self.execution_update_error("`close_invariants`", error))
     }
 
-    fn execution_update_error(&self, operation: &str, error: ExecutionUpdateError) -> ClickError {
+    pub(super) fn execution_update_error(
+        &self,
+        operation: &str,
+        error: ExecutionUpdateError,
+    ) -> ClickError {
         match error {
             ExecutionUpdateError::NotFrontier | ExecutionUpdateError::ClosedLoopEffect => self
                 .step_error(format!(

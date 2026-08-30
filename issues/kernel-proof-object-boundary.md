@@ -83,8 +83,9 @@ Smart region-closer attribution and smart-step/execute construction cursors
 are presentation-only as well; none remain in `ExecutionProofCore` or rebuild
 the frontier to record metadata.
 Checked statement steps, mid-execution `have`, frontier-local `loop`, and
-resource scope close publish their already checked result through the same
-frontier-shaped kernel operation instead of reconstructing `ProofState`.
+resource scope entry/close publish their already checked result through the
+same frontier-shaped kernel operation instead of reconstructing `ProofState`.
+The terminal branch-arm continuation uses that operation as well.
 Preservation `if` uses the corresponding kernel split operation, so the
 checked driver supplies feasible arm results but cannot allocate their branch
 identities or install their topology.
