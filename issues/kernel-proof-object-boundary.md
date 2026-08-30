@@ -65,6 +65,9 @@ the semantic split or joined successor. Higher-level execution and resource
 operations still need the same kernel-owned API treatment. Logical `cases` at
 an execution frontier now uses the same kernel split: both siblings retain one
 shared checked execution core and differ only by their exact disjunct fact.
+Proof-level execution `if` likewise lets the language prepare only opaque arm
+presentation; the kernel validates complementary facts and clones the semantic
+execution core itself.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

@@ -71,6 +71,7 @@ pub(crate) enum FrontierSplitError {
     MissingExecution,
     MissingDisjunction(Proposition),
     ExpectedDisjunction(Proposition),
+    NonComplementaryCases,
 }
 
 #[derive(Clone, Copy)]
@@ -703,6 +704,70 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             .state
             .open_branches
             .split_at(self.focused_branch, [arm(*left), arm(*right)]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(introduced_facts[0].clone()),
+                    checked_facts: Arc::new(introduced_facts[0].clone()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts,
+        })
+    }
+
+    pub(crate) fn split_frontier_if(
+        &self,
+        then_fact: Proposition,
+        else_fact: Proposition,
+        presentations: [S; 2],
+    ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, FrontierSplitError>
+    {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(FrontierSplitError::Completed)?;
+        let ProofObligation::Frontier(frontier) = &branch.obligation else {
+            return Err(FrontierSplitError::NotFrontier);
+        };
+        let execution = branch
+            .state
+            .execution
+            .as_ref()
+            .ok_or(FrontierSplitError::MissingExecution)?;
+        let negated_then = Proposition::Not(Box::new(then_fact.clone()));
+        if else_fact != negated_then
+            && !super::fact_reasoning::condition_polarity_forms(&negated_then).contains(&else_fact)
+        {
+            return Err(FrontierSplitError::NonComplementaryCases);
+        }
+        let introduced_facts = [vec![then_fact.clone()], vec![else_fact.clone()]];
+        let [then_presentation, else_presentation] = presentations;
+        let arm = |fact: Proposition, presentation: S| {
+            ProofBranch::new(
+                ProofObligation::Frontier(frontier.clone()),
+                ProofBranchState {
+                    facts: branch.state.facts.with_fact(fact),
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: Some(Arc::new(ProofExecutionState::new(
+                        execution.core.clone(),
+                        presentation,
+                    ))),
+                },
+            )
+        };
+        let (split, branches, open_branches) = self.state.open_branches.split_at(
+            self.focused_branch,
+            [
+                arm(then_fact, then_presentation),
+                arm(else_fact, else_presentation),
+            ],
+        );
         Ok(ProofSplit {
             proof: Self::new(
                 ProofState {

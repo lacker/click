@@ -54,7 +54,9 @@ Kernel files:
   successors. Proposition case splits and closed-arm joins likewise allocate
   and validate their branch identities inside `ProofObject`; the language
   retains only arm provenance and diagnostics. Logical execution-frontier
-  cases reuse that split while sharing the unchanged checked execution core.
+  cases reuse that split while sharing the unchanged checked execution core;
+  proof-level execution `if` accepts only opaque per-arm presentation and
+  clones semantic execution state inside the kernel.
   Completion witnesses and terminal execution-finalization views can be
   constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and

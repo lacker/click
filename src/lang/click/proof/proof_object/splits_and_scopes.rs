@@ -168,10 +168,6 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, ExecutionProofCaseSplit<'a>), ClickError> {
-        self.require_execution_frontier("proof `if`")?;
-        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
-            unreachable!("the frontier requirement was checked above")
-        };
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let parent_execution = branch_state
             .execution
@@ -184,57 +180,68 @@ impl<'a> Proof<'a> {
             unreachable!("an execution frontier has an execution context")
         };
         let at_function_entry = parent_execution.core.frontier.is_at_function_entry();
-        let arm = |surface_fact: ClickProposition, fact: Proposition, value: bool| {
-            let facts = branch_state.facts.with_fact(fact.clone());
-            let mut execution = (*parent_execution).clone();
-            execution
-                .presentation
+        let arm_presentation = |surface_fact: ClickProposition, fact: &Proposition, value: bool| {
+            let mut presentation = parent_execution.presentation.clone();
+            presentation
                 .surface_propositions
-                .record_lowering(&surface_fact, &fact)?;
-            execution
-                .presentation
-                .case_assumptions
-                .push(CaseAssumption {
-                    tactic_index: context.tactic_index,
-                    condition: condition.clone(),
-                    value,
-                    fact: Some(fact.clone()),
-                    at_function_entry,
-                });
-            Ok((
-                OpenBranch::frontier(
-                    frontier.selection,
-                    BranchState {
-                        facts: facts.clone(),
-                        unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                        execution: Some(Arc::new(execution.clone())),
-                    },
-                ),
-                facts,
-                vec![fact],
-                Arc::new(execution),
-            ))
+                .record_lowering(&surface_fact, fact)?;
+            presentation.case_assumptions.push(CaseAssumption {
+                tactic_index: context.tactic_index,
+                condition: condition.clone(),
+                value,
+                fact: Some(fact.clone()),
+                at_function_entry,
+            });
+            Ok(presentation)
         };
-        let (then_goal, then_facts, then_path, then_execution) =
-            arm(condition.clone(), then_fact, true)?;
-        let (else_goal, else_facts, else_path, else_execution) =
-            arm(else_surface, else_fact, false)?;
-        let (split, ids, open_branches) = self
+        let presentations = [
+            arm_presentation(condition.clone(), &then_fact, true)?,
+            arm_presentation(else_surface, &else_fact, false)?,
+        ];
+        let (state, split, ids, path_facts) = self
             .state
+            .split_frontier_if(then_fact, else_fact, presentations)
+            .map_err(|error| match error {
+                FrontierSplitError::Completed => {
+                    self.step_error("proof `if` follows a completed proof")
+                }
+                FrontierSplitError::NotFrontier => self
+                    .step_error("proof `if` cannot advance C execution inside a proposition proof"),
+                FrontierSplitError::MissingExecution => {
+                    self.step_error("execution-frontier proof lost its semantic state")
+                }
+                FrontierSplitError::NonComplementaryCases => self.step_error(
+                    "proof `if` condition and negation did not lower to complementary facts",
+                ),
+                FrontierSplitError::MissingDisjunction(_)
+                | FrontierSplitError::ExpectedDisjunction(_) => {
+                    unreachable!("proof if does not require a disjunction")
+                }
+            })?
+            .into_parts_with_facts();
+        let then_branch = state
             .open_branches
-            .split_at(self.focused_branch_id(), [then_goal, else_goal]);
-        let first_path = then_path.clone();
+            .get(ids[0])
+            .expect("the kernel returned its open then branch");
+        let else_branch = state
+            .open_branches
+            .get(ids[1])
+            .expect("the kernel returned its open else branch");
+        let then_facts = then_branch.state.facts.clone();
+        let else_facts = else_branch.state.facts.clone();
+        let then_execution = then_branch
+            .state
+            .execution
+            .clone()
+            .expect("a kernel frontier split retains then execution");
+        let else_execution = else_branch
+            .state
+            .execution
+            .clone()
+            .expect("a kernel frontier split retains else execution");
         let successor = Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(first_path.clone()),
-                    checked_facts: Arc::new(first_path),
-                },
-                ids[0],
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
@@ -249,7 +256,7 @@ impl<'a> Proof<'a> {
             surface_condition: condition,
             base_facts: [then_facts, else_facts],
             base_executions: [then_execution, else_execution],
-            path_facts: [then_path, else_path],
+            path_facts,
             common_facts: branch_state.facts.clone(),
             parent_unfolds: branch_state.unfolded_predicates.clone(),
             parent_execution: parent_execution.clone(),
@@ -289,6 +296,9 @@ impl<'a> Proof<'a> {
                 )),
                 FrontierSplitError::ExpectedDisjunction(lowered) => {
                     self.step_error(format!("`cases` requires a disjunction, got {lowered:?}"))
+                }
+                FrontierSplitError::NonComplementaryCases => {
+                    unreachable!("execution cases does not supply complementary branch facts")
                 }
             })?
             .into_parts_with_facts();

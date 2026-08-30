@@ -54,7 +54,10 @@ sibling identities, checks complementary or available case facts, and owns the
 closed-arm join. Surface provenance independently proves that serialized arm
 steps descend through the exact split marker; it never manufactures branch
 state. Logical `cases` at an execution frontier uses the same operation while
-sharing the unchanged execution core between both fact-local siblings.
+sharing the unchanged execution core between both fact-local siblings. For a
+proof-level execution `if`, the language prepares each arm's opaque Surface
+record, while the kernel validates polarity and attaches those records to its
+own clones of the unchanged semantic core.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque
