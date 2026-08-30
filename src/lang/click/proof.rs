@@ -492,93 +492,55 @@ fn equal_by_premise_chain(
     })
 }
 
-/// Splits an instantiated universal body into its implication guards and its
-/// final conclusion, requiring each guard conjunct to discharge from exactly
-/// the listed premises: a context-free normalization, an exact listed premise
-/// (up to conjunct splitting and condition polarity), or one bounded atomic
-/// derivation from the listed premises alone. No proposition search runs.
+/// Language-facing diagnostic adapter for the kernel's instantiated-guard
+/// check. Surface certificate planning shares the same checked rule without
+/// gaining successor authority.
 pub(super) fn discharge_instantiated_guards(
     instantiated: Proposition,
     premises: &[Proposition],
 ) -> Result<(Vec<Proposition>, Proposition), String> {
-    let premise_assumptions = assumptions_from_propositions(premises);
-    let mut premise_conjuncts = Vec::new();
-    for premise in premises {
-        atomic_conjuncts(premise, &mut premise_conjuncts);
-    }
-    let premise_conjuncts = premise_conjuncts.into_iter().cloned().collect::<Vec<_>>();
-    let discharges = |conjunct: &Proposition| {
-        matches!(normalize_proposition(conjunct), SimpProposition::True)
-            || premise_conjuncts.iter().any(|premise| {
-                premise == conjunct || condition_polarity_equivalent(premise, conjunct)
-            })
-            || premise_assumptions
-                .derive_atomic_proposition(conjunct)
-                .is_some()
-            || premise_assumptions
-                .derive_simp_atomic_proposition(conjunct)
-                .is_some()
-    };
-    let mut guards = Vec::new();
-    let mut current = instantiated;
-    while let Proposition::Implies(guard, body) = current {
-        let mut conjuncts = Vec::new();
-        atomic_conjuncts(&guard, &mut conjuncts);
-        if let Some(missing) = conjuncts.iter().find(|conjunct| !discharges(conjunct)) {
-            return Err(format!(
-                "instantiated premise `{}` does not follow from the listed evidence",
-                describe_pure_fact(missing, &[], &[]),
-            ));
-        }
-        guards.push(*guard);
-        current = *body;
-    }
-    Ok((guards, current))
+    crate::kernel::proof::fact_reasoning::discharge_instantiated_guards(instantiated, premises)
+        .map_err(format_forall_int32_instantiation_error)
 }
 
-/// Checks one explicit specialization of an available `int32` universal.
-///
-/// The caller owns availability and expression evaluation. This judgment owns
-/// the deterministic logical transition: substitute the selected argument,
-/// discharge guards from exactly the named premises, ask the kernel for the
-/// application theorem, and validate that theorem before returning its one
-/// conclusion.
+/// Language-facing diagnostic adapter for the kernel's explicit `int32`
+/// specialization check. `ProofObject::apply_instantiate` additionally owns
+/// fact availability and publishing the checked conclusion.
 pub(super) fn check_forall_int32_instantiation(
     quantified: &Proposition,
     argument: Bitvector32Term,
     premises: &[Proposition],
 ) -> Result<Proposition, String> {
-    let Proposition::ForAll { var, sort, body } = quantified else {
-        return Err("`instantiate` requires a universally quantified fact".to_string());
-    };
-    if *sort != Sort::CInt32 {
-        return Err("`instantiate` supports only int32 universals".to_string());
-    }
+    crate::kernel::proof::fact_reasoning::check_forall_int32_instantiation(
+        quantified, argument, premises,
+    )
+    .map_err(format_forall_int32_instantiation_error)
+}
 
-    let instantiated = substitute_int32_variable_in_proposition(body, *var, argument.clone());
-    let (guards, conclusion) = discharge_instantiated_guards(instantiated, premises)?;
-    let theorem = prove_forall_int32_application(quantified, argument, &guards)
-        .ok_or_else(|| "kernel rejected the `instantiate` application".to_string())?;
-    let Proposition::Implies(theorem_quantified, mut theorem_body) = theorem.proposition().clone()
-    else {
-        return Err("invalid universal instantiation theorem".to_string());
-    };
-    if theorem_quantified.as_ref() != quantified {
-        return Err("universal instantiation changed its quantified premise".to_string());
-    }
-    for guard in &guards {
-        let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
-            return Err("universal instantiation omitted a discharged premise".to_string());
-        };
-        if theorem_guard.as_ref() != guard {
-            return Err("universal instantiation changed a discharged premise".to_string());
+pub(super) fn format_forall_int32_instantiation_error(
+    error: crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError,
+) -> String {
+    use crate::kernel::proof::fact_reasoning::ForallInt32InstantiationError as Error;
+    match error {
+        Error::RequiresUniversal => {
+            "`instantiate` requires a universally quantified fact".to_string()
         }
-        theorem_body = next.clone();
+        Error::UnsupportedSort => "`instantiate` supports only int32 universals".to_string(),
+        Error::MissingGuard(missing) => format!(
+            "instantiated premise `{}` does not follow from the listed evidence",
+            describe_pure_fact(&missing, &[], &[]),
+        ),
+        Error::KernelRejected => "kernel rejected the `instantiate` application".to_string(),
+        Error::InvalidTheorem => "invalid universal instantiation theorem".to_string(),
+        Error::ChangedQuantifiedPremise => {
+            "universal instantiation changed its quantified premise".to_string()
+        }
+        Error::OmittedGuard => "universal instantiation omitted a discharged premise".to_string(),
+        Error::ChangedGuard => "universal instantiation changed a discharged premise".to_string(),
+        Error::UnexpectedConclusion => {
+            "universal instantiation produced an unexpected conclusion".to_string()
+        }
     }
-    if theorem_body.as_ref() != &conclusion {
-        return Err("universal instantiation produced an unexpected conclusion".to_string());
-    }
-    Ok(conclusion)
 }
 
 pub(super) fn check_atomic_premise_derivation_goal(

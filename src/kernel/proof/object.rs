@@ -64,6 +64,10 @@ pub(crate) enum PropositionCloseError {
     ExpectedFiniteUniversal,
     MissingFiniteInstance,
     ContradictionUnavailable(Proposition),
+    ExtractUnavailable(Proposition),
+    InstantiatePremiseUnavailable(Proposition),
+    InstantiateQuantifiedUnavailable,
+    InstantiateInvalid(super::fact_reasoning::ForallInt32InstantiationError),
 }
 
 #[derive(Clone, Copy)]
@@ -390,6 +394,95 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         contradictory
             .then(|| self.closed_focused())
             .ok_or_else(|| PropositionCloseError::ContradictionUnavailable(fact.clone()))
+    }
+
+    pub(crate) fn apply_extract(
+        &self,
+        proposition: Proposition,
+    ) -> Result<Self, PropositionCloseError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionCloseError::Unavailable)?;
+        if !branch.state.facts.contains_proper_conjunct(&proposition)
+            && !branch
+                .state
+                .facts
+                .contains_discharged_implication_consequent(&proposition)
+        {
+            return Err(PropositionCloseError::ExtractUnavailable(proposition));
+        }
+        let added_facts = (!branch.state.facts.contains_top_level(&proposition))
+            .then(|| proposition.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+        let facts = branch.state.facts.with_fact(proposition);
+        let complete = match &branch.obligation {
+            ProofObligation::Proposition(goal) => facts.contains(goal.proposition()),
+            _ => false,
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.discharged_if_at(
+                    self.focused_branch,
+                    complete,
+                    facts,
+                ),
+                checked_facts: Arc::new(added_facts.clone()),
+                added_facts: Arc::new(added_facts),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    pub(crate) fn apply_instantiate(
+        &self,
+        quantified: Proposition,
+        argument: crate::kernel::Bitvector32Term,
+        explicit_premises: &[Proposition],
+    ) -> Result<Self, PropositionCloseError> {
+        let (_, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        for premise in explicit_premises {
+            if !facts.available_across_effects(premise, &[]) {
+                return Err(PropositionCloseError::InstantiatePremiseUnavailable(
+                    premise.clone(),
+                ));
+            }
+        }
+        let quantified = if facts.contains(&quantified) {
+            quantified
+        } else if let Some(available) = facts.matching_quantified_fact(&quantified) {
+            available
+        } else {
+            return Err(PropositionCloseError::InstantiateQuantifiedUnavailable);
+        };
+        let conclusion = super::fact_reasoning::check_forall_int32_instantiation(
+            &quantified,
+            argument,
+            explicit_premises,
+        )
+        .map_err(PropositionCloseError::InstantiateInvalid)?;
+        let added_facts = (!facts.contains_top_level(&conclusion))
+            .then(|| conclusion.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+        let facts = facts.with_fact(conclusion);
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .with_facts_at(self.focused_branch, facts),
+                checked_facts: Arc::new(added_facts.clone()),
+                added_facts: Arc::new(added_facts),
+            },
+            self.focused_branch,
+        ))
     }
 }
 

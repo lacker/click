@@ -66,6 +66,12 @@ impl<'a> Proof<'a> {
             ProofStep::Right => Some(self.apply_right()),
             ProofStep::Enumerate => Some(self.apply_enumerate()),
             ProofStep::Contradiction(surface) => Some(self.apply_contradiction(surface)),
+            ProofStep::Extract(proposition) => Some(self.apply_extract(proposition)),
+            ProofStep::InstantiateUsing {
+                quantified,
+                argument,
+                premises,
+            } => Some(self.apply_fixed_state_instantiate_using(quantified, argument, premises)),
             _ => None,
         };
         if let Some(successor) = checked_proposition_successor {
@@ -106,12 +112,6 @@ impl<'a> Proof<'a> {
             }
             ProofStep::Choose(choice) => self.apply_fixed_state_choose(choice),
             ProofStep::Witness(witness) => self.apply_fixed_state_witness(witness),
-            ProofStep::InstantiateUsing {
-                quantified,
-                argument,
-                premises,
-            } => self.apply_fixed_state_instantiate_using(quantified, argument, premises),
-            ProofStep::Extract(proposition) => self.apply_extract(proposition),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
             ProofStep::CloseInvariants => self.apply_close_invariants(),
             ProofStep::FrameUsing { region, premises } => {

@@ -449,7 +449,7 @@ impl<'a> Proof<'a> {
         surface_quantified: &ClickProposition,
         argument: &ContractExpression,
         surface_premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<KernelProofHandle, ClickError> {
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // An instantiation on a judgment stated at a function outcome
@@ -473,8 +473,6 @@ impl<'a> Proof<'a> {
                 );
             }
         };
-        self.proposition_goal("`instantiate` requires a proposition goal")?;
-
         let surface_quantified =
             self.substitute_goal_surface_bindings_in_proposition(surface_quantified)?;
         let surface_premises = surface_premises
@@ -485,26 +483,8 @@ impl<'a> Proof<'a> {
             .iter()
             .map(|surface| self.lower_surface_proposition(surface, "`instantiate using` premise"))
             .collect::<Result<Vec<_>, _>>()?;
-        for premise in &explicit_premises {
-            if !self.facts().available_across_effects(premise, &[]) {
-                return Err(self.step_error(format!(
-                    "`instantiate using` requires an unavailable exact premise: {premise:?}"
-                )));
-            }
-        }
-
         let lowered_quantified =
             self.lower_surface_proposition(&surface_quantified, "`instantiate` quantified fact")?;
-        let quantified = if self.facts().contains(&lowered_quantified) {
-            lowered_quantified
-        } else if let Some(available) = self.facts().matching_quantified_fact(&lowered_quantified) {
-            available
-        } else {
-            return Err(self.step_error(format!(
-                "`instantiate` quantified fact is not exactly available: {}",
-                describe_click_proposition(&surface_quantified)
-            )));
-        };
 
         let parameter_values = parameter_values(view.parameters, view.arguments)
             .map_err(|error| self.step_error(error.message))?;
@@ -536,22 +516,29 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("`instantiate` argument did not evaluate to int32"));
         };
 
-        let conclusion =
-            check_forall_int32_instantiation(&quantified, argument, &explicit_premises)
-                .map_err(|message| self.step_error(format!("`instantiate` failed: {message}")))?;
-        let added = !self.facts().contains_top_level(&conclusion);
-        let facts = self.facts().with_fact(conclusion.clone());
-        let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self
-                .state
-                .open_branches
-                .with_facts_at(self.focused_branch_id(), facts),
-            added_facts: Arc::new(added_facts.clone()),
-            checked_facts: Arc::new(added_facts),
-        })
+        self.state
+            .apply_instantiate(lowered_quantified, argument, &explicit_premises)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("`instantiate` requires a proposition goal")
+                }
+                PropositionCloseError::InstantiatePremiseUnavailable(premise) => {
+                    self.step_error(format!(
+                        "`instantiate using` requires an unavailable exact premise: {premise:?}"
+                    ))
+                }
+                PropositionCloseError::InstantiateQuantifiedUnavailable => {
+                    self.step_error(format!(
+                        "`instantiate` quantified fact is not exactly available: {}",
+                        describe_click_proposition(&surface_quantified)
+                    ))
+                }
+                PropositionCloseError::InstantiateInvalid(message) => self.step_error(format!(
+                    "`instantiate` failed: {}",
+                    format_forall_int32_instantiation_error(message)
+                )),
+                _ => unreachable!("kernel returned an unrelated instantiate error"),
+            })
     }
 
     pub(super) fn apply_rewrite(
@@ -716,34 +703,17 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_extract(
         &self,
         surface: &ClickProposition,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<KernelProofHandle, ClickError> {
         let proposition = self.lower_surface_proposition(surface, "`extract` proposition")?;
-        if !self.facts().contains_proper_conjunct(&proposition)
-            && !self
-                .facts()
-                .contains_discharged_implication_consequent(&proposition)
-        {
-            return Err(self.step_error(format!(
+        self.state.apply_extract(proposition).map_err(|error| match error {
+            PropositionCloseError::ExtractUnavailable(proposition) => self.step_error(format!(
                 "`extract` proposition is not a proper conjunct of an exact available fact or a discharged implication consequent: {}",
                 describe_pure_fact(&proposition, &[], &[])
-            )));
-        }
-        let added_facts = (!self.facts().contains_top_level(&proposition))
-            .then(|| proposition.clone())
-            .into_iter()
-            .collect::<Vec<_>>();
-        let facts = self.facts().with_fact(proposition);
-        let complete = self.goal().is_some_and(|goal| facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_at(
-                self.focused_branch_id(),
-                complete,
-                facts,
-            ),
-            added_facts: Arc::new(added_facts.clone()),
-            checked_facts: Arc::new(added_facts),
+            )),
+            PropositionCloseError::Unavailable => {
+                self.step_error("`extract` requires an open proof branch")
+            }
+            _ => unreachable!("kernel returned an unrelated extract error"),
         })
     }
 

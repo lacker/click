@@ -49,12 +49,16 @@ result, state, execution facts, requirements, and crossed effects used by
 outcome rules. The language attachment retains only Surface proposition
 records, selectors, and diagnostic provenance. Primitive proposition-closing
 rules (`assumption`, `normalize`, `intro`, `split`, disjunction selection,
-finite enumeration, and `contradiction`) are named `ProofObject` operations.
-They check or refine the focused obligation and return an opaque kernel
-successor directly; the language dispatcher only supplies opaque presentation,
+finite enumeration, `contradiction`, conjunction extraction, and explicit
+universal instantiation) are named `ProofObject` operations. They check or
+refine the focused obligation and return an opaque kernel successor directly;
+the language dispatcher only supplies opaque presentation and lowered inputs,
 selects the operation, translates its typed failure into the existing
-diagnostic, and records Surface provenance. Higher-level checked operations
-still need the same kernel-owned API treatment.
+diagnostic, and records Surface provenance. Universal instantiation's guard
+discharge and theorem validation also live in kernel fact reasoning, so the
+language cannot publish an arbitrary conclusion after evaluating a Surface
+argument. Higher-level checked operations still need the same kernel-owned API
+treatment.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

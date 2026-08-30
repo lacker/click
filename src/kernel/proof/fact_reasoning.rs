@@ -7,6 +7,94 @@ pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
         .is_some()
 }
 
+pub(crate) enum ForallInt32InstantiationError {
+    RequiresUniversal,
+    UnsupportedSort,
+    MissingGuard(Proposition),
+    KernelRejected,
+    InvalidTheorem,
+    ChangedQuantifiedPremise,
+    OmittedGuard,
+    ChangedGuard,
+    UnexpectedConclusion,
+}
+
+pub(crate) fn discharge_instantiated_guards(
+    instantiated: Proposition,
+    premises: &[Proposition],
+) -> Result<(Vec<Proposition>, Proposition), ForallInt32InstantiationError> {
+    let premise_assumptions = assumptions_from_propositions(premises);
+    let mut premise_conjuncts = Vec::new();
+    for premise in premises {
+        atomic_conjuncts(premise, &mut premise_conjuncts);
+    }
+    let premise_conjuncts = premise_conjuncts.into_iter().cloned().collect::<Vec<_>>();
+    let discharges = |conjunct: &Proposition| {
+        normalizes_context_free(conjunct)
+            || premise_conjuncts.iter().any(|premise| {
+                premise == conjunct || condition_polarity_equivalent(premise, conjunct)
+            })
+            || premise_assumptions
+                .derive_atomic_proposition(conjunct)
+                .is_some()
+            || premise_assumptions
+                .derive_simp_atomic_proposition(conjunct)
+                .is_some()
+    };
+    let mut guards = Vec::new();
+    let mut current = instantiated;
+    while let Proposition::Implies(guard, body) = current {
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(&guard, &mut conjuncts);
+        if let Some(missing) = conjuncts.iter().find(|conjunct| !discharges(conjunct)) {
+            return Err(ForallInt32InstantiationError::MissingGuard(
+                (*missing).clone(),
+            ));
+        }
+        guards.push(*guard);
+        current = *body;
+    }
+    Ok((guards, current))
+}
+
+pub(crate) fn check_forall_int32_instantiation(
+    quantified: &Proposition,
+    argument: Bitvector32Term,
+    premises: &[Proposition],
+) -> Result<Proposition, ForallInt32InstantiationError> {
+    let Proposition::ForAll { var, sort, body } = quantified else {
+        return Err(ForallInt32InstantiationError::RequiresUniversal);
+    };
+    if *sort != Sort::CInt32 {
+        return Err(ForallInt32InstantiationError::UnsupportedSort);
+    }
+
+    let instantiated = substitute_int32_variable_in_proposition(body, *var, argument.clone());
+    let (guards, conclusion) = discharge_instantiated_guards(instantiated, premises)?;
+    let theorem = prove_forall_int32_application(quantified, argument, &guards)
+        .ok_or(ForallInt32InstantiationError::KernelRejected)?;
+    let Proposition::Implies(theorem_quantified, mut theorem_body) = theorem.proposition().clone()
+    else {
+        return Err(ForallInt32InstantiationError::InvalidTheorem);
+    };
+    if theorem_quantified.as_ref() != quantified {
+        return Err(ForallInt32InstantiationError::ChangedQuantifiedPremise);
+    }
+    for guard in &guards {
+        let Proposition::Implies(theorem_guard, next) = theorem_body.as_ref() else {
+            return Err(ForallInt32InstantiationError::OmittedGuard);
+        };
+        if theorem_guard.as_ref() != guard {
+            return Err(ForallInt32InstantiationError::ChangedGuard);
+        }
+        theorem_body = next.clone();
+    }
+    if theorem_body.as_ref() != &conclusion {
+        return Err(ForallInt32InstantiationError::UnexpectedConclusion);
+    }
+    Ok(conclusion)
+}
+
 fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContext {
     propositions
         .iter()

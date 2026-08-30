@@ -46,6 +46,9 @@ availability and logical shape, refine or close the obligation, and return an
 opaque successor directly. `intro` accepts a callback only to derive new
 opaque presentation from the checked introduction kind; the callback cannot
 choose the kernel proposition, introduced fact, or successor state.
+Conjunction extraction and explicit universal instantiation likewise accept
+lowered inputs, then let the kernel validate availability, guards, and the
+resulting fact before it publishes a successor.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

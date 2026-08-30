@@ -56,7 +56,8 @@ Kernel files:
   constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
-  conflict, and availability rules used by the persistent fact store.
+  conflict, availability, and explicit universal-instantiation rules used by
+  the persistent fact store and proof object.
   `facts.rs` owns that persistent store, its indexes, and its output-sensitive
   ancestry/delta operations.
 - `functions.rs`: C function execution, argument binding, and call results.
