@@ -270,6 +270,58 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn replace_focused_obligation(
+        &self,
+        obligation: O,
+    ) -> Result<Self, ProofFocusError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ProofFocusError::NotOpen)?;
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .replace_at(self.focused_branch, branch.with_obligation(obligation)),
+                added_facts: self.state.added_facts.clone(),
+                checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    pub(crate) fn replace_focused_obligation_and_facts(
+        &self,
+        obligation: O,
+        facts: ProofFacts,
+    ) -> Result<Self, ProofFocusError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ProofFocusError::NotOpen)?;
+        let state = ProofBranchState {
+            facts,
+            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+            execution: branch.state.execution.clone(),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .replace_at(self.focused_branch, ProofBranch::new(obligation, state)),
+                added_facts: self.state.added_facts.clone(),
+                checked_facts: self.state.checked_facts.clone(),
+            },
+            self.focused_branch,
+        ))
+    }
+
     pub(crate) fn join_closed_split(
         &self,
         split: super::SplitId,

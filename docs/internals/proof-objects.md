@@ -83,6 +83,8 @@ the two checked frontier results.
 At an execution or outcome join, the checked driver supplies the merged
 frontier while the kernel validates the child/parent lineage and restores the
 retired parent identity.
+Post-execution result refresh and fact resynchronization similarly replace
+only the focused obligation and its facts through kernel operations.
 Structural loop-effect scopes may restore an already allocated retired cursor
 for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.

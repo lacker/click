@@ -116,29 +116,26 @@ impl<'a> Proof<'a> {
         data.core.result = Arc::new(value.clone());
         data.core.state = state.clone().into();
         let data = Arc::new(data);
-        let mut state = (*self.state()).clone();
-        state.open_branches = match self.focused_obligation() {
+        let obligation = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.data = data;
-                state.open_branches.replace_obligation_at(
-                    self.focused_branch_id(),
-                    Obligation::FunctionOutcome(updated),
-                )
+                Obligation::FunctionOutcome(updated)
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(data);
-                state.open_branches.replace_obligation_at(
-                    self.focused_branch_id(),
-                    Obligation::Proposition(updated),
-                )
+                Obligation::Proposition(updated)
             }
             _ => unreachable!("the outcome data was selected above"),
         };
+        let state = self
+            .state
+            .replace_focused_obligation(obligation)
+            .map_err(|_| self.step_error("outcome goal is no longer open"))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(state, self.focused_branch_id()),
+            state,
             node: self.node.clone(),
         })
     }
@@ -167,33 +164,29 @@ impl<'a> Proof<'a> {
         let mut data = data.clone();
         data.core.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let data = Arc::new(data);
-        let mut state = (*self.state()).clone();
-        state.open_branches = match self.focused_obligation() {
+        let obligation = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.data = data;
-                state.open_branches.replace_obligation_at(
-                    self.focused_branch_id(),
-                    Obligation::FunctionOutcome(updated),
-                )
+                Obligation::FunctionOutcome(updated)
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(data);
-                state.open_branches.replace_obligation_at(
-                    self.focused_branch_id(),
-                    Obligation::Proposition(updated),
-                )
+                Obligation::Proposition(updated)
             }
             _ => unreachable!("the outcome data was selected above"),
         };
-        state.open_branches = state.open_branches.with_facts_at(
-            self.focused_branch_id(),
-            self.facts().resync_ordered_preserving_provenance(facts),
-        );
+        let state = self
+            .state
+            .replace_focused_obligation_and_facts(
+                obligation,
+                self.facts().resync_ordered_preserving_provenance(facts),
+            )
+            .map_err(|_| self.step_error("outcome goal is no longer open"))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(state, self.focused_branch_id()),
+            state,
             node: self.node.clone(),
         })
     }
