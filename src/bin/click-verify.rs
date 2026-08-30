@@ -11,7 +11,7 @@ use click::cli::{
     looks_like_source_location, parse_duration, parse_source_location, read_verifying_sources,
     source_refs,
 };
-use click::lang::click::{
+use click::surface::{
     c0_function_names, c0_incremental_selection, verify_c0_sources, verify_c0_sources_at,
     verify_c0_sources_functions, verifying_source_paths,
 };
@@ -256,7 +256,7 @@ fn verify_changed(
     Ok(())
 }
 
-fn click_message(error: click::lang::click::ClickError) -> String {
+fn click_message(error: click::surface::ClickError) -> String {
     error.message().to_string()
 }
 

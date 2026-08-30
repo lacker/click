@@ -6,8 +6,8 @@ use click::cli::{
     DEFAULT_EXPANSION_TIME_LIMIT, DEFAULT_VERIFY_TIME_LIMIT, PUBLIC_CLI_BEHAVIORS,
     PUBLIC_ENVIRONMENT_VARIABLES, format_duration,
 };
-use click::lang::c::syntax::C0_PUBLIC_FORMS;
-use click::lang::click::{PUBLIC_TACTIC_FORMS, SURFACE_CLICK_FORMS, SURFACE_CLICK_WORDS};
+use click::languages::c::syntax::C0_PUBLIC_FORMS;
+use click::surface::{PUBLIC_TACTIC_FORMS, SURFACE_CLICK_FORMS, SURFACE_CLICK_WORDS};
 
 #[derive(Debug)]
 struct InventoryItem {
@@ -17,6 +17,31 @@ struct InventoryItem {
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn proof_and_program_languages_have_distinct_source_roots() {
+    let source_root = root().join("src");
+    for path in [
+        "surface.rs",
+        "surface/parser.rs",
+        "languages.rs",
+        "languages/c.rs",
+        "languages/c/syntax.rs",
+    ] {
+        assert!(
+            source_root.join(path).is_file(),
+            "missing language-role source root `{path}`"
+        );
+    }
+    assert!(
+        !source_root.join("lang.rs").exists() && !source_root.join("lang").exists(),
+        "Surface Click and program languages must not return to one flat `lang` namespace"
+    );
+    let library = fs::read_to_string(source_root.join("lib.rs")).expect("read library root");
+    assert!(library.contains("pub mod surface;"));
+    assert!(library.contains("pub mod languages;"));
+    assert!(!library.contains("pub mod lang;"));
 }
 
 #[test]
@@ -39,10 +64,10 @@ fn language_proof_code_cannot_rebuild_the_kernel_proof_object() {
         );
     }
 
-    let directory = root().join("src/lang/click/proof/proof_object");
+    let directory = root().join("src/surface/proof/proof_object");
     let mut files = Vec::new();
     files_with_extension(&directory, "rs", &mut files);
-    files.push(root().join("src/lang/click/proof/proof_object.rs"));
+    files.push(root().join("src/surface/proof/proof_object.rs"));
     for path in files {
         if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs") {
             continue;
@@ -604,7 +629,7 @@ fn every_standard_library_symbol_has_a_verified_use() {
 
 #[test]
 fn tactic_inventory_matches_canonical_surface_names() {
-    let source = fs::read_to_string(root().join("src/lang/click/validation/type_validation.rs"))
+    let source = fs::read_to_string(root().join("src/surface/validation/type_validation.rs"))
         .expect("read tactic names");
     let body = source
         .split("fn tactic_name(")
@@ -694,7 +719,7 @@ fn every_tactic_form_has_a_checked_positive_fixture() {
 
     for (id, (path, needle)) in fixtures {
         assert!(
-            path.starts_with("mdtests/") || path.starts_with("src/lang/click/tests/"),
+            path.starts_with("mdtests/") || path.starts_with("src/surface/tests/"),
             "tactic fixture `{id}` must use an ordinary checked test source: {path}"
         );
         let fixture = fs::read_to_string(root().join(&path))

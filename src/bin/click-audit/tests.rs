@@ -1,5 +1,5 @@
 use super::*;
-use click::lang::click::verify_c0_sources;
+use click::surface::verify_c0_sources;
 
 #[test]
 fn parses_arguments_and_duration_units() {
@@ -153,7 +153,7 @@ fn click_engine_changes_force_a_full_changed_audit() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
     assert!(changed_paths_require_full_audit(
         repo,
-        &[PathBuf::from("src/lang/click.rs")]
+        &[PathBuf::from("src/surface.rs")]
     ));
     assert!(!changed_paths_require_full_audit(
         repo,
@@ -327,7 +327,7 @@ int32 example() {
         expand_c0_tactic_source_at(click_source, &sources, position.line, position.column).unwrap();
 
     assert_ne!(expanded, click_source);
-    click::lang::click::verifying_source_paths(&expanded).unwrap();
+    click::surface::verifying_source_paths(&expanded).unwrap();
     verify_c0_sources(&expanded, &sources).unwrap();
 }
 

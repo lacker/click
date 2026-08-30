@@ -84,7 +84,7 @@ needle = "if x <= 0 {"
 
 [[form]]
 id = "cases"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "cases (x == 1 or x == 2) {"
 
 [[form]]
@@ -119,7 +119,7 @@ needle = "assumption();"
 
 [[form]]
 id = "extract"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "extract(k == k);"
 
 [[form]]
@@ -134,27 +134,27 @@ needle = "intro();"
 
 [[form]]
 id = "split"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "split();"
 
 [[form]]
 id = "left"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "left();"
 
 [[form]]
 id = "right"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "right();"
 
 [[form]]
 id = "enumerate"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "enumerate();"
 
 [[form]]
 id = "contradiction"
-path = "src/lang/click/tests/surface_syntax.rs"
+path = "src/surface/tests/surface_syntax.rs"
 needle = "contradiction(x == x);"
 
 [[form]]
@@ -179,7 +179,7 @@ needle = ") using {"
 
 [[form]]
 id = "instantiate-using"
-path = "src/lang/click/tests/tactic_tests/logical_tactics.rs"
+path = "src/surface/tests/tactic_tests/logical_tactics.rs"
 needle = "instantiate(forall (k: int32) {"
 
 [[form]]

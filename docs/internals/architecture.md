@@ -1,18 +1,23 @@
 # Architecture
 
-Click is divided into a source-language front end, proof construction, a
-kernel semantic core, and command-line orchestration.
+Click is divided into one Surface Click proof language, a family of supported
+program languages, a kernel semantic core, and command-line orchestration.
+Both the proof language and each program language have frontend stages such as
+parsing, validation, and lowering; *frontend* names a stage, not either
+language's role.
 
 ## Repository map
 
 | Path | Responsibility |
 | --- | --- |
-| `src/lang/c/` | Parse and represent the supported C0 source language. |
-| `src/lang/click/parser.rs` | Tokenize and parse Surface Click. |
-| `src/lang/click/validation/` | Resolve declarations and enforce source-level type and form rules. |
-| `src/lang/click/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
-| `src/lang/click/checking/` | Evaluate contract forms and connect them to kernel structures. |
-| `src/lang/click/proof/` | Interpret tactics, orchestrate checked proof operations, run smart search, and synthesize surface expansions. |
+| `src/languages.rs`, `src/languages/c.rs`, `src/languages/c/` | Parse, represent, and lower the currently supported C0 program language. Future program languages get sibling modules here. |
+| `src/surface.rs` | Define Surface Click forms and connect its checking, lowering, proof, and presentation modules. |
+| `src/surface/parser.rs` | Tokenize and parse Surface Click. |
+| `src/surface/validation/` | Resolve declarations and enforce source-level type and form rules. |
+| `src/surface/lowering/` | Translate checked surface contracts, propositions, resources, and source locations. |
+| `src/surface/checking/` | Evaluate contract forms and connect them to kernel structures. |
+| `src/surface/proof/` | Interpret tactics, orchestrate checked proof operations, run smart search, and synthesize surface expansions. |
+| `src/source.rs` | Share source-file positions between Surface Click and program-language frontends. |
 | `src/kernel/` | Define primitive terms, states, rules, symbolic execution, assumptions, memory reasoning, and the persistent checked proof object. |
 | `src/cli.rs` | Shared CLI parsing, target selection, durations, and user-facing command metadata. |
 | `src/bin/` | Thin entry points and command-specific reporting for verify, profile, expand, and audit. |
@@ -23,14 +28,15 @@ kernel semantic core, and command-line orchestration.
 
 ## Data flow
 
-The C and Click parsers retain source spans. Validation builds a
+The C program-language and Surface Click proof-language parsers retain source
+spans. Validation builds a
 `C0VerificationSession`, which owns checked declarations and function blocks.
 Lowering records the relationship between surface propositions and kernel
 propositions so diagnostics and expansion can return to source language.
 
 The kernel's persistent `ProofObject` owns typed obligations, facts, symbolic
 C execution, resources, focus, and checked successor authority. A
-language-layer `Proof` pairs that opaque handle with checking context and
+Surface-layer `Proof` pairs that opaque handle with checking context and
 Surface provenance. Explicit tactics request named simple or structural
 operations. Smart planners try the same operations transactionally on
 persistent `Proof` descendants; they can't construct semantic successors
@@ -71,7 +77,7 @@ contain hangs; deterministic work budgets define normal proof-search bounds.
 When adding a public surface, change its authoritative implementation and its
 reference inventory in the same slice:
 
-- a language form normally touches the parser, syntax type, validation,
+- a Surface Click form normally touches the parser, syntax type, validation,
   lowering, printing, tests, and language reference;
 - a tactic touches the surface enum/parser, classification, its checked `Proof`
   operation or smart planning, printing/expansion, tests, and tactic reference;

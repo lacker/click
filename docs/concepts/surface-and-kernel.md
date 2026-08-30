@@ -44,7 +44,7 @@ The important rule is that C state is never ambient in Kernel Click. Surface
 Click is elaborated against a chosen state, and that state becomes an explicit
 `CMemory`, `Pointer`, or `CValue` inside the term.
 
-In `src/lang/click.rs`, invariant elaboration is driven by
+In `src/surface.rs`, invariant elaboration is driven by
 `SpecElaborationContext`. That context carries:
 
 - scalar bindings already elaborated to `SpecExpression`
@@ -210,7 +210,7 @@ and predicates.
 
 ## Implementation notes
 
-In `src/lang/click.rs`, `ClickArrayRef` is private lowering state. Opaque
+In `src/surface.rs`, `ClickArrayRef` is private lowering state. Opaque
 kernel predicate arguments encode an array ref as two terms:
 
 ```text

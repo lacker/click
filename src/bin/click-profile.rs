@@ -11,7 +11,7 @@ use click::cli::{
     read_verifying_sources, shell_quote, source_refs,
 };
 use click::instrumentation::{self, ActiveVerificationWork, TacticEvent, VerificationEvent};
-use click::lang::click::{
+use click::surface::{
     SourcePosition, c0_smart_tactic_source_sites, c0_tactic_source_position, verify_c0_sources,
 };
 

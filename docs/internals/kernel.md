@@ -7,8 +7,8 @@ Click specs.
 
 - `src/kernel/`: proof terms, C semantics, assumptions, symbolic execution,
   and theorem-producing functions.
-- `src/lang/c/syntax.rs`: C0 parser and lowering to kernel C terms.
-- `src/lang/click.rs`: Click parser, validation, lowering, tactics, and proof
+- `src/languages/c/syntax.rs`: C0 parser and lowering to kernel C terms.
+- `src/surface.rs`: Click parser, validation, lowering, tactics, and proof
   orchestration.
 
 `src/kernel/mod.rs` defines real Rust submodules and re-exports the public
@@ -472,7 +472,7 @@ for the standard-library `count`/`permutation` proofs.
 
 ## Click lowering
 
-`src/lang/click.rs` has several lowering/evaluation paths because contracts are
+`src/surface.rs` has several lowering/evaluation paths because contracts are
 evaluated in different contexts:
 
 - requirements
@@ -486,7 +486,7 @@ Click-shaped rather than C-fragment-shaped, so it can carry pure function
 bodies such as `.fold` and is evaluated at the concrete symbolic state where
 the loop VC needs the invariant.
 
-`SpecElaborationContext` in `src/lang/click.rs` is the current bridge from
+`SpecElaborationContext` in `src/surface.rs` is the current bridge from
 Surface Click into Kernel Click. It records scalar spec bindings, Click
 array refs, and the memory used for C-fragment reads. Surface contract
 evaluation also uses `ClickArrayRef { memory, pointer, element_type }` so
@@ -506,7 +506,7 @@ usually causes either a compiler error or an unsupported-feature diagnostic.
 
 ## Parser and validation
 
-The Click parser is hand-written in `src/lang/click.rs`. Validation checks:
+The Click parser is hand-written in `src/surface.rs`. Validation checks:
 
 - duplicate predicates/functions
 - predicate/function arity

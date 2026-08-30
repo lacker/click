@@ -64,14 +64,14 @@ Checklist:
 Search for all matches on:
 
 ```sh
-rg -n "ClickProposition|ContractExpression" src/lang/click.rs
+rg -n "ClickProposition|ContractExpression" src/surface.rs
 ```
 
 ## Adding C0 syntax
 
 Checklist:
 
-- Add parser support in `src/lang/c/syntax.rs`.
+- Add parser support in `src/languages/c/syntax.rs`.
 - Lower to existing kernel terms if possible.
 - Add new kernel semantic terms only when needed.
 - Add undefined-behavior obligations if C semantics require them.

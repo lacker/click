@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use click::cli::{files_with_extension, read_verifying_sources, source_refs};
 use click::instrumentation;
-use click::lang::click::verify_c0_sources;
+use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 

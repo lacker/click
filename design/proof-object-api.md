@@ -3927,4 +3927,4 @@ retirement is the one remaining proof-object migration leaf.
 - The full repository gate is green, and the owned-vector smart-step failure
   no longer reports or performs an ordinary per-tactic independent verification.
 
-[`ProofStep`]: ../src/lang/click.rs
+[`ProofStep`]: ../src/surface.rs

@@ -10,7 +10,7 @@ use click::cli::{
     self, MdTestExpectation, files_with_extension, find_mdtests, find_projects, format_duration,
     looks_like_mdtest, parse_duration, read_verifying_sources, shell_quote, source_refs,
 };
-use click::lang::click::{
+use click::surface::{
     C0VerificationSession, SourcePosition, c0_incremental_selection, c0_smart_tactic_source_sites,
     c0_tactic_source_position, expand_c0_tactic_source_at, verify_c0_sources_at,
     verifying_source_paths,
@@ -930,7 +930,7 @@ fn git_changed_paths(repo: &Path, revision: &str) -> Result<Vec<PathBuf>, String
 }
 
 fn changed_paths_require_full_audit(repo: &Path, changed_paths: &[PathBuf]) -> bool {
-    let click_engine_checkout = repo.join("src/lang/click.rs").is_file()
+    let click_engine_checkout = repo.join("src/surface.rs").is_file()
         && repo.join("src/kernel").is_dir()
         && fs::read_to_string(repo.join("Cargo.toml"))
             .is_ok_and(|manifest| manifest.contains("name = \"click\""));

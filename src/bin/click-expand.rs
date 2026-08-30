@@ -9,7 +9,7 @@ use click::cli::{
     DEFAULT_EXPANSION_TIME_LIMIT, looks_like_mdtest, parse_duration, parse_source_location,
     read_mdtest, read_verifying_sources, source_refs,
 };
-use click::lang::click::{
+use click::surface::{
     c0_smart_tactic_source_sites, c0_tactic_source_position, expand_c0_claim_source_by_label,
     expand_c0_tactic_source_at, verify_c0_sources_at,
 };
@@ -374,7 +374,7 @@ mod tests {
         let sources = source_refs(&mdtest.c_sources);
         let expanded = expand_c0_tactic_source_at(click_source, &sources, click_line, 5)
             .expect("exit simp should generate a certificate");
-        click::lang::click::verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
+        click::surface::verify_c0_sources(&expanded, &sources).unwrap_or_else(|error| {
             panic!(
                 "resource-pattern exit simp expansion should check: {}\n{expanded}",
                 error.message()

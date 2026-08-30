@@ -84,7 +84,7 @@ pub const PUBLIC_CLI_BEHAVIORS: &[&str] = &[
 ];
 
 use crate::instrumentation::{TacticEvent, VerificationEvent};
-use crate::lang::click::verifying_source_paths;
+use crate::surface::verifying_source_paths;
 
 /// Parses a one-based `PATH:LINE:COLUMN` source location.
 ///
