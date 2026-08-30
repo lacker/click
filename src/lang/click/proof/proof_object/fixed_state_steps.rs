@@ -1056,14 +1056,14 @@ impl<'a> Proof<'a> {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
             effect_facts: match effects {
-                OutcomeEffectContext::Path => data.effect_facts.as_ref(),
+                OutcomeEffectContext::Path => data.core.effect_facts.as_ref(),
                 OutcomeEffectContext::Frontier => &execution.core.effect_facts,
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
             pre_state: context.old_reference_state(&execution.core.frontier, &execution.core.state),
-            state: &data.state,
-            result: Some(data.result.as_ref()),
+            state: &data.core.state,
+            result: Some(data.core.result.as_ref()),
             recorded_snapshots: &data.recorded_snapshots,
             surface_propositions: &data.surface_propositions,
             predicate_environment: context.predicate_environment,
@@ -1071,7 +1071,7 @@ impl<'a> Proof<'a> {
             theorem_environment: context.theorem_environment,
             original_requirements: context.function_block.requires(),
             requirement_label_indices: Some(context.function_block.requirement_label_indices()),
-            requirement_facts: data.requirement_facts.as_ref(),
+            requirement_facts: data.core.requirement_facts.as_ref(),
         })
     }
 

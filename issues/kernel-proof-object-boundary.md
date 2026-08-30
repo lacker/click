@@ -29,8 +29,13 @@ matching, transport, conflict, and equivalence rules live in
 diagnostics, and budgeted smart premise search remain in the language layer.
 The persistent `ProofFacts` store and its semantic indexes now live in
 `src/kernel/proof/facts.rs`; language code can only use its named queries and
-persistent successor operations. The remaining proof representation and
-checked operations still need a kernel-owned API.
+persistent successor operations. Kernel `ProofState`, `ProofBranch`, and
+`ProofBranchState` now own the immutable state and open-branch representation,
+with language records carried only as opaque parameters. Effect selections,
+frontier and proposition obligation meaning, result-aware outcome state, and
+checked frame authority live in `src/kernel/proof/obligations.rs`. The
+remaining `Proof` handle, checked operations, and finalization still need a
+kernel-owned API.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

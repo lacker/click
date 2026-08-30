@@ -1,6 +1,11 @@
 use super::pure_theorems::PureTheoremContext;
 use super::*;
-use crate::kernel::proof::{BranchId, ProofBranches, ProofFacts, SplitId};
+use crate::kernel::proof::{
+    BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
+    FunctionOutcomeObligation, OutcomeProofCore, ProofBranch, ProofBranchState, ProofBranches,
+    ProofFacts, ProofState as KernelProofState,
+    PropositionObligation as KernelPropositionObligation, SplitId,
+};
 use crate::persistent::PersistentMap;
 
 #[cfg(test)]
@@ -784,15 +789,8 @@ pub(in crate::lang::click::proof) fn linear_script_is_supported(tactics: &[Proof
             })
 }
 
-#[derive(Clone)]
-struct ProofState {
-    locals: ProofLocals,
-    open_branches: OpenBranches,
-    added_facts: Arc<Vec<Proposition>>,
-    checked_facts: Arc<Vec<Proposition>>,
-}
-
 type OpenBranches = ProofBranches<OpenBranch>;
+type ProofState = KernelProofState<ProofLocals, Obligation, ExecutionProofState>;
 
 impl ProofBranches<OpenBranch> {
     fn obligation(&self, at: BranchId) -> Option<&Obligation> {
@@ -1121,14 +1119,6 @@ struct OutcomeProvenance {
     recorded_snapshots: RecordedSnapshots,
 }
 
-/// One open semantic branch of a `Proof`: what it must establish and the
-/// facts, unfolds, and execution snapshot local to that branch.
-#[derive(Clone)]
-struct OpenBranch {
-    obligation: Obligation,
-    state: BranchState,
-}
-
 /// What one open branch currently has to establish.
 #[derive(Clone)]
 enum Obligation {
@@ -1201,17 +1191,7 @@ impl<'p> FixedStateOperationView<'p> {
 /// directly instead of converting through a mutable execution-context adapter.
 #[derive(Clone)]
 struct OutcomeObligation {
-    /// Zero-based position among the exit's checked paths, in the checked
-    /// execution's deterministic order.
-    path_index: usize,
-    /// Effect clauses still owed by this exact checked outcome. Result-aware
-    /// operations may advance the path before its source-ordered frame closes
-    /// this selection.
-    selection: EffectGoalSelection,
-    /// Effect indices discharged by the most recent checked outcome frame.
-    /// Ordered finalization consumes this private authority without checking
-    /// the same effect transition again.
-    checked_effects: Arc<Vec<usize>>,
+    core: FunctionOutcomeObligation,
     /// The outcome's result-aware proof data. Behind one `Arc` so a nested
     /// proposition judgment stated at this outcome borrows it by identity;
     /// a checked operation that records new lowerings installs a fresh
@@ -1224,14 +1204,9 @@ struct OutcomeObligation {
 /// lowerings, and effect-availability facts.
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct OutcomeProofData {
-    pub(in crate::lang::click::proof) result: Arc<CValue>,
-    pub(in crate::lang::click::proof) state: SharedValue<CState>,
+    core: OutcomeProofCore,
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
     pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
-    pub(in crate::lang::click::proof) effect_facts: Arc<Vec<ExecutionPureFact>>,
-    /// The path's non-effect execution facts, matching the resource-fold law's
-    /// historical input exactly.
-    pub(in crate::lang::click::proof) execution_pure_facts: Arc<Vec<ExecutionPureFact>>,
     /// The statement-entry anchor for premises naming a C local after it
     /// left scope, captured from the frontier at derivation.
     pub(in crate::lang::click::proof) premise_anchor: Option<ProgramPointRef>,
@@ -1239,7 +1214,6 @@ pub(in crate::lang::click::proof) struct OutcomeProofData {
     /// as the raw prefix of the drain's working set at derivation: `choose`
     /// selects its source by requirement index, which persistent
     /// deduplication would misalign.
-    pub(in crate::lang::click::proof) requirement_facts: Arc<Vec<Proposition>>,
     /// Original proposition requirements keyed by their checked entry fact.
     /// Typed outcome evidence uses this persistent index to recover an exact
     /// function-entry Surface premise without scanning unrelated facts.
@@ -1248,32 +1222,8 @@ pub(in crate::lang::click::proof) struct OutcomeProofData {
     branch_decisions: PersistentSequence<ExecutionBranchDecision>,
 }
 
-/// The path-local semantic state owned by one open branch.
-///
-/// Facts and any execution snapshot travel together: sibling branches produced
-/// by a split each own their path's state, sharing unchanged persistent
-/// structure with the ancestor. `ProofState` retains only lineage-wide data.
-#[derive(Clone)]
-struct BranchState {
-    facts: ProofFacts,
-    /// Predicate definitions activated by accepted proof-local unfold steps
-    /// on this judgment's path. Inherited fixed-state/execution names remain in
-    /// their shared context; this is only the path-local delta, so sibling
-    /// goals unfold independently.
-    unfolded_predicates: PersistentOrderedSet<String>,
-    execution: Option<Arc<ExecutionProofState>>,
-}
-
-/// One open C frontier judgment and its path-local semantic context.
-///
-/// The execution state lives on the goal, not on the shared proof state, so
-/// several simultaneous path-local judgments can coexist in one `Proof` once
-/// splits produce them. The `Arc` makes forks and goal-preserving fact
-/// refinements share the unchanged snapshot by identity.
-#[derive(Clone)]
-struct FrontierObligation {
-    selection: EffectGoalSelection,
-}
+type BranchState = ProofBranchState<ExecutionProofState>;
+type OpenBranch = ProofBranch<Obligation, ExecutionProofState>;
 
 /// One proposition judgment keeps its checked kernel meaning and, when the
 /// judgment originated in Surface Click, the exact syntax needed to refine
@@ -1281,7 +1231,7 @@ struct FrontierObligation {
 /// smart search must not carry a second caller-owned description of its goal.
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct PropositionObligation {
-    pub(in crate::lang::click::proof) kernel: Arc<Proposition>,
+    core: KernelPropositionObligation,
     pub(in crate::lang::click::proof) surface: Option<Arc<ClickProposition>>,
     /// Surface names introduced while refining this exact proposition goal.
     /// Universal binders are goal-local: sibling goals share the persistent
@@ -1294,15 +1244,34 @@ pub(in crate::lang::click::proof) struct PropositionObligation {
     pub(in crate::lang::click::proof) outcome: Option<Arc<OutcomeProofData>>,
 }
 
-impl OpenBranch {
-    fn new(obligation: Obligation, state: BranchState) -> Self {
-        Self { obligation, state }
+impl PropositionObligation {
+    fn kernel(&self) -> &Proposition {
+        self.core.proposition()
     }
+}
 
+trait OpenBranchConstruction {
+    fn proposition_in(state: BranchState, kernel: Proposition) -> Self;
+    fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self;
+    fn function_outcome(obligation: OutcomeObligation, state: BranchState) -> Self;
+    fn surface_proposition_in(
+        state: BranchState,
+        kernel: Proposition,
+        surface: ClickProposition,
+    ) -> Self;
+    fn surface_proposition_at_outcome(
+        state: BranchState,
+        outcome: Arc<OutcomeProofData>,
+        kernel: Proposition,
+        surface: ClickProposition,
+    ) -> Self;
+}
+
+impl OpenBranchConstruction for OpenBranch {
     fn proposition_in(state: BranchState, kernel: Proposition) -> Self {
         Self::new(
             Obligation::Proposition(PropositionObligation {
-                kernel: Arc::new(kernel),
+                core: KernelPropositionObligation::new(kernel),
                 surface: None,
                 surface_bindings: PersistentMap::default(),
                 outcome: None,
@@ -1313,7 +1282,7 @@ impl OpenBranch {
 
     fn frontier(selection: EffectGoalSelection, state: BranchState) -> Self {
         Self::new(
-            Obligation::Frontier(FrontierObligation { selection }),
+            Obligation::Frontier(FrontierObligation::new(selection)),
             state,
         )
     }
@@ -1329,7 +1298,7 @@ impl OpenBranch {
     ) -> Self {
         Self::new(
             Obligation::Proposition(PropositionObligation {
-                kernel: Arc::new(kernel),
+                core: KernelPropositionObligation::new(kernel),
                 surface: Some(Arc::new(surface)),
                 surface_bindings: PersistentMap::default(),
                 outcome: None,
@@ -1348,63 +1317,13 @@ impl OpenBranch {
     ) -> Self {
         Self::new(
             Obligation::Proposition(PropositionObligation {
-                kernel: Arc::new(kernel),
+                core: KernelPropositionObligation::new(kernel),
                 surface: Some(Arc::new(surface)),
                 surface_bindings: PersistentMap::default(),
                 outcome: Some(outcome),
             }),
             state,
         )
-    }
-
-    fn with_obligation(&self, obligation: Obligation) -> Self {
-        Self::new(obligation, self.state.clone())
-    }
-
-    fn with_state(&self, state: BranchState) -> Self {
-        Self::new(self.obligation.clone(), state)
-    }
-}
-
-/// Function-effect obligations owned alongside an execution frontier.
-///
-/// The selection is intentionally symbolic: grouped verification does not
-/// copy every effect clause into every short-lived execution `Proof` root.
-/// The immutable function block remains the indexed clause store.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum EffectGoalSelection {
-    None,
-    One(usize),
-    All,
-}
-
-/// Private authority that the ordered outcome finalizer may consume without
-/// proving the same function effect a second time.
-///
-/// Only checked `Proof` frame operations construct this value, after checking
-/// every selected effect against the outcome or outcomes they own.
-#[derive(Clone)]
-pub(super) struct CheckedFrameAuthority {
-    effect_indices: Arc<Vec<usize>>,
-}
-
-impl CheckedFrameAuthority {
-    fn new(effect_indices: Vec<usize>) -> Self {
-        Self {
-            effect_indices: Arc::new(effect_indices),
-        }
-    }
-
-    pub(super) fn contains(&self, effect_index: usize) -> bool {
-        self.effect_indices.binary_search(&effect_index).is_ok()
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.effect_indices.is_empty()
-    }
-
-    pub(super) fn len(&self) -> usize {
-        self.effect_indices.len()
     }
 }
 
@@ -1524,7 +1443,7 @@ impl<'a> Proof<'a> {
         };
         OpenBranch::new(
             Obligation::Proposition(PropositionObligation {
-                kernel: Arc::new(kernel),
+                core: KernelPropositionObligation::new(kernel),
                 surface: surface.map(Arc::new),
                 surface_bindings: match self.focused_obligation() {
                     Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
@@ -1558,14 +1477,14 @@ impl<'a> Proof<'a> {
     #[cfg(test)]
     fn outcome_result(&self) -> Option<&CValue> {
         match self.focused_obligation()? {
-            Obligation::FunctionOutcome(goal) => Some(goal.data.result.as_ref()),
+            Obligation::FunctionOutcome(goal) => Some(goal.data.core.result.as_ref()),
             _ => None,
         }
     }
 
     pub(super) fn goal(&self) -> Option<&Proposition> {
         match self.focused_obligation() {
-            Some(Obligation::Proposition(goal)) => Some(&goal.kernel),
+            Some(Obligation::Proposition(goal)) => Some(goal.kernel()),
             _ => None,
         }
     }
@@ -1655,7 +1574,7 @@ impl<'a> Proof<'a> {
                     };
                     OpenBranch::new(
                         Obligation::Proposition(PropositionObligation {
-                            kernel: Arc::new(goal),
+                            core: KernelPropositionObligation::new(goal),
                             surface: surface_goal.map(Arc::new),
                             surface_bindings: PersistentMap::default(),
                             outcome,

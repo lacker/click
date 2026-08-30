@@ -5,7 +5,42 @@
 //! branch's obligation and semantic payload, but cannot construct or reuse
 //! identities independently of this collection.
 
+use super::{PersistentOrderedSet, ProofFacts};
 use crate::persistent::PersistentMap;
+use std::sync::Arc;
+
+/// Path-local state shared by one open proof branch.
+///
+/// `E` is an opaque language attachment during the boundary migration. The
+/// kernel owns the fact and unfold state and the persistent branch shape; it
+/// never interprets `E` as evidence.
+#[derive(Clone)]
+pub(crate) struct ProofBranchState<E> {
+    pub(crate) facts: ProofFacts,
+    pub(crate) unfolded_predicates: PersistentOrderedSet<String>,
+    pub(crate) execution: Option<Arc<E>>,
+}
+
+/// One open branch: its current obligation and path-local state.
+#[derive(Clone)]
+pub(crate) struct ProofBranch<O, E> {
+    pub(crate) obligation: O,
+    pub(crate) state: ProofBranchState<E>,
+}
+
+impl<O: Clone, E: Clone> ProofBranch<O, E> {
+    pub(crate) fn new(obligation: O, state: ProofBranchState<E>) -> Self {
+        Self { obligation, state }
+    }
+
+    pub(crate) fn with_obligation(&self, obligation: O) -> Self {
+        Self::new(obligation, self.state.clone())
+    }
+
+    pub(crate) fn with_state(&self, state: ProofBranchState<E>) -> Self {
+        Self::new(self.obligation.clone(), state)
+    }
+}
 
 /// Identity of one open semantic branch within a proof lineage.
 ///

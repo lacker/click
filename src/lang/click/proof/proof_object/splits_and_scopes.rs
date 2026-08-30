@@ -35,7 +35,7 @@ impl<'a> Proof<'a> {
         let arm = |disjunct: Proposition| {
             OpenBranch::new(
                 Obligation::Proposition(PropositionObligation {
-                    kernel: goal.kernel.clone(),
+                    core: goal.core.clone(),
                     surface: goal.surface.clone(),
                     surface_bindings: goal.surface_bindings.clone(),
                     outcome: goal.outcome.clone(),
@@ -96,7 +96,7 @@ impl<'a> Proof<'a> {
         let arm = |fact: Proposition| {
             OpenBranch::new(
                 Obligation::Proposition(PropositionObligation {
-                    kernel: goal.kernel.clone(),
+                    core: goal.core.clone(),
                     surface: goal.surface.clone(),
                     surface_bindings: goal.surface_bindings.clone(),
                     outcome: goal.outcome.clone(),
@@ -809,7 +809,7 @@ impl<'a> Proof<'a> {
                     "execution outcome {name} arm did not retain checked frame authority"
                 )));
             };
-            if authority.effect_indices.as_ref() != &record.expected_effects {
+            if !authority.matches(&record.expected_effects) {
                 return Err(self.step_error(format!(
                     "execution outcome {name} arm closed a different effect selection"
                 )));

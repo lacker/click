@@ -500,7 +500,7 @@ impl<'a> Proof<'a> {
                 facts: goal
                     .state
                     .facts
-                    .with_selected_load_equality_bridge(&proposition.kernel),
+                    .with_selected_load_equality_bridge(proposition.kernel()),
                 unfolded_predicates: goal.state.unfolded_predicates.clone(),
                 execution: goal.state.execution.clone(),
             }),

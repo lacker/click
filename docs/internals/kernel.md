@@ -36,6 +36,12 @@ Kernel files:
   frontier, checked execution facts and loop rules, semantic freshness, and
   loop-effect and region state for one proof path. It contains no Surface
   syntax, deferred tactic, expansion cursor, or diagnostic state.
+  `obligations.rs` owns effect selections, frontier and proposition
+  obligations, result-aware outcome state, and checked frame authority.
+  `object.rs` owns the immutable proof-state shape; branch-local state and the
+  open-branch representation live with their topology in `branches.rs`.
+  Language attachments are opaque parameters and are never interpreted as
+  evidence by these modules.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
   conflict, and availability rules used by the persistent fact store.

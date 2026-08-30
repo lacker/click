@@ -152,7 +152,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Vec<usize>, ClickError> {
         let selection = match self.focused_obligation() {
             Some(Obligation::Frontier(FrontierObligation { selection, .. })) => *selection,
-            Some(Obligation::FunctionOutcome(OutcomeObligation { selection, .. })) => *selection,
+            Some(Obligation::FunctionOutcome(outcome)) => outcome.core.selection,
             _ => {
                 return Err(self.step_error("`frame using` requires an execution effect goal"));
             }
@@ -318,8 +318,8 @@ impl<'a> Proof<'a> {
         }
 
         let mut outcome = CFunctionOutcome::Return {
-            value: (*data.result).clone(),
-            state: (*data.state).clone(),
+            value: (*data.core.result).clone(),
+            state: (*data.core.state).clone(),
         };
         for effect_index in &effect_indices {
             let claim = FunctionClaimRef::Effect(
@@ -330,8 +330,8 @@ impl<'a> Proof<'a> {
                 function_claim_label(context.function_block.signature().name(), &claim);
             check_effect_claim_exact(
                 &claim_label,
-                goal.path_index,
-                &data.effect_facts,
+                goal.core.path_index,
+                &data.core.effect_facts,
                 &frame_facts,
                 &claim,
                 context.parsed_function.parameters(),
@@ -342,7 +342,7 @@ impl<'a> Proof<'a> {
         }
 
         let mut assumptions = self.facts().assumptions().clone();
-        for fact in data.effect_facts.iter() {
+        for fact in data.core.effect_facts.iter() {
             assumptions = assumptions.assume_proposition(fact.proposition().clone());
         }
         let (transitioned, _obligations) =
@@ -364,11 +364,11 @@ impl<'a> Proof<'a> {
                 "checked contract resource effect did not preserve the return outcome",
             ));
         };
-        data.result = Arc::new(value);
-        data.state = state.into();
+        data.core.result = Arc::new(value);
+        data.core.state = state.into();
         let mut updated = goal.clone();
-        updated.selection = EffectGoalSelection::None;
-        updated.checked_effects = Arc::new(effect_indices);
+        updated.core.selection = EffectGoalSelection::None;
+        updated.core.checked_effects = Arc::new(effect_indices);
         updated.data = Arc::new(data);
         Ok(ProofState {
             locals: self.state.locals.clone(),
@@ -1075,7 +1075,7 @@ impl<'a> Proof<'a> {
                 self.facts().pure_assumption_available(goal)
                     || self
                         .facts()
-                        .available_across_effects(goal, &data.effect_facts)
+                        .available_across_effects(goal, &data.core.effect_facts)
                     || normalizes_context_free(goal)
             }
             // A nested proposition judgment stated at an execution frontier

@@ -56,7 +56,7 @@ impl<'a> Proof<'a> {
             .open_branches
             .iter()
             .find_map(|(id, branch)| match &branch.obligation {
-                Obligation::FunctionOutcome(outcome) if outcome.path_index == path_index => {
+                Obligation::FunctionOutcome(outcome) if outcome.core.path_index == path_index => {
                     Some(id)
                 }
                 _ => None,
@@ -70,8 +70,8 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("an outcome snapshot requires a focused outcome goal"));
         };
         Ok(CFunctionOutcome::Return {
-            value: (*goal.data.result).clone(),
-            state: (*goal.data.state).clone(),
+            value: (*goal.data.core.result).clone(),
+            state: (*goal.data.core.state).clone(),
         })
     }
 
@@ -81,10 +81,14 @@ impl<'a> Proof<'a> {
         let Some(Obligation::FunctionOutcome(goal)) = self.focused_obligation() else {
             return Err(self.step_error("frame authority requires a focused outcome goal"));
         };
-        if !matches!(goal.selection, EffectGoalSelection::None) || goal.checked_effects.is_empty() {
+        if !matches!(goal.core.selection, EffectGoalSelection::None)
+            || goal.core.checked_effects.is_empty()
+        {
             return Err(self.step_error("the focused outcome has no checked frame authority"));
         }
-        Ok(CheckedFrameAuthority::new((*goal.checked_effects).clone()))
+        Ok(CheckedFrameAuthority::new(
+            (*goal.core.checked_effects).clone(),
+        ))
     }
 
     /// Updates the focused branch outcome goal's immutable result/state snapshot
@@ -113,8 +117,8 @@ impl<'a> Proof<'a> {
         // pre-fold state. CState's components are shared immutable roots, so
         // this update is constant-size rather than a resource/history
         // materialization.
-        data.result = Arc::new(value.clone());
-        data.state = state.clone().into();
+        data.core.result = Arc::new(value.clone());
+        data.core.state = state.clone().into();
         let data = Arc::new(data);
         let mut state = (*self.state).clone();
         state.open_branches = match self.focused_obligation() {
@@ -165,7 +169,7 @@ impl<'a> Proof<'a> {
             _ => 0,
         };
         let mut data = data.clone();
-        data.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
+        data.core.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let data = Arc::new(data);
         let mut state = (*self.state).clone();
         state.open_branches = match self.focused_obligation() {
@@ -311,18 +315,18 @@ impl<'a> Proof<'a> {
             let provenance = execution.provenance_for_outcome(path_index);
             let (id, next_goals) = goals.push(OpenBranch::function_outcome(
                 OutcomeObligation {
-                    path_index,
-                    selection: effect_selection,
-                    checked_effects: Arc::new(Vec::new()),
+                    core: FunctionOutcomeObligation::new(path_index, effect_selection),
                     data: Arc::new(OutcomeProofData {
-                        result: Arc::new(result),
-                        state: state.into(),
+                        core: OutcomeProofCore {
+                            result: Arc::new(result),
+                            state: state.into(),
+                            effect_facts: Arc::new(execution_facts),
+                            execution_pure_facts: Arc::new(path.facts().to_vec()),
+                            requirement_facts: requirement_facts.clone(),
+                        },
                         surface_propositions: provenance.surface_propositions,
                         recorded_snapshots: provenance.recorded_snapshots,
-                        effect_facts: Arc::new(execution_facts),
-                        execution_pure_facts: Arc::new(path.facts().to_vec()),
                         premise_anchor: frontier_anchor.clone(),
-                        requirement_facts: requirement_facts.clone(),
                         requirement_surfaces: requirement_surfaces.clone(),
                         branch_decisions: provenance.branch_decisions,
                     }),

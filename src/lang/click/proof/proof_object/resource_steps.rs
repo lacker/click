@@ -112,7 +112,7 @@ impl<'a> Proof<'a> {
                         predicate_environment,
                         click_function_environment,
                         std::slice::from_ref(name),
-                        &goal.kernel,
+                        goal.kernel(),
                         checked.facts.assumptions(),
                     )
                     .map_err(|message| self.step_error(message))?,
@@ -207,7 +207,7 @@ impl<'a> Proof<'a> {
                         context.predicate_environment,
                         context.click_function_environment,
                         std::slice::from_ref(name),
-                        &goal.kernel,
+                        goal.kernel(),
                         checked.facts.assumptions(),
                     )
                     .map_err(|message| self.step_error(message))?,
@@ -402,15 +402,15 @@ impl<'a> Proof<'a> {
             .frontier
             .execution_start_state(&execution.core.state);
         let outcome = CFunctionOutcome::Return {
-            value: (*goal.data.result).clone(),
-            state: (*goal.data.state).clone(),
+            value: (*goal.data.core.result).clone(),
+            state: (*goal.data.core.state).clone(),
         };
         let checked = fold_composite_resource_on_outcome_for_proof(
             context.resource_environment,
             resource,
             context.claim_label,
-            goal.path_index,
-            &goal.data.execution_pure_facts,
+            goal.core.path_index,
+            &goal.data.core.execution_pure_facts,
             self.facts().clone(),
             &goal.data.surface_propositions,
             context.parsed_function.parameters(),
@@ -425,8 +425,8 @@ impl<'a> Proof<'a> {
             unreachable!("folding a return outcome preserves its outcome kind")
         };
         let mut data = (*goal.data).clone();
-        data.result = Arc::new(value);
-        data.state = state.into();
+        data.core.result = Arc::new(value);
+        data.core.state = state.into();
         let mut updated = goal.clone();
         updated.data = Arc::new(data);
         let state = BranchState {

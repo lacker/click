@@ -27,6 +27,13 @@ rendering, and budgeted smart premise search remain in the language layer.
 The persistent `ProofFacts` store and all of its semantic indexes live in
 `src/kernel/proof/facts.rs`; language code receives an opaque store and uses
 named queries and persistent successor operations rather than its fields.
+Kernel `ProofState`, `ProofBranch`, and `ProofBranchState` now own the
+persistent state and open-branch shapes. Surface-local names, obligation
+presentation, and execution presentation are opaque type parameters during
+the remaining transition migration; the kernel containers never inspect them
+or accept them as evidence. Frontier effect selections, proposition meaning,
+result-aware outcome state, and checked frame authority live in
+`src/kernel/proof/obligations.rs`.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.

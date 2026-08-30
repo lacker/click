@@ -10,9 +10,11 @@ mod execution;
 mod fact_keys;
 pub(crate) mod fact_reasoning;
 mod facts;
+mod object;
+mod obligations;
 mod storage;
 
-pub(crate) use branches::{BranchId, ProofBranches, SplitId};
+pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
 pub(crate) use execution::{
     ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
     ProofExecutionContinuation, old_reference_state,
@@ -22,6 +24,11 @@ pub(crate) use fact_keys::{
     snapshot_blind_proposition_key,
 };
 pub(crate) use facts::ProofFacts;
+pub(crate) use object::ProofState;
+pub(crate) use obligations::{
+    CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FunctionOutcomeObligation,
+    OutcomeProofCore, PropositionObligation,
+};
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
 };

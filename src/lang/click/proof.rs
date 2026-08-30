@@ -38,9 +38,9 @@ use crate::kernel::fresh_int32_variable_for_propositions;
 #[cfg(test)]
 use crate::kernel::proof::quantified_equivalence_index_key;
 use crate::kernel::proof::{
-    ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
-    PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation,
-    ProofFacts, SharedValue, SharedVec, old_reference_state,
+    CheckedFrameAuthority, ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind,
+    FrontierPosition, LoopEffectGoal, PersistentOrderedSet, PersistentSequence,
+    PersistentSequenceIter, ProofExecutionContinuation, ProofFacts, SharedVec, old_reference_state,
 };
 pub(in crate::lang::click) use crate::kernel::proof::{
     SnapshotBlindPropositionKey, snapshot_blind_proposition_key,
