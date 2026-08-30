@@ -29,6 +29,7 @@ mod smart_execution;
 mod structural;
 mod surface_certificates;
 mod surface_construction;
+mod surface_lowering;
 mod surface_synthesis;
 mod theorem_application;
 mod timing;

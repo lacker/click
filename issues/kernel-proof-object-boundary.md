@@ -12,9 +12,10 @@ The first extraction moved branch and split identities plus persistent branch
 topology to `src/kernel/proof.rs`. Smart search now lives outside
 `proof_object/` and consumes an immutable internal planning interface instead
 of the proof's private state, provenance node, focus, or constructors. The
-remaining proof representation and checked operations still need a
-kernel-owned API; moving the old directory wholesale would also move Surface
-Click lowering and certificate serialization into the kernel.
+contextual Surface Click lowering has also moved out of `proof_object/`; the
+checked core retains only its derivation lineage and certificate attribution.
+The remaining proof representation and checked operations still need a
+kernel-owned API.
 
 ## Intended regression
 

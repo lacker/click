@@ -1,56 +1,9 @@
-//! Certificate extraction and Surface-proposition lowering.
+//! Contextual Surface Click lowering for checked proof operations.
 
+use super::pure_theorems::lower_pure_theorem_proposition;
 use super::*;
 
 impl<'a> Proof<'a> {
-    /// The certificate of the focused branch goal's own lineage. Steps in the
-    /// derivation are attributed to the goal they advanced; on an unjoined
-    /// case-split arm, sibling arms' steps interleave in the same chain and
-    /// belong to other lineages. A step-less marker node records the goal
-    /// that was live before it (the split's parent), so walking back
-    /// through markers follows the lineage to the root.
-    pub(in crate::lang::click::proof) fn path_certificate(&self) -> ProofCertificate {
-        let mut steps = Vec::new();
-        let mut goal = self.focused_branch;
-        let mut node = Some(self.node.clone());
-        while let Some(current) = node {
-            match &current.step {
-                Some(step) if current.focused_branch == goal => steps.push(step.as_ref().clone()),
-                Some(_) => {}
-                None => goal = current.focused_branch,
-            }
-            node = current.parent.clone();
-        }
-        steps.reverse();
-        ProofCertificate::from_steps(steps)
-    }
-
-    pub(super) fn certificate_after_node(
-        &self,
-        ancestor: Option<&Arc<ProofNode>>,
-    ) -> Result<ProofCertificate, ClickError> {
-        let expected_depth = ancestor.map_or(0, |node| node.depth);
-        let mut steps = Vec::with_capacity(self.node.depth.saturating_sub(expected_depth));
-        let mut node = Some(self.node.clone());
-        while let Some(current) = node {
-            if ancestor.is_some_and(|ancestor| Arc::ptr_eq(ancestor, &current)) {
-                steps.reverse();
-                return Ok(ProofCertificate::from_steps(steps));
-            }
-            if let Some(step) = &current.step {
-                steps.push(step.as_ref().clone());
-            }
-            node = current.parent.clone();
-        }
-        if ancestor.is_some() {
-            return Err(
-                self.step_error("certificate validationpoint is not an ancestor of this proof")
-            );
-        }
-        steps.reverse();
-        Ok(ProofCertificate::from_steps(steps))
-    }
-
     pub(in crate::lang::click::proof) fn lower_surface_proposition(
         &self,
         surface: &ClickProposition,
@@ -301,16 +254,15 @@ impl<'a> Proof<'a> {
         &self,
         names: impl IntoIterator<Item = String>,
     ) -> BTreeMap<String, ContractExpression> {
-        let surface_bindings = match self.focused_obligation() {
-            Some(Obligation::Proposition(goal)) => Some(&goal.surface_bindings),
-            _ => None,
-        };
+        let surface_bindings = self
+            .proposition_obligation()
+            .map(|goal| &goal.surface_bindings);
         names
             .into_iter()
             .filter_map(|name| {
                 surface_bindings
                     .and_then(|bindings| bindings.get(&name))
-                    .or_else(|| self.state.locals.values.get(&name))
+                    .or_else(|| self.local_binding(&name))
                     .cloned()
                     .map(|value| (name, value))
             })
@@ -341,7 +293,7 @@ impl<'a> Proof<'a> {
         &self,
         proposition: &ClickProposition,
     ) -> Result<ClickProposition, ClickError> {
-        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
+        let Some(goal) = self.proposition_obligation() else {
             return Ok(proposition.clone());
         };
         let mut names = BTreeSet::new();

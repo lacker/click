@@ -18,6 +18,9 @@ topology in `src/kernel/proof.rs`; the remaining checked representation is
 being moved across the same boundary incrementally. Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
+Contextual Surface Click lowering likewise lives beside the language-layer
+proof drivers; the checked core retains only the derivation lineage from which
+surface certificate provenance is extracted.
 
 Goals carry the facts, resources, and symbolic execution state relevant to one
 judgment. Typed scope, split, and join helpers preserve branch and loop

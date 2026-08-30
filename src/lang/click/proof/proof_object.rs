@@ -1,4 +1,4 @@
-use super::pure_theorems::{PureTheoremContext, lower_pure_theorem_proposition};
+use super::pure_theorems::PureTheoremContext;
 use super::*;
 use crate::kernel::proof::{BranchId, ProofBranches, SplitId};
 use crate::persistent::{PersistentMap, PersistentSet};
@@ -1738,6 +1738,13 @@ impl<'a> Proof<'a> {
         }
     }
 
+    pub(in crate::lang::click::proof) fn local_binding(
+        &self,
+        name: &String,
+    ) -> Option<&ContractExpression> {
+        self.state.locals.values.get(name)
+    }
+
     /// Whether the obligation this handle addresses has been discharged. On
     /// a single-goal proof this coincides with completion; inside a sibling
     /// split, only the focused branch obligation's discharge is an arm's success —
@@ -2204,11 +2211,11 @@ mod execution_statements;
 mod fact_index;
 mod fixed_state_steps;
 mod outcomes_and_focus;
+mod provenance;
 mod resource_steps;
 mod scope;
 mod splits_and_scopes;
 mod step_application;
-mod surface_lowering;
 
 #[cfg(test)]
 mod tests;
