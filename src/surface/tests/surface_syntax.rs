@@ -236,23 +236,103 @@ fn parses_and_prints_pure_induction_tactics() {
 
     let printable = vec![
         tactics[0].clone(),
-        ProofTactic::ApplyInduction {
+        ProofTactic::ApplyInductionUsing {
             hypothesis: "ih".to_string(),
             argument: match &tactics[1] {
                 ProofTactic::ApplyTheorem(application) => application.arguments[0].clone(),
                 _ => unreachable!(),
             },
+            premises: Vec::new(),
         },
-        ProofTactic::CloseInduction,
+        ProofTactic::Assumption,
     ];
     let printed = super::printing::format_partial_tactic_sequence(&printable);
     let reparsed = parse(&format!(
         "theorem induction_shape(n: int32) {{ requires n >= 0; ensures n == n by {{ {printed} }} }}"
     ))
     .expect("printed induction proof should parse");
+    let SourceProof::Script(reparsed) = reparsed.theorem_definitions()[0].ensures()[0].proof()
+    else {
+        panic!("expected reparsed induction script")
+    };
+    assert!(matches!(
+        &reparsed[1],
+        ProofTactic::ApplyTheoremUsing { application, premises }
+            if application.name == "ih" && premises.is_empty()
+    ));
+    assert!(matches!(&reparsed[2], ProofTactic::Assumption));
+}
+
+#[test]
+fn parses_and_prints_pure_function_unfold() {
+    let source = r#"
+        function clamp(n: int32) -> int32 {
+            if n <= 0 { 0 } else { n }
+        }
+
+        theorem clamp_nonpositive(n: int32) {
+            requires n <= 0;
+            ensures clamp(n) == 0 by {
+                unfold(clamp(n));
+                normalize();
+            }
+        }
+    "#;
+    let file = parse(source).expect("pure-function unfold should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    assert!(matches!(
+        &tactics[0],
+        ProofTactic::UnfoldFunction(application)
+            if application.name == "clamp" && application.arguments.len() == 1
+    ));
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(printed.contains("unfold(clamp(n));"), "{printed}");
+}
+
+#[test]
+fn parses_and_prints_arithmetic_certificates() {
+    let source = r#"
+        theorem arithmetic_forms(n: int32) {
+            requires 1 < n;
+            ensures 0 <= n - 2 by {
+                have n == n by { arithmetic(); }
+                arithmetic() using {
+                    1 < n;
+                }
+            }
+        }
+    "#;
+    let file = parse(source).expect("arithmetic certificates should parse");
+    let SourceProof::Script(tactics) = file.theorem_definitions()[0].ensures()[0].proof() else {
+        panic!("expected an explicit theorem proof");
+    };
+    let ProofTactic::Have(have) = &tactics[0] else {
+        panic!("expected a nested have");
+    };
+    let SourceProof::Script(have_tactics) = &have.proof else {
+        panic!("expected a nested arithmetic proof");
+    };
+    assert!(matches!(
+        have_tactics.as_slice(),
+        [ProofTactic::ArithmeticUsing(premises)] if premises.is_empty()
+    ));
+    assert!(matches!(
+        &tactics[1],
+        ProofTactic::ArithmeticUsing(premises) if premises.len() == 1
+    ));
+
+    let printed = super::printing::format_partial_tactic_sequence(tactics);
+    assert!(printed.contains("arithmetic();"), "{printed}");
+    assert!(printed.contains("arithmetic() using {"), "{printed}");
+    let reparsed = parse(&format!(
+        "theorem arithmetic_forms(n: int32) {{ requires 1 < n; ensures 0 <= n - 2 by {{ {printed} }} }}"
+    ))
+    .expect("printed arithmetic certificates should parse");
     assert_eq!(
         reparsed.theorem_definitions()[0].ensures()[0].proof(),
-        &SourceProof::Script(tactics.clone())
+        file.theorem_definitions()[0].ensures()[0].proof()
     );
 }
 

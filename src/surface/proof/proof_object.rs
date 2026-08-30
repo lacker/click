@@ -402,11 +402,17 @@ pub(in crate::surface::proof) fn explicit_linear_step(tactic: &ProofTactic) -> O
             premises: premises.clone(),
         }),
         ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::UnfoldFunction(application) => {
+            Some(ProofStep::UnfoldFunction(application.clone()))
+        }
         ProofTactic::Witness(witness) => Some(ProofStep::Witness(witness.clone())),
         ProofTactic::Choose(choice) => Some(ProofStep::Choose(choice.clone())),
         ProofTactic::Assumption => Some(ProofStep::Assumption),
         ProofTactic::Extract(proposition) => Some(ProofStep::Extract(proposition.clone())),
         ProofTactic::Normalize => Some(ProofStep::Normalize),
+        ProofTactic::ArithmeticUsing(premises) => {
+            Some(ProofStep::ArithmeticUsing(premises.clone()))
+        }
         ProofTactic::Intro => Some(ProofStep::Intro),
         ProofTactic::Split => Some(ProofStep::Split),
         ProofTactic::Left => Some(ProofStep::Left),
@@ -1782,7 +1788,9 @@ fn proof_step_source_name(step: &ProofStep) -> &'static str {
         ProofStep::Contradiction(_) => "contradiction",
         ProofStep::Witness(_) => "witness",
         ProofStep::Choose(_) => "choose",
-        ProofStep::UnfoldPredicate(_) | ProofStep::UnfoldResource(_) => "unfold",
+        ProofStep::UnfoldPredicate(_)
+        | ProofStep::UnfoldFunction(_)
+        | ProofStep::UnfoldResource(_) => "unfold",
         ProofStep::FoldResource(_) => "fold",
         ProofStep::ObserveResource(_) => "observe",
         ProofStep::FrameUsing { .. } => "frame",

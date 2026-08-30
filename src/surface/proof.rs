@@ -1,5 +1,8 @@
 use super::diagnostics::*;
 use super::validation::{collect_called_predicates, collect_resource_count_families, tactic_name};
+use super::validation::{
+    collect_click_function_calls, collect_click_function_calls_in_proposition,
+};
 use super::*;
 
 mod attempt;

@@ -43,20 +43,6 @@ cost of checking the emitted operations.
 `step()` as smart and later describing it as both simple and "one smart
 transition".
 
-### Pure induction crosses the surface classification boundary
-
-The parser represents `apply(ih(m))` as ordinary smart `ApplyTheorem`. Pure
-induction preprocessing later recognizes the proof-local hypothesis and rewrites
-it to simple internal `ApplyInduction`. Syntactic smart-site inventory can
-therefore report a form that the tactic reference calls simple.
-
-Pure induction lowering also rewrites smart `simp()` to internal simple
-`CloseInduction`. Printing `CloseInduction` emits `simp();`, which reparses as
-smart. A supposedly simple certificate can therefore serialize through a
-different, smart surface operation and rely on contextual preprocessing to
-become simple again. This weakens the claim that successful smart tactics
-expand into ordinary surface-expressible simple steps.
-
 ### `assumption()` is more permissive than its reference entry
 
 The reference says `assumption()` performs exact lookup and rejects merely
@@ -93,8 +79,9 @@ should be named for what it does, such as an *expandable source site* or
   despite its exact-facts description.
 - `left()` and `right()` accept canonical condition-polarity equivalents as
   well as structurally identical facts.
-- Predicate `unfold(name)` and resource `unfold(resource(args))` are separate
-  registered forms with different transitions but share one reference row.
+- Predicate `unfold(name)`, pure-function `unfold(function(args))`, and
+  resource `unfold(resource(args))` are separate registered forms with
+  different transitions; their reference entries must remain distinct.
 
 The resource-operation descriptions themselves are otherwise accurate:
 `observe` projects a non-consuming declared view while retaining the folded
@@ -118,17 +105,11 @@ occurrence with the particular `#[test]` that verifies it.
 
 1. A documentation regression rejects any normative page that classifies
    `step()` as smart.
-2. A classification regression parses a pure induction proof and requires
-   `apply(ih(m))` to have the same user-visible class in reference, profiling,
-   audit, and expansion.
-3. An expansion regression requires every emitted induction proof to reparse as
-   a certificate containing only the same surface-level simple operations,
-   without a simple internal operation printing as smart syntax.
-4. Focused semantic tests pin the chosen exact behavior of `assumption()`,
+2. Focused semantic tests pin the chosen exact behavior of `assumption()`,
    `contradiction()`, and condition-polarity disjunction introduction.
-5. A reference-inventory regression associates every public form ID with the
+3. A reference-inventory regression associates every public form ID with the
    class in its own table row.
-6. Each positive-fixture mapping uses a distinctive complete tactic spelling
+4. Each positive-fixture mapping uses a distinctive complete tactic spelling
    inside a test that verifies that proof.
 
 ## Acceptance criteria
@@ -138,12 +119,10 @@ occurrence with the particular `#[test]` that verifies it.
   documentation.
 - `step()` is documented everywhere as a simple deterministic statement
   transition over indexed ambient context.
-- Pure induction has no user-visible class mismatch and no simple certificate
-  operation that serializes as a smart tactic.
 - `assumption()`, `contradiction()`, `left()`, and `right()` either match their
   exact documented semantics or their documentation explicitly states the
   accepted equivalences; any semantic change has focused regressions.
-- `cases`, both `unfold` forms, and omitted loop automation are described
+- `cases`, all three `unfold` forms, and omitted loop automation are described
   accurately.
 - Intrinsic tactic class and source-location ownership of automation have
   distinct names and responsibilities.

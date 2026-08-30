@@ -124,6 +124,8 @@ pub(crate) enum PropositionCloseError {
     NotProposition,
     Unavailable,
     DoesNotNormalize,
+    ArithmeticPremiseUnavailable(usize),
+    Arithmetic(super::fact_reasoning::ArithmeticCheckError),
     ExpectedIntroduction(Proposition),
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
@@ -571,6 +573,23 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         super::fact_reasoning::normalizes_context_free(goal.proposition())
             .then(|| self.closed_focused())
             .ok_or(PropositionCloseError::DoesNotNormalize)
+    }
+
+    pub(crate) fn apply_arithmetic(
+        &self,
+        premises: &[Proposition],
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        for (index, premise) in premises.iter().enumerate() {
+            if !facts.exact_available_across_effects(premise, &[]) {
+                return Err(PropositionCloseError::ArithmeticPremiseUnavailable(index));
+            }
+        }
+        super::fact_reasoning::check_signed_affine_arithmetic(goal.proposition(), premises)
+            .map_err(PropositionCloseError::Arithmetic)?;
+        Ok(self.closed_focused())
     }
 
     pub(crate) fn apply_intro(

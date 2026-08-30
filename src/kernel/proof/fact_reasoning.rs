@@ -1,4 +1,430 @@
 use crate::kernel::*;
+use std::collections::BTreeMap;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ArithmeticCheckError {
+    UnsupportedGoal,
+    UnsupportedPremise(usize),
+    GoalMayBeUndefined,
+    DoesNotFollow,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SignedAffineForm {
+    terms: BTreeMap<Bitvector32Term, i64>,
+    constant: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SignedAffineInequality {
+    /// The normalized judgment is `sum(terms) <= bound`.
+    terms: BTreeMap<Bitvector32Term, i64>,
+    bound: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SignedAffineClaim {
+    Inequality(SignedAffineInequality),
+    Equality(SignedAffineForm),
+    Disequality(SignedAffineForm),
+    Constant(bool),
+}
+
+fn collect_signed_affine_terms(
+    term: &Bitvector32Term,
+    coefficient: i64,
+    terms: &mut BTreeMap<Bitvector32Term, i64>,
+    constant: &mut i64,
+) -> Option<()> {
+    crate::instrumentation::record_deterministic_work(1);
+    match term {
+        Bitvector32Term::Constant(value) => {
+            let value = i64::from(*value as i32);
+            *constant = constant.checked_add(coefficient.checked_mul(value)?)?;
+        }
+        Bitvector32Term::Add(left, right) => {
+            collect_signed_affine_terms(left, coefficient, terms, constant)?;
+            collect_signed_affine_terms(right, coefficient, terms, constant)?;
+        }
+        Bitvector32Term::Subtract(left, right) => {
+            collect_signed_affine_terms(left, coefficient, terms, constant)?;
+            collect_signed_affine_terms(right, coefficient.checked_neg()?, terms, constant)?;
+        }
+        Bitvector32Term::Multiply(left, right) => {
+            if let Some(value) = left.as_const() {
+                let value = i64::from(value as i32);
+                collect_signed_affine_terms(
+                    right,
+                    coefficient.checked_mul(value)?,
+                    terms,
+                    constant,
+                )?;
+            } else if let Some(value) = right.as_const() {
+                let value = i64::from(value as i32);
+                collect_signed_affine_terms(
+                    left,
+                    coefficient.checked_mul(value)?,
+                    terms,
+                    constant,
+                )?;
+            } else {
+                return None;
+            }
+        }
+        Bitvector32Term::Variable(_)
+        | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PureFunctionApplication { .. } => {
+            let atom = crate::kernel::eval::canonical_term(term);
+            let updated = terms
+                .get(&atom)
+                .copied()
+                .unwrap_or_default()
+                .checked_add(coefficient)?;
+            if updated == 0 {
+                terms.remove(&atom);
+            } else {
+                terms.insert(atom, updated);
+            }
+        }
+        Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::Remainder(_, _)
+        | Bitvector32Term::ShiftLeft(_, _)
+        | Bitvector32Term::ArithmeticShiftRight(_, _)
+        | Bitvector32Term::BitwiseAnd(_, _)
+        | Bitvector32Term::BitwiseOr(_, _)
+        | Bitvector32Term::BitwiseXor(_, _)
+        | Bitvector32Term::BitwiseNot(_)
+        | Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. } => return None,
+    }
+    Some(())
+}
+
+fn signed_affine_difference(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+) -> Option<SignedAffineForm> {
+    let mut terms = BTreeMap::new();
+    let mut constant = 0;
+    collect_signed_affine_terms(left, 1, &mut terms, &mut constant)?;
+    collect_signed_affine_terms(right, -1, &mut terms, &mut constant)?;
+    Some(SignedAffineForm { terms, constant })
+}
+
+fn signed_affine_inequality(
+    left: &Bitvector32Term,
+    right: &Bitvector32Term,
+    strict: bool,
+) -> Option<SignedAffineInequality> {
+    let difference = signed_affine_difference(left, right)?;
+    let threshold = if strict { -1i64 } else { 0 };
+    Some(SignedAffineInequality {
+        terms: difference.terms,
+        bound: threshold.checked_sub(difference.constant)?,
+    })
+}
+
+fn signed_affine_condition(condition: &ConditionTerm, value: bool) -> Option<SignedAffineClaim> {
+    match (condition, value) {
+        (ConditionTerm::Constant(constant), value) => {
+            Some(SignedAffineClaim::Constant(*constant == value))
+        }
+        (ConditionTerm::Bitvector32SignedLessThan(left, right), true)
+        | (ConditionTerm::Bitvector32SignedGreaterThan(right, left), true)
+        | (ConditionTerm::Bitvector32SignedLessEqual(right, left), false)
+        | (ConditionTerm::Bitvector32SignedGreaterEqual(left, right), false) => Some(
+            SignedAffineClaim::Inequality(signed_affine_inequality(left, right, true)?),
+        ),
+        (ConditionTerm::Bitvector32SignedLessEqual(left, right), true)
+        | (ConditionTerm::Bitvector32SignedGreaterEqual(right, left), true)
+        | (ConditionTerm::Bitvector32SignedLessThan(right, left), false)
+        | (ConditionTerm::Bitvector32SignedGreaterThan(left, right), false) => Some(
+            SignedAffineClaim::Inequality(signed_affine_inequality(left, right, false)?),
+        ),
+        (ConditionTerm::Bitvector32Equal(left, right), true) => Some(SignedAffineClaim::Equality(
+            signed_affine_difference(left, right)?,
+        )),
+        (ConditionTerm::Bitvector32Equal(left, right), false) => Some(
+            SignedAffineClaim::Disequality(signed_affine_difference(left, right)?),
+        ),
+        _ => None,
+    }
+}
+
+fn signed_affine_claim(proposition: &Proposition) -> Option<SignedAffineClaim> {
+    match proposition {
+        Proposition::ConditionIs(condition, value) => signed_affine_condition(condition, *value),
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, value) => {
+                signed_affine_condition(condition, !*value)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn signed_affine_atom_bounds(
+    inequalities: &[SignedAffineInequality],
+) -> BTreeMap<Bitvector32Term, (i64, i64)> {
+    let mut bounds = BTreeMap::new();
+    for inequality in inequalities {
+        crate::instrumentation::record_deterministic_work(1);
+        if inequality.terms.len() != 1 {
+            continue;
+        }
+        let (term, coefficient) = inequality
+            .terms
+            .iter()
+            .next()
+            .expect("one-term inequality has one entry");
+        let entry = bounds
+            .entry(term.clone())
+            .or_insert((i64::from(i32::MIN), i64::from(i32::MAX)));
+        match *coefficient {
+            1 => entry.1 = entry.1.min(inequality.bound),
+            -1 => entry.0 = entry.0.max(inequality.bound.saturating_neg()),
+            _ => {}
+        }
+    }
+    bounds
+}
+
+fn signed_affine_form_range(
+    form: &SignedAffineForm,
+    bounds: &BTreeMap<Bitvector32Term, (i64, i64)>,
+) -> Option<(i128, i128)> {
+    let mut minimum = i128::from(form.constant);
+    let mut maximum = i128::from(form.constant);
+    for (term, coefficient) in &form.terms {
+        crate::instrumentation::record_deterministic_work(1);
+        let (lower, upper) = bounds
+            .get(term)
+            .copied()
+            .unwrap_or((i64::from(i32::MIN), i64::from(i32::MAX)));
+        let coefficient = i128::from(*coefficient);
+        let lower = i128::from(lower);
+        let upper = i128::from(upper);
+        if 0 <= coefficient {
+            minimum = minimum.checked_add(coefficient.checked_mul(lower)?)?;
+            maximum = maximum.checked_add(coefficient.checked_mul(upper)?)?;
+        } else {
+            minimum = minimum.checked_add(coefficient.checked_mul(upper)?)?;
+            maximum = maximum.checked_add(coefficient.checked_mul(lower)?)?;
+        }
+    }
+    Some((minimum, maximum))
+}
+
+fn signed_affine_term_is_defined(
+    term: &Bitvector32Term,
+    bounds: &BTreeMap<Bitvector32Term, (i64, i64)>,
+) -> bool {
+    crate::instrumentation::record_deterministic_work(1);
+    match term {
+        Bitvector32Term::Constant(_)
+        | Bitvector32Term::Variable(_)
+        | Bitvector32Term::MemoryLoad(_, _)
+        | Bitvector32Term::PureFunctionApplication { .. } => true,
+        Bitvector32Term::Add(left, right)
+        | Bitvector32Term::Subtract(left, right)
+        | Bitvector32Term::Multiply(left, right) => {
+            if !signed_affine_term_is_defined(left, bounds)
+                || !signed_affine_term_is_defined(right, bounds)
+            {
+                return false;
+            }
+            let Some(form) = signed_affine_difference(term, &Bitvector32Term::Constant(0)) else {
+                return false;
+            };
+            let Some((minimum, maximum)) = signed_affine_form_range(&form, bounds) else {
+                return false;
+            };
+            i128::from(i32::MIN) <= minimum && maximum <= i128::from(i32::MAX)
+        }
+        Bitvector32Term::Divide(_, _)
+        | Bitvector32Term::Remainder(_, _)
+        | Bitvector32Term::ShiftLeft(_, _)
+        | Bitvector32Term::ArithmeticShiftRight(_, _)
+        | Bitvector32Term::BitwiseAnd(_, _)
+        | Bitvector32Term::BitwiseOr(_, _)
+        | Bitvector32Term::BitwiseXor(_, _)
+        | Bitvector32Term::BitwiseNot(_)
+        | Bitvector32Term::If { .. }
+        | Bitvector32Term::RangeFold { .. } => false,
+    }
+}
+
+fn signed_affine_goal_is_defined(
+    goal: &Proposition,
+    inequalities: &[SignedAffineInequality],
+) -> bool {
+    let bounds = signed_affine_atom_bounds(inequalities);
+    let condition = match goal {
+        Proposition::ConditionIs(condition, _) => condition,
+        Proposition::Not(body) => match body.as_ref() {
+            Proposition::ConditionIs(condition, _) => condition,
+            _ => return false,
+        },
+        _ => return false,
+    };
+    match condition {
+        ConditionTerm::Constant(_) => true,
+        ConditionTerm::Bitvector32SignedLessThan(left, right)
+        | ConditionTerm::Bitvector32SignedLessEqual(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterThan(left, right)
+        | ConditionTerm::Bitvector32SignedGreaterEqual(left, right)
+        | ConditionTerm::Bitvector32Equal(left, right) => {
+            signed_affine_term_is_defined(left, &bounds)
+                && signed_affine_term_is_defined(right, &bounds)
+        }
+        _ => false,
+    }
+}
+
+fn inequality_implies(available: &SignedAffineInequality, goal: &SignedAffineInequality) -> bool {
+    crate::instrumentation::record_deterministic_work(1);
+    available.terms == goal.terms && available.bound <= goal.bound
+}
+
+fn add_inequality(sum: &mut SignedAffineInequality, addend: &SignedAffineInequality) -> Option<()> {
+    sum.bound = sum.bound.checked_add(addend.bound)?;
+    for (term, coefficient) in &addend.terms {
+        crate::instrumentation::record_deterministic_work(1);
+        let updated = sum
+            .terms
+            .get(term)
+            .copied()
+            .unwrap_or_default()
+            .checked_add(*coefficient)?;
+        if updated == 0 {
+            sum.terms.remove(term);
+        } else {
+            sum.terms.insert(term.clone(), updated);
+        }
+    }
+    Some(())
+}
+
+/// Checks one explicit signed-affine arithmetic certificate.
+///
+/// The listed propositions are the checker's entire premise universe. A
+/// combined inequality uses each selected inequality with coefficient one, so
+/// repeating a premise explicitly permits a larger positive coefficient.
+/// Checking is one structural pass over the selected propositions; no ambient
+/// facts are searched and no closure is retained after the current goal closes.
+pub(crate) fn check_signed_affine_arithmetic(
+    goal: &Proposition,
+    premises: &[Proposition],
+) -> Result<(), ArithmeticCheckError> {
+    let goal_proposition = goal;
+    let goal = signed_affine_claim(goal).ok_or(ArithmeticCheckError::UnsupportedGoal)?;
+    let mut inequalities = Vec::new();
+    let mut equalities = Vec::new();
+    for (index, premise) in premises.iter().enumerate() {
+        crate::instrumentation::record_deterministic_work(1);
+        let mut conjuncts = Vec::new();
+        atomic_conjuncts(premise, &mut conjuncts);
+        for conjunct in conjuncts {
+            match signed_affine_claim(conjunct)
+                .ok_or(ArithmeticCheckError::UnsupportedPremise(index))?
+            {
+                SignedAffineClaim::Inequality(inequality) => inequalities.push(inequality),
+                SignedAffineClaim::Equality(equality) => equalities.push(equality),
+                SignedAffineClaim::Constant(true) => {}
+                SignedAffineClaim::Constant(false) | SignedAffineClaim::Disequality(_) => {
+                    return Err(ArithmeticCheckError::UnsupportedPremise(index));
+                }
+            }
+        }
+    }
+    if !signed_affine_goal_is_defined(goal_proposition, &inequalities) {
+        return Err(ArithmeticCheckError::GoalMayBeUndefined);
+    }
+
+    let proved = match goal {
+        SignedAffineClaim::Constant(value) => value,
+        SignedAffineClaim::Equality(form) => {
+            (form.terms.is_empty() && form.constant == 0)
+                || equalities.iter().any(|available| {
+                    available == &form
+                        || (available.constant == form.constant.checked_neg().unwrap_or(i64::MIN)
+                            && available.terms.len() == form.terms.len()
+                            && available.terms.iter().all(|(term, coefficient)| {
+                                form.terms.get(term) == coefficient.checked_neg().as_ref()
+                            }))
+                })
+        }
+        SignedAffineClaim::Disequality(form) => {
+            form.terms.is_empty() && form.constant.rem_euclid(1i64 << 32) != 0
+        }
+        SignedAffineClaim::Inequality(goal) => {
+            if goal.terms.is_empty() && 0 <= goal.bound {
+                true
+            } else if inequalities
+                .iter()
+                .any(|available| inequality_implies(available, &goal))
+            {
+                true
+            } else if inequalities.is_empty() {
+                false
+            } else {
+                let mut sum = SignedAffineInequality {
+                    terms: BTreeMap::new(),
+                    bound: 0,
+                };
+                inequalities
+                    .iter()
+                    .all(|inequality| add_inequality(&mut sum, inequality).is_some())
+                    && inequality_implies(&sum, &goal)
+            }
+        }
+    };
+    proved
+        .then_some(())
+        .ok_or(ArithmeticCheckError::DoesNotFollow)
+}
+
+#[cfg(test)]
+mod arithmetic_tests {
+    use super::*;
+
+    fn less_equal(left: u64, right: u64) -> Proposition {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32SignedLessEqual(
+                Box::new(Bitvector32Term::Variable(Variable(left))),
+                Box::new(Bitvector32Term::Variable(Variable(right))),
+            ),
+            true,
+        )
+    }
+
+    #[test]
+    fn explicit_affine_chain_check_scales_near_linearly() {
+        let mut samples = Vec::new();
+        for size in [16_u64, 32, 64, 128] {
+            let premises = (0..size)
+                .map(|index| less_equal(index, index + 1))
+                .collect::<Vec<_>>();
+            let goal = less_equal(0, size);
+            let (result, work) = crate::instrumentation::measure_deterministic_work(|| {
+                check_signed_affine_arithmetic(&goal, &premises)
+            });
+            result.expect("the explicit inequality chain should prove its endpoint order");
+            assert!(
+                work > 0,
+                "the arithmetic checker must account deterministic work"
+            );
+            samples.push((size, work));
+        }
+        assert!(
+            samples
+                .windows(2)
+                .all(|pair| pair[1].1 <= pair[0].1.saturating_mul(3)),
+            "explicit arithmetic checking grew faster than near-linearly: {samples:?}"
+        );
+    }
+}
 
 pub(crate) fn normalizes_context_free(goal: &Proposition) -> bool {
     PureFactContext::new()

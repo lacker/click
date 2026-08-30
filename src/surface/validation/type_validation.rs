@@ -155,14 +155,16 @@ fn validate_pure_theorem_tactics(
     for tactic in tactics {
         match tactic {
             ProofTactic::UnfoldPredicate(_)
+            | ProofTactic::UnfoldFunction(_)
             | ProofTactic::Induct { .. }
             | ProofTactic::ApplyInduction { .. }
-            | ProofTactic::CloseInduction
+            | ProofTactic::ApplyInductionUsing { .. }
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Assumption
             | ProofTactic::Extract(_)
             | ProofTactic::Normalize
+            | ProofTactic::ArithmeticUsing(_)
             | ProofTactic::Intro
             | ProofTactic::Split
             | ProofTactic::Left
@@ -226,11 +228,13 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::ExecuteUntil(_) => "execute_until",
         ProofTactic::SmartFrame(_) => "frame",
         ProofTactic::FrameUsing { .. } => "frame",
-        ProofTactic::UnfoldPredicate(_) | ProofTactic::UnfoldResource(_) => "unfold",
+        ProofTactic::UnfoldPredicate(_)
+        | ProofTactic::UnfoldFunction(_)
+        | ProofTactic::UnfoldResource(_) => "unfold",
         ProofTactic::FoldResource(_) => "fold",
         ProofTactic::Induct { .. } => "induct",
         ProofTactic::ApplyInduction { .. } => "apply",
-        ProofTactic::CloseInduction => "simp",
+        ProofTactic::ApplyInductionUsing { .. } => "apply",
         ProofTactic::ApplyTheorem(_) | ProofTactic::ApplyTheoremUsing { .. } => "apply",
         ProofTactic::Have(_) => "have",
         ProofTactic::Open(_) => "open",
@@ -244,6 +248,7 @@ pub(in crate::surface) fn tactic_name(tactic: &ProofTactic) -> &'static str {
         ProofTactic::Assumption => "assumption",
         ProofTactic::Extract(_) => "extract",
         ProofTactic::Normalize => "normalize",
+        ProofTactic::ArithmeticUsing(_) => "arithmetic",
         ProofTactic::Intro => "intro",
         ProofTactic::Split => "split",
         ProofTactic::Left => "left",

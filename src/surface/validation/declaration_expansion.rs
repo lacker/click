@@ -305,6 +305,30 @@ fn expand_declared_resource_tactic(
         ProofTactic::UnfoldResource(resource) => Ok(ProofTactic::UnfoldResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),
+        ProofTactic::UnfoldFunction(application)
+            if resource_definitions.contains_key(&application.name) =>
+        {
+            Ok(ProofTactic::UnfoldResource(
+                expand_declared_resource_clause(
+                    ResourceClause::Declared {
+                        access: ResourceAccessMode::Own,
+                        kind: ResourceKind::Token,
+                        name: application.name,
+                        arguments: application.arguments,
+                        parameter_types: Vec::new(),
+                    },
+                    resource_definitions,
+                )?,
+            ))
+        }
+        ProofTactic::UnfoldFunction(mut application) => {
+            application.arguments = application
+                .arguments
+                .into_iter()
+                .map(|argument| expand_declared_resource_expression(argument, resource_definitions))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ProofTactic::UnfoldFunction(application))
+        }
         ProofTactic::ObserveResource(resource) => Ok(ProofTactic::ObserveResource(
             expand_declared_resource_clause(resource, resource_definitions)?,
         )),

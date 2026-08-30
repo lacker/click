@@ -465,6 +465,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::ApplyTheoremUsing { .. }
         | ProofStep::TransportUsing { .. }
         | ProofStep::UnfoldPredicate(_)
+        | ProofStep::UnfoldFunction(_)
         | ProofStep::UnfoldResource(_)
         | ProofStep::FoldResource(_)
         | ProofStep::ObserveResource(_)
@@ -475,6 +476,7 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         | ProofStep::Rewrite(_)
         | ProofStep::Assumption
         | ProofStep::Normalize
+        | ProofStep::ArithmeticUsing(_)
         | ProofStep::Intro
         | ProofStep::Split
         | ProofStep::Left
@@ -488,7 +490,6 @@ fn loop_effect_linear_step_supported(step: &ProofStep) -> bool {
         }
         ProofStep::Induct { .. }
         | ProofStep::ApplyInduction { .. }
-        | ProofStep::CloseInduction
         | ProofStep::Open { .. }
         | ProofStep::If { .. }
         | ProofStep::Cases { .. }

@@ -1859,7 +1859,9 @@ impl Parser {
                 let tactic = if matches!(self.peek(), Some(Token::Ident(_)))
                     && self.peek_next() == Some(&Token::LParen)
                 {
-                    ProofTactic::UnfoldResource(self.parse_declared_resource_call()?)
+                    let (name, arguments) =
+                        self.parse_call_arguments("function or resource name")?;
+                    ProofTactic::UnfoldFunction(ClickFunctionApplication { name, arguments })
                 } else {
                     let predicate = self.expect_ident("predicate name")?;
                     ProofTactic::UnfoldPredicate(predicate)
@@ -1932,6 +1934,17 @@ impl Parser {
             "normalize" => {
                 self.expect_empty_tactic_args(&name)?;
                 ProofTactic::Normalize
+            }
+            "arithmetic" => {
+                self.expect_empty_tactic_args(&name)?;
+                if self.peek_ident() == Some("using") {
+                    let premises = self.parse_exact_premises()?;
+                    if self.peek() == Some(&Token::Semicolon) {
+                        self.position += 1;
+                    }
+                    return Ok(ProofTactic::ArithmeticUsing(premises));
+                }
+                ProofTactic::ArithmeticUsing(Vec::new())
             }
             "intro" => {
                 self.expect_empty_tactic_args(&name)?;

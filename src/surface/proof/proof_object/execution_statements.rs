@@ -361,6 +361,7 @@ impl<'a> Proof<'a> {
                     step,
                     ProofStep::Have { .. }
                         | ProofStep::UnfoldPredicate(_)
+                        | ProofStep::UnfoldFunction(_)
                         | ProofStep::TransportUsing { .. }
                         | ProofStep::Step
                 )
@@ -571,6 +572,7 @@ impl<'a> Proof<'a> {
                     step,
                     ProofStep::Have { .. }
                         | ProofStep::UnfoldPredicate(_)
+                        | ProofStep::UnfoldFunction(_)
                         | ProofStep::TransportUsing { .. }
                         | ProofStep::Step
                 )
@@ -680,6 +682,7 @@ impl<'a> Proof<'a> {
                 step,
                 ProofStep::Have { .. }
                     | ProofStep::UnfoldPredicate(_)
+                    | ProofStep::UnfoldFunction(_)
                     | ProofStep::TransportUsing { .. }
                     | ProofStep::Step
             )

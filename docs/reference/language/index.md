@@ -219,7 +219,7 @@ declaration.
 
 Theorems are intentionally pure. They do not support resource `requires`,
 resource `ensures`, effects, region proof blocks, `old(...)`, `at(...)`, or
-`result`. Pure theorem scripts can simplify, unfold predicates, apply
+`result`. Pure theorem scripts can simplify, unfold predicates and pure functions, apply
 theorems, introduce logical structure, rewrite, use exact assumptions, and
 derive atomic propositions. They cannot execute C or transform resources.
 Applying a theorem never consumes, creates, returns, opens, or closes
@@ -249,7 +249,15 @@ that its parameter is nonnegative. `ih(m)` is available only in that proof and
 requires `m` to be nonnegative and strictly smaller, plus all theorem
 requirements after substituting `m` for the induction parameter. Other theorem
 parameters remain fixed. This is a pure proposition rule, not C execution or
-C termination evidence.
+C termination evidence. Bare `apply(ih(m))` is smart: expansion proves those
+fixed obligations and emits `apply(ih(m)) using { ... }`. The `using` form is
+the simple checked operation and accepts only the exact listed obligations.
+
+Pure-function calls can be opened explicitly with
+`unfold(function(args))`. This simple operation exposes one defining equation
+at the current proof state. It never recursively expands the resulting call
+tree; a recursive call in the selected body remains opaque until a later
+explicit unfold.
 
 Theorems can be reused by explicit application:
 

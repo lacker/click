@@ -960,6 +960,10 @@ id = "tactic.normalize"
 path = "reference/tactics/index.md#proposition-reasoning"
 
 [[item]]
+id = "tactic.arithmetic"
+path = "reference/tactics/index.md#proposition-reasoning"
+
+[[item]]
 id = "tactic.rewrite"
 path = "reference/tactics/index.md#proposition-reasoning"
 
@@ -1117,6 +1121,9 @@ path = "reference/tactics/index.md#effects-resources-and-snapshots"
 id = "tactic-form.unfold-predicate"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 [[item]]
+id = "tactic-form.unfold-function"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
 id = "tactic-form.unfold-resource"
 path = "reference/tactics/index.md#effects-resources-and-snapshots"
 [[item]]
@@ -1127,6 +1134,9 @@ id = "tactic-form.induct"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.apply-induction"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.apply-induction-using"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.apply-theorem"
@@ -1169,6 +1179,12 @@ id = "tactic-form.extract"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.normalize"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.arithmetic"
+path = "reference/tactics/index.md#proposition-reasoning"
+[[item]]
+id = "tactic-form.arithmetic-using"
 path = "reference/tactics/index.md#proposition-reasoning"
 [[item]]
 id = "tactic-form.intro"

@@ -2171,6 +2171,7 @@ impl<'a> Proof<'a> {
         match step {
             ProofStep::Have { .. }
             | ProofStep::UnfoldPredicate(_)
+            | ProofStep::UnfoldFunction(_)
             | ProofStep::TransportUsing { .. }
             | ProofStep::Step => true,
             ProofStep::If {

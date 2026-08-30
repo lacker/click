@@ -3,6 +3,287 @@
 use super::*;
 
 impl<'a> Proof<'a> {
+    pub(super) fn apply_function_unfold(
+        &self,
+        application: &ClickFunctionApplication,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        match self.context.as_ref() {
+            ProofContext::Pure(context) => {
+                let state = CState::new().with_memory(context.theorem_context.memory.clone());
+                self.apply_function_unfold_in_state(
+                    application,
+                    context.theorem_context.values.clone(),
+                    context.theorem_context.array_refs.clone(),
+                    &state,
+                    &state,
+                    None,
+                    &RecordedSnapshots::new(),
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+            }
+            ProofContext::FixedState(context) => {
+                let values = parameter_values(context.parameters, context.arguments)?;
+                let array_refs =
+                    array_refs_for_parameters(context.parameters, &values, context.state.memory());
+                let (values, array_refs) =
+                    contract_environment_at_state(&values, &array_refs, context.state);
+                self.apply_function_unfold_in_state(
+                    application,
+                    values,
+                    array_refs,
+                    context.pre_state,
+                    context.state,
+                    context.result,
+                    context.recorded_snapshots,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+            }
+            ProofContext::Execution(_) if self.focused_outcome_data().is_some() => {
+                let view = self
+                    .outcome_fixed_state_view()
+                    .expect("a focused outcome judgment resolves its fixed-state view");
+                let values = parameter_values(view.parameters, view.arguments)?;
+                let array_refs =
+                    array_refs_for_parameters(view.parameters, &values, view.state.memory());
+                let (values, array_refs) =
+                    contract_environment_at_state(&values, &array_refs, view.state);
+                self.apply_function_unfold_in_state(
+                    application,
+                    values,
+                    array_refs,
+                    view.pre_state,
+                    view.state,
+                    view.result,
+                    view.recorded_snapshots,
+                    view.predicate_environment,
+                    view.click_function_environment,
+                )
+            }
+            ProofContext::Execution(context) => {
+                let execution = self.execution().ok_or_else(|| {
+                    self.step_error("function `unfold` lost its semantic execution state")
+                })?;
+                let values =
+                    parameter_values(context.parsed_function.parameters(), context.arguments)?;
+                let array_refs = array_refs_for_parameters(
+                    context.parsed_function.parameters(),
+                    &values,
+                    execution.core.state.memory(),
+                );
+                let (values, array_refs) =
+                    contract_environment_at_state(&values, &array_refs, &execution.core.state);
+                let pre_state =
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state);
+                self.apply_function_unfold_in_state(
+                    application,
+                    values,
+                    array_refs,
+                    pre_state,
+                    &execution.core.state,
+                    None,
+                    &execution.presentation.recorded_snapshots,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_function_unfold_in_state(
+        &self,
+        application: &ClickFunctionApplication,
+        mut values: BTreeMap<String, CValue>,
+        array_refs: ClickArrayRefs,
+        pre_state: &CState,
+        state: &CState,
+        result: Option<&CValue>,
+        recorded_snapshots: &RecordedSnapshots,
+        predicate_environment: &PredicateEnvironment,
+        click_function_environment: &ClickFunctionEnvironment,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
+        let definition = click_function_environment
+            .get(&application.name)
+            .ok_or_else(|| {
+                self.step_error(format!(
+                    "unknown pure function `{}` in `unfold`",
+                    application.name
+                ))
+            })?;
+        if definition.return_type() != C0Type::Int32 {
+            return Err(self.step_error(format!(
+                "pure function `unfold` currently requires an int32 result; `{}` returns {}",
+                definition.name(),
+                describe_c0_type(definition.return_type())
+            )));
+        }
+        if application.arguments.len() != definition.parameters().len() {
+            return Err(self.step_error(format!(
+                "function `{}` expects {} argument(s), got {}",
+                definition.name(),
+                definition.parameters().len(),
+                application.arguments.len()
+            )));
+        }
+
+        let substitutions = definition
+            .parameters()
+            .iter()
+            .zip(&application.arguments)
+            .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let surface_body = substitute_contract_expression(definition.body(), &substitutions)
+            .map_err(|message| {
+                self.step_error(format!(
+                    "could not instantiate function `{}` for `unfold`: {message}",
+                    application.name
+                ))
+            })?;
+
+        let mut argument_active_functions = BTreeSet::new();
+        for argument in &application.arguments {
+            collect_click_function_calls(argument, &mut argument_active_functions);
+        }
+        let argument_values = application
+            .arguments
+            .iter()
+            .map(|argument| {
+                evaluate_contract_expression_with_environment(
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    result,
+                    self.facts().assumptions(),
+                    argument,
+                    predicate_environment,
+                    click_function_environment,
+                    recorded_snapshots,
+                    &mut argument_active_functions,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|message| {
+                self.step_error(format!(
+                    "could not lower function `unfold` arguments: {message}"
+                ))
+            })?;
+        let arguments = argument_values
+            .into_iter()
+            .map(|value| match value {
+                CValue::Int32(value) => Ok(value),
+                other => Err(self.step_error(format!(
+                    "pure function `unfold` currently requires int32 arguments, got {other:?}"
+                ))),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut unfolding_active_functions = BTreeSet::new();
+        collect_click_function_calls(&surface_body, &mut unfolding_active_functions);
+        let unfolded = evaluate_contract_expression_with_environment(
+            &values,
+            &array_refs,
+            pre_state,
+            state,
+            result,
+            self.facts().assumptions(),
+            &surface_body,
+            predicate_environment,
+            click_function_environment,
+            recorded_snapshots,
+            &mut unfolding_active_functions,
+        )
+        .map_err(|message| {
+            self.step_error(format!(
+                "could not unfold function `{}`: {message}",
+                application.name
+            ))
+        })?;
+        let equality = comparison_proposition(
+            CValue::Int32(Bitvector32Term::PureFunctionApplication {
+                name: application.name.clone(),
+                arguments,
+            }),
+            ComparisonOperator::Equal,
+            unfolded,
+        )
+        .map_err(|error| self.step_error(error.message))?;
+
+        let mut facts = self.facts().clone();
+        let added_facts = (!facts.contains_top_level(&equality))
+            .then(|| equality.clone())
+            .into_iter()
+            .collect::<Vec<_>>();
+        facts = facts.with_fact(equality.clone());
+
+        let branch = match self.focused_obligation() {
+            Some(Obligation::Proposition(goal)) => {
+                let original_surface = goal.surface.as_deref().cloned();
+                let surface_application = ContractExpression::Call {
+                    name: application.name.clone(),
+                    arguments: application.arguments.clone(),
+                };
+                let surface_equality = ClickProposition::Comparison {
+                    left: surface_application,
+                    operator: ComparisonOperator::Equal,
+                    right: surface_body,
+                };
+                let surface = original_surface.as_ref().and_then(|surface| {
+                    rewrite_click_proposition_by_surface_equality(surface, &surface_equality)
+                });
+                let kernel = if let Some(surface) = &surface {
+                    let mut next_variable = 2_000_000;
+                    let mut active_functions = BTreeSet::new();
+                    collect_click_function_calls_in_proposition(surface, &mut active_functions);
+                    lower_outcome_proposition_with_environment(
+                        &mut values,
+                        &array_refs,
+                        pre_state,
+                        state,
+                        result,
+                        facts.assumptions(),
+                        surface,
+                        &mut next_variable,
+                        predicate_environment,
+                        click_function_environment,
+                        recorded_snapshots,
+                        &mut active_functions,
+                    )
+                    .map_err(|message| {
+                        self.step_error(format!(
+                            "could not refresh the goal after function `unfold`: {message}"
+                        ))
+                    })?
+                } else {
+                    goal.kernel().clone()
+                };
+                let complete = facts.contains(&kernel);
+                (!complete).then(|| {
+                    self.refined_proposition(
+                        self.refined_branch_state(facts.clone()),
+                        kernel,
+                        surface.or(original_surface),
+                    )
+                })
+            }
+            Some(Obligation::Frontier(_) | Obligation::FunctionOutcome(_)) => Some(
+                self.focused_branch()
+                    .expect("function unfold requires an open branch")
+                    .with_state(self.refined_branch_state(facts.clone())),
+            ),
+            None => return Err(self.step_error("function `unfold` requires an open goal")),
+        };
+
+        Ok(CheckedFocusedTransition {
+            locals: self.state().locals().clone(),
+            branch,
+            added_facts: added_facts.clone(),
+            checked_facts: added_facts,
+        })
+    }
+
     pub(super) fn apply_predicate_unfold(
         &self,
         name: &String,

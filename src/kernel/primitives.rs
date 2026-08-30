@@ -106,7 +106,7 @@ pub enum Bitvector32Term {
         item: Variable,
         body: Box<Bitvector32Term>,
     },
-    /// An opaque application left by one-step unfolding of a total recursive
+    /// An opaque application retained across one-step unfolding of a total
     /// pure Click function at symbolic arguments.
     PureFunctionApplication {
         name: String,

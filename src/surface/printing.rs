@@ -127,6 +127,14 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
         ProofTactic::UnfoldPredicate(name) => {
             line(output, &prefix, &format!("unfold({name});"));
         }
+        ProofTactic::UnfoldFunction(application) => line(
+            output,
+            &prefix,
+            &format!(
+                "unfold({});",
+                format_click_function_application(application)
+            ),
+        ),
         ProofTactic::UnfoldResource(resource) => line(
             output,
             &prefix,
@@ -156,7 +164,28 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
                 describe_contract_expression(argument)
             ),
         ),
-        ProofTactic::CloseInduction => line(output, &prefix, "simp();"),
+        ProofTactic::ApplyInductionUsing {
+            hypothesis,
+            argument,
+            premises,
+        } => {
+            line(
+                output,
+                &prefix,
+                &format!(
+                    "apply({hypothesis}({})) using {{",
+                    describe_contract_expression(argument)
+                ),
+            );
+            for premise in premises {
+                line(
+                    output,
+                    &format!("{prefix}    "),
+                    &format!("{};", source_click_proposition(premise)),
+                );
+            }
+            line(output, &prefix, "}");
+        }
         ProofTactic::ApplyTheorem(application) => line(
             output,
             &prefix,
@@ -335,6 +364,12 @@ fn write_tactic(output: &mut String, tactic: &ProofTactic, indent: usize) {
             &format!("extract({});", source_click_proposition(proposition)),
         ),
         ProofTactic::Normalize => line(output, &prefix, "normalize();"),
+        ProofTactic::ArithmeticUsing(premises) if premises.is_empty() => {
+            line(output, &prefix, "arithmetic();")
+        }
+        ProofTactic::ArithmeticUsing(premises) => {
+            write_using_premises(output, "arithmetic()", premises, indent)
+        }
         ProofTactic::Intro => line(output, &prefix, "intro();"),
         ProofTactic::Split => line(output, &prefix, "split();"),
         ProofTactic::Left => line(output, &prefix, "left();"),
@@ -515,6 +550,19 @@ fn resource_access(resource: &ResourceClause) -> ResourceAccessMode {
 }
 
 fn format_theorem_application(application: &TheoremApplication) -> String {
+    format!(
+        "{}({})",
+        application.name,
+        application
+            .arguments
+            .iter()
+            .map(describe_contract_expression)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn format_click_function_application(application: &ClickFunctionApplication) -> String {
     format!(
         "{}({})",
         application.name,

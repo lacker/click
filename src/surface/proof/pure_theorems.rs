@@ -178,6 +178,21 @@ fn prepare_pure_induction_tactics(
                         argument: argument.clone(),
                     })
                 }
+                ProofTactic::ApplyTheoremUsing {
+                    application,
+                    premises,
+                } if application.name == hypothesis => {
+                    let [argument] = application.arguments.as_slice() else {
+                        return Err(ClickError::new(format!(
+                            "induction hypothesis `{hypothesis}` expects one argument"
+                        )));
+                    };
+                    Ok(ProofTactic::ApplyInductionUsing {
+                        hypothesis: hypothesis.to_string(),
+                        argument: argument.clone(),
+                        premises: premises.clone(),
+                    })
+                }
                 ProofTactic::If(proof_if) => Ok(ProofTactic::If(ProofIf {
                     condition: proof_if.condition.clone(),
                     then_tactics: transform(&proof_if.then_tactics, hypothesis)?,
@@ -188,9 +203,11 @@ fn prepare_pure_induction_tactics(
                     left_tactics: transform(&proof_cases.left_tactics, hypothesis)?,
                     right_tactics: transform(&proof_cases.right_tactics, hypothesis)?,
                 })),
-                ProofTactic::ApplyInduction { .. } => Err(ClickError::new(
-                    "internal induction-application syntax is not accepted directly",
-                )),
+                ProofTactic::ApplyInduction { .. } | ProofTactic::ApplyInductionUsing { .. } => {
+                    Err(ClickError::new(
+                        "internal induction-application syntax is not accepted directly",
+                    ))
+                }
                 tactic => Ok(tactic.clone()),
             })
             .collect()
@@ -892,8 +909,10 @@ fn proof_supports_pure_certificate(certificate: &ProofCertificate) -> bool {
     certificate.steps().iter().all(|step| match step {
         ProofStep::ApplyTheoremUsing { .. }
         | ProofStep::UnfoldPredicate(_)
+        | ProofStep::UnfoldFunction(_)
         | ProofStep::Assumption
         | ProofStep::Normalize
+        | ProofStep::ArithmeticUsing(_)
         | ProofStep::Intro
         | ProofStep::Split
         | ProofStep::Left
@@ -957,7 +976,15 @@ fn check_pure_script_with_proof(
         return Ok(Some(proof.certificate()));
     }
 
-    if let Some(proof) = root.try_linear_script(tactics)? {
+    let checked = if tactics
+        .iter()
+        .any(|tactic| matches!(tactic, ProofTactic::ArithmeticUsing(_)))
+    {
+        root.try_authoritative_linear_script(tactics)?
+    } else {
+        root.try_linear_script(tactics)?
+    };
+    if let Some(proof) = checked {
         return Ok(Some(proof.certificate()));
     }
 
@@ -994,7 +1021,16 @@ fn pure_theorem_surface_certificate(
     }
 
     if let (Some(tactics), Some(setup)) = (source_tactics, induction_setup) {
-        let lowered = lower_pure_induction_tactics(&setup.surface_requires, tactics, setup)?;
+        let lowered = lower_pure_induction_tactics(
+            claim_label,
+            context,
+            predicate_environment,
+            click_function_environment,
+            &setup.surface_requires,
+            &[],
+            tactics,
+            setup,
+        )?;
         return ProofCertificate::from_proof_tactics(&lowered).map_err(|error| {
             ClickError::new(format!(
                 "induction proof for `{claim_label}` produced an invalid surface certificate: {error:?}"
@@ -1403,30 +1439,16 @@ fn lower_pure_branching_tactics(
                 }));
             }
             ProofTactic::Simp => {
-                let premise_pairs = premise_pool
-                    .iter()
-                    .map(|surface| {
-                        let kernel = lower_pure_theorem_proposition(
-                            claim_label,
-                            surface,
-                            &context.values,
-                            &context.array_refs,
-                            &context.memory,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .ok()?;
-                        Some((kernel, surface.clone()))
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                let available = premise_pairs
-                    .iter()
-                    .map(|(kernel, _)| kernel.clone())
-                    .collect::<Vec<_>>();
-                let certificate =
-                    plan_simp_certificate(goal, &assumptions_from_propositions(&available))?;
                 lowered.extend(
-                    lower_restricted_simp_plan(goal, None, &certificate, &premise_pairs).ok()?,
+                    lower_pure_simp_from_premise_pool(
+                        claim_label,
+                        context,
+                        goal,
+                        predicate_environment,
+                        click_function_environment,
+                        premise_pool,
+                    )
+                    .ok()?,
                 );
             }
             tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
@@ -1438,13 +1460,526 @@ fn lower_pure_branching_tactics(
     Some(lowered)
 }
 
-fn lower_pure_induction_tactics(
+fn lower_pure_simp_from_premise_pool(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
     premise_pool: &[ClickProposition],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    lower_pure_simp_from_mixed_premise_pool(
+        claim_label,
+        context,
+        goal,
+        predicate_environment,
+        click_function_environment,
+        premise_pool,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_pure_arithmetic_from_premise_pool(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    premise_pool: &[ClickProposition],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &[]).is_ok() {
+        return Ok(vec![ProofTactic::ArithmeticUsing(Vec::new())]);
+    }
+    for surface in premise_pool {
+        let kernel = lower_pure_theorem_proposition(
+            claim_label,
+            surface,
+            &context.values,
+            &context.array_refs,
+            &context.memory,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
+            goal,
+            std::slice::from_ref(&kernel),
+        )
+        .is_ok()
+        {
+            return Ok(vec![ProofTactic::ArithmeticUsing(vec![surface.clone()])]);
+        }
+    }
+    Err(ClickError::new(
+        "no single available signed-affine premise proves the goal",
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_pure_simp_from_mixed_premise_pool(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    goal: &Proposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    premise_pool: &[ClickProposition],
+    opaque_premise_pool: &[ClickProposition],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let mut premise_pairs = premise_pool
+        .iter()
+        .map(|surface| {
+            let lower = if opaque_premise_pool.contains(surface) {
+                lower_pure_theorem_proposition_opaque
+            } else {
+                lower_pure_theorem_proposition
+            };
+            let kernel = lower(
+                claim_label,
+                surface,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+            Ok((kernel, surface.clone()))
+        })
+        .collect::<Result<Vec<_>, ClickError>>()?;
+    add_canonical_order_premise_pairs(
+        claim_label,
+        context,
+        predicate_environment,
+        click_function_environment,
+        &mut premise_pairs,
+    )?;
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    if let Some(tactics) = plan_explicit_named_signed_rule(goal, &premise_pairs) {
+        return Ok(tactics);
+    }
+    let certificate = plan_simp_certificate(goal, &assumptions_from_propositions(&available))
+        .ok_or_else(|| {
+            ClickError::new("smart simplification produced no proposition derivation")
+        })?;
+    lower_restricted_simp_plan(goal, None, &certificate, &premise_pairs)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_pure_simp_after_function_unfold(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    surface_goal: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    premise_pool: &[ClickProposition],
+    opaque_premise_pool: &[ClickProposition],
+) -> Result<Vec<ProofTactic>, ClickError> {
+    let mut premise_pairs = premise_pool
+        .iter()
+        .map(|surface| {
+            let lower = if opaque_premise_pool.contains(surface) {
+                lower_pure_theorem_proposition_opaque
+            } else {
+                lower_pure_theorem_proposition
+            };
+            let kernel = lower(
+                claim_label,
+                surface,
+                &context.values,
+                &context.array_refs,
+                &context.memory,
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+            Ok((kernel, surface.clone()))
+        })
+        .collect::<Result<Vec<_>, ClickError>>()?;
+    add_canonical_order_premise_pairs(
+        claim_label,
+        context,
+        predicate_environment,
+        click_function_environment,
+        &mut premise_pairs,
+    )?;
+    let available = premise_pairs
+        .iter()
+        .map(|(kernel, _)| kernel.clone())
+        .collect::<Vec<_>>();
+    let assumptions = assumptions_from_propositions(&available);
+    let state = CState::new().with_memory(context.memory.clone());
+    let mut unfolded_surface_goal = surface_goal.clone();
+    let mut tactics = Vec::new();
+    let surface_facts = premise_pairs
+        .iter()
+        .map(|(_, surface)| surface.clone())
+        .collect::<Vec<_>>();
+    let mut unfolded_applications = Vec::new();
+    // Expand one breadth-first layer beyond the calls present in the goal. This
+    // lets sibling calls expose mutually recursive IH instances before either
+    // sibling is expanded recursively again, while keeping the smart tactic's
+    // search finite and proportional to the goal's explicit call frontier.
+    let mut pending_applications =
+        click_function_applications(&unfolded_surface_goal, &surface_facts)
+            .into_iter()
+            .map(|application| (application, true))
+            .collect::<Vec<_>>();
+    let mut pending_index = 0;
+    while let Some((application, expose_children)) =
+        pending_applications.get(pending_index).cloned()
+    {
+        pending_index += 1;
+        if unfolded_applications.contains(&application) {
+            continue;
+        }
+        let definition = click_function_environment
+            .get(&application.name)
+            .ok_or_else(|| {
+                ClickError::new(format!("unknown pure function `{}`", application.name))
+            })?;
+        let substitutions = definition
+            .parameters()
+            .iter()
+            .zip(&application.arguments)
+            .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let surface_body = substitute_contract_expression(definition.body(), &substitutions)
+            .map_err(ClickError::new)?;
+        if expose_children {
+            for exposed in click_function_applications_in_expression(&surface_body, &surface_facts)
+            {
+                if !pending_applications
+                    .iter()
+                    .any(|(queued, _)| queued == &exposed)
+                {
+                    pending_applications.push((exposed, false));
+                }
+            }
+        }
+        let surface_equality = ClickProposition::Comparison {
+            left: ContractExpression::Call {
+                name: application.name.clone(),
+                arguments: application.arguments.clone(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: surface_body,
+        };
+        let Some(next_surface_goal) = rewrite_click_proposition_by_surface_equality(
+            &unfolded_surface_goal,
+            &surface_equality,
+        ) else {
+            continue;
+        };
+        unfolded_surface_goal = next_surface_goal;
+        unfolded_applications.push(application.clone());
+        tactics.push(ProofTactic::UnfoldFunction(application));
+
+        let mut values = context.values.clone();
+        let mut next_variable = 2_000_000;
+        let mut active_functions = BTreeSet::new();
+        collect_click_function_calls_in_proposition(&unfolded_surface_goal, &mut active_functions);
+        let refreshed_goal = lower_outcome_proposition_with_environment(
+            &mut values,
+            &context.array_refs,
+            &state,
+            &state,
+            None,
+            &assumptions,
+            &unfolded_surface_goal,
+            &mut next_variable,
+            predicate_environment,
+            click_function_environment,
+            &RecordedSnapshots::new(),
+            &mut active_functions,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        let Some(plan) = plan_simp_certificate(&refreshed_goal, &assumptions) else {
+            continue;
+        };
+        tactics.extend(lower_restricted_simp_plan(
+            &refreshed_goal,
+            None,
+            &plan,
+            &premise_pairs,
+        )?);
+        return Ok(tactics);
+    }
+    Err(ClickError::new(format!(
+        "smart simplification still has no derivation after unfolding {} outer pure function call{}",
+        tactics.len(),
+        if tactics.len() == 1 { "" } else { "s" },
+    )))
+}
+
+fn click_function_applications_in_expression(
+    expression: &ContractExpression,
+    known_facts: &[ClickProposition],
+) -> Vec<ClickFunctionApplication> {
+    click_function_applications(
+        &ClickProposition::Comparison {
+            left: expression.clone(),
+            operator: ComparisonOperator::Equal,
+            right: ContractExpression::CFragment(CExpression::Value(int32(0))),
+        },
+        known_facts,
+    )
+}
+
+fn add_canonical_order_premise_pairs(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    premise_pairs: &mut Vec<(Proposition, ClickProposition)>,
+) -> Result<(), ClickError> {
+    let originals = premise_pairs.clone();
+    for (available, surface) in originals {
+        let ClickProposition::Not(body) = surface else {
+            continue;
+        };
+        let ClickProposition::Comparison {
+            left,
+            operator,
+            right,
+        } = *body
+        else {
+            continue;
+        };
+        let canonical = match operator {
+            ComparisonOperator::LessEqual => ClickProposition::Comparison {
+                left: right,
+                operator: ComparisonOperator::LessThan,
+                right: left,
+            },
+            ComparisonOperator::LessThan => ClickProposition::Comparison {
+                left: right,
+                operator: ComparisonOperator::LessEqual,
+                right: left,
+            },
+            ComparisonOperator::GreaterEqual => ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::LessThan,
+                right,
+            },
+            ComparisonOperator::GreaterThan => ClickProposition::Comparison {
+                left,
+                operator: ComparisonOperator::LessEqual,
+                right,
+            },
+            ComparisonOperator::Equal | ComparisonOperator::NotEqual => continue,
+        };
+        let kernel = lower_pure_theorem_proposition(
+            claim_label,
+            &canonical,
+            &context.values,
+            &context.array_refs,
+            &context.memory,
+            predicate_environment,
+            click_function_environment,
+        )
+        .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+        if condition_polarity_equivalent(&available, &kernel)
+            && !premise_pairs.iter().any(|(_, form)| form == &canonical)
+        {
+            premise_pairs.push((kernel, canonical));
+        }
+    }
+    Ok(())
+}
+
+fn click_function_applications(
+    proposition: &ClickProposition,
+    known_facts: &[ClickProposition],
+) -> Vec<ClickFunctionApplication> {
+    fn fact_polarity(
+        proposition: &ClickProposition,
+        known_facts: &[ClickProposition],
+    ) -> Option<bool> {
+        if known_facts.contains(proposition) {
+            return Some(true);
+        }
+        let negated = ClickProposition::Not(Box::new(proposition.clone()));
+        known_facts.contains(&negated).then_some(false)
+    }
+
+    fn expression(
+        term: &ContractExpression,
+        known_facts: &[ClickProposition],
+        applications: &mut Vec<ClickFunctionApplication>,
+    ) {
+        match term {
+            ContractExpression::Call { name, arguments } => {
+                let application = ClickFunctionApplication {
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                };
+                if !applications.contains(&application) {
+                    applications.push(application);
+                }
+            }
+            ContractExpression::Field { base, .. }
+            | ContractExpression::Old(base)
+            | ContractExpression::At {
+                expression: base, ..
+            }
+            | ContractExpression::BitwiseNot(base) => expression(base, known_facts, applications),
+            ContractExpression::Add(left, right)
+            | ContractExpression::Subtract(left, right)
+            | ContractExpression::Multiply(left, right)
+            | ContractExpression::Divide(left, right)
+            | ContractExpression::Remainder(left, right)
+            | ContractExpression::ShiftLeft(left, right)
+            | ContractExpression::ShiftRight(left, right)
+            | ContractExpression::BitwiseAnd(left, right)
+            | ContractExpression::BitwiseOr(left, right)
+            | ContractExpression::BitwiseXor(left, right)
+            | ContractExpression::Index(left, right) => {
+                expression(left, known_facts, applications);
+                expression(right, known_facts, applications);
+            }
+            ContractExpression::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                proposition_inner(condition, known_facts, applications);
+                match fact_polarity(condition, known_facts) {
+                    Some(true) => expression(then_branch, known_facts, applications),
+                    Some(false) => expression(else_branch, known_facts, applications),
+                    None => {}
+                }
+            }
+            ContractExpression::RangeFold {
+                start,
+                end,
+                initial,
+                body,
+                ..
+            } => {
+                expression(start, known_facts, applications);
+                expression(end, known_facts, applications);
+                expression(initial, known_facts, applications);
+                expression(body, known_facts, applications);
+            }
+            ContractExpression::Let { value, body, .. } => {
+                expression(value, known_facts, applications);
+                expression(body, known_facts, applications);
+            }
+            ContractExpression::ResourceCount(resource) => match resource.as_ref() {
+                ResourceClause::Declared { arguments, .. } => {
+                    for argument in arguments {
+                        expression(argument, known_facts, applications);
+                    }
+                }
+                _ => {}
+            },
+            ContractExpression::CFragment(_)
+            | ContractExpression::CBinding(_)
+            | ContractExpression::ResourceWildcard => {}
+        }
+    }
+
+    fn proposition_inner(
+        proposition: &ClickProposition,
+        known_facts: &[ClickProposition],
+        applications: &mut Vec<ClickFunctionApplication>,
+    ) {
+        match proposition {
+            ClickProposition::Comparison { left, right, .. } => {
+                expression(left, known_facts, applications);
+                expression(right, known_facts, applications);
+            }
+            ClickProposition::Defined { expression: value } => {
+                expression(value, known_facts, applications)
+            }
+            ClickProposition::And(left, right)
+            | ClickProposition::Or(left, right)
+            | ClickProposition::Implies(left, right) => {
+                proposition_inner(left, known_facts, applications);
+                proposition_inner(right, known_facts, applications);
+            }
+            ClickProposition::Not(body)
+            | ClickProposition::At {
+                proposition: body, ..
+            }
+            | ClickProposition::ForAll { body, .. }
+            | ClickProposition::Exists { body, .. } => {
+                proposition_inner(body, known_facts, applications)
+            }
+            ClickProposition::RangeAll {
+                start, end, body, ..
+            }
+            | ClickProposition::RangeAny {
+                start, end, body, ..
+            } => {
+                expression(start, known_facts, applications);
+                expression(end, known_facts, applications);
+                proposition_inner(body, known_facts, applications);
+            }
+            ClickProposition::PredicateCall { arguments, .. } => {
+                for argument in arguments {
+                    expression(argument, known_facts, applications);
+                }
+            }
+            ClickProposition::Separate { .. }
+            | ClickProposition::Contains { .. }
+            | ClickProposition::Loadable { .. } => {}
+        }
+    }
+
+    let mut applications = Vec::new();
+    proposition_inner(proposition, known_facts, &mut applications);
+    applications
+}
+
+fn induction_application_surface_premises(
+    setup: &PureInductionSetup,
+    argument: &ContractExpression,
+) -> Result<Vec<ClickProposition>, ClickError> {
+    let zero = ContractExpression::CFragment(CExpression::Value(int32(0)));
+    let current = ContractExpression::CFragment(CExpression::Variable(setup.parameter.clone()));
+    let mut premises = vec![
+        ClickProposition::Comparison {
+            left: zero,
+            operator: ComparisonOperator::LessEqual,
+            right: argument.clone(),
+        },
+        ClickProposition::Comparison {
+            left: argument.clone(),
+            operator: ComparisonOperator::LessThan,
+            right: current,
+        },
+    ];
+    for requirement in &setup.surface_requires {
+        let substituted = substitute_click_proposition(
+            requirement,
+            &BTreeMap::from([(setup.parameter.clone(), argument.clone())]),
+        )
+        .map_err(ClickError::new)?;
+        if !premises.contains(&substituted) {
+            premises.push(substituted);
+        }
+    }
+    Ok(premises)
+}
+
+fn lower_pure_induction_tactics(
+    claim_label: &str,
+    context: &PureTheoremContext,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    premise_pool: &[ClickProposition],
+    opaque_premise_pool: &[ClickProposition],
     tactics: &[ProofTactic],
     setup: &PureInductionSetup,
 ) -> Result<Vec<ProofTactic>, ClickError> {
     let mut lowered = Vec::new();
     let mut current_pool = premise_pool.to_vec();
+    let mut current_opaque_pool = opaque_premise_pool.to_vec();
     for tactic in tactics {
         match tactic {
             ProofTactic::If(proof_if) => {
@@ -1452,15 +1987,27 @@ fn lower_pure_induction_tactics(
                 then_pool.push(proof_if.condition.clone());
                 let mut else_pool = current_pool.clone();
                 else_pool.push(ClickProposition::Not(Box::new(proof_if.condition.clone())));
+                let then_opaque_pool = current_opaque_pool.clone();
+                let else_opaque_pool = current_opaque_pool.clone();
                 lowered.push(ProofTactic::If(ProofIf {
                     condition: proof_if.condition.clone(),
                     then_tactics: lower_pure_induction_tactics(
+                        claim_label,
+                        context,
+                        predicate_environment,
+                        click_function_environment,
                         &then_pool,
+                        &then_opaque_pool,
                         &proof_if.then_tactics,
                         setup,
                     )?,
                     else_tactics: lower_pure_induction_tactics(
+                        claim_label,
+                        context,
+                        predicate_environment,
+                        click_function_environment,
                         &else_pool,
+                        &else_opaque_pool,
                         &proof_if.else_tactics,
                         setup,
                     )?,
@@ -1470,20 +2017,165 @@ fn lower_pure_induction_tactics(
                 hypothesis,
                 argument,
             } => {
+                let application_premises = induction_application_surface_premises(setup, argument)?;
+                for premise in &application_premises {
+                    if current_pool.contains(premise) {
+                        continue;
+                    }
+                    let lowered_goal = lower_pure_theorem_proposition(
+                        claim_label,
+                        premise,
+                        &context.values,
+                        &context.array_refs,
+                        &context.memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+                    let current_kernels = current_pool
+                        .iter()
+                        .map(|surface| {
+                            lower_pure_theorem_proposition(
+                                claim_label,
+                                surface,
+                                &context.values,
+                                &context.array_refs,
+                                &context.memory,
+                                predicate_environment,
+                                click_function_environment,
+                            )
+                            .map_err(|message| {
+                                ClickError::new(format!("`{claim_label}`: {message}"))
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if exact_fact_is_available(&lowered_goal, &current_kernels) {
+                        continue;
+                    }
+                    let proof = lower_pure_simp_from_premise_pool(
+                        claim_label,
+                        context,
+                        &lowered_goal,
+                        predicate_environment,
+                        click_function_environment,
+                        &current_pool,
+                    )
+                    .or_else(|simp_error| {
+                        lower_pure_arithmetic_from_premise_pool(
+                            claim_label,
+                            context,
+                            &lowered_goal,
+                            predicate_environment,
+                            click_function_environment,
+                            &current_pool,
+                        )
+                        .map_err(|arithmetic_error| {
+                            ClickError::new(format!(
+                                "{}; arithmetic fallback: {}",
+                                simp_error.message(),
+                                arithmetic_error.message(),
+                            ))
+                        })
+                    })
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "induction hypothesis application in `{claim_label}` could not produce an explicit proof of `{}`: {}",
+                            describe_click_proposition(premise),
+                            error.message()
+                        ))
+                    })?;
+                    lowered.push(ProofTactic::Have(ProofHave {
+                        proposition: premise.clone(),
+                        proof: SourceProof::Script(proof),
+                    }));
+                    current_pool.push(premise.clone());
+                }
                 let substituted = substitute_click_proposition(
                     &setup.surface_goal,
                     &BTreeMap::from([(setup.parameter.clone(), argument.clone())]),
                 )
                 .map_err(ClickError::new)?;
-                lowered.push(ProofTactic::ApplyInduction {
+                lowered.push(ProofTactic::ApplyInductionUsing {
                     hypothesis: hypothesis.clone(),
                     argument: argument.clone(),
+                    premises: application_premises,
                 });
                 if !current_pool.contains(&substituted) {
-                    current_pool.push(substituted);
+                    current_pool.push(substituted.clone());
+                }
+                if !current_opaque_pool.contains(&substituted) {
+                    current_opaque_pool.push(substituted);
                 }
             }
-            ProofTactic::Simp => lowered.push(ProofTactic::CloseInduction),
+            ProofTactic::ApplyInductionUsing {
+                hypothesis,
+                argument,
+                premises,
+            } => {
+                let substituted = substitute_click_proposition(
+                    &setup.surface_goal,
+                    &BTreeMap::from([(setup.parameter.clone(), argument.clone())]),
+                )
+                .map_err(ClickError::new)?;
+                lowered.push(ProofTactic::ApplyInductionUsing {
+                    hypothesis: hypothesis.clone(),
+                    argument: argument.clone(),
+                    premises: premises.clone(),
+                });
+                if !current_pool.contains(&substituted) {
+                    current_pool.push(substituted.clone());
+                }
+                if !current_opaque_pool.contains(&substituted) {
+                    current_opaque_pool.push(substituted);
+                }
+            }
+            ProofTactic::Have(have) => {
+                lowered.push(ProofTactic::Have(have.clone()));
+                if !current_pool.contains(&have.proposition) {
+                    current_pool.push(have.proposition.clone());
+                }
+            }
+            ProofTactic::Simp => {
+                let explicit_goal = lower_pure_theorem_proposition(
+                    claim_label,
+                    &setup.surface_goal,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| ClickError::new(format!("`{claim_label}`: {message}")))?;
+                let direct = lower_pure_simp_from_mixed_premise_pool(
+                    claim_label,
+                    context,
+                    &explicit_goal,
+                    predicate_environment,
+                    click_function_environment,
+                    &current_pool,
+                    &current_opaque_pool,
+                );
+                let explicit = match direct {
+                    Ok(explicit) => explicit,
+                    Err(direct_error) => lower_pure_simp_after_function_unfold(
+                        claim_label,
+                        context,
+                        &setup.surface_goal,
+                        predicate_environment,
+                        click_function_environment,
+                        &current_pool,
+                        &current_opaque_pool,
+                    )
+                    .map_err(|error| {
+                        ClickError::new(format!(
+                            "induction `simp` in `{claim_label}` could not produce an explicit simple proof: {}\n  direct simplification: {}",
+                            error.message(),
+                            direct_error.message()
+                        ))
+                    })?,
+                };
+                lowered.extend(explicit);
+            }
             tactic if matches!(tactic.class(), TacticClass::Simple(_)) => {
                 lowered.push(tactic.clone());
             }
@@ -1636,6 +2328,7 @@ fn apply_pure_induction_hypothesis(
     setup: &PureInductionSetup,
     hypothesis: &str,
     argument: &ContractExpression,
+    explicit_surface_premises: Option<&[ClickProposition]>,
     claim_label: &str,
     tactic_index: usize,
     available: &mut Vec<Proposition>,
@@ -1649,7 +2342,40 @@ fn apply_pure_induction_hypothesis(
         )));
     }
     let state = CState::new().with_memory(context.memory.clone());
-    let assumptions = assumptions_from_propositions(available);
+    let explicit_premises = explicit_surface_premises
+        .map(|premises| {
+            premises
+                .iter()
+                .map(|premise| {
+                    lower_pure_theorem_proposition(
+                        claim_label,
+                        premise,
+                        &context.values,
+                        &context.array_refs,
+                        &context.memory,
+                        predicate_environment,
+                        click_function_environment,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower `apply using` premise: {message}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+    if let Some(premises) = &explicit_premises {
+        for premise in premises {
+            if !exact_fact_is_available(premise, available) {
+                return Err(ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `apply using` requires an unavailable exact premise: {premise:?}"
+                )));
+            }
+        }
+    }
+    let reasoning_facts = explicit_premises.as_deref().unwrap_or(available);
+    let assumptions = assumptions_from_propositions(reasoning_facts);
     let mut active_functions = BTreeSet::new();
     let value = evaluate_contract_expression_with_environment(
         &context.values,
@@ -1727,12 +2453,13 @@ fn apply_pure_induction_hypothesis(
                 ),
                 true,
             );
-            proves(&nonnegative)
-                || proves(&enough)
-                || assumptions.decide(&ConditionTerm::Bitvector32SignedLessEqual(
-                    Box::new(current_term.clone()),
-                    Box::new(Bitvector32Term::Constant(step - 1)),
-                )) == Some(false)
+            explicit_premises.is_none()
+                && (proves(&nonnegative)
+                    || proves(&enough)
+                    || assumptions.decide(&ConditionTerm::Bitvector32SignedLessEqual(
+                        Box::new(current_term.clone()),
+                        Box::new(Bitvector32Term::Constant(step - 1)),
+                    )) == Some(false))
         }
         None => false,
     };
@@ -1753,7 +2480,8 @@ fn apply_pure_induction_hypothesis(
     if !available.contains(&smaller) {
         available.push(smaller.clone());
     }
-    let assumptions = assumptions_from_propositions(available);
+    let reasoning_facts = explicit_premises.as_deref().unwrap_or(available);
+    let assumptions = assumptions_from_propositions(reasoning_facts);
     let proves = |fact: &Proposition| {
         available.contains(fact)
             || assumptions.derive_proposition(fact).is_some()
@@ -1948,6 +2676,7 @@ fn prove_pure_theorem_tactics(
     let mut available = requires.to_vec();
     let mut unfolded_predicates = Vec::new();
     let mut goal = original_goal.clone();
+    let mut surface_goal = induction_setup.map(|setup| setup.surface_goal.clone());
     let mut closed = false;
     let mut induction_active = false;
 
@@ -2087,6 +2816,30 @@ fn prove_pure_theorem_tactics(
                     induction_setup.expect("active induction has a setup"),
                     hypothesis,
                     argument,
+                    None,
+                    claim_label,
+                    tactic_index,
+                    &mut available,
+                    context,
+                    predicate_environment,
+                    click_function_environment,
+                )?;
+            }
+            ProofTactic::ApplyInductionUsing {
+                hypothesis,
+                argument,
+                premises,
+            } => {
+                if !induction_active {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: induction hypothesis used before `induct`"
+                    )));
+                }
+                apply_pure_induction_hypothesis(
+                    induction_setup.expect("active induction has a setup"),
+                    hypothesis,
+                    argument,
+                    Some(premises),
                     claim_label,
                     tactic_index,
                     &mut available,
@@ -2124,6 +2877,203 @@ fn prove_pure_theorem_tactics(
                 .map_err(|message| {
                     ClickError::new(format!("`{claim_label}` tactic {tactic_index}: {message}"))
                 })?;
+            }
+            ProofTactic::UnfoldFunction(application) => {
+                let definition = click_function_environment
+                    .get(&application.name)
+                    .ok_or_else(|| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: unknown pure function `{}` in `unfold`",
+                            application.name
+                        ))
+                    })?;
+                if definition.return_type() != C0Type::Int32 {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: pure function `unfold` currently requires an int32 result"
+                    )));
+                }
+                if application.arguments.len() != definition.parameters().len() {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: function `{}` expects {} argument(s), got {}",
+                        definition.name(),
+                        definition.parameters().len(),
+                        application.arguments.len()
+                    )));
+                }
+                let substitutions = definition
+                    .parameters()
+                    .iter()
+                    .zip(&application.arguments)
+                    .map(|(parameter, argument)| (parameter.name().to_string(), argument.clone()))
+                    .collect::<BTreeMap<_, _>>();
+                let surface_body =
+                    substitute_contract_expression(definition.body(), &substitutions).map_err(
+                        |message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not instantiate function `{}` for `unfold`: {message}",
+                                application.name
+                            ))
+                        },
+                    )?;
+                let state = CState::new().with_memory(context.memory.clone());
+                let assumptions = assumptions_from_propositions(&available);
+                let mut argument_active_functions = BTreeSet::new();
+                for argument in &application.arguments {
+                    collect_click_function_calls(argument, &mut argument_active_functions);
+                }
+                let arguments = application
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        evaluate_contract_expression_with_environment(
+                            &context.values,
+                            &context.array_refs,
+                            &state,
+                            &state,
+                            None,
+                            &assumptions,
+                            argument,
+                            predicate_environment,
+                            click_function_environment,
+                            &RecordedSnapshots::new(),
+                            &mut argument_active_functions,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not lower function `unfold` arguments: {message}"
+                        ))
+                    })?
+                    .into_iter()
+                    .map(|value| match value {
+                        CValue::Int32(value) => Ok(value),
+                        other => Err(ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: pure function `unfold` currently requires int32 arguments, got {other:?}"
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let mut unfolding_active_functions = BTreeSet::new();
+                collect_click_function_calls(&surface_body, &mut unfolding_active_functions);
+                let unfolded = evaluate_contract_expression_with_environment(
+                    &context.values,
+                    &context.array_refs,
+                    &state,
+                    &state,
+                    None,
+                    &assumptions,
+                    &surface_body,
+                    predicate_environment,
+                    click_function_environment,
+                    &RecordedSnapshots::new(),
+                    &mut unfolding_active_functions,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not unfold function `{}`: {message}",
+                        application.name
+                    ))
+                })?;
+                let equality = comparison_proposition(
+                    CValue::Int32(Bitvector32Term::PureFunctionApplication {
+                        name: application.name.clone(),
+                        arguments,
+                    }),
+                    ComparisonOperator::Equal,
+                    unfolded,
+                )?;
+                if !available.contains(&equality) {
+                    available.push(equality);
+                }
+
+                let Some(current_surface_goal) = surface_goal.as_ref() else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: function `unfold` lost the theorem's surface goal"
+                    )));
+                };
+                let surface_equality = ClickProposition::Comparison {
+                    left: ContractExpression::Call {
+                        name: application.name.clone(),
+                        arguments: application.arguments.clone(),
+                    },
+                    operator: ComparisonOperator::Equal,
+                    right: surface_body,
+                };
+                if let Some(next_surface_goal) = rewrite_click_proposition_by_surface_equality(
+                    current_surface_goal,
+                    &surface_equality,
+                ) {
+                    surface_goal = Some(next_surface_goal.clone());
+                    let assumptions = assumptions_from_propositions(&available);
+                    let mut values = context.values.clone();
+                    let mut next_variable = 2_000_000;
+                    let mut active_functions = BTreeSet::new();
+                    collect_click_function_calls_in_proposition(
+                        &next_surface_goal,
+                        &mut active_functions,
+                    );
+                    goal = lower_outcome_proposition_with_environment(
+                        &mut values,
+                        &context.array_refs,
+                        &state,
+                        &state,
+                        None,
+                        &assumptions,
+                        &next_surface_goal,
+                        &mut next_variable,
+                        predicate_environment,
+                        click_function_environment,
+                        &RecordedSnapshots::new(),
+                        &mut active_functions,
+                    )
+                    .map_err(|message| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: could not refresh the goal after function `unfold`: {message}"
+                        ))
+                    })?;
+                }
+            }
+            ProofTactic::Have(have) => {
+                let proposition = lower_pure_theorem_proposition(
+                    claim_label,
+                    &have.proposition,
+                    &context.values,
+                    &context.array_refs,
+                    &context.memory,
+                    predicate_environment,
+                    click_function_environment,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: could not lower `have` proposition: {message}"
+                    ))
+                })?;
+                let SourceProof::Script(have_tactics) = &have.proof else {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: expanded `have` requires an explicit simple proof"
+                    )));
+                };
+                let certificate = ProofCertificate::from_proof_tactics(have_tactics).map_err(
+                    |error| {
+                        ClickError::new(format!(
+                            "`{claim_label}` tactic {tactic_index}: invalid `have` certificate: {error:?}"
+                        ))
+                    },
+                )?;
+                validate_pure_theorem_certificate(
+                    claim_label,
+                    &available,
+                    &proposition,
+                    predicate_environment,
+                    click_function_environment,
+                    theorem_environment,
+                    context,
+                    &certificate,
+                    None,
+                )?;
+                if !available.contains(&proposition) {
+                    available.push(proposition);
+                }
             }
             ProofTactic::ApplyTheorem(application) => {
                 available = apply_theorem_applications_to_available(
@@ -2245,6 +3195,43 @@ fn prove_pure_theorem_tactics(
                 }
                 closed = true;
             }
+            ProofTactic::ArithmeticUsing(surface_premises) => {
+                let premises = surface_premises
+                    .iter()
+                    .enumerate()
+                    .map(|(premise_index, premise)| {
+                        let lowered = lower_pure_theorem_proposition(
+                            claim_label,
+                            premise,
+                            &context.values,
+                            &context.array_refs,
+                            &context.memory,
+                            predicate_environment,
+                            click_function_environment,
+                        )
+                        .map_err(|message| {
+                            ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: could not lower `arithmetic using` premise {premise_index}: {message}"
+                            ))
+                        })?;
+                        if !exact_fact_is_available(&lowered, &available) {
+                            return Err(ClickError::new(format!(
+                                "`{claim_label}` tactic {tactic_index}: `arithmetic using` premise {premise_index} is not exactly available"
+                            )));
+                        }
+                        Ok(lowered)
+                    })
+                    .collect::<Result<Vec<_>, ClickError>>()?;
+                crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(
+                    &goal, &premises,
+                )
+                .map_err(|error| {
+                    ClickError::new(format!(
+                        "`{claim_label}` tactic {tactic_index}: `arithmetic` failed: {error:?}"
+                    ))
+                })?;
+                closed = true;
+            }
             ProofTactic::Intro
             | ProofTactic::Split
             | ProofTactic::Left
@@ -2340,12 +3327,7 @@ fn prove_pure_theorem_tactics(
                         ClickError::new(format!("`rewrite` failed for `{claim_label}`: {message}"))
                     })?;
             }
-            ProofTactic::Simp | ProofTactic::CloseInduction => {
-                if matches!(tactic, ProofTactic::CloseInduction) && !induction_active {
-                    return Err(ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: induction closer used outside `induct`"
-                    )));
-                }
+            ProofTactic::Simp => {
                 let assumptions = assumptions_from_propositions(&available);
                 if assumptions.derive_proposition(&goal).is_some() {
                     closed = true;

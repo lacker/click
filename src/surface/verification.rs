@@ -2090,6 +2090,7 @@ pub(in crate::surface) fn validate_loop_initialization_tactics(
     for tactic in tactics {
         match tactic {
             ProofTactic::UnfoldPredicate(_)
+            | ProofTactic::UnfoldFunction(_)
             | ProofTactic::ApplyTheorem(_)
             | ProofTactic::ApplyTheoremUsing { .. }
             | ProofTactic::Have(_)

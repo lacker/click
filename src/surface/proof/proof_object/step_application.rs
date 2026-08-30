@@ -60,6 +60,7 @@ impl<'a> Proof<'a> {
         let checked_proposition_successor = match &step {
             ProofStep::Assumption => Some(self.apply_assumption()),
             ProofStep::Normalize => Some(self.apply_normalize()),
+            ProofStep::ArithmeticUsing(premises) => Some(self.apply_arithmetic_using(premises)),
             ProofStep::Intro => Some(self.apply_intro()),
             ProofStep::Split => Some(self.apply_split()),
             ProofStep::Left => Some(self.apply_left()),
@@ -100,6 +101,7 @@ impl<'a> Proof<'a> {
                 premises,
             } => self.apply_transport_using(source, target, premises),
             ProofStep::UnfoldPredicate(name) => self.apply_predicate_unfold(name),
+            ProofStep::UnfoldFunction(application) => self.apply_function_unfold(application),
             ProofStep::UnfoldResource(resource) => self.apply_execution_resource_unfold(resource),
             ProofStep::FoldResource(resource) => {
                 if self.focused_outcome_data().is_some() {
@@ -1103,6 +1105,50 @@ impl<'a> Proof<'a> {
             }
             _ => unreachable!("kernel returned an unrelated normalize error"),
         })
+    }
+
+    #[inline(never)]
+    pub(super) fn apply_arithmetic_using(
+        &self,
+        surface_premises: &[ClickProposition],
+    ) -> Result<KernelProofHandle, ClickError> {
+        let premises = surface_premises
+            .iter()
+            .map(|premise| self.lower_surface_proposition(premise, "`arithmetic using` premise"))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.state
+            .apply_arithmetic(&premises)
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("`arithmetic` requires a proposition goal")
+                }
+                PropositionCloseError::ArithmeticPremiseUnavailable(index) => self.step_error(
+                    format!("`arithmetic using` premise {index} is not exactly available"),
+                ),
+                PropositionCloseError::Arithmetic(
+                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedGoal,
+                ) => self.step_error(
+                    "`arithmetic` requires an atomic signed-affine int32 comparison goal",
+                ),
+                PropositionCloseError::Arithmetic(
+                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::UnsupportedPremise(
+                        index,
+                    ),
+                ) => self.step_error(format!(
+                    "`arithmetic using` premise {index} is not a signed-affine int32 comparison"
+                )),
+                PropositionCloseError::Arithmetic(
+                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::GoalMayBeUndefined,
+                ) => self.step_error(
+                    "`arithmetic` cannot establish that every int32 operation in the current goal is defined without overflow from exactly the listed premises",
+                ),
+                PropositionCloseError::Arithmetic(
+                    crate::kernel::proof::fact_reasoning::ArithmeticCheckError::DoesNotFollow,
+                ) => self.step_error(
+                    "the current goal does not follow from exactly the listed arithmetic premises",
+                ),
+                _ => unreachable!("kernel returned an unrelated arithmetic error"),
+            })
     }
 
     // Preserve the rule/dispatcher frame boundary described above; `intro`

@@ -149,6 +149,10 @@ the same goal at any proved nonnegative `m < n`. The application also requires
 the theorem's declared requirements with `n` replaced by `m`; Click never
 drops a domain condition merely because it is doing induction.
 
+Bare `apply(ih(m))` is smart because it plans explicit proofs of those fixed
+obligations. Expansion ends in `apply(ih(m)) using { ... }`, the simple form
+that checks exactly the listed obligations without searching.
+
 The induction variable must be an `int32` theorem parameter. Other theorem
 parameters remain fixed, so `ih` takes only the replacement value for the
 named induction parameter. This is strong induction, so calls such as
@@ -156,8 +160,9 @@ named induction parameter. This is strong induction, so calls such as
 nonnegative and smaller. The local hypothesis is not a global theorem and is
 not available in C execution proofs.
 
-Symbolic function evaluation still exposes only one equation. Neither `simp`
-nor repeated evaluation silently starts induction or unfolds to a depth limit.
+`unfold(function(args))` explicitly exposes one symbolic defining equation.
+A recursive call produced by that layer stays opaque. Neither `simp` nor
+repeated evaluation silently starts induction or unfolds to a depth limit.
 Pure theorem induction is also unrelated to a C function's optional
 termination evidence: it proves a proposition about specification values, not
 that a C call returns.

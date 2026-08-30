@@ -45,6 +45,9 @@ fn linear_execution_proof_step(tactic: &ProofTactic) -> Option<ProofStep> {
             premises: premises.clone(),
         }),
         ProofTactic::UnfoldPredicate(name) => Some(ProofStep::UnfoldPredicate(name.clone())),
+        ProofTactic::UnfoldFunction(application) => {
+            Some(ProofStep::UnfoldFunction(application.clone()))
+        }
         ProofTactic::UnfoldResource(resource) => Some(ProofStep::UnfoldResource(resource.clone())),
         ProofTactic::FoldResource(resource) => Some(ProofStep::FoldResource(resource.clone())),
         ProofTactic::ObserveResource(resource) => {

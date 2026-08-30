@@ -45,7 +45,7 @@ impl<'a> Proof<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         for premise in &explicit_premises {
-            if !self.facts().contains(premise) {
+            if !self.facts().exact_available_across_effects(premise, &[]) {
                 return Err(self.step_error(format!(
                     "`apply using` requires an unavailable exact premise: {premise:?}"
                 )));

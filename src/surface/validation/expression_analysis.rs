@@ -516,7 +516,7 @@ pub(in crate::surface) fn proposition_contains_at_expression(
     }
 }
 
-pub(super) fn collect_click_function_calls(
+pub(in crate::surface) fn collect_click_function_calls(
     expression: &ContractExpression,
     calls: &mut BTreeSet<String>,
 ) {
@@ -610,7 +610,7 @@ fn collect_click_function_calls_in_resource_subject(
     }
 }
 
-fn collect_click_function_calls_in_proposition(
+pub(in crate::surface) fn collect_click_function_calls_in_proposition(
     proposition: &ClickProposition,
     calls: &mut BTreeSet<String>,
 ) {

@@ -1881,6 +1881,11 @@ pub(super) fn lower_restricted_simp_plan(
                     "`simp() using` selected `normalize`, but the goal is not context-free",
                 ));
             }
+            if crate::kernel::proof::fact_reasoning::check_signed_affine_arithmetic(goal, &[])
+                .is_ok()
+            {
+                return Ok(vec![ProofTactic::ArithmeticUsing(Vec::new())]);
+            }
             None
         }
         SimpEvidence::Derivation(derivation) => {

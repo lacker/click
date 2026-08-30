@@ -1830,6 +1830,7 @@ pub enum ProofTactic {
         premises: Vec<ClickProposition>,
     },
     UnfoldPredicate(String),
+    UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     Induct {
@@ -1840,7 +1841,11 @@ pub enum ProofTactic {
         hypothesis: String,
         argument: ContractExpression,
     },
-    CloseInduction,
+    ApplyInductionUsing {
+        hypothesis: String,
+        argument: ContractExpression,
+        premises: Vec<ClickProposition>,
+    },
     ApplyTheorem(TheoremApplication),
     ApplyTheoremUsing {
         application: TheoremApplication,
@@ -1858,6 +1863,7 @@ pub enum ProofTactic {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
     Left,
@@ -1889,17 +1895,18 @@ pub enum SimpleTactic {
     Mark,
     StatementTransition,
     UnfoldPredicate,
+    UnfoldFunction,
     UnfoldResource,
     ObserveResource,
     Induct,
     ApplyInduction,
-    CloseInduction,
     ApplyTheorem,
     Witness,
     Choose,
     Assumption,
     Extract,
     Normalize,
+    Arithmetic,
     Intro,
     Split,
     Left,
@@ -1989,8 +1996,13 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
         class: "simple",
     },
     PublicTacticForm {
+        id: "unfold-function",
+        syntax: "unfold(function(args))",
+        class: "simple",
+    },
+    PublicTacticForm {
         id: "unfold-resource",
-        syntax: "unfold(name)",
+        syntax: "unfold(resource(args))",
         class: "simple",
     },
     PublicTacticForm {
@@ -2006,6 +2018,11 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "apply-induction",
         syntax: "apply(ih(m))",
+        class: "smart",
+    },
+    PublicTacticForm {
+        id: "apply-induction-using",
+        syntax: "apply(ih(m)) using",
         class: "simple",
     },
     PublicTacticForm {
@@ -2076,6 +2093,16 @@ pub const PUBLIC_TACTIC_FORMS: &[PublicTacticForm] = &[
     PublicTacticForm {
         id: "normalize",
         syntax: "normalize()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "arithmetic",
+        syntax: "arithmetic()",
+        class: "simple",
+    },
+    PublicTacticForm {
+        id: "arithmetic-using",
+        syntax: "arithmetic() using",
         class: "simple",
     },
     PublicTacticForm {
@@ -2167,6 +2194,7 @@ pub enum ProofStep {
     Mark(String),
     Step,
     UnfoldPredicate(String),
+    UnfoldFunction(ClickFunctionApplication),
     UnfoldResource(ResourceClause),
     FoldResource(ResourceClause),
     Induct {
@@ -2176,8 +2204,8 @@ pub enum ProofStep {
     ApplyInduction {
         hypothesis: String,
         argument: ContractExpression,
+        premises: Vec<ClickProposition>,
     },
-    CloseInduction,
     ApplyTheoremUsing {
         application: TheoremApplication,
         premises: Vec<ClickProposition>,
@@ -2188,6 +2216,7 @@ pub enum ProofStep {
     Assumption,
     Extract(ClickProposition),
     Normalize,
+    ArithmeticUsing(Vec<ClickProposition>),
     Intro,
     Split,
     Left,
@@ -2321,6 +2350,7 @@ impl ProofStep {
             ProofTactic::Mark(name) => Self::Mark(name.clone()),
             ProofTactic::Step => Self::Step,
             ProofTactic::UnfoldPredicate(name) => Self::UnfoldPredicate(name.clone()),
+            ProofTactic::UnfoldFunction(application) => Self::UnfoldFunction(application.clone()),
             ProofTactic::UnfoldResource(resource) => Self::UnfoldResource(resource.clone()),
             ProofTactic::FoldResource(resource) => Self::FoldResource(resource.clone()),
             ProofTactic::Induct {
@@ -2330,14 +2360,18 @@ impl ProofStep {
                 parameter: parameter.clone(),
                 hypothesis: hypothesis.clone(),
             },
-            ProofTactic::ApplyInduction {
+            ProofTactic::ApplyInduction { .. } => {
+                unreachable!("bare induction application is smart")
+            }
+            ProofTactic::ApplyInductionUsing {
                 hypothesis,
                 argument,
+                premises,
             } => Self::ApplyInduction {
                 hypothesis: hypothesis.clone(),
                 argument: argument.clone(),
+                premises: premises.clone(),
             },
-            ProofTactic::CloseInduction => Self::CloseInduction,
             ProofTactic::ApplyTheoremUsing {
                 application,
                 premises,
@@ -2351,6 +2385,7 @@ impl ProofStep {
             ProofTactic::Assumption => Self::Assumption,
             ProofTactic::Extract(proposition) => Self::Extract(proposition.clone()),
             ProofTactic::Normalize => Self::Normalize,
+            ProofTactic::ArithmeticUsing(premises) => Self::ArithmeticUsing(premises.clone()),
             ProofTactic::Intro => Self::Intro,
             ProofTactic::Split => Self::Split,
             ProofTactic::Left => Self::Left,
@@ -2479,6 +2514,7 @@ impl ProofStep {
             Self::Mark(name) => ProofTactic::Mark(name.clone()),
             Self::Step => ProofTactic::Step,
             Self::UnfoldPredicate(name) => ProofTactic::UnfoldPredicate(name.clone()),
+            Self::UnfoldFunction(application) => ProofTactic::UnfoldFunction(application.clone()),
             Self::UnfoldResource(resource) => ProofTactic::UnfoldResource(resource.clone()),
             Self::FoldResource(resource) => ProofTactic::FoldResource(resource.clone()),
             Self::Induct {
@@ -2491,11 +2527,12 @@ impl ProofStep {
             Self::ApplyInduction {
                 hypothesis,
                 argument,
-            } => ProofTactic::ApplyInduction {
+                premises,
+            } => ProofTactic::ApplyInductionUsing {
                 hypothesis: hypothesis.clone(),
                 argument: argument.clone(),
+                premises: premises.clone(),
             },
-            Self::CloseInduction => ProofTactic::CloseInduction,
             Self::ApplyTheoremUsing {
                 application,
                 premises,
@@ -2509,6 +2546,7 @@ impl ProofStep {
             Self::Assumption => ProofTactic::Assumption,
             Self::Extract(proposition) => ProofTactic::Extract(proposition.clone()),
             Self::Normalize => ProofTactic::Normalize,
+            Self::ArithmeticUsing(premises) => ProofTactic::ArithmeticUsing(premises.clone()),
             Self::Intro => ProofTactic::Intro,
             Self::Split => ProofTactic::Split,
             Self::Left => ProofTactic::Left,
@@ -2764,11 +2802,12 @@ impl ProofTactic {
             Self::Mark(_) => TacticClass::Simple(SimpleTactic::Mark),
             Self::Step => TacticClass::Simple(SimpleTactic::StatementTransition),
             Self::UnfoldPredicate(_) => TacticClass::Simple(SimpleTactic::UnfoldPredicate),
+            Self::UnfoldFunction(_) => TacticClass::Simple(SimpleTactic::UnfoldFunction),
             Self::UnfoldResource(_) => TacticClass::Simple(SimpleTactic::UnfoldResource),
             Self::ObserveResource(_) => TacticClass::Simple(SimpleTactic::ObserveResource),
             Self::Induct { .. } => TacticClass::Simple(SimpleTactic::Induct),
-            Self::ApplyInduction { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
-            Self::CloseInduction => TacticClass::Simple(SimpleTactic::CloseInduction),
+            Self::ApplyInduction { .. } => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
+            Self::ApplyInductionUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyInduction),
             Self::ApplyTheorem(_) => TacticClass::Smart(SmartTacticKind::ApplyTheorem),
             Self::ApplyTheoremUsing { .. } => TacticClass::Simple(SimpleTactic::ApplyTheorem),
             Self::Witness(_) => TacticClass::Simple(SimpleTactic::Witness),
@@ -2776,6 +2815,7 @@ impl ProofTactic {
             Self::Assumption => TacticClass::Simple(SimpleTactic::Assumption),
             Self::Extract(_) => TacticClass::Simple(SimpleTactic::Extract),
             Self::Normalize => TacticClass::Simple(SimpleTactic::Normalize),
+            Self::ArithmeticUsing(_) => TacticClass::Simple(SimpleTactic::Arithmetic),
             Self::Intro => TacticClass::Simple(SimpleTactic::Intro),
             Self::Split => TacticClass::Simple(SimpleTactic::Split),
             Self::Left => TacticClass::Simple(SimpleTactic::Left),
@@ -2865,6 +2905,12 @@ pub enum ProofAssertion {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TheoremApplication {
+    name: String,
+    arguments: Vec<ContractExpression>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickFunctionApplication {
     name: String,
     arguments: Vec<ContractExpression>,
 }

@@ -38,6 +38,11 @@ path = "mdtests/sorted_predicate.md"
 needle = "unfold(sorted);"
 
 [[form]]
+id = "unfold-function"
+path = "mdtests/pure_function_unfold.md"
+needle = "unfold(clamp_nonpositive(n));"
+
+[[form]]
 id = "unfold-resource"
 path = "mdtests/composite_resource_composes_token.md"
 needle = "unfold(live_server(fd, state));"
@@ -56,6 +61,21 @@ needle = "induct(n) as ih;"
 id = "apply-induction"
 path = "mdtests/pure_induction_countdown.md"
 needle = "apply(ih(n - 1));"
+
+[[form]]
+id = "apply-induction-using"
+path = "mdtests/pure_induction_countdown_explicit.md"
+needle = "apply(ih(n - 1)) using {"
+
+[[form]]
+id = "arithmetic"
+path = "mdtests/pure_arithmetic_rejects_unbounded_overflow.md"
+needle = "arithmetic();"
+
+[[form]]
+id = "arithmetic-using"
+path = "mdtests/pure_arithmetic_affine.md"
+needle = "arithmetic() using {"
 
 [[form]]
 id = "apply-theorem"
