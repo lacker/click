@@ -843,6 +843,10 @@ pub(in crate::lang::click::proof) struct ExecutionProofPresentation {
     /// checked. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(in crate::lang::click::proof) invariant_closer_step: Option<InvariantCloserStep>,
+    /// Where a smart region-level invariant closer was written. Like the
+    /// explicit closer above, this is expansion and timing attribution only;
+    /// the kernel-owned invariant-closure flag carries semantic authority.
+    pub(in crate::lang::click::proof) region_simp: Option<(usize, usize)>,
     /// Semantic transition evidence recorded by planning so the surface step
     /// constructed for a statement move can consult the certified transition.
     /// It is deliberately separate from `ProofTactic` so internal execution
@@ -915,6 +919,7 @@ impl ExecutionProofState {
                 post_execution_tactics: PersistentSequence::default(),
                 surface_record: SurfaceRecord::default(),
                 invariant_closer_step: Default::default(),
+                region_simp: None,
                 planned_statement_transitions: Default::default(),
                 expansion: ExpansionCursor::default(),
                 branch_path,

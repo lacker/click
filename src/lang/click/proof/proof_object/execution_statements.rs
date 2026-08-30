@@ -405,31 +405,10 @@ impl<'a> Proof<'a> {
             for step in &construction.steps {
                 proof = proof.apply_step(step.clone())?;
             }
-            let mut successor_execution = proof
-                .execution()
-                .cloned()
-                .ok_or_else(|| proof.step_error("smart `step` lost its semantic state"))?;
-            successor_execution
-                .presentation
-                .surface_record
-                .last_step_entry = construction.last_step_entry;
-            return Ok(Self {
-                context: proof.context.clone(),
-                state: KernelProofObject::new(
-                    ProofState {
-                        locals: proof.state.locals.clone(),
-                        open_branches: proof.state.open_branches.replace_frontier_at(
-                            proof.focused_branch_id(),
-                            proof.facts().clone(),
-                            successor_execution,
-                        ),
-                        added_facts: proof.state.added_facts.clone(),
-                        checked_facts: proof.state.checked_facts.clone(),
-                    },
-                    proof.focused_branch_id(),
-                ),
-                node: proof.node.clone(),
-            });
+            let (proof, ()) = proof.edit_execution_presentation(|presentation| {
+                presentation.surface_record.last_step_entry = construction.last_step_entry;
+            })?;
+            return Ok(proof);
         }
         if let Some(blocker) = construction.blocker {
             return Err(ClickError::new(format!(
@@ -757,31 +736,10 @@ impl<'a> Proof<'a> {
         let Some(proof) = applied else {
             return Err(no_candidate());
         };
-        let mut successor_execution = proof
-            .execution()
-            .cloned()
-            .ok_or_else(|| proof.step_error("smart `execute` lost its semantic state"))?;
-        successor_execution
-            .presentation
-            .surface_record
-            .last_step_entry = construction.last_step_entry;
-        Ok(Self {
-            context: proof.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: proof.state.locals.clone(),
-                    open_branches: proof.state.open_branches.replace_frontier_at(
-                        proof.focused_branch_id(),
-                        proof.facts().clone(),
-                        successor_execution,
-                    ),
-                    added_facts: proof.state.added_facts.clone(),
-                    checked_facts: proof.state.checked_facts.clone(),
-                },
-                proof.focused_branch_id(),
-            ),
-            node: proof.node.clone(),
-        })
+        let (proof, ()) = proof.edit_execution_presentation(|presentation| {
+            presentation.surface_record.last_step_entry = construction.last_step_entry;
+        })?;
+        Ok(proof)
     }
 
     /// The mid-execution `have` for a bounded region path, applied through
@@ -894,32 +852,19 @@ impl<'a> Proof<'a> {
         source_index: usize,
     ) -> Result<Self, ClickError> {
         self.require_execution_frontier("`close_invariants`")?;
-        let mut execution = self
+        let execution = self
             .execution()
-            .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        execution.presentation.invariant_closer_step = Some(InvariantCloserStep {
-            tactic_index,
-            source_index,
-            statement_index: execution.core.frontier.next_statement_index,
-        });
-        Ok(Self {
-            context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        self.facts().clone(),
-                        execution,
-                    ),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                self.focused_branch_id(),
-            ),
-            node: self.node.clone(),
-        })
+        let statement_index = execution.core.frontier.next_statement_index;
+        let (proof, ()) = self.clone().edit_execution_presentation(|presentation| {
+            presentation.invariant_closer_step = Some(InvariantCloserStep {
+                tactic_index,
+                source_index,
+                statement_index,
+            });
+        })?;
+        let state = proof.state.with_fact_deltas(Vec::new(), Vec::new());
+        Ok(proof.with_kernel_state(state))
     }
 
     /// Records a region-level `simp` for the loop-invariant bundle. The
@@ -933,31 +878,17 @@ impl<'a> Proof<'a> {
         source_index: usize,
     ) -> Result<Self, ClickError> {
         self.require_execution_frontier("`simp`")?;
-        let mut execution = self
+        let execution = self
             .execution()
-            .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("a region `simp` is only available in a loop-region proof"));
         }
-        execution.core.region_simp = Some((tactic_index, source_index));
-        Ok(Self {
-            context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        self.facts().clone(),
-                        execution,
-                    ),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                self.focused_branch_id(),
-            ),
-            node: self.node.clone(),
-        })
+        let (proof, ()) = self.clone().edit_execution_presentation(|presentation| {
+            presentation.region_simp = Some((tactic_index, source_index));
+        })?;
+        let state = proof.state.with_fact_deltas(Vec::new(), Vec::new());
+        Ok(proof.with_kernel_state(state))
     }
 
     /// Applies a frontier-local `loop` tactic as one checked operation on

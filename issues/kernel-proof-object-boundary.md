@@ -79,13 +79,21 @@ Surface metadata only through a kernel operation whose callback cannot access
 or replace the semantic execution core, facts, obligation, or proof deltas.
 Ordered post-execution scheduling helpers consequently live on the opaque
 presentation attachment rather than the semantic execution-state wrapper.
+Smart region-closer attribution and smart-step/execute construction cursors
+are presentation-only as well; none remain in `ExecutionProofCore` or rebuild
+the frontier to record metadata.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back
 into a mutable whole `ProofState`; resource scope close publishes its
-separately checked result through a frontier-only migration seam. Replacing
-that raw checked result with typed kernel evidence remains part of the resource
-transition migration.
+separately checked result through a frontier-only publication operation.
+
+This issue is limited to making the proof object and its structural invariants
+kernel-owned. Checked language drivers may still establish a semantic result
+and submit it through a narrow, transition-shaped kernel operation. Requiring
+every proof rule, execution checker, and resource checker to instead construct
+fully typed kernel evidence would be a deeper checker/kernel interface redesign
+and is not required here.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
@@ -104,13 +112,21 @@ tests must continue to pass without changing Surface Click or C fixtures.
 ## Acceptance criteria
 
 - The opaque persistent `Proof` representation, branch and split topology,
-  checked logical/execution/resource transitions, structural split/scope/join
-  operations, and completion/finalization authority live under `src/kernel/`.
+  structural split/scope/join operations, and completion/finalization authority
+  live under `src/kernel/`.
 - `src/lang/click/proof/` retains Surface `ProofStep` lowering, checked-driver
   orchestration, smart planning, diagnostics, and certificate extraction or
   rendering.
+- Production language code cannot extract or generically replace a whole
+  kernel `ProofState`. Semantic results produced by checked drivers cross the
+  boundary only through named, transition-shaped publication operations.
+- Opaque presentation callbacks cannot access or mutate semantic execution
+  state, facts, obligations, branch topology, focus, completion, or proof
+  deltas.
 - Smart tactics receive only read-only proof queries and named checked
   operations. They cannot mutate semantic state or manufacture a successor.
+- Fully typed evidence from every logical rule, execution checker, and resource
+  checker is explicitly outside this issue's acceptance criteria.
 - `ProofStep` and `ProofCertificate` remain Surface Click provenance and
   serialization, not kernel evidence or a second ordinary checking engine.
 - Technical code and architecture documentation call the soundness-critical
