@@ -152,13 +152,14 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let pre_state = context
-            .old_reference_state(&execution.frontier, &execution.state)
+            .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
         let retain_function_entry_derivation = execution
+            .core
             .frontier
             .execution_start_state
             .as_ref()
-            .is_none_or(|start| start == &*execution.state);
+            .is_none_or(|start| start == &*execution.core.state);
         let checked = check_fixed_state_theorem_application_using_facts(
             context.theorem_environment,
             application,
@@ -169,29 +170,34 @@ impl<'a> Proof<'a> {
             context.parsed_function.parameters(),
             context.arguments,
             &pre_state,
-            &execution.state,
+            &execution.core.state,
             None,
             &execution.recorded_snapshots,
             &execution.surface_propositions,
-            &execution.unfolded_predicates,
-            &execution.effect_facts,
+            &execution.core.unfolded_predicates,
+            &execution.core.effect_facts,
             context.predicate_environment,
             context.click_function_environment,
             retain_function_entry_derivation,
         )?;
         if let Some(prerequisite) = checked.function_entry_prerequisite
             && !execution
+                .core
                 .function_entry_execution_prerequisites
                 .contains(&prerequisite)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(prerequisite);
         }
         if let Some(derivation) = checked.function_entry_derivation
-            && !execution.function_entry_derivations.contains(&derivation)
+            && !execution
+                .core
+                .function_entry_derivations
+                .contains(&derivation)
         {
-            execution.function_entry_derivations.insert(derivation);
+            execution.core.function_entry_derivations.insert(derivation);
         }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {
@@ -768,11 +774,11 @@ impl<'a> Proof<'a> {
         Some(FixedStateOperationView {
             claim_label: context.claim_label,
             tactic_index: context.tactic_index,
-            effect_facts: &execution.effect_facts,
+            effect_facts: &execution.core.effect_facts,
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: context.old_reference_state(&execution.frontier, &execution.state),
-            state: &execution.state,
+            pre_state: context.old_reference_state(&execution.core.frontier, &execution.core.state),
+            state: &execution.core.state,
             result: None,
             recorded_snapshots: &execution.recorded_snapshots,
             surface_propositions: &execution.surface_propositions,
@@ -874,15 +880,21 @@ impl<'a> Proof<'a> {
         let mut execution = self.execution().cloned().ok_or_else(|| {
             self.step_error("post-execution case split lost its execution frontier")
         })?;
-        if !execution.frontier.is_at_function_exit() {
+        if !execution.core.frontier.is_at_function_exit() {
             return Err(self.step_error("post-execution case split requires function exit"));
         }
-        let checked = execution.frontier.execution().cloned().ok_or_else(|| {
-            self.step_error("post-execution case split has no checked execution paths")
-        })?;
-        let pre_state = execution
+        let checked = execution
+            .core
             .frontier
-            .execution_start_state(&execution.state)
+            .execution()
+            .cloned()
+            .ok_or_else(|| {
+                self.step_error("post-execution case split has no checked execution paths")
+            })?;
+        let pre_state = execution
+            .core
+            .frontier
+            .execution_start_state(&execution.core.state)
             .clone();
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
         let mut outcome_provenance = Vec::with_capacity(checked.paths().len() * 2);
@@ -973,7 +985,7 @@ impl<'a> Proof<'a> {
             checked.arguments().to_vec(),
             paths,
         );
-        execution.frontier.position = FrontierPosition::FunctionExit {
+        execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: candidates,
         };
         execution.outcome_provenance = Arc::new(outcome_provenance);
@@ -999,13 +1011,13 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("post-execution `if` lost its execution frontier"))?;
-        if !execution.frontier.is_at_function_exit() {
+        if !execution.core.frontier.is_at_function_exit() {
             return Err(self.step_error("post-execution `if` requires function exit"));
         }
-        let checked = execution
-            .frontier
-            .execution()
-            .ok_or_else(|| self.step_error("post-execution `if` has no checked execution paths"))?;
+        let checked =
+            execution.core.frontier.execution().ok_or_else(|| {
+                self.step_error("post-execution `if` has no checked execution paths")
+            })?;
         for path_index in 0..checked.paths().len() {
             check_verification_deadline()?;
             let provenance = execution.provenance_for_outcome(path_index);
@@ -1045,11 +1057,11 @@ impl<'a> Proof<'a> {
             tactic_index: context.tactic_index,
             effect_facts: match effects {
                 OutcomeEffectContext::Path => data.effect_facts.as_ref(),
-                OutcomeEffectContext::Frontier => &execution.effect_facts,
+                OutcomeEffectContext::Frontier => &execution.core.effect_facts,
             },
             parameters: context.parsed_function.parameters(),
             arguments: context.arguments,
-            pre_state: context.old_reference_state(&execution.frontier, &execution.state),
+            pre_state: context.old_reference_state(&execution.core.frontier, &execution.core.state),
             state: &data.state,
             result: Some(data.result.as_ref()),
             recorded_snapshots: &data.recorded_snapshots,
@@ -1208,7 +1220,7 @@ impl<'a> Proof<'a> {
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let pre_state = context
-            .old_reference_state(&execution.frontier, &execution.state)
+            .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
         let checked = check_fixed_state_fact_transport_using_facts(
             source,
@@ -1217,11 +1229,11 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
             &self.facts(),
-            &execution.effect_facts,
+            &execution.core.effect_facts,
             context.parsed_function.parameters(),
             context.arguments,
             &pre_state,
-            &execution.state,
+            &execution.core.state,
             None,
             &execution.recorded_snapshots,
             &execution.surface_propositions,

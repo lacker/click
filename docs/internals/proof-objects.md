@@ -18,8 +18,9 @@ topology in `src/kernel/proof/branches.rs`; the remaining checked
 representation is being moved across the same boundary incrementally. Its
 surface-independent persistent containers already live in
 `src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
-`src/kernel/proof/execution.rs` and the persistent fact store's structural keys
-live in `src/kernel/proof/fact_keys.rs`. The fact store's semantic matching,
+`src/kernel/proof/execution.rs`. That module now owns the complete
+surface-independent `ExecutionProofCore`, not only its frontier. The persistent
+fact store's structural keys live in `src/kernel/proof/fact_keys.rs`. The fact store's semantic matching,
 transport, conflict, and snapshot-equivalence rules live beside those keys in
 `src/kernel/proof/fact_reasoning.rs`; Surface Click fact selection, diagnostic
 rendering, and budgeted smart premise search remain in the language layer.
@@ -60,17 +61,21 @@ during ordinary verification in the intended architecture.
 
 ## Execution state inside a proof
 
-`ExecutionProofState` owns every semantic path fact: the `CState`, the
-kernel-owned execution frontier (program point, region, region start state, continuations),
-the snapshots recorded on the path, the surface spellings the path
-has lowered, case assumptions, execution facts, frontier-local loop clauses
-and rules, function-entry prerequisites and derivations, planned statement
-transitions, the freshness counters, the loop-effect goal and region flags,
-branch provenance, deferred post-execution tactics, and the path's unfolded
-predicates. The path's surface record (`SurfaceRecord`: certificate-visible
-certificate facts, the premise anchor, proof-level case choices) is typed path
-state on it too. Its one cursor, `ExpansionCursor`, records where a source
-tactic's expansion is being captured; it holds no semantic state. The checked
+Kernel `ExecutionProofCore` owns the semantic execution state for one proof
+path: the `CState`, typed frontier (program point, region, region start state,
+and continuations), checked execution facts and loop rules, function-entry
+prerequisites and derivations, freshness counters, loop-effect goal, region
+flags, structured-branch flags, and unfolded kernel predicates.
+
+Language-layer `ExecutionProofState` wraps that core with only Surface Click
+construction data: recorded snapshots and their selectors, source spellings,
+case assumptions, frontier loop clauses, planned statement transitions,
+branch and outcome provenance, deferred post-execution tactics, and the
+`SurfaceRecord` used for certificate extraction. Its `ExpansionCursor` records
+where a source tactic's expansion is being captured and holds no semantic
+state. Core access is explicit as `execution.core`; the wrapper does not
+duplicate the C state, frontier, resources, checked facts, or semantic flags.
+The checked
 drivers no longer mirror surface steps into that builder: a tactic's expansion
 and a preservation arm's certificate come from the `Proof` itself
 (`certificate`, `certificate_since`, and the lineage-following
@@ -93,7 +98,8 @@ small roots and changed map paths rather than materializing the whole state.
 Lowering and fixed-state proofs read execution data through `ExecutionView`, a
 borrowed view of the frontier, recorded snapshots, surface
 spellings, execution facts, and the `old(...)` reference state. It is built from
-typed fields only (`ExecutionProofState::view`, or `ExecutionView::new` for a
+the wrapper and its kernel core (`ExecutionProofState::view`, or
+`ExecutionView::new` for a
 planner's scratch state); nothing in it borrows a cursor.
 
 A surviving source or expansion cursor may own syntax position, focus,

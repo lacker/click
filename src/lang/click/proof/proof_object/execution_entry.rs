@@ -136,7 +136,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("a loop effect lost its preservation state"))?;
-        execution.loop_effect_goal = Some(LoopEffectGoal {
+        execution.core.loop_effect_goal = Some(LoopEffectGoal {
             before_state: before_state.clone(),
             check: check.clone(),
             closed: false,
@@ -278,12 +278,12 @@ impl<'a> Proof<'a> {
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
         Ok(ProofFinalizationView {
-            state: &execution.state,
+            state: &execution.core.state,
             facts: self.facts().to_vec(),
-            frontier: &execution.frontier,
+            frontier: &execution.core.frontier,
             execution,
             context,
-            unfolded_predicates: &execution.unfolded_predicates,
+            unfolded_predicates: &execution.core.unfolded_predicates,
             branch_path: &execution.branch_path,
             outcome_provenance: execution.outcome_provenance.as_ref(),
         })
@@ -309,7 +309,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
-        if !execution.frontier.is_at_function_exit() {
+        if !execution.core.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("post-execution tactics can be scheduled only at function exit")
             );

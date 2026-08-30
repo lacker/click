@@ -21,14 +21,15 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &CState = &execution.state;
-    let unfolded_predicates: &[String] = &execution.unfolded_predicates;
+    let state: &CState = &execution.core.state;
+    let unfolded_predicates: &[String] = &execution.core.unfolded_predicates;
 
     let _have_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "contract have check");
     let mut have_facts = pure_facts.clone();
     have_facts.extend(
         execution
+            .core
             .effect_facts
             .iter()
             .map(|fact| fact.proposition().clone()),
@@ -46,13 +47,13 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         &have_facts,
         parsed_function.parameters(),
         arguments,
-        proof_context.old_reference_state(&execution.frontier, state),
+        proof_context.old_reference_state(&execution.core.frontier, state),
         &state,
         None,
         None,
         ExecutionView::new(
-            &execution.frontier,
-            &execution.effect_facts,
+            &execution.core.frontier,
+            &execution.core.effect_facts,
             &execution.recorded_snapshots,
             &execution.surface_propositions,
             proof_context.constants.function_entry_state.as_ref(),
@@ -73,8 +74,8 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         (Some(_), _) => None,
         (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
             ExecutionView::new(
-                &execution.frontier,
-                &execution.effect_facts,
+                &execution.core.frontier,
+                &execution.core.effect_facts,
                 &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
@@ -103,13 +104,13 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                         &have_facts,
                         parsed_function.parameters(),
                         arguments,
-                        proof_context.old_reference_state(&execution.frontier, state),
+                        proof_context.old_reference_state(&execution.core.frontier, state),
                         &state,
                         None,
                         None,
                         ExecutionView::new(
-        &execution.frontier,
-        &execution.effect_facts,
+        &execution.core.frontier,
+        &execution.core.effect_facts,
         &execution.recorded_snapshots,
         &execution.surface_propositions,
         proof_context.constants.function_entry_state.as_ref(),
@@ -136,10 +137,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 claim_label,
                 tactic_index,
                 &have_facts,
-                &execution.effect_facts,
+                &execution.core.effect_facts,
                 parsed_function.parameters(),
                 arguments,
-                proof_context.old_reference_state(&execution.frontier, state),
+                proof_context.old_reference_state(&execution.core.frontier, state),
                 &state,
                 &execution.recorded_snapshots,
                 &execution.surface_propositions,
@@ -154,6 +155,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
     // Carry any kernel-issued standard-theorem authority selected
     // inside the fixed-state Proof back to the enclosing entry proof.
     if execution
+        .core
         .frontier
         .execution_start_state
         .as_ref()
@@ -169,7 +171,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                 application,
                 parsed_function.parameters(),
                 arguments,
-                proof_context.old_reference_state(&execution.frontier, state),
+                proof_context.old_reference_state(&execution.core.frontier, state),
                 &state,
                 &execution.recorded_snapshots,
                 predicate_environment,
@@ -181,9 +183,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
                     conclusion = body;
                 }
                 execution
+                    .core
                     .function_entry_execution_prerequisites
                     .insert(conclusion.clone());
-                execution.function_entry_derivations.insert(derivation);
+                execution.core.function_entry_derivations.insert(derivation);
             }
         }
     }
@@ -195,6 +198,7 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
         .surface_propositions
         .record_lowering(&have.proposition, &fact)?;
     if execution
+        .core
         .frontier
         .execution_start_state
         .as_ref()
@@ -203,9 +207,10 @@ pub(in crate::lang::click::proof) fn check_mid_execution_have(
             prove_pure_proposition_from_context(&assumptions_from_propositions(&have_facts), &fact)
     {
         execution
+            .core
             .function_entry_execution_prerequisites
             .insert(fact.clone());
-        execution.function_entry_derivations.insert(derivation);
+        execution.core.function_entry_derivations.insert(derivation);
     }
     if !pure_facts.contains(&fact) {
         pure_facts.push(fact.clone());
@@ -232,15 +237,15 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &mut CState = &mut execution.state;
-    let unfolded_predicates: &[String] = &execution.unfolded_predicates;
+    let state: &mut CState = &mut execution.core.state;
+    let unfolded_predicates: &[String] = &execution.core.unfolded_predicates;
 
-    if execution.frontier.is_at_function_exit() {
+    if execution.core.frontier.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` requires the execution frontier to be at a loop, but execution has reached function exit"
         )));
     }
-    let statement_index = execution.frontier.next_statement_index;
+    let statement_index = execution.core.frontier.next_statement_index;
     let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `loop` could not resolve source statement({statement_index})"
@@ -266,7 +271,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         function_with_prior_loops.with_frontier_loop_clause(loop_template, loop_index);
     validate_region_proof_clauses(&bound_function_block, parsed_function)?;
 
-    let initial_state = execution.frontier.execution_start_state(state).clone();
+    let initial_state = execution.core.frontier.execution_start_state(state).clone();
     let annotated = annotated_function(
         &bound_function_block,
         parsed_function,
@@ -277,15 +282,15 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         resource_environment,
         false,
     )?;
-    if execution.frontier.is_at_function_entry() {
+    if execution.core.frontier.is_at_function_entry() {
         let entry_state = c_function_entry_state(&initial_state, &annotated, arguments)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not bind function arguments"
                 ))
             })?;
-        execution.frontier.execution_start_state = Some(initial_state.clone());
-        execution.frontier.position = FrontierPosition::StatementEntry {
+        execution.core.frontier.execution_start_state = Some(initial_state.clone());
+        execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: annotated.body().clone().into(),
         };
         *state = entry_state;
@@ -361,8 +366,8 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
             surface_propositions: execution.surface_propositions.clone(),
             recorded_snapshots: execution.recorded_snapshots.clone(),
             case_path,
-            next_opaque_call: execution.next_opaque_call,
-            next_kernel_variable: execution.next_kernel_variable,
+            next_opaque_call: execution.core.next_opaque_call,
+            next_kernel_variable: execution.core.next_kernel_variable,
         }],
         &mut next_statement_index,
         &mut next_loop_index,
@@ -411,13 +416,14 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     }
     let local_function_environment = function_environment.clone().with_verified_loop_rules(
         execution
+            .core
             .frontier_loop_rules
             .iter()
             .cloned()
             .chain(std::iter::once(loop_rule.clone())),
     );
 
-    if let FrontierPosition::StatementEntry { remaining } = &execution.frontier.position {
+    if let FrontierPosition::StatementEntry { remaining } = &execution.core.frontier.position {
         let (_, tail) = split_next_source_operation(remaining).map_err(|message| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `loop` could not isolate the current source loop: {message}"
@@ -428,7 +434,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         if let Some(tail) = tail {
             flatten_top_level_sequence(&tail, &mut statements).map_err(ClickError::new)?;
         }
-        execution.frontier.position = FrontierPosition::StatementEntry {
+        execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: sequence_from_statements(&statements)
                 .expect("the current loop always contributes one statement")
                 .into(),
@@ -452,7 +458,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
         LoopStepPolicy::ApplyVerifiedRule,
         None,
     )?;
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
     if let Some(exit_condition) = loop_exit_condition {
         let exit_point = ProgramPointRef {
             region: CodeRegionRef::Loop(loop_index),
@@ -485,7 +491,7 @@ pub(in crate::lang::click::proof) fn execute_frontier_local_loop(
     execution
         .frontier_loop_clauses
         .push(loop_template.bound_to_loop(loop_index));
-    execution.frontier_loop_rules.push(loop_rule);
+    execution.core.frontier_loop_rules.push(loop_rule);
     Ok(expanded_loop)
 }
 

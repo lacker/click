@@ -457,8 +457,8 @@ pub(in crate::lang::click::proof) fn append_statement_transition_certificate(
         .planned_statement_transitions
         .push(PlannedStatementTransition {
             transition: transition.clone(),
-            next_opaque_call: execution.next_opaque_call,
-            next_kernel_variable: execution.next_kernel_variable,
+            next_opaque_call: execution.core.next_opaque_call,
+            next_kernel_variable: execution.core.next_kernel_variable,
         });
     if let Some(construction) = construction.as_mut() {
         let environments = construction.environments;

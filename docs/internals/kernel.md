@@ -32,7 +32,10 @@ Kernel files:
 - `proof/`: persistent checked proof-object infrastructure. Its `branches.rs`
   owns branch and split identities, allocation, and structural topology;
   `storage.rs` owns the shared persistent containers used by proof forks; and
-  `execution.rs` owns typed execution frontiers and loop-effect obligations.
+  `execution.rs` owns `ExecutionProofCore`: the C state, typed execution
+  frontier, checked execution facts and loop rules, semantic freshness, and
+  loop-effect and region state for one proof path. It contains no Surface
+  syntax, deferred tactic, expansion cursor, or diagnostic state.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
   conflict, and availability rules used by the persistent fact store.

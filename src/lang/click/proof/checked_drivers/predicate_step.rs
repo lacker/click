@@ -70,8 +70,8 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &CState = &execution.state;
-    let unfolded_predicates = &mut execution.unfolded_predicates;
+    let state: &CState = &execution.core.state;
+    let unfolded_predicates = &mut execution.core.unfolded_predicates;
 
     let checked_facts = check_unfold_predicate_in_facts(
         available_pure_facts,
@@ -125,6 +125,7 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             .surface_propositions
             .record_lowering(&surface, &kernel)?;
         let contract_unfolding = execution
+            .core
             .frontier
             .execution_start_state
             .as_ref()
@@ -142,9 +143,10 @@ pub(in crate::lang::click::proof) fn check_unfold_predicate_facts(
             .flatten();
         if let Some(derivation) = contract_unfolding {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(kernel);
-            execution.function_entry_derivations.insert(derivation);
+            execution.core.function_entry_derivations.insert(derivation);
         }
     }
     Ok(CheckedPredicateUnfold {

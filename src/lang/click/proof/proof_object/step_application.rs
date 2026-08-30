@@ -240,7 +240,10 @@ impl<'a> Proof<'a> {
             .ok_or_else(|| {
                 self.step_error("result-aware `frame using` lost its execution snapshot")
             })?;
-        let pre_state = execution.frontier.execution_start_state(&execution.state);
+        let pre_state = execution
+            .core
+            .frontier
+            .execution_start_state(&execution.core.state);
 
         let mut data = (*goal.data).clone();
         let mut frame_facts = Vec::with_capacity(premises.len());
@@ -249,7 +252,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .available_across_effects(kernel, &execution.effect_facts)
+                        .available_across_effects(kernel, &execution.core.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -261,7 +264,7 @@ impl<'a> Proof<'a> {
             // or a resource-shaped fact derived atomically from the context.
             let available = |fact: &Proposition| {
                 self.facts()
-                    .available_across_effects(fact, &execution.effect_facts)
+                    .available_across_effects(fact, &execution.core.effect_facts)
                     || (matches!(
                         fact,
                         Proposition::CResourceContains { .. }
@@ -401,7 +404,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |kernel| {
                     self.facts()
-                        .available_across_effects(kernel, &execution.effect_facts)
+                        .available_across_effects(kernel, &execution.core.effect_facts)
                 })
                 .cloned()
                 .map(Ok)
@@ -410,7 +413,7 @@ impl<'a> Proof<'a> {
                 })?;
             if !self
                 .facts()
-                .available_across_effects(&fact, &execution.effect_facts)
+                .available_across_effects(&fact, &execution.core.effect_facts)
             {
                 return Err(self.step_error(format!(
                     "`frame using` requires an exact available premise: {surface:?} lowered to {fact:?}"
@@ -423,13 +426,14 @@ impl<'a> Proof<'a> {
                 frame_facts.push(fact);
             }
         }
-        if execution.loop_effect_goal.is_some() {
+        if execution.core.loop_effect_goal.is_some() {
             if region.is_some() {
                 return Err(
                     self.step_error("a structural effect proof must use unqualified `frame using`")
                 );
             }
             let goal = execution
+                .core
                 .loop_effect_goal
                 .as_ref()
                 .expect("the loop effect goal was observed above");
@@ -439,6 +443,7 @@ impl<'a> Proof<'a> {
             let mut loop_effect_facts = frame_facts.clone();
             loop_effect_facts.extend(
                 execution
+                    .core
                     .effect_facts
                     .iter()
                     .map(|fact| fact.proposition().clone()),
@@ -448,13 +453,14 @@ impl<'a> Proof<'a> {
             loop_effect_facts.dedup();
             c_loop_effects_hold_at_back_edge(
                 &goal.before_state,
-                &execution.state,
+                &execution.core.state,
                 std::slice::from_ref(&goal.check),
                 &loop_effect_facts,
                 &assumptions_from_propositions(&loop_effect_facts),
             )
             .map_err(|message| self.step_error(format!("`frame using` failed: {message}")))?;
             execution
+                .core
                 .loop_effect_goal
                 .as_mut()
                 .expect("the checked loop effect goal remains present")
@@ -475,7 +481,7 @@ impl<'a> Proof<'a> {
                 checked_facts: Arc::new(frame_facts),
             });
         }
-        if !execution.frontier.is_at_function_exit() {
+        if !execution.core.frontier.is_at_function_exit() {
             return Err(self.step_error("`frame using` requires function exit"));
         }
         if let Some(region) = region {
@@ -529,11 +535,11 @@ impl<'a> Proof<'a> {
 
         let effect_indices = self.selected_effect_indices(context)?;
 
-        let checked_execution = execution.frontier.execution().ok_or_else(|| {
+        let checked_execution = execution.core.frontier.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
         let pre_state = context
-            .old_reference_state(&execution.frontier, &execution.state)
+            .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
         for effect_index in &effect_indices {
             let claim = FunctionClaimRef::Effect(
@@ -665,20 +671,20 @@ impl<'a> Proof<'a> {
         let execution_state = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if !execution_state.frontier.is_at_function_exit()
+        if !execution_state.core.frontier.is_at_function_exit()
             || !execution_state.case_assumptions.is_empty()
         {
             return Ok(None);
         }
         let effect_indices = self.selected_effect_indices(context)?;
-        let execution = execution_state.frontier.execution().ok_or_else(|| {
+        let execution = execution_state.core.frontier.execution().ok_or_else(|| {
             self.step_error("function-exit proof has no checked execution outcomes")
         })?;
         let path_independent_only = self.node.depth == 0
-            && (execution.paths().len() > 1 || execution_state.has_structured_branch_history);
+            && (execution.paths().len() > 1 || execution_state.core.has_structured_branch_history);
         let available = self.facts().to_vec();
-        let pre_state =
-            context.old_reference_state(&execution_state.frontier, &execution_state.state);
+        let pre_state = context
+            .old_reference_state(&execution_state.core.frontier, &execution_state.core.state);
         let mut path_derivations = Vec::with_capacity(execution.paths().len());
         for (path_index, path) in execution.paths().iter().enumerate() {
             if !path.obligations().is_empty() {
@@ -768,11 +774,11 @@ impl<'a> Proof<'a> {
         }
         let path_tactics = lower_certified_frame_path_tactics(
             &mut construction_surface,
-            &execution_state.frontier,
-            &execution_state.effect_facts,
+            &execution_state.core.frontier,
+            &execution_state.core.effect_facts,
             &execution_state.recorded_snapshots,
             context,
-            &execution_state.state,
+            &execution_state.core.state,
             &available,
             context.parsed_function.parameters(),
             context.arguments,
@@ -881,7 +887,7 @@ impl<'a> Proof<'a> {
         let execution = self.execution().ok_or_else(|| {
             self.step_error("smart loop framing requires an execution-frontier Proof")
         })?;
-        execution.loop_effect_goal.as_ref().ok_or_else(|| {
+        execution.core.loop_effect_goal.as_ref().ok_or_else(|| {
             self.step_error("smart loop framing requires a structural effect goal")
         })?;
         let mut dependency_names = BTreeSet::new();
@@ -898,7 +904,7 @@ impl<'a> Proof<'a> {
             {
                 if self
                     .facts()
-                    .available_across_effects(kernel, &execution.effect_facts)
+                    .available_across_effects(kernel, &execution.core.effect_facts)
                 {
                     candidates.insert(kernel.clone());
                 }
@@ -907,6 +913,7 @@ impl<'a> Proof<'a> {
                 continue;
             };
             let value = execution
+                .core
                 .state
                 .locals()
                 .object_values()
@@ -958,7 +965,7 @@ impl<'a> Proof<'a> {
                     for atom in atoms {
                         if self
                             .facts()
-                            .available_across_effects(&atom, &execution.effect_facts)
+                            .available_across_effects(&atom, &execution.core.effect_facts)
                         {
                             candidates.insert(atom);
                         }
@@ -1001,7 +1008,7 @@ impl<'a> Proof<'a> {
                 .surface_propositions
                 .available_kernel_matching(surface, |candidate| {
                     self.facts()
-                        .available_across_effects(candidate, &execution.effect_facts)
+                        .available_across_effects(candidate, &execution.core.effect_facts)
                 })
                 .cloned()
                 .or_else(|| {
@@ -1023,7 +1030,7 @@ impl<'a> Proof<'a> {
             kernel,
             context.parsed_function.parameters(),
             context.arguments,
-            &execution.state,
+            &execution.core.state,
         ) && matches(&surface)
         {
             return Some(surface);
@@ -1031,7 +1038,7 @@ impl<'a> Proof<'a> {
         // A fact about an earlier value of a body variable denotes at the
         // recorded entry of the statement that read it.
         let anchor = ProgramPointRef {
-            region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
+            region: CodeRegionRef::Statement(execution.core.frontier.next_statement_index),
             kind: ProgramPointKind::Entry,
         };
         let candidates = super::super::smart_closures::synthesize_surface_at_recorded_snapshots(

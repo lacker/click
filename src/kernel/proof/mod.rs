@@ -14,7 +14,7 @@ mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranches, SplitId};
 pub(crate) use execution::{
-    ExecutionFrontier, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
+    ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
     ProofExecutionContinuation, old_reference_state,
 };
 pub(crate) use fact_keys::{

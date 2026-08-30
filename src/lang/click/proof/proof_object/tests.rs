@@ -2859,13 +2859,21 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             .expect("application successor execution state");
         assert!(
             root_execution
+                .core
                 .state
-                .shares_storage_with(&applied_execution.state),
+                .shares_storage_with(&applied_execution.core.state),
             "theorem application does not alter the C state"
         );
-        assert!(root_execution.function_entry_execution_prerequisites.len() == 0);
+        assert!(
+            root_execution
+                .core
+                .function_entry_execution_prerequisites
+                .len()
+                == 0
+        );
         assert!(
             applied_execution
+                .core
                 .function_entry_execution_prerequisites
                 .contains(&kernel_conclusion)
         );
@@ -6997,19 +7005,22 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
         let successor_execution = successor.execution().expect("successor execution state");
         assert!(
             root_execution
+                .core
                 .state
-                .shares_storage_with(&successor_execution.state),
+                .shares_storage_with(&successor_execution.core.state),
             "unfold does not alter the C frontier"
         );
         assert!(
             root_execution
+                .core
                 .effect_facts
-                .shares_storage_with(&successor_execution.effect_facts),
+                .shares_storage_with(&successor_execution.core.effect_facts),
             "unfold does not copy unrelated effect history"
         );
 
         assert!(
             successor_execution
+                .core
                 .unfolded_predicates
                 .contains(&"selected".to_string())
         );
@@ -7490,7 +7501,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         assert!(
             closed
                 .execution()
-                .is_some_and(|execution| !execution.frontier.is_at_function_exit())
+                .is_some_and(|execution| !execution.core.frontier.is_at_function_exit())
         );
 
         let mut missing = resource.clone();
@@ -7513,7 +7524,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
         let terminal_execution = terminal
             .execution()
             .expect("the terminal open retains execution state");
-        assert!(terminal_execution.frontier.is_at_function_exit());
+        assert!(terminal_execution.core.frontier.is_at_function_exit());
         assert_eq!(terminal_execution.post_execution_tactics.len(), 1);
         assert_eq!(
             terminal.certificate().steps(),
@@ -7616,14 +7627,16 @@ fn execution_transport_forks_without_copying_unrelated_state() {
         let successor_execution = successor.execution().expect("successor execution state");
         assert!(
             root_execution
+                .core
                 .state
-                .shares_storage_with(&successor_execution.state),
+                .shares_storage_with(&successor_execution.core.state),
             "transport does not alter the C state"
         );
         assert!(
             root_execution
+                .core
                 .effect_facts
-                .shares_storage_with(&successor_execution.effect_facts),
+                .shares_storage_with(&successor_execution.core.effect_facts),
             "transport does not copy unrelated effect history"
         );
         assert_eq!(
@@ -7843,6 +7856,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
             !stepped
                 .execution()
                 .expect("assignment successor retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -8064,6 +8078,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             completed
                 .execution()
                 .expect("statement successor retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -8078,8 +8093,9 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             .expect("statement successor retains execution state");
         assert!(
             root_execution
+                .core
                 .state
-                .shares_nonlocal_storage_with(&completed_execution.state),
+                .shares_nonlocal_storage_with(&completed_execution.core.state),
             "a return step should not copy unchanged memory, resources, or populations"
         );
         assert!(completed.is_at_function_exit());
@@ -8171,7 +8187,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         let execution = closed
             .execution()
             .expect("the successor retains execution state");
-        assert!(execution.region_invariants_closed);
+        assert!(execution.core.region_invariants_closed);
         assert!(
             execution.invariant_closer_step.is_none(),
             "source timing metadata is attached only at the check adapter boundary"
@@ -8564,6 +8580,7 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
             completed
                 .execution()
                 .expect("completed proof retains execution state")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -8759,6 +8776,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             completed
                 .execution()
                 .expect("completed proof retains execution state")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -8848,6 +8866,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
             sibling_completed
                 .execution()
                 .expect("completed sibling join retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -9003,6 +9022,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             completed
                 .execution()
                 .expect("completed interface proof retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -9115,6 +9135,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         completed
             .execution()
             .expect("the completed sibling interface proof retains execution")
+            .core
             .frontier
             .is_at_function_exit()
     );
@@ -9258,9 +9279,10 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         };
         assert!(
             !arm_execution(true)
+                .core
                 .state
                 .resources()
-                .shares_storage_with(arm_execution(false).state.resources())
+                .shares_storage_with(arm_execution(false).core.state.resources())
         );
 
         let assertions = vec![ProofAssertion::Resource(ready_clause.clone())];
@@ -9342,6 +9364,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
             normalized_join
                 .execution()
                 .expect("normalized interface retains execution")
+                .core
                 .state
                 .resources()
                 .contains_exact_representation(&represented_quantity),
@@ -9500,7 +9523,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
                 .is_some()
         );
         assert!(
-            execution.frontier.is_at_region_boundary(),
+            execution.core.frontier.is_at_region_boundary(),
             "the nested join ends the outer arm's own region"
         );
         let joined = joined
@@ -9520,6 +9543,7 @@ fn nested_end_of_arm_interface_derives_its_enclosing_continuation() {
             completed
                 .execution()
                 .expect("completed nested proof retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -9663,6 +9687,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
             completed
                 .execution()
                 .expect("completed decided proof retains execution")
+                .core
                 .frontier
                 .is_at_function_exit()
         );
@@ -9755,6 +9780,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
         completed
             .execution()
             .expect("the completed decided sibling proof retains execution")
+            .core
             .frontier
             .is_at_function_exit()
     );
@@ -9896,8 +9922,9 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let execution = joined
             .execution()
             .expect("terminal join should retain execution state");
-        assert!(execution.frontier.is_at_function_exit());
+        assert!(execution.core.frontier.is_at_function_exit());
         let outcome_paths = execution
+            .core
             .frontier
             .execution()
             .expect("terminal join should retain outcomes")
@@ -9978,9 +10005,10 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let sibling_execution = sibling_joined
             .execution()
             .expect("the sibling terminal join retains execution state");
-        assert!(sibling_execution.frontier.is_at_function_exit());
+        assert!(sibling_execution.core.frontier.is_at_function_exit());
         assert_eq!(
             sibling_execution
+                .core
                 .frontier
                 .execution()
                 .expect("the sibling terminal join retains outcomes")

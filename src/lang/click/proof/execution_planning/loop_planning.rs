@@ -1379,14 +1379,14 @@ pub(in crate::lang::click::proof) fn verify_one_loop_preservation_proof(
             })
             .collect::<Vec<_>>();
         let source_tactics = leaf.path_certificate().to_proof_tactics();
-        let region_simp = context_execution.region_simp;
+        let region_simp = context_execution.core.region_simp;
         let proof_site = leaf
             .finalization_view()?
             .context
             .constants
             .proof_site
             .clone();
-        let invariants_already_closed = context_execution.region_invariants_closed;
+        let invariants_already_closed = context_execution.core.region_invariants_closed;
         let statement_index = context_frontier.next_statement_index;
         let (closer_index, closer_source, closer_name, closer_class) =
             if let Some(step) = context_execution.invariant_closer_step {

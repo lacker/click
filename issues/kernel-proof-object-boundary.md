@@ -17,7 +17,12 @@ checked core retains only its derivation lineage and certificate attribution.
 The proof-specific persistent storage containers now live in
 `src/kernel/proof/storage.rs`; they carry no surface syntax or transition
 authority. Typed execution frontiers and loop-effect obligations now live in
-`src/kernel/proof/execution.rs`; snapshot-blind and alpha-equivalence fact-index
+`src/kernel/proof/execution.rs`. That module also owns `ExecutionProofCore`:
+the path's C state, checked execution facts and loop rules, semantic freshness,
+and loop/region flags. The language-layer `ExecutionProofState` is an explicit
+wrapper containing only snapshot selectors, source spellings, deferred Surface
+tactics, construction cursors, and provenance; it does not duplicate semantic
+execution state. Snapshot-blind and alpha-equivalence fact-index
 keys live in `src/kernel/proof/fact_keys.rs`, and surface-independent fact
 matching, transport, conflict, and equivalence rules live in
 `src/kernel/proof/fact_reasoning.rs`. Surface fact-selection policy,

@@ -25,7 +25,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     let resource_environment = proof_context.resource_environment;
     let claim_label = proof_context.claim_label;
 
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
 
     let mut concrete_facts = available_pure_facts.clone();
     let mut established_interface_resources = Vec::new();
@@ -37,7 +37,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                         concrete_facts.assumptions(),
                         parameters,
                         arguments,
-                        proof_context.old_reference_state(&execution.frontier, state),
+                        proof_context.old_reference_state(&execution.core.frontier, state),
                         state,
                         None,
                         &execution.recorded_snapshots,
@@ -106,7 +106,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         *available_pure_facts = concrete_facts;
         return Ok(());
     }
-    let entry_state = execution.frontier.execution_start_state(state).clone();
+    let entry_state = execution.core.frontier.execution_start_state(state).clone();
     let abstraction = match sibling_join_states {
         Some(states) => abstract_c_state_for_join_across(state, states, stable_join_locals),
         None => abstract_c_state_for_join(state, stable_join_locals),
@@ -127,7 +127,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
         .recorded_snapshots
         .insert(target.clone(), abstract_state.clone());
     execution.case_assumptions.clear();
-    execution.execution_abstraction = true;
+    execution.core.execution_abstraction = true;
 
     let mut exported_resources = ResourceContext::new();
     // This vector contains only facts explicitly exported by the interface
@@ -168,7 +168,7 @@ pub(super) fn apply_branch_interface_with_proof_facts(
             }
             if !entry_loadables.is_empty() {
                 let mut pre_advance_facts = concrete_facts.clone();
-                for fact in &execution.effect_facts {
+                for fact in &execution.core.effect_facts {
                     if !pre_advance_facts.contains_top_level(fact.proposition()) {
                         pre_advance_facts = pre_advance_facts.with_fact(fact.proposition().clone());
                     }
@@ -408,9 +408,9 @@ pub(super) fn execute_branch_step_from_frontier_position(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
 
-    let statement_index = execution.frontier.next_statement_index;
+    let statement_index = execution.core.frontier.next_statement_index;
     let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
@@ -419,8 +419,8 @@ pub(super) fn execute_branch_step_from_frontier_position(
     let (execution_start_state, mut current_state, statement, remaining) =
         next_top_level_statement_from_frontier_position(
             ExecutionView::new(
-                &execution.frontier,
-                &execution.effect_facts,
+                &execution.core.frontier,
+                &execution.core.effect_facts,
                 &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
@@ -536,8 +536,8 @@ pub(super) fn execute_branch_step_from_frontier_position(
         && !condition_was_proven
         && matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
     {
-        let occurrence = execution.next_path_choice;
-        execution.next_path_choice += 1;
+        let occurrence = execution.core.next_path_choice;
+        execution.core.next_path_choice += 1;
         let statement_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
@@ -627,7 +627,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
         );
         restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
         &current_state,
@@ -638,12 +638,12 @@ pub(super) fn execute_branch_step_from_frontier_position(
     } else {
         *else_branch
     };
-    execution.frontier.next_statement_index = if selected_then {
+    execution.core.frontier.next_statement_index = if selected_then {
         then_statement_index
     } else {
         else_statement_index
     };
-    execution.frontier.execution_start_state = Some(execution_start_state);
+    execution.core.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state;
     // The selected arm is spliced before the `if`'s tail so the frontier's
     // own statement tree keeps every downstream statement reachable; the
@@ -653,7 +653,7 @@ pub(super) fn execute_branch_step_from_frontier_position(
         // The empty arm completes this branch region immediately; the patched
         // layout supplies its control successor and statically completed
         // branch regions.
-        let skip_index = execution.frontier.next_statement_index;
+        let skip_index = execution.core.frontier.next_statement_index;
         for exited in proof_context
             .constants
             .source_layout
@@ -676,19 +676,19 @@ pub(super) fn execute_branch_step_from_frontier_position(
         match remaining {
             Some(tail) => {
                 if let Some(successor) = successor {
-                    execution.frontier.next_statement_index = successor;
+                    execution.core.frontier.next_statement_index = successor;
                 }
-                execution.frontier.position = FrontierPosition::StatementEntry {
+                execution.core.frontier.position = FrontierPosition::StatementEntry {
                     remaining: tail.into(),
                 };
             }
-            None => match resume_after_completed_region(&mut execution.frontier) {
+            None => match resume_after_completed_region(&mut execution.core.frontier) {
                 Some(tail) => {
-                    execution.frontier.position = FrontierPosition::StatementEntry {
+                    execution.core.frontier.position = FrontierPosition::StatementEntry {
                         remaining: tail.into(),
                     };
                 }
-                None if finish_exhausted_region(&mut execution.frontier) => {}
+                None if finish_exhausted_region(&mut execution.core.frontier) => {}
                 None => {
                     return Err(ClickError::new(format!(
                         "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
@@ -701,12 +701,12 @@ pub(super) fn execute_branch_step_from_frontier_position(
             Some(tail) => c_seq(selected_branch, tail),
             None => selected_branch,
         };
-        execution.frontier.position = FrontierPosition::StatementEntry {
+        execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: spliced.into(),
         };
     }
     record_current_statement_entry(
-        &execution.frontier,
+        &execution.core.frontier,
         &mut execution.recorded_snapshots,
         state,
         function_block,
@@ -741,7 +741,7 @@ fn execute_concrete_loop_head_step(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    execution.concrete_loop_execution = true;
+    execution.core.concrete_loop_execution = true;
     let CStatement::While {
         condition, body, ..
     } = loop_statement.clone()
@@ -823,9 +823,9 @@ fn execute_concrete_loop_head_step(
         );
         restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
-    execution.frontier.execution_start_state = Some(execution_start_state);
+    execution.core.frontier.execution_start_state = Some(execution_start_state);
     *state = current_state.clone();
 
     if condition_transition.is_true {
@@ -834,26 +834,27 @@ fn execute_concrete_loop_head_step(
             None => loop_statement,
         };
         execution
+            .core
             .frontier
             .continuations
             .push(ProofExecutionContinuation {
                 remaining: Some(loop_head.into()),
                 next_statement_index: statement_index,
             });
-        execution.frontier.next_statement_index = proof_context.constants.source_layout
+        execution.core.frontier.next_statement_index = proof_context.constants.source_layout
             .loop_body_entry(loop_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
                 ))
             })?;
-        execution.frontier.position = FrontierPosition::StatementEntry {
+        execution.core.frontier.position = FrontierPosition::StatementEntry {
             remaining: (*body).into(),
         };
         record_statement_program_snapshot_state(
             &mut execution.recorded_snapshots,
             function_block,
-            execution.frontier.next_statement_index,
+            execution.core.frontier.next_statement_index,
             ProgramPointKind::Entry,
             current_state,
         );
@@ -891,26 +892,26 @@ fn execute_concrete_loop_head_step(
         );
     }
     let next = if let Some(remaining) = remaining {
-        execution.frontier.next_statement_index = continuation_node;
+        execution.core.frontier.next_statement_index = continuation_node;
         Some(remaining)
     } else {
-        resume_after_completed_region(&mut execution.frontier)
+        resume_after_completed_region(&mut execution.core.frontier)
     };
     let Some(remaining) = next else {
-        if finish_exhausted_region(&mut execution.frontier) {
+        if finish_exhausted_region(&mut execution.core.frontier) {
             return Ok(());
         }
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` reached the end of the function without a return"
         )));
     };
-    execution.frontier.position = FrontierPosition::StatementEntry {
+    execution.core.frontier.position = FrontierPosition::StatementEntry {
         remaining: remaining.into(),
     };
     record_statement_program_snapshot_state(
         &mut execution.recorded_snapshots,
         function_block,
-        execution.frontier.next_statement_index,
+        execution.core.frontier.next_statement_index,
         ProgramPointKind::Entry,
         current_state,
     );
@@ -1484,7 +1485,7 @@ fn execute_step_from_frontier_position_selecting_path(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
 
     #[cfg(test)]
     if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning) {
@@ -1496,7 +1497,7 @@ fn execute_step_from_frontier_position_selecting_path(
             ));
         });
     }
-    let statement_index = execution.frontier.next_statement_index;
+    let statement_index = execution.core.frontier.next_statement_index;
     let source_region = proof_context.constants.source_layout.statement(statement_index).ok_or_else(|| {
         ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve source statement({statement_index})"
@@ -1525,8 +1526,8 @@ fn execute_step_from_frontier_position_selecting_path(
     let (execution_start_state, current_state, source_statement, remaining) =
         next_top_level_statement_from_frontier_position(
             ExecutionView::new(
-                &execution.frontier,
-                &execution.effect_facts,
+                &execution.core.frontier,
+                &execution.core.effect_facts,
                 &execution.recorded_snapshots,
                 &execution.surface_propositions,
                 proof_context.constants.function_entry_state.as_ref(),
@@ -1609,8 +1610,8 @@ fn execute_step_from_frontier_position_selecting_path(
         function_environment,
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         &transition_label,
-        &mut execution.next_opaque_call,
-        &mut execution.next_kernel_variable,
+        &mut execution.core.next_opaque_call,
+        &mut execution.core.next_kernel_variable,
         prerequisite_policy,
         fact_transport_policy,
         context,
@@ -1669,7 +1670,10 @@ fn execute_step_from_frontier_position_selecting_path(
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
+            append_execution_effect_facts(
+                &mut completed_execution_facts,
+                &execution.core.effect_facts,
+            );
             let return_assumptions = assumptions_from_propositions(&transition.pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
                 &execution_start_state,
@@ -1680,7 +1684,7 @@ fn execute_step_from_frontier_position_selecting_path(
             );
             completed_outcomes.push((outcome, completed_execution_facts, obligations));
         }
-        let state: &mut CState = &mut execution.state;
+        let state: &mut CState = &mut execution.core.state;
         let completed = c_function_execution_candidates_from_outcomes(
             execution_start_state.clone(),
             function.clone(),
@@ -1689,14 +1693,14 @@ fn execute_step_from_frontier_position_selecting_path(
         );
         let execution_state = execution_start_state.clone();
         set_function_exit_execution(
-            &mut execution.frontier,
+            &mut execution.core.frontier,
             claim_label,
             tactic_index,
             tactic_name,
             execution_start_state,
             completed,
         )?;
-        execution.frontier.next_statement_index = source_region.continuation_node;
+        execution.core.frontier.next_statement_index = source_region.continuation_node;
         *available_pure_facts = common_pure_facts;
         *state = execution_state;
         return Ok(common_introduced_facts);
@@ -1780,7 +1784,7 @@ fn execute_step_from_frontier_position_selecting_path(
         .expect("one statement transition was required");
     let introduced_facts = transition.introduced_facts.clone();
     let definedness = statement_expression_definedness(&current_state, &step_statement);
-    for derivation in &execution.function_entry_derivations {
+    for derivation in &execution.core.function_entry_derivations {
         let mut conclusion = derivation.proposition();
         while let Proposition::Implies(_, body) = conclusion {
             conclusion = body;
@@ -1795,6 +1799,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 .contains(conclusion)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(conclusion.clone());
         }
@@ -1891,7 +1896,7 @@ fn execute_step_from_frontier_position_selecting_path(
         );
         restore_construction_snapshot_view(&mut execution.recorded_snapshots, restore);
     }
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a
     // later proof step. Record that form during both planning and
@@ -1968,7 +1973,7 @@ fn execute_step_from_frontier_position_selecting_path(
         }
     }
     let execution_pure_facts = transition.execution_facts;
-    append_execution_effect_facts(&mut execution.effect_facts, &execution_pure_facts);
+    append_execution_effect_facts(&mut execution.core.effect_facts, &execution_pure_facts);
     let transition_obligations = transition.obligations;
     let successor_pure_facts = transition.pure_facts;
     let outcome = transition.outcome;
@@ -2023,28 +2028,28 @@ fn execute_step_from_frontier_position_selecting_path(
                 );
             }
             let remaining = if let Some(remaining) = remaining {
-                execution.frontier.next_statement_index = source_region.continuation_node;
+                execution.core.frontier.next_statement_index = source_region.continuation_node;
                 Some(remaining)
             } else {
-                resume_after_completed_region(&mut execution.frontier)
+                resume_after_completed_region(&mut execution.core.frontier)
             };
             *available_pure_facts = successor_pure_facts;
-            execution.frontier.execution_start_state = Some(execution_start_state);
+            execution.core.frontier.execution_start_state = Some(execution_start_state);
             *state = next_state.clone();
             match remaining {
                 Some(remaining) => {
-                    execution.frontier.position = FrontierPosition::StatementEntry {
+                    execution.core.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
                     record_statement_program_snapshot_state(
                         &mut execution.recorded_snapshots,
                         function_block,
-                        execution.frontier.next_statement_index,
+                        execution.core.frontier.next_statement_index,
                         ProgramPointKind::Entry,
                         next_state,
                     );
                 }
-                None if finish_exhausted_region(&mut execution.frontier) => {
+                None if finish_exhausted_region(&mut execution.core.frontier) => {
                     // The region's boundary state is also the entry state of
                     // its statically known continuation, exactly as the arm
                     // recorded it when continuations were popped at runtime.
@@ -2065,7 +2070,7 @@ fn execute_step_from_frontier_position_selecting_path(
         }
         CStatementOutcome::Return { .. } => {
             if matches!(&outcome, CStatementOutcome::Return { .. }) {
-                record_completed_continuation_exits(&mut execution.frontier);
+                record_completed_continuation_exits(&mut execution.core.frontier);
             }
             let return_assumptions = assumptions_from_propositions(&successor_pure_facts);
             let (outcome, obligations) = c_function_outcome_from_statement_outcome(
@@ -2076,7 +2081,10 @@ fn execute_step_from_frontier_position_selecting_path(
                 &return_assumptions,
             );
             let mut completed_execution_facts = execution_pure_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
+            append_execution_effect_facts(
+                &mut completed_execution_facts,
+                &execution.core.effect_facts,
+            );
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
@@ -2085,19 +2093,22 @@ fn execute_step_from_frontier_position_selecting_path(
             );
             let execution_state = execution_start_state.clone();
             set_function_exit_execution(
-                &mut execution.frontier,
+                &mut execution.core.frontier,
                 claim_label,
                 tactic_index,
                 tactic_name,
                 execution_start_state,
                 completed,
             )?;
-            execution.frontier.next_statement_index = source_region.continuation_node;
+            execution.core.frontier.next_statement_index = source_region.continuation_node;
             *state = execution_state;
         }
         CStatementOutcome::VerificationDiverges => {
             let mut completed_execution_facts = execution_pure_facts;
-            append_execution_effect_facts(&mut completed_execution_facts, &execution.effect_facts);
+            append_execution_effect_facts(
+                &mut completed_execution_facts,
+                &execution.core.effect_facts,
+            );
             let completed = c_function_execution_candidates_from_outcomes(
                 execution_start_state.clone(),
                 function.clone(),
@@ -2110,14 +2121,14 @@ fn execute_step_from_frontier_position_selecting_path(
             );
             let execution_state = execution_start_state.clone();
             set_function_exit_execution(
-                &mut execution.frontier,
+                &mut execution.core.frontier,
                 claim_label,
                 tactic_index,
                 tactic_name,
                 execution_start_state,
                 completed,
             )?;
-            execution.frontier.next_statement_index = source_region.continuation_node;
+            execution.core.frontier.next_statement_index = source_region.continuation_node;
             *state = execution_state;
         }
         CStatementOutcome::UndefinedBehavior(kind) => {
@@ -2157,7 +2168,7 @@ fn execute_step_from_frontier_position_selecting_path(
     if construction.is_some() {
         // Construction reads the post-statement state while it records into
         // the execution; the transports do not change the state.
-        let exit_state = (*execution.state).clone();
+        let exit_state = (*execution.core.state).clone();
         for operation in &deferred_transport_operations {
             if let Some(construction) = construction.as_mut() {
                 let environments = construction.environments;
@@ -2303,26 +2314,26 @@ pub(super) fn bounded_execute_from_frontier_position(
     let mut executed_steps = 0;
 
     while let Some(mut frontier) = pending.pop() {
-        if frontier.execution.frontier.is_at_function_exit() {
+        if frontier.execution.core.frontier.is_at_function_exit() {
             completed.push(frontier);
             continue;
         }
         if executed_steps == BOUNDED_EXECUTE_STEP_LIMIT {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute` exhausted its {BOUNDED_EXECUTE_STEP_LIMIT}-step budget at statement({})",
-                frontier.execution.frontier.next_statement_index
+                frontier.execution.core.frontier.next_statement_index
             )));
         }
         executed_steps += 1;
 
-        let statement_index = frontier.execution.frontier.next_statement_index;
+        let statement_index = frontier.execution.core.frontier.next_statement_index;
         let source_region = proof_context
             .constants.source_layout
             .statement(statement_index)
             .ok_or_else(|| {
                 ClickError::new(format!(
                     "`{claim_label}` tactic {tactic_index}: `execute` could not resolve source statement({})",
-                    frontier.execution.frontier.next_statement_index
+                    frontier.execution.core.frontier.next_statement_index
                 ))
             })?;
         if matches!(source_region.kind, SourceStatementKind::If { .. }) {
@@ -2428,12 +2439,12 @@ pub(super) fn merge_bounded_execution_frontiers(
     }
 
     let execution_start_state = completed[0]
-        .execution.frontier
+        .execution.core.frontier
         .execution_start_state
         .clone()
         .ok_or_else(|| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `execute` has no execution start execution.state"
+                "`{claim_label}` tactic {tactic_index}: `execute` has no execution start execution.core.state"
             ))
         })?;
     let mut common_pure_facts = completed[0].pure_facts.clone();
@@ -2454,6 +2465,7 @@ pub(super) fn merge_bounded_execution_frontiers(
     for frontier in &completed {
         let function_execution = frontier
             .execution
+            .core
             .frontier
             .execution()
             .expect("completed bounded frontier should have an execution");
@@ -2477,10 +2489,10 @@ pub(super) fn merge_bounded_execution_frontiers(
 
     let mut merged = completed.remove(0);
     merged.execution.recorded_snapshots = common_snapshots;
-    merged.execution.frontier.position = FrontierPosition::FunctionExit {
+    merged.execution.core.frontier.position = FrontierPosition::FunctionExit {
         execution: function_execution,
     };
-    merged.execution.state = execution_start_state.into();
+    merged.execution.core.state = execution_start_state.into();
     merged.pure_facts = common_pure_facts;
     *execution = merged.execution;
     *available_pure_facts = merged.pure_facts;
@@ -2497,7 +2509,7 @@ pub(super) fn execute_rest_from_frontier_position(
     let function = proof_context.function;
 
     loop {
-        let can_execute_one_step = match &execution.frontier.position {
+        let can_execute_one_step = match &execution.core.frontier.position {
             FrontierPosition::FunctionEntry => split_next_execution_step(function.body()).is_ok(),
             FrontierPosition::StatementEntry { remaining } => {
                 split_next_execution_step(remaining).is_ok()
@@ -2524,7 +2536,7 @@ pub(super) fn execute_rest_from_frontier_position(
         )?;
     }
 
-    if !execution.frontier.is_at_function_exit() {
+    if !execution.core.frontier.is_at_function_exit() {
         bounded_execute_from_frontier_position(
             execution,
             proof_context,
@@ -2560,20 +2572,20 @@ pub(super) fn execute_until_statement(
         )));
     }
 
-    if execution.frontier.is_at_function_exit() {
+    if execution.core.frontier.is_at_function_exit() {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot run after execution already reached function exit"
         )));
     }
-    if statement_index < execution.frontier.next_statement_index {
+    if statement_index < execution.core.frontier.next_statement_index {
         return Err(ClickError::new(format!(
             "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` cannot move backward from statement({})",
-            execution.frontier.next_statement_index
+            execution.core.frontier.next_statement_index
         )));
     }
 
-    while execution.frontier.next_statement_index != statement_index {
-        let region_start = execution.frontier.next_statement_index;
+    while execution.core.frontier.next_statement_index != statement_index {
+        let region_start = execution.core.frontier.next_statement_index;
         let assumptions = assumptions_from_propositions(available_pure_facts);
         execute_step_from_frontier_position(
             execution,
@@ -2586,15 +2598,15 @@ pub(super) fn execute_until_statement(
             LoopStepPolicy::ApplyVerifiedRule,
             construction.as_mut().map(Construction::reborrow),
         )?;
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` reached function exit before its target"
             )));
         }
-        if execution.frontier.next_statement_index > statement_index {
+        if execution.core.frontier.next_statement_index > statement_index {
             return Err(ClickError::new(format!(
                 "`{claim_label}` tactic {tactic_index}: `execute_until(statement({statement_index}))` target is not reachable from the current execution path; advancing statement({region_start}) moved the frontier to statement({})",
-                execution.frontier.next_statement_index
+                execution.core.frontier.next_statement_index
             )));
         }
     }

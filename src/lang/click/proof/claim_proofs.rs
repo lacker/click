@@ -1090,11 +1090,11 @@ pub(super) fn finish_ordered_proof<'a>(
             )
         })
         .transpose()?;
-    let frontier_function_environment =
-        (!proof_execution.frontier_loop_rules.is_empty()).then(|| {
+    let frontier_function_environment = (!proof_execution.core.frontier_loop_rules.is_empty())
+        .then(|| {
             function_environment
                 .clone()
-                .with_verified_loop_rules(proof_execution.frontier_loop_rules.to_vec())
+                .with_verified_loop_rules(proof_execution.core.frontier_loop_rules.to_vec())
         });
     let function = frontier_function.as_ref().unwrap_or(function);
     let function_environment = frontier_function_environment
@@ -1118,6 +1118,7 @@ pub(super) fn finish_ordered_proof<'a>(
             .clone();
         certification_facts.extend(
             proof_execution
+                .core
                 .function_entry_execution_prerequisites
                 .iter()
                 .cloned(),
@@ -1210,13 +1211,13 @@ pub(super) fn finish_ordered_proof<'a>(
                 &proof_label,
                 "independent kernel certification",
                 || {
-                    if proof_execution.frontier_loop_rules.is_empty()
+                    if proof_execution.core.frontier_loop_rules.is_empty()
                         && let Some((_, _, _, execution)) = certification_cache.iter().find(
                             |(facts, cached_state, concrete_loop_execution, _)| {
                                 facts == &certification_facts
                                     && cached_state == pre_state
                                     && *concrete_loop_execution
-                                        == proof_execution.concrete_loop_execution
+                                        == proof_execution.core.concrete_loop_execution
                             },
                         )
                     {
@@ -1230,7 +1231,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             arguments,
                             &execution_start_assumptions,
                             function_environment,
-                            proof_execution.concrete_loop_execution,
+                            proof_execution.core.concrete_loop_execution,
                             || {
                                 prove_checked_c_function_execution_with_environment(
                                     pre_state.clone(),
@@ -1238,14 +1239,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                     arguments.to_vec(),
                                     execution_start_assumptions.clone(),
                                     function_environment.clone(),
-                                    if proof_execution.concrete_loop_execution
-                                        || !proof_execution.frontier_loop_rules.is_empty()
+                                    if proof_execution.core.concrete_loop_execution
+                                        || !proof_execution.core.frontier_loop_rules.is_empty()
                                     {
                                         CExecutionSemantics::APPLY_VERIFIED_RULES
                                     } else {
                                         CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
                                     },
-                                    if proof_execution.concrete_loop_execution {
+                                    if proof_execution.core.concrete_loop_execution {
                                         CFunctionContractExecutionMode::ExecuteLoops
                                     } else {
                                         CFunctionContractExecutionMode::VerifyLoops
@@ -1253,11 +1254,11 @@ pub(super) fn finish_ordered_proof<'a>(
                                 )
                             },
                         );
-                        if proof_execution.frontier_loop_rules.is_empty() {
+                        if proof_execution.core.frontier_loop_rules.is_empty() {
                             certification_cache.push((
                                 certification_facts.clone(),
                                 pre_state.clone(),
-                                proof_execution.concrete_loop_execution,
+                                proof_execution.core.concrete_loop_execution,
                                 execution.clone(),
                             ));
                         }
@@ -1267,8 +1268,9 @@ pub(super) fn finish_ordered_proof<'a>(
             );
             let certified_execution = checked_c_function_execution_with_entry_derivations(
                 certified_execution,
-                proof_execution.function_entry_derivations.to_vec(),
+                proof_execution.core.function_entry_derivations.to_vec(),
                 proof_execution
+                    .core
                     .function_entry_execution_prerequisites
                     .to_vec(),
             );
@@ -1522,7 +1524,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 &proof_label,
                 "certified outcome pairing",
                 || -> Result<Option<Vec<Option<usize>>>, ClickError> {
-                    if proof_execution.execution_abstraction {
+                    if proof_execution.core.execution_abstraction {
                         return Ok((!certified_outcomes.is_empty())
                             .then(|| vec![Some(0); execution.paths().len()]));
                     }
@@ -2211,7 +2213,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                         "post-execution have context assembly",
                                         || {
                                             let mut available = path_requirements.clone();
-                                            for fact in &proof_execution.effect_facts {
+                                            for fact in &proof_execution.core.effect_facts {
                                                 if matches!(
                                                     fact.proposition(),
                                                     Proposition::CMemoryMutatesOnly { .. }
@@ -2223,7 +2225,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 }
                                             }
                                             for equation in crate::kernel::certified_store_equations(
-                                                &proof_execution.effect_facts,
+                                                &proof_execution.core.effect_facts,
                                             ) {
                                                 if !available.contains(&equation) {
                                                     available.push(equation);
@@ -2231,7 +2233,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                             }
                                             for fact in
                                                 crate::kernel::certified_store_loadability_facts(
-                                                    &proof_execution.effect_facts,
+                                                    &proof_execution.core.effect_facts,
                                                 )
                                             {
                                                 if !available.contains(&fact) {
@@ -3834,7 +3836,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     }
 
                     let (certified_path, specification_outcome, specification_requirements) =
-                        if proof_execution.execution_abstraction {
+                        if proof_execution.core.execution_abstraction {
                             (
                                 certified_path.clone(),
                                 certified_outcomes_by_group[certified_path_index.0]
@@ -3911,9 +3913,9 @@ pub(super) fn finish_ordered_proof<'a>(
                             expansion_blocker: retained_surface.blocker.clone(),
                             specification: specification.clone(),
                             theorem: theorem.clone(),
-                            concrete_loop_execution: proof_execution.concrete_loop_execution,
+                            concrete_loop_execution: proof_execution.core.concrete_loop_execution,
                             frontier_loop_clauses: proof_execution.frontier_loop_clauses.to_vec(),
-                            frontier_loop_rules: proof_execution.frontier_loop_rules.to_vec(),
+                            frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
                             checked_execution: certified_executions[certified_path_index.0].clone(),
                         });
                     }

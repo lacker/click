@@ -560,7 +560,7 @@ impl<'a> ProofScope<'a> {
                     .step_error("open resource branch lost its execution frontier")
             })?;
         let mut facts = body.facts().clone();
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             execution.defer_post_execution(
                 context.tactic_index,
                 *source_index,
@@ -571,7 +571,7 @@ impl<'a> ProofScope<'a> {
             );
         } else {
             let pre_state = context
-                .old_reference_state(&execution.frontier, &execution.state)
+                .old_reference_state(&execution.core.frontier, &execution.core.state)
                 .clone();
             let checked = close_open_resource_for_proof(
                 context.resource_environment,
@@ -582,14 +582,14 @@ impl<'a> ProofScope<'a> {
                 context.parsed_function.parameters(),
                 context.arguments,
                 &pre_state,
-                execution.state.into_value(),
+                execution.core.state.into_value(),
                 context.predicate_environment,
                 context.click_function_environment,
-                &execution.unfolded_predicates,
+                &execution.core.unfolded_predicates,
                 *preserve_exposed_body,
             )?;
             facts = checked.facts;
-            execution.state = checked.state.into();
+            execution.core.state = checked.state.into();
         }
         let mut state = Arc::unwrap_or_clone(body.state.clone());
         state.open_branches =
@@ -931,10 +931,11 @@ impl<'a> ProofScope<'a> {
             .certificate_facts
             .insert(kernel.clone());
         let at_entry = execution
+            .core
             .frontier
             .execution_start_state
             .as_ref()
-            .is_none_or(|start| start == &*execution.state);
+            .is_none_or(|start| start == &*execution.core.state);
         if !at_entry {
             return Ok(());
         }
@@ -944,7 +945,7 @@ impl<'a> ProofScope<'a> {
                 continue;
             };
             let pre_state = context
-                .old_reference_state(&execution.frontier, &execution.state)
+                .old_reference_state(&execution.core.frontier, &execution.core.state)
                 .clone();
             if let Some(derivation) =
                 kernel_standard_theorem_derivation_in_current_state_with_assumptions(
@@ -953,7 +954,7 @@ impl<'a> ProofScope<'a> {
                     context.parsed_function.parameters(),
                     context.arguments,
                     &pre_state,
-                    &execution.state,
+                    &execution.core.state,
                     &execution.recorded_snapshots,
                     context.predicate_environment,
                     context.click_function_environment,
@@ -965,18 +966,20 @@ impl<'a> ProofScope<'a> {
                     conclusion = body;
                 }
                 execution
+                    .core
                     .function_entry_execution_prerequisites
                     .insert(conclusion.clone());
-                execution.function_entry_derivations.insert(derivation);
+                execution.core.function_entry_derivations.insert(derivation);
             }
         }
         if let Some(derivation) =
             crate::kernel::prove_pure_proposition_from_context(assumptions, kernel)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(kernel.clone());
-            execution.function_entry_derivations.insert(derivation);
+            execution.core.function_entry_derivations.insert(derivation);
         }
         Ok(())
     }
@@ -1092,7 +1095,7 @@ impl<'a> ProofScope<'a> {
                     })?;
                 let mut facts = self.body.facts().clone();
                 let mut state = Arc::unwrap_or_clone(self.body.state);
-                if execution.frontier.is_at_function_exit() {
+                if execution.core.frontier.is_at_function_exit() {
                     execution.defer_post_execution(
                         context.tactic_index,
                         source_index,
@@ -1103,7 +1106,7 @@ impl<'a> ProofScope<'a> {
                     );
                 } else {
                     let pre_state = context
-                        .old_reference_state(&execution.frontier, &execution.state)
+                        .old_reference_state(&execution.core.frontier, &execution.core.state)
                         .clone();
                     let checked = close_open_resource_for_proof(
                         context.resource_environment,
@@ -1114,14 +1117,14 @@ impl<'a> ProofScope<'a> {
                         context.parsed_function.parameters(),
                         context.arguments,
                         &pre_state,
-                        execution.state.into_value(),
+                        execution.core.state.into_value(),
                         context.predicate_environment,
                         context.click_function_environment,
-                        &execution.unfolded_predicates,
+                        &execution.core.unfolded_predicates,
                         preserve_exposed_body,
                     )?;
                     facts = checked.facts;
-                    execution.state = checked.state.into();
+                    execution.core.state = checked.state.into();
                 }
                 state.open_branches = state.open_branches.replace_frontier_at(
                     self.body.focused_branch,

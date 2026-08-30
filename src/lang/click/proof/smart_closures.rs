@@ -961,7 +961,7 @@ impl<'a> Proof<'a> {
         let frontier_anchor = match self.context.as_ref() {
             ProofContext::Execution(_) if self.focused_outcome_data().is_none() => {
                 self.execution().map(|execution| ProgramPointRef {
-                    region: CodeRegionRef::Statement(execution.frontier.next_statement_index),
+                    region: CodeRegionRef::Statement(execution.core.frontier.next_statement_index),
                     kind: ProgramPointKind::Entry,
                 })
             }
@@ -2576,7 +2576,7 @@ impl<'a> Proof<'a> {
         // Structural frontiers belong to the branch and loop operations.
         let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             execution.view(context),
-            &execution.state,
+            &execution.core.state,
             context.function,
             context.arguments,
             context.claim_label,

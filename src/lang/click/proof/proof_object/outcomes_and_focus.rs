@@ -9,7 +9,7 @@ impl<'a> Proof<'a> {
     /// grants no authority to advance the proof.
     pub(in crate::lang::click::proof) fn is_at_function_exit(&self) -> bool {
         self.execution()
-            .is_some_and(|execution| execution.frontier.is_at_function_exit())
+            .is_some_and(|execution| execution.core.frontier.is_at_function_exit())
     }
 
     /// Whether the focused branch execution frontier still owns a function effect
@@ -36,7 +36,7 @@ impl<'a> Proof<'a> {
     /// its own statement tree is exhausted and no code lies beyond it.
     pub(in crate::lang::click::proof) fn is_at_region_boundary(&self) -> bool {
         self.execution()
-            .is_some_and(|execution| execution.frontier.is_at_region_boundary())
+            .is_some_and(|execution| execution.core.frontier.is_at_region_boundary())
     }
 
     /// Every open goal in this proof, in stable id order.
@@ -248,7 +248,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let checked = execution.frontier.execution().ok_or_else(|| {
+        let checked = execution.core.frontier.execution().ok_or_else(|| {
             self.step_error("outcome goals require execution to have reached function exit")
         })?;
         let branch_state = &self.focused_branch().expect("focused branch exists").state;
@@ -371,10 +371,10 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             return Ok(false);
         }
-        if execution.state.memory().has_pending_heap_allocation() {
+        if execution.core.state.memory().has_pending_heap_allocation() {
             // A pending malloc result is an independent execution split. The
             // current branch container owns one C-condition split, not the
             // Cartesian product of both; compatibility execution retains
@@ -384,7 +384,7 @@ impl<'a> Proof<'a> {
         let Some(context) = self.execution_context() else {
             return Ok(false);
         };
-        let statement_index = execution.frontier.next_statement_index;
+        let statement_index = execution.core.frontier.next_statement_index;
         let source_region = context
             .constants
             .source_layout
@@ -426,8 +426,8 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))?;
-        Ok((!execution.frontier.is_at_function_exit())
-            .then_some(execution.frontier.next_statement_index))
+        Ok((!execution.core.frontier.is_at_function_exit())
+            .then_some(execution.core.frontier.next_statement_index))
     }
 
     /// Returns the current source-layout frontier node, including the
@@ -436,7 +436,7 @@ impl<'a> Proof<'a> {
         &self,
     ) -> Result<usize, ClickError> {
         self.execution()
-            .map(|execution| execution.frontier.next_statement_index)
+            .map(|execution| execution.core.frontier.next_statement_index)
             .ok_or_else(|| self.step_error("execution proof lost its semantic frontier"))
     }
 }

@@ -185,15 +185,15 @@ impl<'a> Proof<'a> {
                 let kernel = match &surface {
                     Some(surface) => {
                         let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                        let pre_state =
-                            context.old_reference_state(&execution.frontier, &execution.state);
+                        let pre_state = context
+                            .old_reference_state(&execution.core.frontier, &execution.core.state);
                         lower_fixed_state_proposition_with_assumptions(
                             &surface,
                             checked.facts.assumptions(),
                             context.parsed_function.parameters(),
                             context.arguments,
                             pre_state,
-                            &execution.state,
+                            &execution.core.state,
                             None,
                             &execution.recorded_snapshots,
                             context.predicate_environment,
@@ -255,7 +255,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("`observe` must run before execution reaches function exit")
             );
@@ -265,17 +265,17 @@ impl<'a> Proof<'a> {
             resource,
             context.parsed_function.parameters(),
             context.arguments,
-            (*execution.state).clone(),
+            (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.surface_propositions,
-            &mut execution.function_entry_derivations,
-            &mut execution.function_entry_execution_prerequisites,
+            &mut execution.core.function_entry_derivations,
+            &mut execution.core.function_entry_execution_prerequisites,
             context.predicate_environment,
             context.click_function_environment,
             context.claim_label,
             context.tactic_index,
         )?;
-        execution.state = checked.state.into();
+        execution.core.state = checked.state.into();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -301,7 +301,7 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             return Err(self
                 .step_error("resource `unfold` must run before execution reaches function exit"));
         }
@@ -310,7 +310,7 @@ impl<'a> Proof<'a> {
             resource,
             context.parsed_function.parameters(),
             context.arguments,
-            (*execution.state).clone(),
+            (*execution.core.state).clone(),
             self.facts().clone(),
             &mut execution.surface_propositions,
             context.predicate_environment,
@@ -318,7 +318,7 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
-        execution.state = checked.state.into();
+        execution.core.state = checked.state.into();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -344,13 +344,13 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.frontier.is_at_function_exit() {
+        if execution.core.frontier.is_at_function_exit() {
             return Err(
                 self.step_error("resource `fold` must run before execution reaches function exit")
             );
         }
         let pre_state = context
-            .old_reference_state(&execution.frontier, &execution.state)
+            .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
         let checked = fold_composite_resource_for_proof(
             context.resource_environment,
@@ -361,12 +361,12 @@ impl<'a> Proof<'a> {
             context.parsed_function.parameters(),
             context.arguments,
             &pre_state,
-            (*execution.state).clone(),
+            (*execution.core.state).clone(),
             context.predicate_environment,
             context.click_function_environment,
-            &execution.unfolded_predicates,
+            &execution.core.unfolded_predicates,
         )?;
-        execution.state = checked.state.into();
+        execution.core.state = checked.state.into();
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -397,7 +397,10 @@ impl<'a> Proof<'a> {
         let execution = branch_state.execution.as_deref().ok_or_else(|| {
             self.step_error("outcome resource `fold` lost its execution snapshot")
         })?;
-        let pre_state = execution.frontier.execution_start_state(&execution.state);
+        let pre_state = execution
+            .core
+            .frontier
+            .execution_start_state(&execution.core.state);
         let outcome = CFunctionOutcome::Return {
             value: (*goal.data.result).clone(),
             state: (*goal.data.state).clone(),

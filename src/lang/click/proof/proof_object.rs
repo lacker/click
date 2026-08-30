@@ -266,16 +266,17 @@ impl<'a> ExecutionSplit<'a> {
         )
         .is_some()
             || !matches!(
-                self.parent_execution.frontier.region,
+                self.parent_execution.core.frontier.region,
                 ExecutionRegionKind::Function
             );
         self.sole_feasible_arm().is_some()
             || (continuation_reachable
                 && self.base_executions.iter().flatten().all(|execution| {
                     execution
+                        .core
                         .state
                         .resources()
-                        .descends_from(self.parent_execution.state.resources())
+                        .descends_from(self.parent_execution.core.state.resources())
                 }))
     }
 }
@@ -338,7 +339,7 @@ fn derive_execution_join_continuation(
     continuation_remaining: &Option<Arc<CStatement>>,
     continuation_index: usize,
 ) -> Option<ExecutionBranchJoinContinuation> {
-    let mut continuations = root_execution.frontier.continuations.clone();
+    let mut continuations = root_execution.core.frontier.continuations.clone();
     if let Some(remaining) = continuation_remaining {
         return Some(ExecutionBranchJoinContinuation {
             remaining: remaining.clone(),
@@ -928,10 +929,7 @@ impl Default for ProofLocals {
 /// frontier state, certificate-construction metadata, and persistent branch provenance.
 #[derive(Clone)]
 pub(in crate::lang::click::proof) struct ExecutionProofState {
-    pub(in crate::lang::click::proof) state: SharedValue<CState>,
-    /// Where execution stands: the program point, region, region start
-    /// state, and pending continuations.
-    pub(in crate::lang::click::proof) frontier: ExecutionFrontier,
+    pub(in crate::lang::click::proof) core: ExecutionProofCore,
     /// The immutable states recorded under program points or proof marks,
     /// which `at(selector, ...)` premises resolve against.
     pub(in crate::lang::click::proof) recorded_snapshots: RecordedSnapshots,
@@ -941,12 +939,9 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     pub(in crate::lang::click::proof) surface_propositions: SurfacePropositionMap,
     /// Case assumptions introduced on this path by proof-level splits.
     pub(in crate::lang::click::proof) case_assumptions: PersistentSequence<CaseAssumption>,
-    /// Execution facts established by the effects run so far on this path.
-    pub(in crate::lang::click::proof) effect_facts: SharedVec<ExecutionPureFact>,
-    /// Frontier-local loop clauses and their verified rules, bound on this
-    /// path and migrated across joins as arm deltas.
+    /// Frontier-local loop clauses, paired with the kernel-owned verified
+    /// rules and migrated across joins as arm deltas.
     pub(in crate::lang::click::proof) frontier_loop_clauses: PersistentSequence<StructuralClause>,
-    pub(in crate::lang::click::proof) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     /// Outcome tactics deferred during execution, applied in order at
     /// finalization; joins carry each arm's suffix.
     pub(in crate::lang::click::proof) post_execution_tactics:
@@ -954,46 +949,6 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// The path's surface record: certificate-visible certificate facts, the
     /// premise anchor, and proof-level case choices.
     pub(in crate::lang::click::proof) surface_record: SurfaceRecord,
-    /// The execution frontier was intentionally replaced by a branch
-    /// interface. Its state is a specification abstraction, not an exact
-    /// symbolic body outcome; whole-function kernel certification checks every
-    /// concrete path before any contract claim is exported.
-    pub(in crate::lang::click::proof) execution_abstraction: bool,
-    pub(in crate::lang::click::proof) loop_effect_goal: Option<LoopEffectGoal>,
-    pub(in crate::lang::click::proof) next_path_choice: usize,
-    /// Frontier-local loop proofs become part of the checked function proof,
-    /// not temporary tactic state.  Final kernel certification rebuilds the
-    /// annotated function from these bound clauses and reuses these rules.
-    /// The snapshot that `old(...)` — and `at(function.entry, ...)`, which is
-    /// the same reference under another form — names in this region.
-    ///
-    /// `old` denotes function entry, but certificate validation used to resolve it
-    /// *positionally*, to whichever state the enclosing proof region started
-    /// from. Inside a function-body proof those coincide; inside a
-    /// loop-preservation region they do not, so the same surface text meant
-    /// loop-entry memory here and function-entry memory in the Click -> Spec
-    /// lowering the kernel certified against. Naming the state explicitly is
-    /// what makes the two agree; see
-    /// `docs/internals/memory-dag.md` (stage 2a).
-    ///
-    /// `None` keeps the previous positional resolution, so every region that
-    /// does not record a function-entry snapshot behaves exactly as before.
-    pub(in crate::lang::click::proof) concrete_loop_execution: bool,
-    /// Immutable facts at the execution root. Every proof branch reads the
-    /// same entry context, so clones share it rather than copying a
-    /// project-sized fact vector.
-    /// Exact non-contract facts selected by a statement certificate, resource
-    /// observation, or explicit kernel theorem while the C frontier is still
-    /// at function entry.
-    pub(in crate::lang::click::proof) function_entry_execution_prerequisites:
-        PersistentOrderedSet<Proposition>,
-    /// Kernel-issued implications produced by explicit theorem applications
-    /// and resource-count observations at function entry. Final certification
-    /// independently discharges their premises before admitting conclusions
-    /// that were exact assumptions of the checked execution.
-    pub(in crate::lang::click::proof) function_entry_derivations: PersistentOrderedSet<Theorem>,
-    pub(in crate::lang::click::proof) region_simp: Option<(usize, usize)>,
-    pub(in crate::lang::click::proof) region_invariants_closed: bool,
     /// Where the checked `close_invariants` tactic sat, so the invariant
     /// bundle check its caller performs after the check finishes can be
     /// timed against that tactic's own identity instead of going unattributed.
@@ -1004,8 +959,6 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// checked. Without this the dominant cost of the loop-invariant bundle
     /// carries no class tag at all (`git history (profiler coverage, 2026-07-31)`).
     pub(in crate::lang::click::proof) invariant_closer_step: Option<InvariantCloserStep>,
-    pub(in crate::lang::click::proof) next_opaque_call: u64,
-    pub(in crate::lang::click::proof) next_kernel_variable: u64,
     /// Semantic transition evidence recorded by planning so the surface step
     /// constructed for a statement move can consult the certified transition.
     /// It is deliberately separate from `ProofTactic` so internal execution
@@ -1027,17 +980,6 @@ pub(in crate::lang::click::proof) struct ExecutionProofState {
     /// than an invariant across parallel vectors. The record is output-sized
     /// Proof provenance; its persistent roots do not copy semantic state.
     outcome_provenance: Arc<Vec<OutcomeProvenance>>,
-    pub(in crate::lang::click::proof) has_empty_execution_branch_leaf: bool,
-    /// Whether a structured execution join (a `branch`, a case split, or a
-    /// decided path) produced this state: a converging join leaves one path
-    /// and no per-path decision, so the fact is recorded here.
-    pub(in crate::lang::click::proof) has_structured_branch_history: bool,
-    /// The predicates unfolded on this execution path. Distinct from a
-    /// goal's `unfolded_predicates`, which are the unfolds visible to one
-    /// judgment (a nested scope unfolds locally): this set is path state,
-    /// migrated across joins as an arm delta and read by kernel
-    /// certification, which exposes these definitions at function entry.
-    pub(in crate::lang::click::proof) unfolded_predicates: SharedVec<String>,
 }
 
 impl ExecutionProofState {
@@ -1058,8 +1000,8 @@ impl ExecutionProofState {
         context: &'s ExecutionProofContext<'_>,
     ) -> ExecutionView<'s> {
         ExecutionView::new(
-            &self.frontier,
-            &self.effect_facts,
+            &self.core.frontier,
+            &self.core.effect_facts,
             &self.recorded_snapshots,
             &self.surface_propositions,
             context.constants.function_entry_state.as_ref(),
@@ -1076,36 +1018,20 @@ impl ExecutionProofState {
         branch_path: PersistentSequence<String>,
     ) -> Self {
         Self {
-            state: state.into(),
-            frontier,
+            core: ExecutionProofCore::at_entry(state, frontier),
             recorded_snapshots,
             surface_propositions,
             case_assumptions: PersistentSequence::default(),
-            effect_facts: SharedVec::default(),
             frontier_loop_clauses: PersistentSequence::default(),
-            frontier_loop_rules: PersistentSequence::default(),
             post_execution_tactics: PersistentSequence::default(),
             surface_record: SurfaceRecord::default(),
-            execution_abstraction: Default::default(),
-            loop_effect_goal: Default::default(),
-            next_path_choice: Default::default(),
-            concrete_loop_execution: Default::default(),
-            function_entry_execution_prerequisites: Default::default(),
-            function_entry_derivations: Default::default(),
-            region_simp: Default::default(),
-            region_invariants_closed: Default::default(),
             invariant_closer_step: Default::default(),
-            next_opaque_call: Default::default(),
-            next_kernel_variable: Default::default(),
             planned_statement_transitions: Default::default(),
             expansion: ExpansionCursor::default(),
             branch_path,
             branch_surface_facts: PersistentOrderedSet::default(),
             branch_decisions: PersistentSequence::default(),
             outcome_provenance: Arc::new(Vec::new()),
-            has_empty_execution_branch_leaf: false,
-            has_structured_branch_history: false,
-            unfolded_predicates: SharedVec::default(),
         }
     }
 }
@@ -1835,7 +1761,7 @@ impl<'a> Proof<'a> {
             ProofContext::FixedState(context) => context.unfolded_predicates,
             ProofContext::Execution(_) => self
                 .execution()
-                .map(|execution| execution.unfolded_predicates.as_slice())
+                .map(|execution| execution.core.unfolded_predicates.as_slice())
                 .unwrap_or(&[]),
         };
         let mut names = inherited.to_vec();
@@ -1922,7 +1848,7 @@ impl<'a> Proof<'a> {
     /// representation transitions, but it is no longer an open semantic goal.
     fn focused_loop_effect_closed(&self) -> bool {
         self.branch_execution()
-            .and_then(|execution| execution.loop_effect_goal.as_ref())
+            .and_then(|execution| execution.core.loop_effect_goal.as_ref())
             .is_some_and(|goal| goal.closed)
     }
 

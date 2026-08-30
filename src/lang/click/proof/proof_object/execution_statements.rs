@@ -33,7 +33,7 @@ impl<'a> Proof<'a> {
                 fact,
                 context.parsed_function.parameters(),
                 context.arguments,
-                &checked.execution.state,
+                &checked.execution.core.state,
             ) {
                 // At a call successor, a synthesized `old(...)` names the
                 // callee's entry snapshot, while the same surface syntax in
@@ -96,7 +96,7 @@ impl<'a> Proof<'a> {
         }
         execution
             .recorded_snapshots
-            .insert(selector, (*execution.state).clone());
+            .insert(selector, (*execution.core.state).clone());
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -119,17 +119,17 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(
                 self.step_error("`close_invariants` is only available in a loop-region proof")
             );
         }
-        if execution.region_invariants_closed {
+        if execution.core.region_invariants_closed {
             return Err(
                 self.step_error("the invariant bundle was closed more than once on one path")
             );
         }
-        execution.region_invariants_closed = true;
+        execution.core.region_invariants_closed = true;
         Ok(ProofState {
             locals: self.state.locals.clone(),
 
@@ -163,29 +163,30 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("loop invariant closure lost its execution state"))?;
-        if execution.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("loop invariant closure requires a loop-region proof"));
         }
 
         let mut closer_facts = self.facts().to_vec();
         closer_facts.extend(
             execution
+                .core
                 .effect_facts
                 .iter()
                 .map(|fact| fact.proposition().clone()),
         );
         closer_facts.extend(crate::kernel::certified_store_equations(
-            &execution.effect_facts,
+            &execution.core.effect_facts,
         ));
         c_loop_invariants_hold_at_back_edge_using(
-            &execution.state,
+            &execution.core.state,
             loop_entry_state,
             invariant_checks,
             &assumptions_from_propositions(&closer_facts),
         )
         .map_err(|message| self.step_error(format!("invariant bundle: {message}")))?;
 
-        if execution.region_invariants_closed {
+        if execution.core.region_invariants_closed {
             Ok(self.clone())
         } else {
             self.apply_step(ProofStep::CloseInvariants)
@@ -220,9 +221,9 @@ impl<'a> Proof<'a> {
         // entry snapshot before any step has crossed it; record it so the
         // form lowers, exactly as the checked `if` did.
         record_current_statement_entry(
-            &base_execution.frontier,
+            &base_execution.core.frontier,
             &mut base_execution.recorded_snapshots,
-            &base_execution.state,
+            &base_execution.core.state,
             context.function_block,
             context.function,
             context.arguments,
@@ -239,7 +240,7 @@ impl<'a> Proof<'a> {
                 &mut arm_execution,
                 &tactic_context,
                 &mut arm_facts,
-                base_execution.has_structured_branch_history,
+                base_execution.core.has_structured_branch_history,
                 condition,
                 value,
             )?;
@@ -492,7 +493,7 @@ impl<'a> Proof<'a> {
                         state.resources().facts(),
                         context.parsed_function.parameters(),
                         context.arguments,
-                        &view.execution.effect_facts,
+                        &view.execution.core.effect_facts,
                     )
                 )));
             }
@@ -514,7 +515,7 @@ impl<'a> Proof<'a> {
                 ))
             })?;
             let transition_facts = super::super::cursor_execution::fact_transport_transition_facts(
-                &view.execution.effect_facts,
+                &view.execution.core.effect_facts,
                 &source,
             );
             plan_explicit_fact_transport(
@@ -878,7 +879,7 @@ impl<'a> Proof<'a> {
         execution.invariant_closer_step = Some(InvariantCloserStep {
             tactic_index,
             source_index,
-            statement_index: execution.frontier.next_statement_index,
+            statement_index: execution.core.frontier.next_statement_index,
         });
         Ok(Self {
             context: self.context.clone(),
@@ -912,10 +913,10 @@ impl<'a> Proof<'a> {
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.frontier.region != ExecutionRegionKind::LoopBody {
+        if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
             return Err(self.step_error("a region `simp` is only available in a loop-region proof"));
         }
-        execution.region_simp = Some((tactic_index, source_index));
+        execution.core.region_simp = Some((tactic_index, source_index));
         Ok(Self {
             context: self.context.clone(),
             state: Arc::new(ProofState {
@@ -969,7 +970,7 @@ impl<'a> Proof<'a> {
             tactic_index,
             source_index,
             &ProofTactic::Loop(loop_clause.clone()),
-            execution.frontier.next_statement_index,
+            execution.core.frontier.next_statement_index,
         );
         let expanded_loop = execute_frontier_local_loop(
             expansion_capture.as_deref_mut(),

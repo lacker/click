@@ -1097,7 +1097,7 @@ pub(super) fn append_proof_step_for_operation(
                             synthesize_surface_proposition(
                                 &crate::kernel::resolve_minted_load_variables(
                                     &transport.target,
-                                    &construction.effect_facts,
+                                    &construction.execution.core.effect_facts,
                                 ),
                                 parameters,
                                 arguments,
@@ -1216,7 +1216,9 @@ pub(super) fn append_proof_step_for_operation(
         }
         (None, Some(ConstructionEvidence::CertifiedStatementStep { .. })) => {
             construction.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
-                region: CodeRegionRef::Statement(construction.frontier.next_statement_index),
+                region: CodeRegionRef::Statement(
+                    construction.execution.core.frontier.next_statement_index,
+                ),
                 kind: ProgramPointKind::Entry,
             });
             construction
@@ -1235,7 +1237,7 @@ pub(super) fn append_proof_step_for_operation(
                 .context
                 .constants
                 .source_layout
-                .statement(construction.frontier.next_statement_index)
+                .statement(construction.execution.core.frontier.next_statement_index)
                 .and_then(|region| match region.kind {
                     SourceStatementKind::Loop { loop_index } => Some(loop_index),
                     SourceStatementKind::Plain | SourceStatementKind::If { .. } => None,
@@ -1247,7 +1249,9 @@ pub(super) fn append_proof_step_for_operation(
                 return;
             };
             construction.proof_certificate_builder.last_step_entry = Some(ProgramPointRef {
-                region: CodeRegionRef::Statement(construction.frontier.next_statement_index),
+                region: CodeRegionRef::Statement(
+                    construction.execution.core.frontier.next_statement_index,
+                ),
                 kind: ProgramPointKind::Entry,
             });
             let mut surface_available = available.to_vec();
@@ -1373,7 +1377,7 @@ pub(super) fn append_proof_step_for_operation(
                         arguments,
                         construction
                             .context
-                            .old_reference_state(&construction.frontier, state),
+                            .old_reference_state(&construction.execution.core.frontier, state),
                         state,
                         &construction.recorded_snapshots,
                         &construction.surface_propositions,
@@ -1456,7 +1460,7 @@ pub(super) fn append_proof_step_for_operation(
                         arguments,
                         construction
                             .context
-                            .old_reference_state(&construction.frontier, state),
+                            .old_reference_state(&construction.execution.core.frontier, state),
                         state,
                         &construction.recorded_snapshots,
                         &construction.surface_propositions,
@@ -1665,7 +1669,7 @@ pub(super) fn append_proof_step_for_operation(
                                     proposition,
                                     after,
                                     &transport_assumptions,
-                                    &construction.effect_facts,
+                                    &construction.execution.core.effect_facts,
                                 )
                             }));
                     if !matches {
@@ -1755,7 +1759,7 @@ pub(super) fn append_proof_step_for_operation(
                             expected,
                             after,
                             &transport_assumptions,
-                            &construction.effect_facts,
+                            &construction.execution.core.effect_facts,
                         )
                     {
                         return Some((candidate.clone(), actual));
@@ -1783,7 +1787,7 @@ pub(super) fn append_proof_step_for_operation(
                     Some((surface_target, lowered_surface_target)),
                 ) => {
                     let transition_facts =
-                        fact_transport_transition_facts(&construction.effect_facts, &lowered_surface_source);
+                        fact_transport_transition_facts(&construction.execution.core.effect_facts, &lowered_surface_source);
                     match plan_explicit_fact_transport(
                         &surface_source,
                         &lowered_surface_source,

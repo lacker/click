@@ -37,7 +37,7 @@ impl<'a> Proof<'a> {
         {
             return Ok(false);
         }
-        let statement_index = execution.frontier.next_statement_index;
+        let statement_index = execution.core.frontier.next_statement_index;
         if !context
             .constants
             .source_layout
@@ -49,7 +49,7 @@ impl<'a> Proof<'a> {
         let Ok((_, _, CStatement::If { condition, .. }, _)) =
             next_top_level_statement_from_frontier_position(
                 execution.view(context),
-                &execution.state,
+                &execution.core.state,
                 context.function,
                 context.arguments,
                 context.claim_label,
@@ -90,7 +90,7 @@ impl<'a> Proof<'a> {
         let execution = self
             .execution()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        let statement_index = execution.frontier.next_statement_index;
+        let statement_index = execution.core.frontier.next_statement_index;
         let source_region = context
             .constants
             .source_layout
@@ -112,7 +112,7 @@ impl<'a> Proof<'a> {
         let (execution_start_state, current_state, statement, remaining) =
             next_top_level_statement_from_frontier_position(
                 execution.view(context),
-                &execution.state,
+                &execution.core.state,
                 context.function,
                 context.arguments,
                 context.claim_label,
@@ -168,37 +168,37 @@ impl<'a> Proof<'a> {
                     "checked `branch` cannot yet own an unresolved heap-allocation outcome split",
                 ));
             }
-            arm_execution.frontier.next_statement_index = if take_then {
+            arm_execution.core.frontier.next_statement_index = if take_then {
                 then_statement_index
             } else {
                 else_statement_index
             };
-            arm_execution.frontier.execution_start_state = Some(execution_start_state.clone());
-            arm_execution.state = resolved_state.into();
+            arm_execution.core.frontier.execution_start_state = Some(execution_start_state.clone());
+            arm_execution.core.state = resolved_state.into();
             // The arm frontier owns exactly the arm's own statement tree:
             // exhausting it reaches the typed region boundary, and the join
             // restores the parent frontier. Enclosing continuations belong
             // to the parent, never to a bounded arm.
-            arm_execution.frontier.continuations = PersistentSequence::default();
-            arm_execution.frontier.region = ExecutionRegionKind::BranchArm;
+            arm_execution.core.frontier.continuations = PersistentSequence::default();
+            arm_execution.core.frontier.region = ExecutionRegionKind::BranchArm;
             if matches!(selected_branch, CStatement::Skip) {
                 record_statement_program_snapshot_state(
                     &mut arm_execution.recorded_snapshots,
                     context.function_block,
                     statement_index,
                     ProgramPointKind::Exit,
-                    (*arm_execution.state).clone(),
+                    (*arm_execution.core.state).clone(),
                 );
-                arm_execution.frontier.position = FrontierPosition::RegionBoundary;
+                arm_execution.core.frontier.position = FrontierPosition::RegionBoundary;
             } else {
-                arm_execution.frontier.position = FrontierPosition::StatementEntry {
+                arm_execution.core.frontier.position = FrontierPosition::StatementEntry {
                     remaining: Arc::new(selected_branch.clone()),
                 };
             }
             record_current_statement_entry(
-                &arm_execution.frontier,
+                &arm_execution.core.frontier,
                 &mut arm_execution.recorded_snapshots,
-                &arm_execution.state,
+                &arm_execution.core.state,
                 context.function_block,
                 context.function,
                 context.arguments,
@@ -211,15 +211,15 @@ impl<'a> Proof<'a> {
             } else {
                 negate_click_proposition(&surface_condition)
             };
-            let pre_state =
-                context.old_reference_state(&arm_execution.frontier, &arm_execution.state);
+            let pre_state = context
+                .old_reference_state(&arm_execution.core.frontier, &arm_execution.core.state);
             let kernel_path_fact = lower_fixed_state_proposition_with_assumptions(
                 &surface_path_fact,
                 transition.pure_facts.assumptions(),
                 context.parsed_function.parameters(),
                 context.arguments,
                 pre_state,
-                &arm_execution.state,
+                &arm_execution.core.state,
                 None,
                 &arm_execution.recorded_snapshots,
                 context.predicate_environment,
@@ -243,7 +243,7 @@ impl<'a> Proof<'a> {
                     value: take_then,
                     proof_case: false,
                 });
-            arm_execution.has_structured_branch_history = true;
+            arm_execution.core.has_structured_branch_history = true;
             arm_execution.branch_path.push(format!(
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
@@ -297,20 +297,25 @@ impl<'a> Proof<'a> {
         {
             return Err(self.step_error(format!("{name} arm retained the wrong condition theorem")));
         }
-        if arm.execution.function_entry_execution_prerequisites.len()
+        if arm
+            .execution
+            .core
+            .function_entry_execution_prerequisites
+            .len()
             != parent_execution
+                .core
                 .function_entry_execution_prerequisites
                 .len()
                 + arm.introduced_prerequisites.len()
-            || arm.execution.function_entry_derivations.len()
-                != parent_execution.function_entry_derivations.len()
+            || arm.execution.core.function_entry_derivations.len()
+                != parent_execution.core.function_entry_derivations.len()
                     + arm.introduced_derivations.len()
             || arm.execution.frontier_loop_clauses.len()
                 != parent_execution.frontier_loop_clauses.len() + arm.introduced_loop_clauses.len()
-            || arm.execution.frontier_loop_rules.len()
-                != parent_execution.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
-            || arm.execution.unfolded_predicates.len()
-                != parent_execution.unfolded_predicates.len() + arm.introduced_unfolds.len()
+            || arm.execution.core.frontier_loop_rules.len()
+                != parent_execution.core.frontier_loop_rules.len() + arm.introduced_loop_rules.len()
+            || arm.execution.core.unfolded_predicates.len()
+                != parent_execution.core.unfolded_predicates.len() + arm.introduced_unfolds.len()
             || arm.execution.planned_statement_transitions.len()
                 != parent_execution.planned_statement_transitions.len()
         {
@@ -338,8 +343,8 @@ impl<'a> Proof<'a> {
         assertions: Vec<ProofAssertion>,
         arm: &CheckedExecutionJoinArm<'_>,
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
-        if !arm.execution.frontier.is_at_region_boundary()
-            && !arm.execution.frontier.is_at_function_exit()
+        if !arm.execution.core.frontier.is_at_region_boundary()
+            && !arm.execution.core.frontier.is_at_function_exit()
         {
             return Err(self.step_error(format!(
                 "the sole feasible {} `branch ensuring` arm has not reached its region boundary or function exit",
@@ -431,8 +436,8 @@ impl<'a> Proof<'a> {
         take_then: bool,
         arm: &CheckedExecutionJoinArm<'_>,
     ) -> Result<ProofStep, ClickError> {
-        if !arm.execution.frontier.is_at_region_boundary()
-            && !arm.execution.frontier.is_at_function_exit()
+        if !arm.execution.core.frontier.is_at_region_boundary()
+            && !arm.execution.core.frontier.is_at_function_exit()
         {
             return Err(self.step_error(format!(
                 "the sole feasible {} execution arm has not reached its region boundary or function exit",
@@ -452,7 +457,7 @@ impl<'a> Proof<'a> {
         };
         let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             parent_execution.view(context),
-            &parent_execution.state,
+            &parent_execution.core.state,
             context.function,
             context.arguments,
             context.claim_label,
@@ -509,8 +514,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource interface requires an execution proof"));
         };
-        let mut then_residual = arms[0].execution.state.resources().clone();
-        let mut else_residual = arms[1].execution.state.resources().clone();
+        let mut then_residual = arms[0].execution.core.state.resources().clone();
+        let mut else_residual = arms[1].execution.core.state.resources().clone();
         for assertion in assertions {
             let ProofAssertion::Resource(resource) = assertion else {
                 continue;
@@ -519,7 +524,7 @@ impl<'a> Proof<'a> {
                 resource,
                 context.parsed_function.parameters(),
                 context.arguments,
-                &arms[0].execution.state,
+                &arms[0].execution.core.state,
             )?;
             if !then_expected.is_own() {
                 continue;
@@ -528,7 +533,7 @@ impl<'a> Proof<'a> {
                 resource,
                 context.parsed_function.parameters(),
                 context.arguments,
-                &arms[1].execution.state,
+                &arms[1].execution.core.state,
             )?;
             then_residual = then_residual
                 .without_fact_incrementally(&then_expected, arms[0].facts.assumptions())
@@ -548,7 +553,7 @@ impl<'a> Proof<'a> {
         ResourceContext::common_exact_descendant(
             &then_residual,
             &else_residual,
-            parent_execution.state.resources(),
+            parent_execution.core.state.resources(),
         )
         .ok_or_else(|| {
             self.step_error(
@@ -583,7 +588,7 @@ impl<'a> Proof<'a> {
             continuation_index,
         );
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
-            if !arm.execution.frontier.is_at_region_boundary() {
+            if !arm.execution.core.frontier.is_at_region_boundary() {
                 return Err(self.step_error(format!(
                     "{name} `branch ensuring` arm has not reached its region boundary"
                 )));
@@ -611,13 +616,14 @@ impl<'a> Proof<'a> {
 
         let mut stable_join_locals = arms[0]
             .execution
+            .core
             .state
             .locals()
             .object_values()
             .map(|(name, value)| (name.to_string(), value.clone()))
             .collect::<BTreeMap<_, _>>();
         stable_join_locals
-            .retain(|name, value| arms[1].execution.state.locals().get(name) == Some(value));
+            .retain(|name, value| arms[1].execution.core.state.locals().get(name) == Some(value));
         // The interface anchors at its continuation's entry. A `branch
         // ensuring` that ends its region has no live parent continuation,
         // but the patched source layout supplies the same statically known
@@ -630,7 +636,7 @@ impl<'a> Proof<'a> {
             kind: ProgramPointKind::Entry,
         };
         let sibling_join_states: [&CState; 2] =
-            [&arms[0].execution.state, &arms[1].execution.state];
+            [&arms[0].execution.core.state, &arms[1].execution.core.state];
 
         let abstract_arm = |arm: &CheckedExecutionJoinArm<'_>| -> Result<
             (ExecutionProofState, ProofFacts),
@@ -658,7 +664,8 @@ impl<'a> Proof<'a> {
 
         let then_interface_vec = then_interface_facts.to_vec();
         let else_interface_vec = else_interface_facts.to_vec();
-        if then_interface_vec != else_interface_vec || *then_abstract.state != *else_abstract.state
+        if then_interface_vec != else_interface_vec
+            || *then_abstract.core.state != *else_abstract.core.state
         {
             return Err(self.step_error(
                 "`branch ensuring` arms produced different abstract successor states",
@@ -680,6 +687,7 @@ impl<'a> Proof<'a> {
         // does not already establish them.
         let mut resources = common_resources;
         let additions = then_abstract
+            .core
             .state
             .resources()
             .facts()
@@ -700,21 +708,22 @@ impl<'a> Proof<'a> {
                 ))
             })?
             .normalized_around_facts(&additions, then_interface_facts.assumptions());
-        let state = (*then_abstract.state)
+        let state = (*then_abstract.core.state)
             .clone()
             .with_resource_context(resources);
-        then_abstract.state = state.into();
+        then_abstract.core.state = state.into();
 
-        let abstract_state = (*then_abstract.state).clone();
+        let abstract_state = (*then_abstract.core.state).clone();
         let mut execution = parent_execution.clone();
-        execution.has_empty_execution_branch_leaf |= then_abstract.has_empty_execution_branch_leaf
-            || else_abstract.has_empty_execution_branch_leaf;
+        execution.core.has_empty_execution_branch_leaf |=
+            then_abstract.core.has_empty_execution_branch_leaf
+                || else_abstract.core.has_empty_execution_branch_leaf;
         self.merge_branch_surface_facts(
             &mut execution,
             parent_execution,
             [&then_abstract, &else_abstract],
         )?;
-        execution.state = abstract_state.clone().into();
+        execution.core.state = abstract_state.clone().into();
         execution.recorded_snapshots = common_snapshots;
         execution
             .recorded_snapshots
@@ -726,43 +735,45 @@ impl<'a> Proof<'a> {
             },
             abstract_state.clone(),
         );
-        execution.frontier.execution_start_state = Some(execution_start_state);
+        execution.core.frontier.execution_start_state = Some(execution_start_state);
         match join_continuation {
             Some(join) => {
-                execution.frontier.next_statement_index = join.next_statement_index;
-                execution.frontier.continuations = join.continuations;
-                execution.frontier.position = FrontierPosition::StatementEntry {
+                execution.core.frontier.next_statement_index = join.next_statement_index;
+                execution.core.frontier.continuations = join.continuations;
+                execution.core.frontier.position = FrontierPosition::StatementEntry {
                     remaining: join.remaining,
                 };
             }
             None => {
                 // The joined `branch ensuring` ends its enclosing region:
                 // the parent rests at its own typed boundary.
-                execution.frontier.continuations = PersistentSequence::default();
-                if !finish_exhausted_region(&mut execution.frontier) {
+                execution.core.frontier.continuations = PersistentSequence::default();
+                if !finish_exhausted_region(&mut execution.core.frontier) {
                     return Err(self.step_error(
                         "execution `branch` reached the end of the function without a return",
                     ));
                 }
             }
         }
-        execution.has_structured_branch_history = true;
-        execution.execution_abstraction = true;
-        execution.unfolded_predicates.clear();
+        execution.core.has_structured_branch_history = true;
+        execution.core.execution_abstraction = true;
+        execution.core.unfolded_predicates.clear();
         execution.case_assumptions.clear();
-        execution.next_opaque_call = then_abstract
+        execution.core.next_opaque_call = then_abstract
+            .core
             .next_opaque_call
-            .max(else_abstract.next_opaque_call);
-        execution.next_kernel_variable = then_abstract
+            .max(else_abstract.core.next_opaque_call);
+        execution.core.next_kernel_variable = then_abstract
+            .core
             .next_kernel_variable
-            .max(else_abstract.next_kernel_variable);
+            .max(else_abstract.core.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.effect_facts,
+                &mut execution.core.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -772,6 +783,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -780,7 +792,10 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution.function_entry_derivations.insert(theorem.clone());
+            execution
+                .core
+                .function_entry_derivations
+                .insert(theorem.clone());
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
         execution.branch_path.clear();
@@ -795,9 +810,9 @@ impl<'a> Proof<'a> {
             abstract_state,
         );
         record_current_statement_entry(
-            &execution.frontier,
+            &execution.core.frontier,
             &mut execution.recorded_snapshots,
-            &execution.state,
+            &execution.core.state,
             context.function_block,
             context.function,
             context.arguments,
@@ -968,7 +983,7 @@ impl<'a> Proof<'a> {
         } else {
             let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
                 parent_execution.view(context),
-                &parent_execution.state,
+                &parent_execution.core.state,
                 context.function,
                 context.arguments,
                 context.claim_label,
@@ -1000,7 +1015,7 @@ impl<'a> Proof<'a> {
             )
         };
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
-            if !arm.execution.frontier.is_at_function_exit() {
+            if !arm.execution.core.frontier.is_at_function_exit() {
                 return Err(self.step_error(format!(
                     "{name} branch arm has not completed at function exit"
                 )));
@@ -1056,6 +1071,7 @@ impl<'a> Proof<'a> {
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
                 .execution
+                .core
                 .frontier
                 .execution()
                 .expect("validated terminal arm is at function exit");
@@ -1097,39 +1113,41 @@ impl<'a> Proof<'a> {
             paths,
         );
         let mut execution = parent_execution.clone();
-        execution.has_empty_execution_branch_leaf |= arms
+        execution.core.has_empty_execution_branch_leaf |= arms
             .iter()
-            .any(|arm| arm.execution.has_empty_execution_branch_leaf);
+            .any(|arm| arm.execution.core.has_empty_execution_branch_leaf);
         self.merge_branch_surface_facts(
             &mut execution,
             parent_execution,
             [arms[0].execution, arms[1].execution],
         )?;
-        execution.state = execution_start_state.clone().into();
+        execution.core.state = execution_start_state.clone().into();
         execution.recorded_snapshots = common_snapshots;
-        execution.frontier.continuations.clear();
-        execution.frontier.execution_start_state = Some(execution_start_state);
-        execution.frontier.position = FrontierPosition::FunctionExit {
+        execution.core.frontier.continuations.clear();
+        execution.core.frontier.execution_start_state = Some(execution_start_state);
+        execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: outcomes,
         };
         execution.branch_decisions = parent_execution.branch_decisions.clone();
         execution.outcome_provenance = Arc::new(outcome_provenance);
-        execution.has_structured_branch_history = true;
-        execution.next_opaque_call = arms[0]
+        execution.core.has_structured_branch_history = true;
+        execution.core.next_opaque_call = arms[0]
             .execution
+            .core
             .next_opaque_call
-            .max(arms[1].execution.next_opaque_call);
-        execution.next_kernel_variable = arms[0]
+            .max(arms[1].execution.core.next_opaque_call);
+        execution.core.next_kernel_variable = arms[0]
             .execution
+            .core
             .next_kernel_variable
-            .max(arms[1].execution.next_kernel_variable);
+            .max(arms[1].execution.core.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.effect_facts,
+                &mut execution.core.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -1139,6 +1157,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -1147,15 +1166,18 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution.function_entry_derivations.insert(theorem.clone());
+            execution
+                .core
+                .function_entry_derivations
+                .insert(theorem.clone());
         }
         for name in arms[0]
             .introduced_unfolds
             .iter()
             .chain(&arms[1].introduced_unfolds)
         {
-            if !execution.unfolded_predicates.contains(name) {
-                execution.unfolded_predicates.push(name.clone());
+            if !execution.core.unfolded_predicates.contains(name) {
+                execution.core.unfolded_predicates.push(name.clone());
             }
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
@@ -1320,28 +1342,28 @@ impl<'a> Proof<'a> {
                     "cannot use the empty execution join for a nonempty {name} arm"
                 )));
             }
-            if !arm.execution.frontier.is_at_region_boundary() {
+            if !arm.execution.core.frontier.is_at_region_boundary() {
                 return Err(self.step_error(format!(
                     "{name} branch arm has not reached its shared continuation"
                 )));
             }
             self.validate_execution_join_arm_deltas("join", name, expected, arm, parent_execution)?;
         }
-        let then_state = &arms[0].execution.state;
-        let else_state = &arms[1].execution.state;
+        let then_state = &arms[0].execution.core.state;
+        let else_state = &arms[1].execution.core.state;
         if **then_state != **else_state {
             return Err(self.step_error("execution `branch` arms reached different C states"));
         }
         let mut execution = parent_execution.clone();
-        execution.has_empty_execution_branch_leaf |= arms
+        execution.core.has_empty_execution_branch_leaf |= arms
             .iter()
-            .any(|arm| arm.execution.has_empty_execution_branch_leaf);
+            .any(|arm| arm.execution.core.has_empty_execution_branch_leaf);
         self.merge_branch_surface_facts(
             &mut execution,
             parent_execution,
             [arms[0].execution, arms[1].execution],
         )?;
-        execution.state = (**then_state).clone().into();
+        execution.core.state = (**then_state).clone().into();
         execution.recorded_snapshots.insert(
             ProgramPointRef {
                 region: CodeRegionRef::Statement(statement_index),
@@ -1349,24 +1371,24 @@ impl<'a> Proof<'a> {
             },
             (**then_state).clone(),
         );
-        execution.frontier.execution_start_state = Some(execution_start_state);
+        execution.core.frontier.execution_start_state = Some(execution_start_state);
         // The parent frontier continues around the joined state: its own
         // tail when it has one; otherwise control returns through the
         // parent's enclosing loop-iteration continuations, and an exhausted
         // bounded region rests at its typed boundary.
         match continuation_remaining {
             Some(remaining) => {
-                execution.frontier.next_statement_index = continuation_index;
-                execution.frontier.position = FrontierPosition::StatementEntry { remaining };
+                execution.core.frontier.next_statement_index = continuation_index;
+                execution.core.frontier.position = FrontierPosition::StatementEntry { remaining };
             }
-            None => match resume_after_completed_region(&mut execution.frontier) {
+            None => match resume_after_completed_region(&mut execution.core.frontier) {
                 Some(remaining) => {
-                    execution.frontier.position = FrontierPosition::StatementEntry {
+                    execution.core.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }
                 None => {
-                    if !finish_exhausted_region(&mut execution.frontier) {
+                    if !finish_exhausted_region(&mut execution.core.frontier) {
                         return Err(self.step_error(
                             "execution `branch` reached the end of the function without a return",
                         ));
@@ -1374,22 +1396,24 @@ impl<'a> Proof<'a> {
                 }
             },
         }
-        execution.has_structured_branch_history = true;
-        execution.next_opaque_call = arms[0]
+        execution.core.has_structured_branch_history = true;
+        execution.core.next_opaque_call = arms[0]
             .execution
+            .core
             .next_opaque_call
-            .max(arms[1].execution.next_opaque_call);
-        execution.next_kernel_variable = arms[0]
+            .max(arms[1].execution.core.next_opaque_call);
+        execution.core.next_kernel_variable = arms[0]
             .execution
+            .core
             .next_kernel_variable
-            .max(arms[1].execution.next_kernel_variable);
+            .max(arms[1].execution.core.next_kernel_variable);
         for effect in arms[0]
             .introduced_effect_facts
             .iter()
             .chain(&arms[1].introduced_effect_facts)
         {
             append_execution_effect_facts(
-                &mut execution.effect_facts,
+                &mut execution.core.effect_facts,
                 std::slice::from_ref(effect),
             );
         }
@@ -1399,6 +1423,7 @@ impl<'a> Proof<'a> {
             .chain(&arms[1].introduced_prerequisites)
         {
             execution
+                .core
                 .function_entry_execution_prerequisites
                 .insert(fact.clone());
         }
@@ -1407,15 +1432,18 @@ impl<'a> Proof<'a> {
             .iter()
             .chain(&arms[1].introduced_derivations)
         {
-            execution.function_entry_derivations.insert(theorem.clone());
+            execution
+                .core
+                .function_entry_derivations
+                .insert(theorem.clone());
         }
         for name in arms[0]
             .introduced_unfolds
             .iter()
             .chain(&arms[1].introduced_unfolds)
         {
-            if !execution.unfolded_predicates.contains(name) {
-                execution.unfolded_predicates.push(name.clone());
+            if !execution.core.unfolded_predicates.contains(name) {
+                execution.core.unfolded_predicates.push(name.clone());
             }
         }
         migrate_arm_loop_proofs(&mut execution, &arms);
@@ -1433,9 +1461,9 @@ impl<'a> Proof<'a> {
             (**then_state).clone(),
         );
         record_current_statement_entry(
-            &execution.frontier,
+            &execution.core.frontier,
             &mut execution.recorded_snapshots,
-            &execution.state,
+            &execution.core.state,
             context.function_block,
             context.function,
             context.arguments,
@@ -1583,7 +1611,7 @@ impl<'a> Proof<'a> {
             &record.common_facts,
             &record.parent_unfolds,
             &record.parent_execution,
-            record.parent_execution.frontier.next_statement_index,
+            record.parent_execution.core.frontier.next_statement_index,
             record.execution_start_state.clone(),
             Some(record.surface_condition.clone()),
             [then_view, else_view],
@@ -1714,21 +1742,25 @@ impl<'a> Proof<'a> {
             .introduced_since(delta_facts)
             .ok_or_else(not_descended)?;
         let introduced_effect_facts = execution
+            .core
             .effect_facts
-            .suffix_since(&delta_execution.effect_facts)
+            .suffix_since(&delta_execution.core.effect_facts)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_prerequisites = execution
+            .core
             .function_entry_execution_prerequisites
-            .introduced_since(&delta_execution.function_entry_execution_prerequisites)
+            .introduced_since(&delta_execution.core.function_entry_execution_prerequisites)
             .ok_or_else(not_descended)?;
         let introduced_derivations = execution
+            .core
             .function_entry_derivations
-            .introduced_since(&delta_execution.function_entry_derivations)
+            .introduced_since(&delta_execution.core.function_entry_derivations)
             .ok_or_else(not_descended)?;
         let introduced_unfolds = execution
+            .core
             .unfolded_predicates
-            .suffix_since(&delta_execution.unfolded_predicates)
+            .suffix_since(&delta_execution.core.unfolded_predicates)
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_clauses = execution
@@ -1737,8 +1769,9 @@ impl<'a> Proof<'a> {
             .ok_or_else(not_descended)?
             .to_vec();
         let introduced_loop_rules = execution
+            .core
             .frontier_loop_rules
-            .suffix_since(&delta_execution.frontier_loop_rules)
+            .suffix_since(&delta_execution.core.frontier_loop_rules)
             .ok_or_else(not_descended)?
             .to_vec();
         Ok((
@@ -1797,7 +1830,7 @@ impl<'a> Proof<'a> {
         let mut execution = view.execution.clone();
         self.install_parent_frontier_after_decided(&mut execution, record)?;
         execution.branch_path = record.parent_execution.branch_path.clone();
-        execution.has_empty_execution_branch_leaf = true;
+        execution.core.has_empty_execution_branch_leaf = true;
         let parts = CheckedExecutionJoinParts {
             execution,
             facts: view.facts.clone(),
@@ -1999,7 +2032,7 @@ impl<'a> Proof<'a> {
         };
         let (_, _, statement, _) = next_top_level_statement_from_frontier_position(
             record.parent_execution.view(context),
-            &record.parent_execution.state,
+            &record.parent_execution.core.state,
             context.function,
             context.arguments,
             context.claim_label,
@@ -2299,24 +2332,25 @@ impl<'a> Proof<'a> {
         // sole arm ended at its typed boundary or returned: a function-exit
         // frontier reached inside an arm belongs to the enclosing region, so
         // source-ordered outcome tactics see it as the function's exit.
-        execution.frontier.region = record.parent_execution.frontier.region;
-        if !execution.frontier.is_at_region_boundary() {
+        execution.core.frontier.region = record.parent_execution.core.frontier.region;
+        if !execution.core.frontier.is_at_region_boundary() {
             return Ok(());
         }
-        execution.frontier.continuations = record.parent_execution.frontier.continuations.clone();
-        execution.frontier.next_statement_index = record.continuation_index;
+        execution.core.frontier.continuations =
+            record.parent_execution.core.frontier.continuations.clone();
+        execution.core.frontier.next_statement_index = record.continuation_index;
         match record.continuation_remaining.clone() {
             Some(remaining) => {
-                execution.frontier.position = FrontierPosition::StatementEntry { remaining };
+                execution.core.frontier.position = FrontierPosition::StatementEntry { remaining };
             }
-            None => match resume_after_completed_region(&mut execution.frontier) {
+            None => match resume_after_completed_region(&mut execution.core.frontier) {
                 Some(remaining) => {
-                    execution.frontier.position = FrontierPosition::StatementEntry {
+                    execution.core.frontier.position = FrontierPosition::StatementEntry {
                         remaining: remaining.into(),
                     };
                 }
                 None => {
-                    if !finish_exhausted_region(&mut execution.frontier) {
+                    if !finish_exhausted_region(&mut execution.core.frontier) {
                         return Err(self.step_error(
                             "decided `branch` reached the end of the function without a return",
                         ));
@@ -2340,7 +2374,7 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(self.clone());
         };
-        if !execution.frontier.is_at_region_boundary() {
+        if !execution.core.frontier.is_at_region_boundary() {
             return Ok(self.clone());
         }
         let mut execution = execution.clone();
@@ -2406,7 +2440,7 @@ impl<'a> Proof<'a> {
                 .open_branches
                 .get(id)
                 .and_then(|branch| branch.state.execution.as_deref())
-                .is_some_and(|execution| execution.frontier.is_at_function_exit())
+                .is_some_and(|execution| execution.core.frontier.is_at_function_exit())
         })
     }
 
@@ -2420,7 +2454,7 @@ impl<'a> Proof<'a> {
                     .open_branches
                     .get(*id)
                     .and_then(|branch| branch.state.execution.as_deref())
-                    .is_some_and(|execution| execution.frontier.is_at_function_exit())
+                    .is_some_and(|execution| execution.core.frontier.is_at_function_exit())
             })
     }
 
@@ -2576,7 +2610,7 @@ fn migrate_arm_loop_proofs(
                 continue;
             }
             execution.frontier_loop_clauses.push(clause.clone());
-            execution.frontier_loop_rules.push(rule.clone());
+            execution.core.frontier_loop_rules.push(rule.clone());
         }
     }
 }

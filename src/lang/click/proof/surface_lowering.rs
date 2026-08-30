@@ -94,14 +94,15 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
+                let pre_state =
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state);
                 lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
                     context.arguments,
                     pre_state,
-                    &execution.state,
+                    &execution.core.state,
                     None,
                     &execution.recorded_snapshots,
                     context.predicate_environment,
@@ -165,14 +166,15 @@ impl<'a> Proof<'a> {
                     self.step_error("execution proposition proof lost its semantic frontier")
                 })?;
                 let surface = self.substitute_fixed_state_locals_in_proposition(surface)?;
-                let pre_state = context.old_reference_state(&execution.frontier, &execution.state);
+                let pre_state =
+                    context.old_reference_state(&execution.core.frontier, &execution.core.state);
                 lower_fixed_state_proposition_with_assumptions(
                     &surface,
                     self.facts().assumptions(),
                     context.parsed_function.parameters(),
                     context.arguments,
                     pre_state,
-                    &execution.state,
+                    &execution.core.state,
                     None,
                     &execution.recorded_snapshots,
                     context.predicate_environment,

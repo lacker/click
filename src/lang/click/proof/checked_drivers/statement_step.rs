@@ -28,7 +28,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &mut CState = &mut execution.state;
+    let state: &mut CState = &mut execution.core.state;
     let assumptions = requirement_pure_facts.assumptions();
     // A bare `step()` executes in the whole proof context: prerequisites
     // are proved from it, and nothing is transported per step because the
@@ -43,7 +43,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
     // Resuming from a completed branch region reaches this statement without
     // recording its entry snapshot. Later facts may still name this boundary.
     record_current_statement_entry(
-        &execution.frontier,
+        &execution.core.frontier,
         &mut execution.recorded_snapshots,
         state,
         function_block,
@@ -54,7 +54,7 @@ pub(in crate::lang::click::proof) fn check_statement_step(
         tactic_name,
     )?;
     let pre_state = proof_context
-        .old_reference_state(&execution.frontier, state)
+        .old_reference_state(&execution.core.frontier, state)
         .clone();
     let mut step_facts = Vec::new();
     for case in &execution.case_assumptions {
@@ -90,7 +90,8 @@ pub(in crate::lang::click::proof) fn check_statement_step(
                 }
             }
         };
-        if requirement_pure_facts.available_across_effects(&branch_fact, &execution.effect_facts)
+        if requirement_pure_facts
+            .available_across_effects(&branch_fact, &execution.core.effect_facts)
             && !step_facts.contains(&branch_fact)
         {
             step_facts.push(branch_fact);

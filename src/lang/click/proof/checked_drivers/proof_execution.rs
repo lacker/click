@@ -2797,7 +2797,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
     let click_function_environment = proof_context.click_function_environment;
     let claim_label = proof_context.claim_label;
 
-    if execution.loop_effect_goal.is_some() {
+    if execution.core.loop_effect_goal.is_some() {
         // A structural-effect validation path may already own the exact C-branch
         // fact under this Surface spelling. Prefer that unambiguous indexed
         // identity to rereading the condition from the heap. Ordinary loop
@@ -2832,12 +2832,12 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
                 condition: condition.clone(),
                 value,
                 fact: Some(kernel_fact),
-                at_function_entry: execution.frontier.is_at_function_entry(),
+                at_function_entry: execution.core.frontier.is_at_function_entry(),
             });
             return Ok(true);
         }
     }
-    if execution.frontier.is_at_function_exit()
+    if execution.core.frontier.is_at_function_exit()
         && structured_branch_history
         && proof_case_is_stable_program_point_condition(condition)
     {
@@ -2852,8 +2852,8 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             pure_facts,
             parameters,
             arguments,
-            proof_context.old_reference_state(&execution.frontier, &execution.state),
-            &execution.state,
+            proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
+            &execution.core.state,
             None,
             &execution.recorded_snapshots,
             predicate_environment,
@@ -2895,7 +2895,7 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
             return Ok(true);
         }
     }
-    if execution.frontier.is_at_function_exit() {
+    if execution.core.frontier.is_at_function_exit() {
         execution.case_assumptions.push(CaseAssumption {
             tactic_index,
             condition: condition.clone(),
@@ -2905,14 +2905,14 @@ pub(in crate::lang::click::proof) fn introduce_proof_case_assumption(
         });
         return Ok(true);
     }
-    let at_function_entry = execution.frontier.is_at_function_entry();
+    let at_function_entry = execution.core.frontier.is_at_function_entry();
     let proposition = lower_fixed_state_proposition(
         condition,
         pure_facts,
         parameters,
         arguments,
-        proof_context.old_reference_state(&execution.frontier, &execution.state),
-        &execution.state,
+        proof_context.old_reference_state(&execution.core.frontier, &execution.core.state),
+        &execution.core.state,
         None,
         &execution.recorded_snapshots,
         predicate_environment,
