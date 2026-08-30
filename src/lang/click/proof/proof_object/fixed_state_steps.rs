@@ -8,7 +8,7 @@ impl<'a> Proof<'a> {
         &self,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => {
                 self.apply_pure_theorem_using(context, application, surface_premises)
@@ -38,7 +38,7 @@ impl<'a> Proof<'a> {
         context: &PureProofContext<'_>,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let explicit_premises = surface_premises
             .iter()
             .map(|premise| self.lower_surface_proposition(premise, "`apply using` premise"))
@@ -87,17 +87,13 @@ impl<'a> Proof<'a> {
             facts = facts.with_fact(fact);
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_at(
-                self.focused_branch_id(),
-                complete,
-                facts,
-            ),
-            checked_facts: Arc::new(added_facts.clone()),
-            added_facts: Arc::new(added_facts),
-        })
+        Ok(self.checked_fact_transition(
+            self.state().locals.clone(),
+            facts,
+            complete,
+            added_facts.clone(),
+            added_facts,
+        ))
     }
 
     pub(super) fn apply_fixed_state_theorem_using(
@@ -105,7 +101,7 @@ impl<'a> Proof<'a> {
         view: &FixedStateOperationView<'_>,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
         let checked = check_fixed_state_theorem_application_using_facts(
             view.theorem_environment,
@@ -128,17 +124,13 @@ impl<'a> Proof<'a> {
             false,
         )?;
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_at(
-                self.focused_branch_id(),
-                complete,
-                checked.facts,
-            ),
-            checked_facts: Arc::new(checked.added_facts.clone()),
-            added_facts: Arc::new(checked.added_facts),
-        })
+        Ok(self.checked_fact_transition(
+            self.state().locals.clone(),
+            checked.facts,
+            complete,
+            checked.added_facts.clone(),
+            checked.added_facts,
+        ))
     }
 
     pub(super) fn apply_execution_theorem_using(
@@ -146,7 +138,7 @@ impl<'a> Proof<'a> {
         context: &ExecutionProofContext<'a>,
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let mut execution = self
             .execution()
             .cloned()
@@ -200,24 +192,19 @@ impl<'a> Proof<'a> {
             execution.core.function_entry_derivations.insert(derivation);
         }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_or_execution_at(
-                self.focused_branch_id(),
-                complete,
-                checked.facts,
-                execution,
-            ),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
-        })
+        Ok(self.checked_execution_transition(
+            checked.facts,
+            complete,
+            execution,
+            checked.added_facts.clone(),
+            checked.added_facts,
+        ))
     }
 
     pub(super) fn apply_fixed_state_choose(
         &self,
         choice: &ProofChoice,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A choice on a judgment stated at a function outcome selects
@@ -296,22 +283,13 @@ impl<'a> Proof<'a> {
             .then(|| vec![chosen_fact.clone()])
             .unwrap_or_default();
         let facts = self.facts().with_fact(chosen_fact.clone());
-        Ok(ProofState {
-            locals,
-
-            open_branches: self
-                .state
-                .open_branches
-                .with_facts_at(self.focused_branch_id(), facts),
-            added_facts: Arc::new(added_facts),
-            checked_facts: Arc::new(vec![chosen_fact]),
-        })
+        Ok(self.checked_fact_transition(locals, facts, false, added_facts, vec![chosen_fact]))
     }
 
     pub(super) fn apply_fixed_state_witness(
         &self,
         witness: &ProofWitness,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let view = match self.context.as_ref() {
             ProofContext::FixedState(context) => FixedStateOperationView::from_fixed_state(context),
             // A witness refinement on a judgment stated at a function
@@ -429,19 +407,13 @@ impl<'a> Proof<'a> {
             }
             _ => None,
         };
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self
-                .state()
-                .open_branches
-                .replace_at(self.focused_branch_id(), {
-                    let context = self.refined_branch_state(self.facts().clone());
-                    self.refined_proposition(context, goal, surface_goal)
-                }),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        })
+        let context = self.refined_branch_state(self.facts().clone());
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals.clone(),
+            Some(self.refined_proposition(context, goal, surface_goal)),
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 
     pub(super) fn apply_fixed_state_instantiate_using(
@@ -544,7 +516,7 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_rewrite(
         &self,
         surface_equality: &ClickProposition,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(_) => self.apply_pure_rewrite(surface_equality),
             ProofContext::FixedState(context) => self.apply_fixed_state_rewrite(
@@ -575,7 +547,7 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_pure_rewrite(
         &self,
         surface_equality: &ClickProposition,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let goal = Box::new(
             self.proposition_goal("`rewrite` requires a proposition goal")?
                 .clone(),
@@ -592,7 +564,7 @@ impl<'a> Proof<'a> {
         &self,
         view: &FixedStateOperationView<'_>,
         surface_equality: &ClickProposition,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let unfolded_predicates = self.active_unfolded_predicates();
         let goal = Box::new(
             unfold_predicates_in_proposition(
@@ -665,7 +637,7 @@ impl<'a> Proof<'a> {
         goal: Box<Proposition>,
         equality: Box<Proposition>,
         surface_equality: &ClickProposition,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let admitted = self.facts().materialization_available(&equality)
             || reverse_kernel_equality(equality.as_ref().clone())
                 .as_ref()
@@ -685,19 +657,13 @@ impl<'a> Proof<'a> {
                 .filter(|lowered| lowered == &rewritten)
                 .map(|_| candidate)
         });
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self
-                .state()
-                .open_branches
-                .replace_at(self.focused_branch_id(), {
-                    let context = self.refined_branch_state(self.facts().clone());
-                    self.refined_proposition(context, rewritten, surface_goal)
-                }),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        })
+        let context = self.refined_branch_state(self.facts().clone());
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals.clone(),
+            Some(self.refined_proposition(context, rewritten, surface_goal)),
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 
     pub(super) fn apply_extract(
@@ -965,15 +931,16 @@ impl<'a> Proof<'a> {
             execution: candidates,
         };
         execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
-        let mut state = (*self.state()).clone();
-        state.open_branches = state.open_branches.replace_execution_at(
-            self.focused_branch_id(),
+        let transition = self.checked_execution_transition(
             self.facts().clone(),
+            false,
             execution,
+            Vec::new(),
+            Vec::new(),
         );
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(state, self.focused_branch_id()),
+            state: self.publish_checked_transition(transition)?,
             node: self.node.clone(),
         })
     }
@@ -1055,7 +1022,7 @@ impl<'a> Proof<'a> {
         source: &ClickProposition,
         target: &ClickProposition,
         premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         match self.context.as_ref() {
             ProofContext::FixedState(context) => self.apply_fixed_state_transport_using(
                 source,
@@ -1101,7 +1068,7 @@ impl<'a> Proof<'a> {
         target: &ClickProposition,
         premises: &[ClickProposition],
         view: &FixedStateOperationView<'_>,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let (source, target, premises) = if premises.is_empty() {
             (source.clone(), target.clone(), premises.to_vec())
         } else {
@@ -1157,28 +1124,21 @@ impl<'a> Proof<'a> {
                 unfolded_predicates: branch_state.unfolded_predicates.clone(),
                 execution: branch_state.execution.clone(),
             };
-            return Ok(ProofState {
-                locals: self.state().locals.clone(),
-                open_branches: self.state().open_branches.replace_at(
-                    self.focused_branch_id(),
-                    OpenBranch::function_outcome(updated, state),
-                ),
-                added_facts: Arc::new(added_facts),
-                checked_facts: Arc::new(checked_facts),
-            });
+            return Ok(CheckedFocusedTransition::replacing(
+                self.state().locals.clone(),
+                Some(OpenBranch::function_outcome(updated, state)),
+                added_facts,
+                checked_facts,
+            ));
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_at(
-                self.focused_branch_id(),
-                complete,
-                facts,
-            ),
-            added_facts: Arc::new(added_facts),
-            checked_facts: Arc::new(checked_facts),
-        })
+        Ok(self.checked_fact_transition(
+            self.state().locals.clone(),
+            facts,
+            complete,
+            added_facts,
+            checked_facts,
+        ))
     }
 
     pub(super) fn apply_execution_transport_using(
@@ -1187,7 +1147,7 @@ impl<'a> Proof<'a> {
         target: &ClickProposition,
         premises: &[ClickProposition],
         context: &ExecutionProofContext<'a>,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         // A nested proposition proof stated at this frontier may transport
         // facts as well; the successor below preserves the goal's kind.
         let mut execution = self
@@ -1231,17 +1191,12 @@ impl<'a> Proof<'a> {
         };
         facts = facts.with_fact(checked.target);
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.discharged_if_or_execution_at(
-                self.focused_branch_id(),
-                complete,
-                facts,
-                execution,
-            ),
-            added_facts: Arc::new(added_facts.clone()),
-            checked_facts: Arc::new(added_facts),
-        })
+        Ok(self.checked_execution_transition(
+            facts,
+            complete,
+            execution,
+            added_facts.clone(),
+            added_facts,
+        ))
     }
 }

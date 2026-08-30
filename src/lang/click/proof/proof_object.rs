@@ -791,6 +791,29 @@ pub(in crate::lang::click::proof) fn linear_script_is_supported(tactics: &[Proof
 
 type ProofState = KernelProofState<ProofLocals, Obligation, ExecutionProofState>;
 
+struct CheckedFocusedTransition {
+    locals: ProofLocals,
+    branch: Option<OpenBranch>,
+    added_facts: Vec<Proposition>,
+    checked_facts: Vec<Proposition>,
+}
+
+impl CheckedFocusedTransition {
+    fn replacing(
+        locals: ProofLocals,
+        branch: Option<OpenBranch>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Self {
+        Self {
+            locals,
+            branch,
+            added_facts,
+            checked_facts,
+        }
+    }
+}
+
 /// Proof-local surface names introduced by checked refinements such as
 /// `choose`. The persistent map makes forks and one local binding logarithmic;
 /// the counter is branch-local scalar freshness state.
@@ -1265,6 +1288,59 @@ impl<'a> Proof<'a> {
 
     fn focused_obligation(&self) -> Option<&Obligation> {
         Some(&self.focused_branch()?.obligation)
+    }
+
+    fn checked_fact_transition(
+        &self,
+        locals: ProofLocals,
+        facts: ProofFacts,
+        complete: bool,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> CheckedFocusedTransition {
+        let branch = (!complete).then(|| {
+            self.focused_branch()
+                .expect("a checked fact transition requires an open branch")
+                .with_state(self.refined_branch_state(facts))
+        });
+        CheckedFocusedTransition::replacing(locals, branch, added_facts, checked_facts)
+    }
+
+    fn checked_execution_transition(
+        &self,
+        facts: ProofFacts,
+        complete: bool,
+        execution: ExecutionProofState,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> CheckedFocusedTransition {
+        let branch = (!complete).then(|| {
+            let mut state = self.refined_branch_state(facts);
+            state.execution = Some(Arc::new(execution));
+            self.focused_branch()
+                .expect("a checked execution transition requires an open branch")
+                .with_state(state)
+        });
+        CheckedFocusedTransition::replacing(
+            self.state().locals.clone(),
+            branch,
+            added_facts,
+            checked_facts,
+        )
+    }
+
+    fn publish_checked_transition(
+        &self,
+        transition: CheckedFocusedTransition,
+    ) -> Result<KernelProofHandle, ClickError> {
+        self.state
+            .publish_checked_focused_result(
+                transition.locals,
+                transition.branch,
+                transition.added_facts,
+                transition.checked_facts,
+            )
+            .map_err(|_| self.step_error("checked transition lost its focused proof branch"))
     }
 
     pub(in crate::lang::click::proof) fn proposition_obligation(

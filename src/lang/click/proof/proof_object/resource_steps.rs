@@ -3,7 +3,10 @@
 use super::*;
 
 impl<'a> Proof<'a> {
-    pub(super) fn apply_predicate_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
+    pub(super) fn apply_predicate_unfold(
+        &self,
+        name: &String,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         match self.context.as_ref() {
             ProofContext::Pure(context) => self.apply_proposition_predicate_unfold(
                 name,
@@ -41,7 +44,7 @@ impl<'a> Proof<'a> {
         click_function_environment: &ClickFunctionEnvironment,
         claim_label: &str,
         tactic_index: usize,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let checked = check_unfold_predicate_in_facts(
             &self.facts(),
             name,
@@ -144,18 +147,18 @@ impl<'a> Proof<'a> {
                 execution: goal.state.execution.clone(),
             })
         };
-        Ok(ProofState {
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
-            open_branches: self
-                .state
-                .open_branches
-                .replace_at(self.focused_branch_id(), goal),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
+            branch: Some(goal),
+            added_facts: checked.added_facts.clone(),
+            checked_facts: checked.added_facts,
         })
     }
 
-    pub(super) fn apply_execution_unfold(&self, name: &String) -> Result<ProofState, ClickError> {
+    pub(super) fn apply_execution_unfold(
+        &self,
+        name: &String,
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`unfold` requires an execution-frontier proof"));
         };
@@ -228,25 +231,22 @@ impl<'a> Proof<'a> {
                 .expect("execution unfold requires an open goal")
                 .with_state(goal_context),
         };
-        Ok(ProofState {
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
             // A nested proposition proof stated at this frontier unfolds its
             // own goal through the same checked operation. Other execution
             // goals retain their kind while installing the updated snapshot
             // and unfold delta.
-            open_branches: self
-                .state
-                .open_branches
-                .replace_at(self.focused_branch_id(), goal),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
+            branch: Some(goal),
+            added_facts: checked.added_facts.clone(),
+            checked_facts: checked.added_facts,
         })
     }
 
     pub(super) fn apply_execution_resource_observation(
         &self,
         resource: &ResourceClause,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`observe` requires an execution-frontier proof"));
         };
@@ -276,23 +276,26 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.core.state = checked.state.into();
-        Ok(ProofState {
+        let branch = self
+            .focused_branch()
+            .expect("resource observation requires an open goal")
+            .with_state(BranchState {
+                facts: checked.facts,
+                unfolded_predicates: self.focused_branch_unfolds().clone(),
+                execution: Some(Arc::new(execution)),
+            });
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.replace_frontier_at(
-                self.focused_branch_id(),
-                checked.facts,
-                execution,
-            ),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
+            branch: Some(branch),
+            added_facts: checked.added_facts.clone(),
+            checked_facts: checked.added_facts,
         })
     }
 
     pub(super) fn apply_execution_resource_unfold(
         &self,
         resource: &ResourceClause,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `unfold` requires an execution-frontier proof"));
         };
@@ -319,23 +322,26 @@ impl<'a> Proof<'a> {
             context.tactic_index,
         )?;
         execution.core.state = checked.state.into();
-        Ok(ProofState {
+        let branch = self
+            .focused_branch()
+            .expect("resource unfold requires an open goal")
+            .with_state(BranchState {
+                facts: checked.facts,
+                unfolded_predicates: self.focused_branch_unfolds().clone(),
+                execution: Some(Arc::new(execution)),
+            });
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.replace_frontier_at(
-                self.focused_branch_id(),
-                checked.facts,
-                execution,
-            ),
-            added_facts: Arc::new(checked.added_facts.clone()),
-            checked_facts: Arc::new(checked.added_facts),
+            branch: Some(branch),
+            added_facts: checked.added_facts.clone(),
+            checked_facts: checked.added_facts,
         })
     }
 
     pub(super) fn apply_execution_resource_fold(
         &self,
         resource: &ResourceClause,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("resource `fold` requires an execution-frontier proof"));
         };
@@ -367,16 +373,19 @@ impl<'a> Proof<'a> {
             &execution.core.unfolded_predicates,
         )?;
         execution.core.state = checked.state.into();
-        Ok(ProofState {
+        let branch = self
+            .focused_branch()
+            .expect("resource fold requires an open goal")
+            .with_state(BranchState {
+                facts: checked.facts,
+                unfolded_predicates: self.focused_branch_unfolds().clone(),
+                execution: Some(Arc::new(execution)),
+            });
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.replace_frontier_at(
-                self.focused_branch_id(),
-                checked.facts,
-                execution,
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
+            branch: Some(branch),
+            added_facts: Vec::new(),
+            checked_facts: Vec::new(),
         })
     }
 
@@ -386,7 +395,7 @@ impl<'a> Proof<'a> {
     pub(super) fn apply_outcome_resource_fold(
         &self,
         resource: &ResourceClause,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("outcome resource `fold` requires an execution proof"));
         };
@@ -434,14 +443,11 @@ impl<'a> Proof<'a> {
             unfolded_predicates: branch_state.unfolded_predicates.clone(),
             execution: branch_state.execution.clone(),
         };
-        Ok(ProofState {
+        Ok(CheckedFocusedTransition {
             locals: self.state().locals.clone(),
-            open_branches: self.state().open_branches.replace_at(
-                self.focused_branch_id(),
-                OpenBranch::function_outcome(updated, state),
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
+            branch: Some(OpenBranch::function_outcome(updated, state)),
+            added_facts: Vec::new(),
+            checked_facts: Vec::new(),
         })
     }
 }

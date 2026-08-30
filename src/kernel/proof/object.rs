@@ -147,7 +147,7 @@ impl<L, O, E> ProofObject<L, O, E> {
         )
     }
 
-    pub(crate) fn new(state: ProofState<L, O, E>, focused_branch: BranchId) -> Self {
+    fn new(state: ProofState<L, O, E>, focused_branch: BranchId) -> Self {
         Self {
             state: Arc::new(state),
             focused_branch,
@@ -270,6 +270,34 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
 }
 
 impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn publish_checked_focused_result(
+        &self,
+        locals: L,
+        branch: Option<ProofBranch<O, E>>,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Result<Self, ProofFocusError> {
+        if self.state.open_branches.get(self.focused_branch).is_none() {
+            return Err(ProofFocusError::NotOpen);
+        }
+        let open_branches = match branch {
+            Some(branch) => self
+                .state
+                .open_branches
+                .replace_at(self.focused_branch, branch),
+            None => self.state.open_branches.close_at(self.focused_branch),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals,
+                open_branches,
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
+            },
+            self.focused_branch,
+        ))
+    }
+
     pub(crate) fn replace_focused_with_checked_branches(
         &self,
         branches: Vec<ProofBranch<O, E>>,
@@ -1435,19 +1463,6 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
         Some(&self.get(at)?.obligation)
     }
 
-    /// Replaces only what the addressed branch must establish, preserving its
-    /// branch-local state.
-    pub(crate) fn replace_obligation_at(
-        &self,
-        at: BranchId,
-        obligation: ProofObligation<P, O>,
-    ) -> Self {
-        let Some(branch) = self.get(at) else {
-            unreachable!("obligation refinement requires the addressed open branch");
-        };
-        self.replace_at(at, branch.with_obligation(obligation))
-    }
-
     /// Retains the addressed obligation under updated branch-local state.
     pub(crate) fn with_branch_state_at(&self, at: BranchId, state: ProofBranchState<E>) -> Self {
         let Some(branch) = self.get(at) else {
@@ -1516,20 +1531,6 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
             self.close_at(at)
         } else {
             self.with_facts_at(at, facts)
-        }
-    }
-
-    pub(crate) fn discharged_if_or_execution_at(
-        &self,
-        at: BranchId,
-        complete: bool,
-        facts: ProofFacts,
-        execution: E,
-    ) -> Self {
-        if complete {
-            self.close_at(at)
-        } else {
-            self.replace_execution_at(at, facts, execution)
         }
     }
 

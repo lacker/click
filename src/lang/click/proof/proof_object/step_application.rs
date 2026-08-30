@@ -89,7 +89,7 @@ impl<'a> Proof<'a> {
             });
         }
 
-        let next_state = match &step {
+        let transition = match &step {
             ProofStep::ApplyTheoremUsing {
                 application,
                 premises,
@@ -134,7 +134,7 @@ impl<'a> Proof<'a> {
 
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(next_state, self.focused_branch_id()),
+            state: self.publish_checked_transition(transition)?,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(step)),
@@ -233,7 +233,7 @@ impl<'a> Proof<'a> {
         &self,
         region: Option<&CodeRegionRef>,
         premises: &[ClickProposition],
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`frame using` requires an execution proof"));
         };
@@ -386,15 +386,16 @@ impl<'a> Proof<'a> {
         updated.selection = EffectGoalSelection::None;
         updated.checked_effects = Arc::new(effect_indices);
         updated.data = Arc::new(data);
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-            open_branches: self.state.open_branches.replace_obligation_at(
-                self.focused_branch_id(),
-                Obligation::FunctionOutcome(updated),
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(frame_facts),
-        })
+        let branch = self
+            .focused_branch()
+            .expect("an outcome frame transition requires an open branch")
+            .with_obligation(Obligation::FunctionOutcome(updated));
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals.clone(),
+            Some(branch),
+            Vec::new(),
+            frame_facts,
+        ))
     }
 
     #[inline(never)]
@@ -404,7 +405,7 @@ impl<'a> Proof<'a> {
         premises: &[ClickProposition],
         origin: Option<ProofStepOrigin>,
         retain_closed_loop_effect_goal: bool,
-    ) -> Result<ProofState, ClickError> {
+    ) -> Result<CheckedFocusedTransition, ClickError> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`frame using` requires an execution proof"));
         };
@@ -483,23 +484,23 @@ impl<'a> Proof<'a> {
                 .as_mut()
                 .expect("the checked loop effect goal remains present")
                 .closed = true;
-            let open_branches = if retain_closed_loop_effect_goal {
-                self.state().open_branches.replace_frontier_at(
-                    self.focused_branch_id(),
-                    self.facts().clone(),
-                    execution,
+            let branch = if retain_closed_loop_effect_goal {
+                let mut state = self.refined_branch_state(self.facts().clone());
+                state.execution = Some(Arc::new(execution));
+                Some(
+                    self.focused_branch()
+                        .expect("a retained loop effect transition requires an open branch")
+                        .with_state(state),
                 )
             } else {
-                self.state()
-                    .open_branches
-                    .close_at(self.focused_branch_id())
+                None
             };
-            return Ok(ProofState {
-                locals: self.state().locals.clone(),
-                open_branches,
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(frame_facts),
-            });
+            return Ok(CheckedFocusedTransition::replacing(
+                self.state().locals.clone(),
+                branch,
+                Vec::new(),
+                frame_facts,
+            ));
         }
         if !execution.core.frontier.is_at_function_exit() {
             return Err(self.step_error("`frame using` requires function exit"));
@@ -540,17 +541,13 @@ impl<'a> Proof<'a> {
                     origin.source_index,
                     PostExecutionTactic::FrameRegion(region.clone()),
                 );
-                return Ok(ProofState {
-                    locals: self.state().locals.clone(),
-
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        self.facts().clone(),
-                        execution,
-                    ),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                });
+                return Ok(self.checked_execution_transition(
+                    self.facts().clone(),
+                    false,
+                    execution,
+                    Vec::new(),
+                    Vec::new(),
+                ));
             }
         }
 
@@ -593,23 +590,19 @@ impl<'a> Proof<'a> {
                 surface_tactics: None,
             },
         );
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.replace_at(
-                self.focused_branch_id(),
-                OpenBranch::frontier(
-                    EffectGoalSelection::None,
-                    BranchState {
-                        facts: self.facts().clone(),
-                        unfolded_predicates: self.focused_branch_unfolds().clone(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                ),
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        })
+        Ok(CheckedFocusedTransition::replacing(
+            self.state().locals.clone(),
+            Some(OpenBranch::frontier(
+                EffectGoalSelection::None,
+                BranchState {
+                    facts: self.facts().clone(),
+                    unfolded_predicates: self.focused_branch_unfolds().clone(),
+                    execution: Some(Arc::new(execution)),
+                },
+            )),
+            Vec::new(),
+            Vec::new(),
+        ))
     }
 
     /// Applies a planner-selected contextual frame tree directly to this
