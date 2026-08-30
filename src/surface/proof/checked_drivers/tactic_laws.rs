@@ -72,25 +72,45 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
     // advance the checked fixed-state Proof below.
     let smart_result = match (&checked_proof_result, &smart_unfolds) {
         (Some(_), _) => None,
-        (None, Some(unfolded_predicates)) => Some(construct_smart_have_plan(
-            ExecutionView::new(
-                &execution.core.frontier,
-                &execution.core.effect_facts,
+        (None, Some(unfolded_predicates)) => {
+            let checked_goal = lower_fixed_state_proposition(
+                &have.proposition,
+                &facts_for_simple_goal_lowering(&have_facts),
+                parsed_function.parameters(),
+                arguments,
+                proof_context.old_reference_state(&execution.core.frontier, state),
+                state,
+                None,
                 &execution.presentation.recorded_snapshots,
-                &execution.presentation.surface_propositions,
-                proof_context.constants.function_entry_state.as_ref(),
-            ),
-            &state,
-            &have_facts,
-            parsed_function.parameters(),
-            arguments,
-            predicate_environment,
-            click_function_environment,
-            have,
-            claim_label,
-            tactic_index,
-            unfolded_predicates,
-        )?),
+                predicate_environment,
+                click_function_environment,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "`{claim_label}` have proof {tactic_index}: could not lower pure goal: {message}"
+                ))
+            })?;
+            Some(construct_smart_have_plan(
+                ExecutionView::new(
+                    &execution.core.frontier,
+                    &execution.core.effect_facts,
+                    &execution.presentation.recorded_snapshots,
+                    &execution.presentation.surface_propositions,
+                    proof_context.constants.function_entry_state.as_ref(),
+                ),
+                state,
+                &have_facts,
+                parsed_function.parameters(),
+                arguments,
+                predicate_environment,
+                click_function_environment,
+                have,
+                claim_label,
+                tactic_index,
+                unfolded_predicates,
+                &checked_goal,
+            )?)
+        }
         (None, None) => None,
     };
     let (fact, surface_certificate) = match (checked_proof_result, smart_result) {

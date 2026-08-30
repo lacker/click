@@ -546,18 +546,12 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
         let available = if let Some(outcome) = goal.outcome.as_deref() {
             facts.pure_assumption_available(proposition)
                 || facts.available_across_effects(proposition, &outcome.core.effect_facts)
-                || super::fact_reasoning::normalizes_context_free(proposition)
         } else {
             match context {
                 PropositionAssumptionContext::Exact => facts.contains(proposition),
-                PropositionAssumptionContext::Pure => {
-                    facts.pure_assumption_available(proposition)
-                        || super::fact_reasoning::normalizes_context_free(proposition)
-                }
+                PropositionAssumptionContext::Pure => facts.pure_assumption_available(proposition),
                 PropositionAssumptionContext::Materialized => {
                     facts.materialization_available(proposition)
-                        || facts.contains_discharged_implication_consequent(proposition)
-                        || super::fact_reasoning::normalizes_context_free(proposition)
                 }
             }
         };

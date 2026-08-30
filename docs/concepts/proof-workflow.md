@@ -190,7 +190,8 @@ control flow.
   index. Prefer labels for durable scripts.
 - `witness(k = expression);`: prove the current existential goal by substituting
   the given int32 expression for binder `k`.
-- `assumption();`: close an exact current pure goal.
+- `assumption();`: close a goal already present as the same semantic fact; it
+  does not normalize, extract, or transport a new fact.
 - `normalize();`: close a pure goal by context-free computation.
 - `rewrite(equality);`: rewrite a pure goal once using an exact available int32
   equality whose left side is a variable.

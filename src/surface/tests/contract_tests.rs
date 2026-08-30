@@ -1683,7 +1683,7 @@ fn post_execution_frame_using_relowers_a_preceding_have_fact() {
             } by {
                 execute();
                 have data[0] == 0 by {
-                    assumption();
+                    normalize();
                 }
                 frame() using {
                     data[0] == 0;

@@ -1087,7 +1087,7 @@ impl<'a> Proof<'a> {
                     self.step_error("`assumption` requires a proposition goal")
                 }
                 PropositionCloseError::Unavailable => self.step_error(
-                    "`assumption` requires the exact current goal as an available fact",
+                    "`assumption` requires the current goal as an available semantic fact",
                 ),
                 _ => unreachable!("kernel returned an unrelated assumption error"),
             })

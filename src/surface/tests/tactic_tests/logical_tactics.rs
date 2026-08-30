@@ -275,6 +275,58 @@ fn failed_fixed_state_normalize_does_not_dump_internal_memory() {
 }
 
 #[test]
+fn assumption_reuses_facts_but_does_not_normalize_or_extract_implications() {
+    let c_source = r#"
+        int32 keep(int32 x, int32 y) {
+            x = x;
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "keep.c";
+
+        int32 keep(int32 x, int32 y) {
+            requires x == 0;
+            requires x == 0 implies y == 0;
+            ensures result == result;
+        } by {
+            step();
+            have y == 0 by {
+                extract(y == 0);
+            }
+            step();
+            normalize();
+        }
+    "#;
+
+    verify_c0_sources(click_source, &[("keep.c", c_source)])
+        .expect("explicit extraction and normalization should verify");
+
+    let implicit_extract = click_source.replace("extract(y == 0);", "assumption();");
+    let error = verify_c0_sources(&implicit_extract, &[("keep.c", c_source)])
+        .expect_err("assumption must not discharge an implication");
+    assert!(
+        error
+            .message()
+            .contains("`assumption` requires the current goal as an available semantic fact"),
+        "{}",
+        error.message()
+    );
+
+    let implicit_normalize = click_source.replacen("normalize();", "assumption();", 1);
+    let error = verify_c0_sources(&implicit_normalize, &[("keep.c", c_source)])
+        .expect_err("assumption must not normalize a proposition");
+    assert!(
+        error.message().contains("`assumption` did not match")
+            || error
+                .message()
+                .contains("`assumption` requires the current goal as an available semantic fact"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn parses_local_have_proof_tactic() {
     let source = FILL3_CLICK.replace(
         "by auto;",
@@ -2174,7 +2226,7 @@ fn leading_universal_have_scopes_stay_on_one_proof() {
     assert!(
         error
             .message()
-            .contains("`assumption` requires the exact current goal as an available fact"),
+            .contains("`assumption` requires the current goal as an available semantic fact"),
         "the checked Proof operation should reject the tamper directly: {error:?}"
     );
     assert_eq!(

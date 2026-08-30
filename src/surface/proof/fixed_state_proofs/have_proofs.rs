@@ -285,28 +285,16 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
         claim_label,
         "smart have: goal lowering",
     );
-    let fact = match lower_fixed_state_proposition(
-        &have.proposition,
-        &direct_lowering_facts,
-        parameters,
-        arguments,
-        pre_state,
-        state,
-        None,
-        recorded_snapshots,
-        predicate_environment,
-        click_function_environment,
-    ) {
-        Ok(fact) => fact,
-        Err(_) if prelowered_goal.is_some() => prelowered_goal.expect("checked above").clone(),
-        Err(message) if restricted_simp => {
-            return Err(ClickError::new(format!(
-                "`{claim_label}` have proof {outer_tactic_index}: could not lower restricted `simp` goal without applying an ambient equality: {message}"
-            )));
-        }
-        Err(message) => match lower_fixed_state_proposition(
+    // A caller that already created the checked Proof goal owns its lowering.
+    // Planning against a freshly lowered sibling can emit a certificate that
+    // checks only against an internal representation and fails after surface
+    // expansion re-lowers the goal normally.
+    let fact = if let Some(prelowered_goal) = prelowered_goal {
+        prelowered_goal.clone()
+    } else {
+        match lower_fixed_state_proposition(
             &have.proposition,
-            &facts_for_simple_goal_lowering(available),
+            &direct_lowering_facts,
             parameters,
             arguments,
             pre_state,
@@ -317,12 +305,31 @@ pub(in crate::surface::proof) fn plan_smart_have_in_current_state(
             click_function_environment,
         ) {
             Ok(fact) => fact,
-            Err(fallback_message) => {
+            Err(message) if restricted_simp => {
                 return Err(ClickError::new(format!(
-                    "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {fallback_message}\n  direct lowering also failed: {message}"
+                    "`{claim_label}` have proof {outer_tactic_index}: could not lower restricted `simp` goal without applying an ambient equality: {message}"
                 )));
             }
-        },
+            Err(message) => match lower_fixed_state_proposition(
+                &have.proposition,
+                &facts_for_simple_goal_lowering(available),
+                parameters,
+                arguments,
+                pre_state,
+                state,
+                None,
+                recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            ) {
+                Ok(fact) => fact,
+                Err(fallback_message) => {
+                    return Err(ClickError::new(format!(
+                        "`{claim_label}` have proof {outer_tactic_index}: could not lower pure goal: {fallback_message}\n  direct lowering also failed: {message}"
+                    )));
+                }
+            },
+        }
     };
     drop(goal_lowering);
     let unfold_span = crate::instrumentation::OperationTiming::new(

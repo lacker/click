@@ -2106,6 +2106,7 @@ pub(super) fn construct_smart_have_plan(
     claim_label: &str,
     tactic_index: usize,
     unfolded_predicates: &[String],
+    checked_goal: &Proposition,
 ) -> Result<(Proposition, SourceProof), ClickError> {
     let planning_span =
         crate::instrumentation::OperationTiming::new("have", claim_label, "smart have planning");
@@ -2123,7 +2124,7 @@ pub(super) fn construct_smart_have_plan(
         predicate_environment,
         click_function_environment,
         unfolded_predicates,
-        None,
+        Some(checked_goal),
     )?;
     drop(planning_span);
     let _construction_span = crate::instrumentation::OperationTiming::new(

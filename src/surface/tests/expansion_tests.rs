@@ -6125,7 +6125,6 @@ fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
             mutable p[0..1];
         } by {
             execute();
-            assumption();
             normalize();
             frame() using {};
         }
@@ -6156,12 +6155,10 @@ fn grouped_post_execution_closers_before_empty_mutable_frame_stay_on_proof() {
     let tactics = verified[0]
         .expanded_proof_tactics()
         .expect("the outcome closers should retain provenance");
-    for expected in [ProofTactic::Assumption, ProofTactic::Normalize] {
-        assert!(
-            tactics.contains(&expected),
-            "the retained proof lost {expected:?}: {tactics:#?}"
-        );
-    }
+    assert!(
+        tactics.contains(&ProofTactic::Normalize),
+        "the retained proof lost its normalization: {tactics:#?}"
+    );
     assert!(
         tactics.iter().any(|tactic| matches!(
             tactic,
@@ -6359,7 +6356,7 @@ fn grouped_post_execution_predicate_unfold_before_frame_stays_on_proof() {
         } by {
             execute();
             unfold(is_nine);
-            assumption();
+            normalize();
             frame() using {};
         }
     "#;
@@ -10496,6 +10493,44 @@ fn resource_example_pipelines_have_no_outcome_fallbacks() {
             )
         });
     }
+}
+
+#[test]
+fn smart_have_expansion_plans_against_the_ordinary_surface_goal() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest
+        .join("examples")
+        .join("ring-buffer")
+        .join("ring_buffer.click");
+    let explicit = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let smart = explicit.replacen(
+        "have owner->head == old(owner->head) by {\n        normalize();\n    }",
+        "have owner->head == old(owner->head) by {\n        simp();\n    }",
+        1,
+    );
+    assert_ne!(
+        smart, explicit,
+        "the regression must select the intended have"
+    );
+    let sources = crate::cli::read_verifying_sources(&path, &smart)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
+
+    verify_c0_sources(&smart, &c_sources).expect("the smart have should verify");
+    let expanded = expand_c0_claim_source(
+        &smart,
+        &c_sources,
+        "ring_buffer_pipeline",
+        CProofClaim::Grouped,
+    )
+    .expect("the smart have should expand against its ordinary lowered goal");
+    assert!(
+        expanded.contains("have owner->head == old(owner->head) by {\n        normalize();\n    }"),
+        "the expansion used a different internal goal:\n{expanded}"
+    );
+    verify_c0_sources(&expanded, &c_sources)
+        .expect("the expanded smart have should independently reverify");
 }
 
 #[test]

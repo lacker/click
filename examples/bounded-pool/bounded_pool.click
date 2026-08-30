@@ -293,7 +293,7 @@ void pool_pipeline(
     }
     have 0 <= pool->capacity by {
         rewrite(pool->capacity == count(pool_slot(pool)));
-        assumption();
+        normalize();
     }
     step();
     step();

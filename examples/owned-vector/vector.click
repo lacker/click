@@ -1241,7 +1241,7 @@ int32 vector_pipeline(
     step();
     have owner->len == 1 by {
         rewrite(at(statement(3).exit, 1) == at(statement(3).exit, owner->len));
-        assumption();
+        normalize();
     }
     have 0 < owner->len by {
         rewrite(owner->len == 1);

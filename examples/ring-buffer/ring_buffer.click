@@ -153,16 +153,18 @@ int32 ring_buffer_pipeline(
         contains(linear_ring(owner), owned_ring_storage(owner->data));
     }
     have result == replacement by {
-        assumption();
+        rewrite(at(statement(4).entry, pushed) ==
+            at(statement(4).entry, replacement));
+        normalize();
     }
     have owner->head == old(owner->head) by {
-        assumption();
+        normalize();
     }
     have owner->tail == 4 by {
         assumption();
     }
     have owner->data == old(owner->data) by {
-        assumption();
+        normalize();
     }
     have owner->data[0] == replacement by {
         assumption();

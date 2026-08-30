@@ -474,7 +474,7 @@ int32 owned_string_push(struct owned_string* owner, int32 value) {
     }
     have owner->data[old(owner->len)] == value by {
         rewrite(owner->data == old(owner->data));
-        assumption();
+        normalize();
     }
     have owner->data[owner->len] == 0 by {
         rewrite(owner->len == (old(owner->len) + 1));

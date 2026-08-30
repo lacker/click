@@ -1,8 +1,9 @@
 # simple proof tactics
 
-These proofs use only deterministic, bounded simple tactics. `assumption` closes
-an exact fact, `normalize` computes a proposition without consulting the proof
-context, and `rewrite` performs one explicitly named equality substitution.
+These proofs use only deterministic, bounded simple tactics. `assumption` reuses
+an available semantic fact without deriving a new one, `normalize` computes a
+proposition without consulting the proof context, and `rewrite` performs one
+explicitly named equality substitution.
 
 ```c filename=simple_tactics.c
 int32 identity(int32 x) {
