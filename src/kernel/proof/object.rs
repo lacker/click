@@ -6,6 +6,7 @@
 
 use super::{BranchId, ProofBranch, ProofBranchState, ProofBranches, ProofFacts, ProofObligation};
 use crate::kernel::Proposition;
+use std::ops::Deref;
 use std::sync::Arc;
 
 /// The immutable state shared by checked proof successors.
@@ -15,6 +16,74 @@ pub(crate) struct ProofState<L, O, E> {
     pub(crate) open_branches: ProofBranches<ProofBranch<O, E>>,
     pub(crate) added_facts: Arc<Vec<Proposition>>,
     pub(crate) checked_facts: Arc<Vec<Proposition>>,
+}
+
+/// Opaque handle to one immutable checked proof state and the open branch it
+/// addresses.
+///
+/// Surface-language context and certificate provenance deliberately live
+/// outside this handle. They may describe or render a checked derivation, but
+/// they are not part of the semantic proof state and cannot change its focus.
+#[derive(Clone)]
+pub(crate) struct ProofObject<L, O, E> {
+    state: Arc<ProofState<L, O, E>>,
+    focused_branch: BranchId,
+}
+
+impl<L, O, E> ProofObject<L, O, E> {
+    pub(crate) fn new(state: ProofState<L, O, E>, focused_branch: BranchId) -> Self {
+        Self {
+            state: Arc::new(state),
+            focused_branch,
+        }
+    }
+
+    pub(crate) fn from_shared_state(
+        state: Arc<ProofState<L, O, E>>,
+        focused_branch: BranchId,
+    ) -> Self {
+        Self {
+            state,
+            focused_branch,
+        }
+    }
+
+    pub(crate) fn state(&self) -> &ProofState<L, O, E> {
+        self.state.as_ref()
+    }
+
+    pub(crate) fn focused_branch(&self) -> BranchId {
+        self.focused_branch
+    }
+
+    pub(crate) fn shares_state_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    pub(crate) fn with_state(&self, state: ProofState<L, O, E>) -> Self {
+        Self::new(state, self.focused_branch)
+    }
+
+    pub(crate) fn focused_at(&self, focused_branch: BranchId) -> Self {
+        Self::from_shared_state(self.state.clone(), focused_branch)
+    }
+
+    pub(crate) fn into_state(self) -> ProofState<L, O, E>
+    where
+        L: Clone,
+        O: Clone,
+        E: Clone,
+    {
+        Arc::unwrap_or_clone(self.state)
+    }
+}
+
+impl<L, O, E> Deref for ProofObject<L, O, E> {
+    type Target = ProofState<L, O, E>;
+
+    fn deref(&self) -> &Self::Target {
+        self.state()
+    }
 }
 
 impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, O>, E>> {

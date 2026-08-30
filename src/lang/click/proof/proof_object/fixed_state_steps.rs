@@ -88,10 +88,10 @@ impl<'a> Proof<'a> {
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_at(
+                self.focused_branch_id(),
                 complete,
                 facts,
             ),
@@ -129,10 +129,10 @@ impl<'a> Proof<'a> {
         )?;
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_at(
+                self.focused_branch_id(),
                 complete,
                 checked.facts,
             ),
@@ -201,10 +201,10 @@ impl<'a> Proof<'a> {
         }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_or_execution_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_or_execution_at(
+                self.focused_branch_id(),
                 complete,
                 checked.facts,
                 execution,
@@ -235,7 +235,7 @@ impl<'a> Proof<'a> {
         self.proposition_goal("`choose` requires a proposition goal")?;
         if choice.name == "result"
             || view.state.locals().contains_name(&choice.name)
-            || self.state.locals.values.contains_key(&choice.name)
+            || self.state().locals.values.contains_key(&choice.name)
         {
             return Err(self.step_error(format!("`{}` is already in scope", choice.name)));
         }
@@ -284,9 +284,9 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("only int32 existential choices are supported"));
         }
 
-        let chosen = Bitvector32Term::Variable(Variable(self.state.locals.next_choice_variable));
+        let chosen = Bitvector32Term::Variable(Variable(self.state().locals.next_choice_variable));
         let chosen_fact = substitute_int32_variable_in_proposition(&body, var, chosen.clone());
-        let mut locals = self.state.locals.clone();
+        let mut locals = self.state().locals.clone();
         locals.values = locals.values.with_inserted(
             choice.name.clone(),
             ContractExpression::CFragment(CExpression::Value(CValue::Int32(chosen))),
@@ -302,7 +302,7 @@ impl<'a> Proof<'a> {
             open_branches: self
                 .state
                 .open_branches
-                .with_facts_at(self.focused_branch, facts),
+                .with_facts_at(self.focused_branch_id(), facts),
             added_facts: Arc::new(added_facts),
             checked_facts: Arc::new(vec![chosen_fact]),
         })
@@ -430,12 +430,15 @@ impl<'a> Proof<'a> {
             _ => None,
         };
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
-                let context = self.refined_branch_state(self.facts().clone());
-                self.refined_proposition(context, goal, surface_goal)
-            }),
+            open_branches: self
+                .state()
+                .open_branches
+                .replace_at(self.focused_branch_id(), {
+                    let context = self.refined_branch_state(self.facts().clone());
+                    self.refined_proposition(context, goal, surface_goal)
+                }),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         })
@@ -540,12 +543,12 @@ impl<'a> Proof<'a> {
         let facts = self.facts().with_fact(conclusion.clone());
         let added_facts = added.then_some(conclusion).into_iter().collect::<Vec<_>>();
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
             open_branches: self
                 .state
                 .open_branches
-                .with_facts_at(self.focused_branch, facts),
+                .with_facts_at(self.focused_branch_id(), facts),
             added_facts: Arc::new(added_facts.clone()),
             checked_facts: Arc::new(added_facts),
         })
@@ -696,12 +699,15 @@ impl<'a> Proof<'a> {
                 .map(|_| candidate)
         });
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
-                let context = self.refined_branch_state(self.facts().clone());
-                self.refined_proposition(context, rewritten, surface_goal)
-            }),
+            open_branches: self
+                .state()
+                .open_branches
+                .replace_at(self.focused_branch_id(), {
+                    let context = self.refined_branch_state(self.facts().clone());
+                    self.refined_proposition(context, rewritten, surface_goal)
+                }),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         })
@@ -729,10 +735,10 @@ impl<'a> Proof<'a> {
         let facts = self.facts().with_fact(proposition);
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_at(
+                self.focused_branch_id(),
                 complete,
                 facts,
             ),
@@ -989,17 +995,16 @@ impl<'a> Proof<'a> {
             execution: candidates,
         };
         execution.outcome_provenance = Arc::new(outcome_provenance);
-        let mut state = (*self.state).clone();
+        let mut state = (*self.state()).clone();
         state.open_branches = state.open_branches.replace_execution_at(
-            self.focused_branch,
+            self.focused_branch_id(),
             self.facts().clone(),
             execution,
         );
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, self.focused_branch_id()),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -1183,9 +1188,9 @@ impl<'a> Proof<'a> {
                 execution: branch_state.execution.clone(),
             };
             return Ok(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_at(
-                    self.focused_branch,
+                locals: self.state().locals.clone(),
+                open_branches: self.state().open_branches.replace_at(
+                    self.focused_branch_id(),
                     OpenBranch::function_outcome(updated, state),
                 ),
                 added_facts: Arc::new(added_facts),
@@ -1194,10 +1199,10 @@ impl<'a> Proof<'a> {
         }
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_at(
+                self.focused_branch_id(),
                 complete,
                 facts,
             ),
@@ -1255,10 +1260,10 @@ impl<'a> Proof<'a> {
         facts = facts.with_fact(checked.target);
         let complete = self.goal().is_some_and(|goal| facts.contains(goal));
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.discharged_if_or_execution_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.discharged_if_or_execution_at(
+                self.focused_branch_id(),
                 complete,
                 facts,
                 execution,

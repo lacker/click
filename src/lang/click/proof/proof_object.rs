@@ -3,8 +3,8 @@ use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
     FunctionOutcomeObligation, OutcomeProofCore, ProofBranch, ProofBranchState, ProofBranches,
-    ProofFacts, ProofObligation as KernelBranchObligation, ProofState as KernelProofState,
-    PropositionObligation as KernelPropositionObligation, SplitId,
+    ProofFacts, ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
+    ProofState as KernelProofState, PropositionObligation as KernelPropositionObligation, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -145,12 +145,8 @@ pub(in crate::lang::click) fn count_checked_expanded_execution_ifs<R>(
 #[derive(Clone)]
 pub(super) struct Proof<'a> {
     pub(in crate::lang::click::proof) context: Arc<ProofContext<'a>>,
-    state: Arc<ProofState>,
+    state: KernelProofObject<ProofLocals, Obligation, ExecutionProofState>,
     node: Arc<ProofNode>,
-    /// The open goal this handle addresses. Focus is a cursor, not semantic
-    /// state: two handles over one state may address different judgments,
-    /// and checked operations advance exactly the focused branch goal.
-    focused_branch: BranchId,
 }
 
 /// Feasible arms of one checked C `if` frontier.
@@ -1234,10 +1230,18 @@ pub(in crate::lang::click::proof) fn old_reflexive_transport_source(
 }
 
 impl<'a> Proof<'a> {
+    fn state(&self) -> &ProofState {
+        self.state.state()
+    }
+
+    fn focused_branch_id(&self) -> BranchId {
+        self.state.focused_branch()
+    }
+
     /// The open branch addressed by this handle. Focus is only a cursor;
     /// sibling branches remain in the same immutable proof state.
     fn focused_branch(&self) -> Option<&OpenBranch> {
-        self.state.open_branches.get(self.focused_branch)
+        self.state().open_branches.get(self.focused_branch_id())
     }
 
     fn focused_obligation(&self) -> Option<&Obligation> {
@@ -1257,7 +1261,7 @@ impl<'a> Proof<'a> {
         &self,
         name: &String,
     ) -> Option<&ContractExpression> {
-        self.state.locals.values.get(name)
+        self.state().locals.values.get(name)
     }
 
     /// Whether the obligation this handle addresses has been discharged. On
@@ -1265,7 +1269,10 @@ impl<'a> Proof<'a> {
     /// split, only the focused branch obligation's discharge is an arm's success —
     /// the sibling legitimately remains open.
     pub(super) fn focused_discharged(&self) -> bool {
-        self.state.open_branches.get(self.focused_branch).is_none()
+        self.state()
+            .open_branches
+            .get(self.focused_branch_id())
+            .is_none()
     }
 
     /// The focused branch branch's path-local execution state, shared by identity
@@ -1352,7 +1359,7 @@ impl<'a> Proof<'a> {
 
     #[cfg(test)]
     fn branches_next_id(&self) -> u64 {
-        self.state.open_branches.next_id_for_test()
+        self.state().open_branches.next_id_for_test()
     }
 
     #[cfg(test)]
@@ -1438,43 +1445,45 @@ impl<'a> Proof<'a> {
         let facts = self.facts().with_selected_resource_separation(&goal);
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
 
-                open_branches: OpenBranches::root({
-                    let context = BranchState {
-                        facts,
-                        unfolded_predicates: match &outcome {
-                            Some(_) => self.focused_branch_unfolds().clone(),
-                            None => PersistentOrderedSet::default(),
-                        },
-                        execution: match &outcome {
-                            Some(_) => self.branch_execution().cloned(),
-                            None => None,
-                        },
-                    };
-                    OpenBranch::new(
-                        Obligation::Proposition(PropositionObligation::new(
-                            goal,
-                            PropositionPresentation {
-                                surface: surface_goal.map(Arc::new),
-                                surface_bindings: PersistentMap::default(),
-                                outcome,
+                    open_branches: OpenBranches::root({
+                        let context = BranchState {
+                            facts,
+                            unfolded_predicates: match &outcome {
+                                Some(_) => self.focused_branch_unfolds().clone(),
+                                None => PersistentOrderedSet::default(),
                             },
-                        )),
-                        context,
-                    )
-                }),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                            execution: match &outcome {
+                                Some(_) => self.branch_execution().cloned(),
+                                None => None,
+                            },
+                        };
+                        OpenBranch::new(
+                            Obligation::Proposition(PropositionObligation::new(
+                                goal,
+                                PropositionPresentation {
+                                    surface: surface_goal.map(Arc::new),
+                                    surface_bindings: PersistentMap::default(),
+                                    outcome,
+                                },
+                            )),
+                            context,
+                        )
+                    }),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         })
     }
 
@@ -1554,7 +1563,7 @@ impl<'a> Proof<'a> {
     }
 
     pub(super) fn is_complete(&self) -> bool {
-        self.state.open_branches.is_discharged()
+        self.state().open_branches.is_discharged()
     }
 
     pub(in crate::lang::click::proof) fn active_unfolded_predicates(&self) -> Vec<String> {
@@ -1656,9 +1665,12 @@ impl<'a> Proof<'a> {
 
     fn closed_state(&self) -> ProofState {
         ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.close_at(self.focused_branch),
+            open_branches: self
+                .state()
+                .open_branches
+                .close_at(self.focused_branch_id()),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(Vec::new()),
         }

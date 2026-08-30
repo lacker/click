@@ -32,7 +32,7 @@ impl<'a> Proof<'a> {
         let Some(execution) = self.execution() else {
             return Ok(false);
         };
-        if self.state.open_branches.is_discharged()
+        if self.state().open_branches.is_discharged()
             || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Ok(false);
@@ -82,7 +82,7 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("`branch` requires an execution-frontier proof"));
         };
-        if self.state.open_branches.is_discharged()
+        if self.state().open_branches.is_discharged()
             || !matches!(self.focused_obligation(), Some(Obligation::Frontier(_)))
         {
             return Err(self.step_error("`branch` requires an open execution frontier"));
@@ -1702,7 +1702,7 @@ impl<'a> Proof<'a> {
         delta_execution: &'v ExecutionProofState,
         condition_theorem: Option<&'v Theorem>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
-        let Some(branch) = self.state.open_branches.get(id) else {
+        let Some(branch) = self.state().open_branches.get(id) else {
             return Err(self.step_error(format!(
                 "cannot join `branch`: the {name} arm is not an open execution frontier"
             )));
@@ -1872,7 +1872,7 @@ impl<'a> Proof<'a> {
         let parent_node = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `branch`: the split marker lost its root")
         })?;
-        let open_branches = self.state.open_branches.join_reserved_at(
+        let open_branches = self.state().open_branches.join_reserved_at(
             ids,
             parent_goal,
             OpenBranch::frontier(
@@ -1886,19 +1886,21 @@ impl<'a> Proof<'a> {
         );
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(parts.common_added_facts.clone()),
-                checked_facts: Arc::new(parts.common_added_facts),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(parts.common_added_facts.clone()),
+                    checked_facts: Arc::new(parts.common_added_facts),
+                },
+                parent_goal,
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
                 step: Some(Arc::new(parts.step)),
                 focused_branch: parent_goal,
                 depth: parent_node.depth + 1,
             }),
-            focused_branch: parent_goal,
         })
     }
 
@@ -1923,7 +1925,7 @@ impl<'a> Proof<'a> {
         let path_facts = record.path_facts[arm_index]
             .clone()
             .expect("a recorded arm id has recorded path facts");
-        focused_branch.state = Arc::new(ProofState {
+        focused_branch.state = focused_branch.state.with_state(ProofState {
             locals: focused_branch.state.locals.clone(),
             open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
@@ -1943,7 +1945,7 @@ impl<'a> Proof<'a> {
         let arm_index = usize::from(!take_then);
         let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused_branch.state = Arc::new(ProofState {
+        focused_branch.state = focused_branch.state.with_state(ProofState {
             locals: focused_branch.state.locals.clone(),
             open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
@@ -2381,18 +2383,20 @@ impl<'a> Proof<'a> {
         self.install_parent_frontier_after_decided(&mut execution, record)?;
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    self.facts().clone(),
-                    execution,
-                ),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        self.facts().clone(),
+                        execution,
+                    ),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                self.focused_branch_id(),
+            ),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -2436,7 +2440,7 @@ impl<'a> Proof<'a> {
         take_then: bool,
     ) -> bool {
         record.arm_id(take_then).is_some_and(|id| {
-            self.state
+            self.state()
                 .open_branches
                 .get(id)
                 .and_then(|branch| branch.state.execution.as_deref())
@@ -2450,7 +2454,7 @@ impl<'a> Proof<'a> {
     ) -> bool {
         record.sole_feasible_arm().is_none()
             && record.arm_branches.iter().flatten().all(|id| {
-                self.state
+                self.state()
                     .open_branches
                     .get(*id)
                     .and_then(|branch| branch.state.execution.as_deref())
@@ -2500,7 +2504,7 @@ impl<'a> Proof<'a> {
         let (split, ids, mut open_branches) = self
             .state
             .open_branches
-            .begin_split::<2>(self.focused_branch);
+            .begin_split::<2>(self.focused_branch_id());
         let mut arm_ids: [Option<BranchId>; 2] = [None, None];
         let mut condition_theorems: [Option<Theorem>; 2] = [None, None];
         let mut base_facts: [Option<ProofFacts>; 2] = [None, None];
@@ -2542,23 +2546,25 @@ impl<'a> Proof<'a> {
             .expect("a feasible arm records its path facts");
         let successor = Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                // The successor starts focused branch on the first feasible arm and
-                // carries that arm's path facts as its delta, exactly as the
-                // container's arm proof did; `focus_split_arm` installs the
-                // matching delta when the driver moves to the other arm.
-                added_facts: Arc::new(first_path_facts.clone()),
-                checked_facts: Arc::new(first_path_facts),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    // The successor starts focused branch on the first feasible arm and
+                    // carries that arm's path facts as its delta, exactly as the
+                    // container's arm proof did; `focus_split_arm` installs the
+                    // matching delta when the driver moves to the other arm.
+                    added_facts: Arc::new(first_path_facts.clone()),
+                    checked_facts: Arc::new(first_path_facts),
+                },
+                focused_branch,
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch,
         };
         let record = ExecutionSplit {
             marker: successor.checkpoint(),

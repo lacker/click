@@ -93,27 +93,29 @@ impl<'a> Proof<'a> {
                 theorem_environment,
                 constants: Arc::new(constants),
             })),
-            state: Arc::new(ProofState {
-                locals: ProofLocals::default(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: ProofLocals::default(),
 
-                open_branches: OpenBranches::root(OpenBranch::frontier(
-                    effect_goals,
-                    BranchState {
-                        facts: ProofFacts::from_ordered(&pure_facts),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                )),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                    open_branches: OpenBranches::root(OpenBranch::frontier(
+                        effect_goals,
+                        BranchState {
+                            facts: ProofFacts::from_ordered(&pure_facts),
+                            unfolded_predicates: PersistentOrderedSet::default(),
+                            execution: Some(Arc::new(execution)),
+                        },
+                    )),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         }
     }
 
@@ -160,26 +162,28 @@ impl<'a> Proof<'a> {
                     ..(*context.constants).clone()
                 }),
             })),
-            state: Arc::new(ProofState {
-                locals: ProofLocals::default(),
-                open_branches: OpenBranches::root(OpenBranch::frontier(
-                    EffectGoalSelection::None,
-                    BranchState {
-                        facts: self.facts().clone(),
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: Some(Arc::new(execution)),
-                    },
-                )),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: ProofLocals::default(),
+                    open_branches: OpenBranches::root(OpenBranch::frontier(
+                        EffectGoalSelection::None,
+                        BranchState {
+                            facts: self.facts().clone(),
+                            unfolded_predicates: PersistentOrderedSet::default(),
+                            execution: Some(Arc::new(execution)),
+                        },
+                    )),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         })
     }
 
@@ -228,9 +232,9 @@ impl<'a> Proof<'a> {
             context,
             state,
             node,
-            focused_branch,
         } = self;
-        let mut proof_state = Arc::unwrap_or_clone(state);
+        let focused_branch = state.focused_branch();
+        let mut proof_state = state.into_state();
         // Release the goal map's reference first so the execution snapshot
         // is unique whenever this proof was.
         proof_state.open_branches = proof_state.open_branches.without_at(focused_branch);
@@ -256,9 +260,8 @@ impl<'a> Proof<'a> {
         Ok((
             Self {
                 context,
-                state: Arc::new(proof_state),
+                state: KernelProofObject::new(proof_state, focused_branch),
                 node,
-                focused_branch,
             },
             result,
         ))
@@ -354,17 +357,16 @@ impl<'a> Proof<'a> {
             });
         }
         execution.defer_post_execution(tactic_index, source_index, tactic);
-        let mut state = (*self.state).clone();
+        let mut state = (*self.state()).clone();
         state.open_branches = state.open_branches.replace_execution_at(
-            self.focused_branch,
+            self.focused_branch_id(),
             self.facts().clone(),
             execution,
         );
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, self.focused_branch_id()),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -372,14 +374,14 @@ impl<'a> Proof<'a> {
     /// Enclosing proof infrastructure can incorporate this output-sensitive
     /// delta without traversing or cloning the proof's complete fact set.
     pub(in crate::lang::click::proof) fn added_facts(&self) -> &[Proposition] {
-        self.state.added_facts.as_ref()
+        self.state().added_facts.as_ref()
     }
 
     /// Exact semantic facts selected or established by the latest step, in
     /// step-defined order. This lets enclosing surface bookkeeping record the
     /// checker-owned forms without re-lowering them.
     pub(in crate::lang::click::proof) fn checked_facts(&self) -> &[Proposition] {
-        self.state.checked_facts.as_ref()
+        self.state().checked_facts.as_ref()
     }
 }
 

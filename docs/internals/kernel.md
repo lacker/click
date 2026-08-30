@@ -39,8 +39,10 @@ Kernel files:
   `obligations.rs` owns the branch-obligation enum, effect selections,
   frontier/proposition/outcome obligations, result-aware outcome state, and
   checked frame authority. Surface presentation is an opaque attachment.
-  `object.rs` owns the immutable proof-state shape; branch-local state and the
-  open-branch representation live with their topology in `branches.rs`.
+  `object.rs` owns the immutable proof-state shape and the opaque
+  `ProofObject` handle that keeps one shared state together with its focused
+  branch cursor; branch-local state and the open-branch representation live
+  with their topology in `branches.rs`.
   Language attachments are opaque parameters and are never interpreted as
   evidence by these modules. Goal-preserving fact/execution successors,
   strict frontier successors, obligation replacement, and conditional

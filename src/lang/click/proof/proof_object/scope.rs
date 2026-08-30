@@ -70,7 +70,7 @@ impl<'a> ProofScope<'a> {
         nested: ProofScope<'a>,
     ) -> Result<Self, ClickError> {
         if !Arc::ptr_eq(&nested.root.context, &self.body.context)
-            || !Arc::ptr_eq(&nested.root.state, &self.body.state)
+            || !nested.root.state.shares_state_with(&self.body.state)
             || !Arc::ptr_eq(&nested.root.node, &self.body.node)
         {
             return Err(self
@@ -343,7 +343,7 @@ impl<'a> ProofScope<'a> {
             .last()
             .expect("the nonempty leading scope chain has an inner scope");
         if !Arc::ptr_eq(&current.root.context, &inner.root.context)
-            || !Arc::ptr_eq(&current.root.state, &inner.root.state)
+            || !current.root.state.shares_state_with(&inner.root.state)
             || !Arc::ptr_eq(&current.root.node, &inner.root.node)
         {
             return Err(inner
@@ -384,7 +384,7 @@ impl<'a> ProofScope<'a> {
             .last()
             .expect("the nonempty leading scope chain has an inner scope");
         if !Arc::ptr_eq(&current.root.context, &inner.root.context)
-            || !Arc::ptr_eq(&current.root.state, &inner.root.state)
+            || !current.root.state.shares_state_with(&inner.root.state)
             || !Arc::ptr_eq(&current.root.node, &inner.root.node)
         {
             return Err(inner
@@ -420,7 +420,7 @@ impl<'a> ProofScope<'a> {
             .last()
             .expect("the nonempty leading scope chain has an inner scope");
         if !Arc::ptr_eq(&leaf.root.context, &inner.root.context)
-            || !Arc::ptr_eq(&leaf.root.state, &inner.root.state)
+            || !leaf.root.state.shares_state_with(&inner.root.state)
             || !Arc::ptr_eq(&leaf.root.node, &inner.root.node)
         {
             return Err(inner
@@ -478,22 +478,21 @@ impl<'a> ProofScope<'a> {
             }
         }
         let introduced_facts = introduced_facts.to_vec();
-        let mut state = Arc::unwrap_or_clone(joined.state.clone());
+        let mut state = joined.state.clone().into_state();
         state.added_facts = Arc::new(introduced_facts.clone());
         state.checked_facts = Arc::new(introduced_facts);
         Ok(Proof {
             context: outer.root.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, outer.root.focused_branch_id()),
             node: Arc::new(ProofNode {
                 parent: Some(outer.root.node.clone()),
                 step: Some(Arc::new(ProofStep::Open {
                     resource: resource.clone(),
                     proof: Box::new(body),
                 })),
-                focused_branch: outer.root.focused_branch,
+                focused_branch: outer.root.focused_branch_id(),
                 depth: outer.root.node.depth + 1,
             }),
-            focused_branch: outer.root.focused_branch,
         })
     }
 
@@ -516,7 +515,7 @@ impl<'a> ProofScope<'a> {
                 unreachable!("a two-element scope window has two entries")
             };
             if !Arc::ptr_eq(&child.root.context, &parent.body.context)
-                || !Arc::ptr_eq(&child.root.state, &parent.body.state)
+                || !child.root.state.shares_state_with(&parent.body.state)
                 || !Arc::ptr_eq(&child.root.node, &parent.body.node)
             {
                 return Err(outer
@@ -591,21 +590,20 @@ impl<'a> ProofScope<'a> {
             facts = checked.facts;
             execution.core.state = checked.state.into();
         }
-        let mut state = Arc::unwrap_or_clone(body.state.clone());
+        let mut state = body.state.clone().into_state();
         state.open_branches =
             state
                 .open_branches
-                .replace_frontier_at(body.focused_branch, facts, execution);
+                .replace_frontier_at(body.focused_branch_id(), facts, execution);
         Ok(Proof {
             context: body.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, body.focused_branch_id()),
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
-                focused_branch: body.focused_branch,
+                focused_branch: body.focused_branch_id(),
                 depth: body.node.depth,
             }),
-            focused_branch: body.focused_branch,
         })
     }
 
@@ -621,18 +619,17 @@ impl<'a> ProofScope<'a> {
                 .root
                 .step_error("cannot discharge an unfinished loop-effect branch"));
         }
-        let mut state = Arc::unwrap_or_clone(body.state.clone());
-        state.open_branches = state.open_branches.close_at(body.focused_branch);
+        let mut state = body.state.clone().into_state();
+        state.open_branches = state.open_branches.close_at(body.focused_branch_id());
         Ok(Proof {
             context: body.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, body.focused_branch_id()),
             node: Arc::new(ProofNode {
                 parent: Some(body.node.clone()),
                 step: None,
-                focused_branch: body.focused_branch,
+                focused_branch: body.focused_branch_id(),
                 depth: body.node.depth,
             }),
-            focused_branch: body.focused_branch,
         })
     }
 
@@ -1030,7 +1027,7 @@ impl<'a> ProofScope<'a> {
                             script.as_deref(),
                         )?;
                         self.root.state.open_branches.replace_frontier_at(
-                            self.root.focused_branch,
+                            self.root.focused_branch_id(),
                             facts,
                             execution,
                         )
@@ -1039,10 +1036,10 @@ impl<'a> ProofScope<'a> {
                         .root
                         .state
                         .open_branches
-                        .with_facts_at(self.root.focused_branch, facts),
+                        .with_facts_at(self.root.focused_branch_id(), facts),
                 };
                 if let Some(Obligation::FunctionOutcome(outcome)) =
-                    goals.obligation(self.root.focused_branch).cloned()
+                    goals.obligation(self.root.focused_branch_id()).cloned()
                 {
                     let mut updated = outcome;
                     let mut data = (*updated.data).clone();
@@ -1050,28 +1047,30 @@ impl<'a> ProofScope<'a> {
                         .record_lowering(&proposition, &kernel)?;
                     updated.data = Arc::new(data);
                     goals = goals.replace_obligation_at(
-                        self.root.focused_branch,
+                        self.root.focused_branch_id(),
                         Obligation::FunctionOutcome(updated),
                     );
                 }
                 Ok(Proof {
                     context: self.root.context.clone(),
-                    state: Arc::new(ProofState {
-                        locals: self.root.state.locals.clone(),
-                        open_branches: goals,
-                        added_facts: Arc::new(vec![kernel.clone()]),
-                        checked_facts: Arc::new(vec![kernel]),
-                    }),
+                    state: KernelProofObject::new(
+                        ProofState {
+                            locals: self.root.state.locals.clone(),
+                            open_branches: goals,
+                            added_facts: Arc::new(vec![kernel.clone()]),
+                            checked_facts: Arc::new(vec![kernel]),
+                        },
+                        self.root.focused_branch_id(),
+                    ),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
                         step: Some(Arc::new(ProofStep::Have {
                             proposition,
                             proof: Box::new(body),
                         })),
-                        focused_branch: self.root.focused_branch,
+                        focused_branch: self.root.focused_branch_id(),
                         depth: self.root.node.depth + 1,
                     }),
-                    focused_branch: self.root.focused_branch,
                 })
             }
             ProofScopeStructure::Open {
@@ -1094,7 +1093,7 @@ impl<'a> ProofScope<'a> {
                             .step_error("open scope body lost its execution frontier")
                     })?;
                 let mut facts = self.body.facts().clone();
-                let mut state = Arc::unwrap_or_clone(self.body.state);
+                let mut state = self.body.state.clone().into_state();
                 if execution.core.frontier.is_at_function_exit() {
                     execution.defer_post_execution(
                         context.tactic_index,
@@ -1127,21 +1126,22 @@ impl<'a> ProofScope<'a> {
                     execution.core.state = checked.state.into();
                 }
                 state.open_branches = state.open_branches.replace_frontier_at(
-                    self.body.focused_branch,
+                    self.body.focused_branch_id(),
                     facts,
                     execution,
                 );
                 if discharge_closed_loop_effect && loop_effect_closed {
-                    state.open_branches = state.open_branches.close_at(self.body.focused_branch);
+                    state.open_branches =
+                        state.open_branches.close_at(self.body.focused_branch_id());
                 }
                 state.added_facts = Arc::new(self.introduced_facts.clone());
                 state.checked_facts = Arc::new(self.introduced_facts);
                 // The successor's goal map came from the scope body, whose
                 // cursor may have moved through a decided branch.
-                let focused_branch = self.body.focused_branch;
+                let focused_branch = self.body.focused_branch_id();
                 Ok(Proof {
                     context: self.root.context.clone(),
-                    state: Arc::new(state),
+                    state: KernelProofObject::new(state, focused_branch),
                     node: Arc::new(ProofNode {
                         parent: Some(self.root.node.clone()),
                         step: Some(Arc::new(ProofStep::Open {
@@ -1151,7 +1151,6 @@ impl<'a> ProofScope<'a> {
                         focused_branch,
                         depth: self.root.node.depth + 1,
                     }),
-                    focused_branch,
                 })
             }
         }

@@ -42,7 +42,7 @@ impl<'a> Proof<'a> {
     /// Every open goal in this proof, in stable id order.
     #[cfg(test)]
     pub(in crate::lang::click::proof) fn branches(&self) -> impl Iterator<Item = BranchId> + '_ {
-        self.state.open_branches.ids()
+        self.state().open_branches.ids()
     }
 
     /// The open function-outcome goal derived for one checked path, if this
@@ -52,7 +52,7 @@ impl<'a> Proof<'a> {
         &self,
         path_index: usize,
     ) -> Option<BranchId> {
-        self.state
+        self.state()
             .open_branches
             .iter()
             .find_map(|(id, branch)| match &branch.obligation {
@@ -116,30 +116,30 @@ impl<'a> Proof<'a> {
         data.core.result = Arc::new(value.clone());
         data.core.state = state.clone().into();
         let data = Arc::new(data);
-        let mut state = (*self.state).clone();
+        let mut state = (*self.state()).clone();
         state.open_branches = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.data = data;
                 state.open_branches.replace_obligation_at(
-                    self.focused_branch,
+                    self.focused_branch_id(),
                     Obligation::FunctionOutcome(updated),
                 )
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(data);
-                state
-                    .open_branches
-                    .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
+                state.open_branches.replace_obligation_at(
+                    self.focused_branch_id(),
+                    Obligation::Proposition(updated),
+                )
             }
             _ => unreachable!("the outcome data was selected above"),
         };
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, self.focused_branch_id()),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -167,34 +167,34 @@ impl<'a> Proof<'a> {
         let mut data = data.clone();
         data.core.requirement_facts = Arc::new(facts[..requires.min(facts.len())].to_vec());
         let data = Arc::new(data);
-        let mut state = (*self.state).clone();
+        let mut state = (*self.state()).clone();
         state.open_branches = match self.focused_obligation() {
             Some(Obligation::FunctionOutcome(goal)) => {
                 let mut updated = goal.clone();
                 updated.data = data;
                 state.open_branches.replace_obligation_at(
-                    self.focused_branch,
+                    self.focused_branch_id(),
                     Obligation::FunctionOutcome(updated),
                 )
             }
             Some(Obligation::Proposition(goal)) => {
                 let mut updated = goal.clone();
                 updated.outcome = Some(data);
-                state
-                    .open_branches
-                    .replace_obligation_at(self.focused_branch, Obligation::Proposition(updated))
+                state.open_branches.replace_obligation_at(
+                    self.focused_branch_id(),
+                    Obligation::Proposition(updated),
+                )
             }
             _ => unreachable!("the outcome data was selected above"),
         };
         state.open_branches = state.open_branches.with_facts_at(
-            self.focused_branch,
+            self.focused_branch_id(),
             self.facts().resync_ordered_preserving_provenance(facts),
         );
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(state),
+            state: KernelProofObject::new(state, self.focused_branch_id()),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -216,12 +216,12 @@ impl<'a> Proof<'a> {
         &self,
         goal: BranchId,
     ) -> Result<Self, ClickError> {
-        if self.state.open_branches.get(goal).is_none() {
+        if self.state().open_branches.get(goal).is_none() {
             return Err(self.step_error(format!("goal {goal:?} is not open in this proof")));
         }
-        let mut focused_branch = self.clone();
-        focused_branch.focused_branch = goal;
-        Ok(focused_branch)
+        let mut focused = self.clone();
+        focused.state = focused.state.focused_at(goal);
+        Ok(focused)
     }
 
     /// Derives the typed function-outcome goal set from a function-exit
@@ -273,7 +273,10 @@ impl<'a> Proof<'a> {
             _ => PersistentMap::default(),
         };
         let requirement_surfaces = Arc::new(requirement_surfaces);
-        let mut goals = self.state.open_branches.close_at(self.focused_branch);
+        let mut goals = self
+            .state()
+            .open_branches
+            .close_at(self.focused_branch_id());
         let mut outcome_ids = Vec::new();
         for (path_index, path) in checked.paths().iter().enumerate() {
             // One checked statement may produce several candidate outcomes.
@@ -342,23 +345,25 @@ impl<'a> Proof<'a> {
         }
         let successor = Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
 
-                open_branches: goals,
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                    open_branches: goals,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                outcome_ids[0],
+            ),
             // A structural marker records the derivation; the certificate
             // step vocabulary for consuming outcome goals arrives with the
             // drain migration.
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: outcome_ids[0],
         };
         Ok((successor, outcome_ids))
     }

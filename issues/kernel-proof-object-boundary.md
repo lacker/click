@@ -36,13 +36,16 @@ proposition/frontier/outcome obligation enum, effect selections, result-aware
 outcome state, and checked frame authority live in
 `src/kernel/proof/obligations.rs`. Goal-preserving fact/execution successors,
 strict frontier successors, obligation replacement, and conditional discharge
-are kernel state operations. The remaining `Proof` handle, higher-level
-checked operations, and finalization still need a kernel-owned API.
+are kernel state operations. The opaque kernel `ProofObject` handle now owns
+the shared semantic state and its focused branch cursor; the language `Proof`
+wrapper retains only checking context and Surface certificate lineage.
+Higher-level checked operations and finalization still need a kernel-owned
+API.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
-checkpoints live in `proof_object/provenance.rs`. This leaves the persistent
-checked state visibly separate from both dependencies before its final move.
+checkpoints live in `proof_object/provenance.rs`. They wrap and describe the
+opaque checked handle without becoming semantic state.
 
 ## Intended regression
 

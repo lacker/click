@@ -62,22 +62,24 @@ impl<'a> Proof<'a> {
         let open_branches = self
             .state
             .open_branches
-            .replace_at(self.focused_branch, goal);
+            .replace_at(self.focused_branch_id(), goal);
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(added_facts.clone()),
-                checked_facts: Arc::new(added_facts),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(added_facts.clone()),
+                    checked_facts: Arc::new(added_facts),
+                },
+                self.focused_branch_id(),
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(step)),
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth + 1,
             }),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -98,10 +100,10 @@ impl<'a> Proof<'a> {
             .recorded_snapshots
             .insert(selector, (*execution.core.state).clone());
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_frontier_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_frontier_at(
+                self.focused_branch_id(),
                 self.facts().clone(),
                 execution,
             ),
@@ -131,10 +133,10 @@ impl<'a> Proof<'a> {
         }
         execution.core.region_invariants_closed = true;
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_frontier_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_frontier_at(
+                self.focused_branch_id(),
                 self.facts().clone(),
                 execution,
             ),
@@ -288,22 +290,24 @@ impl<'a> Proof<'a> {
                 let (_, ids, open_branches) = self
                     .state
                     .open_branches
-                    .split_at(self.focused_branch, [then_goal, else_goal]);
+                    .split_at(self.focused_branch_id(), [then_goal, else_goal]);
                 let successor = Self {
                     context: self.context.clone(),
-                    state: Arc::new(ProofState {
-                        locals: self.state.locals.clone(),
-                        open_branches,
-                        added_facts: Arc::new(added),
-                        checked_facts: Arc::new(Vec::new()),
-                    }),
+                    state: KernelProofObject::new(
+                        ProofState {
+                            locals: self.state().locals.clone(),
+                            open_branches,
+                            added_facts: Arc::new(added),
+                            checked_facts: Arc::new(Vec::new()),
+                        },
+                        ids[0],
+                    ),
                     node: Arc::new(ProofNode {
                         parent: Some(self.node.clone()),
                         step: None,
-                        focused_branch: self.focused_branch,
+                        focused_branch: self.focused_branch_id(),
                         depth: self.node.depth,
                     }),
-                    focused_branch: ids[0],
                 };
                 Ok((successor, [Some(ids[0]), Some(ids[1])]))
             }
@@ -319,20 +323,22 @@ impl<'a> Proof<'a> {
                 };
                 let successor = Self {
                     context: self.context.clone(),
-                    state: Arc::new(ProofState {
-                        locals: self.state.locals.clone(),
-                        open_branches: self
-                            .state
-                            .open_branches
-                            .replace_at(self.focused_branch, goal),
-                        added_facts: Arc::new(added),
-                        checked_facts: Arc::new(Vec::new()),
-                    }),
+                    state: KernelProofObject::new(
+                        ProofState {
+                            locals: self.state().locals.clone(),
+                            open_branches: self
+                                .state
+                                .open_branches
+                                .replace_at(self.focused_branch_id(), goal),
+                            added_facts: Arc::new(added),
+                            checked_facts: Arc::new(Vec::new()),
+                        },
+                        self.focused_branch_id(),
+                    ),
                     node: self.node.clone(),
-                    focused_branch: self.focused_branch,
                 };
                 let mut ids = [None, None];
-                ids[usize::from(!value)] = Some(successor.focused_branch);
+                ids[usize::from(!value)] = Some(successor.focused_branch_id());
                 Ok((successor, ids))
             }
         }
@@ -411,18 +417,20 @@ impl<'a> Proof<'a> {
             successor_execution.surface_record.last_step_entry = construction.last_step_entry;
             return Ok(Self {
                 context: proof.context.clone(),
-                state: Arc::new(ProofState {
-                    locals: proof.state.locals.clone(),
-                    open_branches: proof.state.open_branches.replace_frontier_at(
-                        proof.focused_branch,
-                        proof.facts().clone(),
-                        successor_execution,
-                    ),
-                    added_facts: proof.state.added_facts.clone(),
-                    checked_facts: proof.state.checked_facts.clone(),
-                }),
+                state: KernelProofObject::new(
+                    ProofState {
+                        locals: proof.state.locals.clone(),
+                        open_branches: proof.state.open_branches.replace_frontier_at(
+                            proof.focused_branch_id(),
+                            proof.facts().clone(),
+                            successor_execution,
+                        ),
+                        added_facts: proof.state.added_facts.clone(),
+                        checked_facts: proof.state.checked_facts.clone(),
+                    },
+                    proof.focused_branch_id(),
+                ),
                 node: proof.node.clone(),
-                focused_branch: proof.focused_branch,
             });
         }
         if let Some(blocker) = construction.blocker {
@@ -749,18 +757,20 @@ impl<'a> Proof<'a> {
         successor_execution.surface_record.last_step_entry = construction.last_step_entry;
         Ok(Self {
             context: proof.context.clone(),
-            state: Arc::new(ProofState {
-                locals: proof.state.locals.clone(),
-                open_branches: proof.state.open_branches.replace_frontier_at(
-                    proof.focused_branch,
-                    proof.facts().clone(),
-                    successor_execution,
-                ),
-                added_facts: proof.state.added_facts.clone(),
-                checked_facts: proof.state.checked_facts.clone(),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: proof.state.locals.clone(),
+                    open_branches: proof.state.open_branches.replace_frontier_at(
+                        proof.focused_branch_id(),
+                        proof.facts().clone(),
+                        successor_execution,
+                    ),
+                    added_facts: proof.state.added_facts.clone(),
+                    checked_facts: proof.state.checked_facts.clone(),
+                },
+                proof.focused_branch_id(),
+            ),
             node: proof.node.clone(),
-            focused_branch: proof.focused_branch,
         })
     }
 
@@ -843,23 +853,25 @@ impl<'a> Proof<'a> {
         };
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    proof_facts,
-                    execution,
-                ),
-                added_facts: Arc::new(added),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        proof_facts,
+                        execution,
+                    ),
+                    added_facts: Arc::new(added),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                self.focused_branch_id(),
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(have_step)),
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -883,18 +895,20 @@ impl<'a> Proof<'a> {
         });
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    self.facts().clone(),
-                    execution,
-                ),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        self.facts().clone(),
+                        execution,
+                    ),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                self.focused_branch_id(),
+            ),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -919,18 +933,20 @@ impl<'a> Proof<'a> {
         execution.core.region_simp = Some((tactic_index, source_index));
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    self.facts().clone(),
-                    execution,
-                ),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        self.facts().clone(),
+                        execution,
+                    ),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                self.focused_branch_id(),
+            ),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -1014,23 +1030,25 @@ impl<'a> Proof<'a> {
             .clone();
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    proof_facts,
-                    execution,
-                ),
-                added_facts: Arc::new(added),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        proof_facts,
+                        execution,
+                    ),
+                    added_facts: Arc::new(added),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                self.focused_branch_id(),
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(loop_step)),
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: self.focused_branch,
         })
     }
 }

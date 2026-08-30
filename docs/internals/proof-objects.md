@@ -7,11 +7,13 @@ result.
 
 ## Persistent proof state
 
-`Proof` owns an immutable `ProofState`, a provenance `ProofNode`, shared proof
-context, and one focused goal. Applying a checked operation returns a successor
-that shares unchanged structure with its ancestor. A smart tactic can therefore
-branch, inspect alternatives, and abandon candidates without cloning the
-complete logical or execution state.
+The kernel `ProofObject` owns an immutable `ProofState` and the focused branch
+cursor into that state. The language-layer `Proof` wrapper pairs that opaque
+handle with a shared checking context and Surface provenance `ProofNode`.
+Applying a checked operation returns a successor that shares unchanged
+structure with its ancestor. A smart tactic can therefore branch, inspect
+alternatives, and abandon candidates without cloning the complete logical or
+execution state.
 
 The kernel owns branch and split identities and the persistent open-branch
 topology in `src/kernel/proof/branches.rs`; the remaining checked
@@ -27,11 +29,11 @@ rendering, and budgeted smart premise search remain in the language layer.
 The persistent `ProofFacts` store and all of its semantic indexes live in
 `src/kernel/proof/facts.rs`; language code receives an opaque store and uses
 named queries and persistent successor operations rather than its fields.
-Kernel `ProofState`, `ProofBranch`, and `ProofBranchState` now own the
-persistent state and open-branch shapes. Surface-local names, obligation
-presentation, and execution presentation are opaque type parameters during
-the remaining transition migration; the kernel containers never inspect them
-or accept them as evidence. The proposition/frontier/outcome obligation enum,
+Kernel `ProofObject`, `ProofState`, `ProofBranch`, and `ProofBranchState` own
+the persistent handle, state, focus, and open-branch shapes. Surface-local
+names, obligation presentation, and execution presentation are opaque type
+parameters; the kernel containers never inspect them or accept them as
+evidence. The proposition/frontier/outcome obligation enum,
 effect selections, result-aware outcome state, and checked frame authority
 live in `src/kernel/proof/obligations.rs`; proposition and outcome presentation
 are opaque parameters. Goal-preserving fact or execution updates, strict

@@ -165,7 +165,7 @@ fn loop_effect_derivation_starts_a_separate_root_branch() {
     assert_eq!(preservation.sole_branch_id(), preservation_branch);
     assert_eq!(effect.branches().count(), 1);
     assert_eq!(effect.sole_branch_id(), Some(BranchId::ROOT));
-    assert!(!Arc::ptr_eq(&preservation.state, &effect.state));
+    assert!(!preservation.state.shares_state_with(&effect.state));
 }
 
 fn pure_identity_fixture() -> PureTheoremContext {
@@ -230,7 +230,7 @@ fn attempt_discards_failed_continuation_and_shares_the_checked_prefix() {
         ],
         |shared, step| {
             attempts += 1;
-            assert!(Arc::ptr_eq(&shared.state, &prefix.state));
+            assert!(shared.state.shares_state_with(&prefix.state));
             attempt::candidate_outcome(shared.apply_step(step))
         },
     )
@@ -469,7 +469,7 @@ fn proof_failure_preserves_ancestor_and_selected_provenance() {
         &theorem_environment,
     );
     let fork = root.clone();
-    assert!(Arc::ptr_eq(&root.state, &fork.state));
+    assert!(root.state.shares_state_with(&fork.state));
     assert!(Arc::ptr_eq(&root.node, &fork.node));
 
     assert!(
@@ -534,7 +534,7 @@ fn branch_identity_is_stable_across_fork_refinement_and_closure() {
     // extraction partitions interleaved multi-goal derivations by this
     // attribution rather than inferring ownership from final states.
     assert_eq!(introduced.node.focused_branch, root_id);
-    assert_eq!(introduced.focused_branch, root_id);
+    assert_eq!(introduced.focused_branch_id(), root_id);
     assert!(
         fact_node_allocations() - before_refinement <= 24,
         "refining the sole goal must touch only constant persistent state"
@@ -862,7 +862,7 @@ fn persistent_fact_lookup_scales_logarithmically() {
             &theorem_environment,
         );
         let shared = proof.clone();
-        assert!(Arc::ptr_eq(&proof.state, &shared.state));
+        assert!(proof.state.shares_state_with(&shared.state));
         assert!(Arc::ptr_eq(&proof.node, &shared.node));
 
         let comparisons = proof.fact_lookup_comparisons(&goal);
@@ -1163,7 +1163,7 @@ fn proposition_unfold_uses_indexed_facts_and_persistent_local_state() {
                 .is_err(),
             "an unknown predicate must reject transactionally"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let unfold = ProofStep::UnfoldPredicate("selected".to_string());
@@ -1308,7 +1308,7 @@ fn fixed_state_proposition_unfold_checks_the_same_retained_step() {
             root.apply_step(ProofStep::UnfoldPredicate("missing".to_string()))
                 .is_err()
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
 
         let step = ProofStep::UnfoldPredicate("selected".to_string());
         let before = fact_node_allocations();
@@ -1420,7 +1420,11 @@ fn result_aware_fixed_state_goal_focus_shares_facts_and_checks_assumption() {
                 .apply_step(ProofStep::Assumption)
                 .is_err()
         );
-        assert!(Arc::ptr_eq(&focused_branch.state, &retained_focused.state));
+        assert!(
+            focused_branch
+                .state
+                .shares_state_with(&retained_focused.state)
+        );
 
         let complete = focused_branch
             .apply_step(ProofStep::Assumption)
@@ -1510,7 +1514,7 @@ fn fixed_state_context_have_publishes_checked_fact_for_later_scope() {
                 ProofStep::Assumption
             ]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -1667,7 +1671,7 @@ fn execution_frontier_rejects_proposition_closers_transactionally() {
     );
     let fork = root.clone();
     assert!(root.goal().is_none());
-    assert!(Arc::ptr_eq(&root.state, &fork.state));
+    assert!(root.state.shares_state_with(&fork.state));
     assert!(Arc::ptr_eq(&root.node, &fork.node));
     for closer in [ProofStep::Assumption, ProofStep::Normalize] {
         let error = fork
@@ -1753,7 +1757,7 @@ fn fixed_state_witness_refines_existential_transactionally_with_constant_local_w
             .err()
             .expect("a mismatched witness must reject the candidate");
         assert!(error.message().contains("binds `chosen`"), "{error:?}");
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let before = fact_node_allocations();
@@ -1963,7 +1967,7 @@ fn fixed_state_choose_uses_indexed_requirement_and_persistent_local_bindings() {
             .err()
             .expect("an unknown label must reject the candidate");
         assert!(missing.message().contains("unknown requirement label"));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
 
         let choice = ProofChoice {
             name: "candidate".to_string(),
@@ -2087,7 +2091,7 @@ fn pure_rewrite_uses_indexed_equality_availability_without_changing_facts() {
             error.message().contains("exact available fact"),
             "{error:?}"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let step = ProofStep::Rewrite(equality.clone());
@@ -2271,7 +2275,7 @@ fn surface_rewrite_retains_structural_successor_and_scales() {
                 && matches!(left.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
                 && matches!(right.steps(), [ProofStep::Rewrite(_), ProofStep::Normalize])
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -2366,7 +2370,7 @@ fn fixed_state_extract_uses_persistent_proper_conjunct_membership() {
             allocations <= allocation_bound,
             "size {size} extract allocated {allocations} persistent nodes (bound {allocation_bound})"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert_eq!(extracted.certificate().steps(), &[step]);
         assert_eq!(extracted.added_facts(), std::slice::from_ref(&kernel));
@@ -2472,7 +2476,7 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             allocations <= allocation_bound,
             "size {size} implication extract allocated {allocations} persistent nodes (bound {allocation_bound})"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert_eq!(extracted.certificate().steps(), &[step]);
         assert_eq!(extracted.added_facts(), std::slice::from_ref(&target));
@@ -2629,11 +2633,11 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
         );
 
         let mut indexed_root = root.clone();
-        let mut indexed_state = Arc::unwrap_or_clone(indexed_root.state);
+        let mut indexed_state = indexed_root.state.clone().into_state();
         indexed_state.open_branches = indexed_state
             .open_branches
-            .with_facts_at(indexed_root.focused_branch, unfolded_facts);
-        indexed_root.state = Arc::new(indexed_state);
+            .with_facts_at(indexed_root.focused_branch_id(), unfolded_facts);
+        indexed_root.state = indexed_root.state.with_state(indexed_state);
         let before = fact_node_allocations();
         let selected = indexed_root
             .try_indexed_forall_instantiation()
@@ -2665,7 +2669,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             root.apply_step(omitted).is_err(),
             "ambient availability must not discharge an omitted guard"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let before = fact_node_allocations();
@@ -2833,7 +2837,7 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
             omitted.message().contains("required exact fact"),
             "{omitted:?}"
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let step = selected;
@@ -3238,7 +3242,7 @@ fn branch_theorem_search_retains_checked_arm_steps_and_scales() {
                     .is_err(),
                 "an unavailable frame premise must reject the checked descendant"
             );
-            assert!(Arc::ptr_eq(&terminal.state, &retained.state));
+            assert!(terminal.state.shares_state_with(&retained.state));
             assert_eq!(terminal.certificate(), retained.certificate());
         }
         let framed = terminal
@@ -3493,7 +3497,7 @@ fn fixed_state_apply_search_uses_indexes_and_retains_its_checked_successor() {
             Some(&ProofStep::Extract(premise.clone()))
         );
         assert_eq!(complete.certificate().steps().get(1), Some(&step));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -3700,7 +3704,7 @@ fn result_aware_fixed_state_context_apply_is_indexed_and_transactional() {
             .err()
             .expect("ambient availability must not discharge an omitted premise");
         assert!(missing.message().contains("required exact fact"));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let before_query = fact_node_allocations();
@@ -3826,7 +3830,7 @@ fn fixed_state_transport_can_follow_another_checked_step() {
             premises: Vec::new(),
         });
         assert!(rejected.is_err());
-        assert!(Arc::ptr_eq(&refined.state, &retained_refined.state));
+        assert!(refined.state.shares_state_with(&retained_refined.state));
 
         let transport = ProofStep::TransportUsing {
             source: source.clone(),
@@ -3941,7 +3945,7 @@ fn pure_signed_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
             closed.certificate().steps(),
             [ProofStep::Have { .. }, ProofStep::ApplyTheoremUsing { .. },]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         // A nested smart `have` must not serialize the goal's ambient
@@ -4072,7 +4076,7 @@ fn pure_equality_refinement_simp_applies_one_rewrite_with_logarithmic_local_upda
             closed.certificate().steps(),
             [ProofStep::Rewrite(_), ProofStep::Normalize]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -4399,7 +4403,7 @@ fn fixed_state_predecessor_simp_builds_checked_scope_with_logarithmic_local_upda
             closed.certificate().steps(),
             [ProofStep::Have { .. }, ProofStep::ApplyTheoremUsing { .. }]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -4501,7 +4505,7 @@ fn fixed_state_equality_simp_builds_its_recorded_path_with_logarithmic_local_upd
                 ProofStep::Normalize,
             ]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -4604,7 +4608,7 @@ fn fixed_state_arithmetic_rewrite_paths_ignore_unrelated_facts() {
                 ProofStep::Normalize,
             ]
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -4711,7 +4715,7 @@ fn fixed_state_order_simp_builds_its_theorem_path_with_logarithmic_local_updates
                 [ProofStep::ApplyTheoremUsing { .. }]
             )
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -5084,7 +5088,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                             == std::slice::from_ref(&increment_constant_upper_intermediate)
                 )),
             }
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.state.shares_state_with(&retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
             let theorem_context = PureTheoremContext {
@@ -5108,7 +5112,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                 pure_root.try_restricted_simp_closure(&[]).is_none(),
                 "omitting the named premise must reject the restricted candidate"
             );
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             let before_restricted = fact_node_allocations();
             let pure_closed = pure_root
                 .try_restricted_simp_closure(std::slice::from_ref(surface_premise))
@@ -5160,7 +5164,7 @@ fn fixed_state_single_premise_arithmetic_simps_retain_indexed_theorem_steps() {
                             == std::slice::from_ref(&increment_constant_upper_intermediate)
                 )),
             }
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             assert!(pure_root.certificate().steps().is_empty());
         }
     }
@@ -5271,7 +5275,7 @@ fn branch_exported_premise_uses_one_selected_anchor_with_logarithmic_work() {
                 if application.name == "int32_increment_strict_greater_lower_bound"
                     && premises.as_slice() == expected_premises
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -5421,7 +5425,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                     if application.name == *theorem_name
                         && premises.as_slice() == selected_premises
             ));
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.state.shares_state_with(&retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
             let theorem_context = PureTheoremContext {
@@ -5449,7 +5453,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                     pure_root.try_restricted_simp_closure(omitted).is_none(),
                     "omitting either theorem premise must reject the restricted candidate"
                 );
-                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             }
             let before_restricted = fact_node_allocations();
             let pure_closed = pure_root
@@ -5467,7 +5471,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                     if application.name == *theorem_name
                     && premises.as_slice() == selected_premises
             ));
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             assert!(pure_root.certificate().steps().is_empty());
         }
     }
@@ -5538,7 +5542,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
                 && second_premises.len() == 2
                 && second_premises[1] == upper_premise
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let theorem_context = PureTheoremContext {
@@ -5563,7 +5567,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             std::slice::from_ref(&upper_premise),
         ] {
             assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
         }
         let before_restricted = fact_node_allocations();
         let pure_closed = pure_root
@@ -5583,7 +5587,7 @@ fn increment_bound_family_retains_two_indexed_theorem_premises() {
             ] if first.name == "int32_lt_implies_le"
                 && second.name == "int32_increment_strict_greater_lower_bound"
         ));
-        assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+        assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
         assert!(pure_root.certificate().steps().is_empty());
     }
 }
@@ -5689,7 +5693,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
                 if application.name == "int32_le_and_not_lt_implies_eq"
                     && premises.as_slice() == selected
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let restricted_kernels = selected
@@ -5736,7 +5740,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
             std::slice::from_ref(&not_less_than),
         ] {
             assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
         }
         let restricted_derivation = plan_simp_certificate(
             &kernel_equality,
@@ -5784,7 +5788,7 @@ fn le_and_not_lt_equality_simp_retains_one_indexed_theorem_application() {
                 if application.name == "int32_le_and_not_lt_implies_eq"
                 && premises.as_slice() == selected
         ));
-        assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+        assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
     }
 }
 
@@ -5892,7 +5896,7 @@ fn ge_and_not_gt_equality_simp_retains_one_indexed_theorem_application() {
                 if application.name == "int32_ge_and_not_gt_implies_eq"
                     && premises.as_slice() == selected
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -5998,7 +6002,7 @@ fn le_and_neq_strict_simp_retains_one_indexed_theorem_application() {
                 if application.name == "int32_le_and_neq_implies_lt"
                     && premises.as_slice() == selected
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -6141,7 +6145,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                         if application.name == *theorem_name
                             && premises.as_slice() == selected
             ));
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.state.shares_state_with(&retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
             let theorem_context = PureTheoremContext {
@@ -6166,7 +6170,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                 std::slice::from_ref(&selected[1]),
             ] {
                 assert!(pure_root.try_restricted_simp_closure(omitted).is_none());
-                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             }
             let before_restricted = fact_node_allocations();
             let pure_closed = pure_root
@@ -6183,7 +6187,7 @@ fn symbolic_arithmetic_definedness_retains_two_indexed_theorem_premises() {
                     if application.name == *theorem_name
                         && premises.as_slice() == selected
             ));
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             assert!(pure_root.certificate().steps().is_empty());
         }
     }
@@ -6303,7 +6307,7 @@ fn selected_disjunction_simp_retains_checked_cases_and_scales() {
                         if equality == &equal_one
                 )
         ));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -6513,7 +6517,7 @@ fn surface_structural_simp_retains_recursive_child_proofs_and_scales() {
                 ),
                 _ => unreachable!(),
             }
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.state.shares_state_with(&retained_root.state));
             assert!(root.certificate().steps().is_empty());
         }
     }
@@ -6715,7 +6719,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                         if application.name == *theorem_name && premises == selected
                 ));
             }
-            assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+            assert!(root.state.shares_state_with(&retained_root.state));
             assert!(root.certificate().steps().is_empty());
 
             let theorem_context = PureTheoremContext {
@@ -6746,7 +6750,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                     pure_root.try_restricted_simp_closure(&omitted).is_none(),
                     "omitting a theorem premise must reject the restricted candidate"
                 );
-                assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+                assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             }
             let before_restricted = fact_node_allocations();
             let pure_closed = pure_root
@@ -6780,7 +6784,7 @@ fn predecessor_simps_retain_indexed_named_rule_premises() {
                         if application.name == *theorem_name && premises == selected
                 ));
             }
-            assert!(Arc::ptr_eq(&pure_root.state, &retained_pure_root.state));
+            assert!(pure_root.state.shares_state_with(&retained_pure_root.state));
             assert!(pure_root.certificate().steps().is_empty());
         }
     }
@@ -6875,7 +6879,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
             .err()
             .expect("an unavailable instantiated requirement must reject the candidate");
         assert!(missing.message().contains("required exact fact"));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         let before_query = fact_node_allocations();
         let step = root
@@ -6910,7 +6914,7 @@ fn pure_apply_search_instantiates_requirements_and_retains_its_successor() {
         );
         assert!(complete.is_complete());
         assert_eq!(complete.certificate().steps().first(), Some(&step));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
     }
 }
@@ -6993,7 +6997,7 @@ fn execution_unfold_forks_persistently_and_ignores_unrelated_facts() {
             "size {size} unfold allocated {allocations} persistent nodes (bound {allocation_bound})"
         );
 
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert_eq!(root.facts().to_vec().len(), size as usize + 1);
         assert_eq!(root.certificate().steps(), &[]);
         assert_eq!(
@@ -7118,7 +7122,7 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
             &[ProofStep::ObserveResource(resource.clone())]
         );
         assert!(!observed.added_facts().is_empty());
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let mut missing = resource.clone();
@@ -7225,7 +7229,7 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
             &[ProofStep::UnfoldResource(resource.clone())]
         );
         assert!(!unfolded.added_facts().is_empty());
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
 
         let mut missing = resource.clone();
@@ -7336,7 +7340,7 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
             ]
         );
         assert!(folded.added_facts().is_empty());
-        assert!(Arc::ptr_eq(&unfolded.state, &retained_unfolded.state));
+        assert!(unfolded.state.shares_state_with(&retained_unfolded.state));
 
         let mut missing = resource.clone();
         let ResourceClause::Declared { name, .. } = &mut missing else {
@@ -7483,7 +7487,7 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
                 ])),
             }]
         );
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         let sibling_scope = root
             .begin_open(resource.clone(), 0)
@@ -7619,7 +7623,7 @@ fn execution_transport_forks_without_copying_unrelated_state() {
             .apply_step(step.clone())
             .expect("an exact identity transport should succeed");
 
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert_eq!(root.certificate().steps(), &[]);
         assert_eq!(successor.certificate().steps(), &[step]);
         assert!(successor.added_facts().is_empty());
@@ -7744,7 +7748,7 @@ fn execution_transport_search_returns_checked_successors_and_scales() {
                 rejected.is_none(),
                 "an unrelated target must not be manufactured by transport search"
             );
-            assert!(Arc::ptr_eq(&progressed.state, &retained.state));
+            assert!(progressed.state.shares_state_with(&retained.state));
             assert!(matches!(
                 progressed.certificate().steps(),
                 [ProofStep::Step]
@@ -7848,7 +7852,7 @@ fn statement_assignment_step_ignores_unrelated_proof_facts() {
             allocations,
         ));
 
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert!(matches!(stepped.certificate().steps(), [ProofStep::Step]));
         assert_eq!(stepped.facts().to_vec(), root.facts().to_vec());
@@ -7966,7 +7970,7 @@ fn contextual_store_step_scales_with_unrelated_named_facts() {
             allocations,
         ));
 
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         let certificate = stepped.certificate();
         // A bare `step()` names no premise: the statement runs in the
@@ -8046,7 +8050,7 @@ fn checked_statement_step_ignores_unrelated_proof_facts() {
             .expect("the bare statement step should remain available")
             .expect("unrelated ambient facts must not block the bare step");
         assert!(matches!(stepped.certificate().steps(), [ProofStep::Step]));
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         let marked = root
             .apply_step(ProofStep::Mark("candidate".to_string()))
@@ -8181,7 +8185,7 @@ fn close_invariants_is_a_transactional_constant_local_proof_step() {
         // snapshot in the persistent goal collection; the bound stays
         // independent of ambient fact count.
         assert!(fact_node_allocations() - before <= 1);
-        assert!(Arc::ptr_eq(&root.state, &retained_root.state));
+        assert!(root.state.shares_state_with(&retained_root.state));
         assert!(root.certificate().steps().is_empty());
         assert_eq!(closed.certificate().steps(), &[ProofStep::CloseInvariants]);
         let execution = closed
@@ -8808,7 +8812,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         // record fails marker identity, and the genuine join partitions
         // the interleaved sibling steps by attribution and resumes the
         // parent obligation under its original id.
-        let parent_id = root.focused_branch;
+        let parent_id = root.focused_branch_id();
         let (split_proof, record) = root
             .split_focused_execution_branch()
             .expect("the symbolic condition should split in-proof");
@@ -8847,7 +8851,7 @@ fn nonempty_execution_branch_retains_checked_arm_steps_at_the_join() {
         let sibling_joined = both_stepped
             .join_focused_execution_branch(&record)
             .expect("both siblings reached the shared continuation");
-        assert_eq!(sibling_joined.focused_branch, parent_id);
+        assert_eq!(sibling_joined.focused_branch_id(), parent_id);
         let continuation_ids: Vec<BranchId> = sibling_joined.branches().collect();
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(
@@ -9054,7 +9058,7 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         .err()
         .expect("each arm must independently establish the interface");
     assert!(error.message().contains("did not establish fact"));
-    assert!(Arc::ptr_eq(&root.state, &retained.state));
+    assert!(root.state.shares_state_with(&retained.state));
     assert!(root.certificate().steps().is_empty());
 
     // The container's spliced-arm identity regression is superseded by
@@ -9110,12 +9114,12 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
     // lineage with distinct concrete states, abstract through the same
     // explicit interface, and resume the parent obligation with the
     // agreed abstract continuation.
-    let parent_id = root.focused_branch;
+    let parent_id = root.focused_branch_id();
     let interface = vec![ProofAssertion::Fact(nonnegative.clone())];
     let joined = both_stepped
         .join_focused_execution_interface(&record, interface.clone())
         .expect("both siblings should abstract through the shared interface");
-    assert_eq!(joined.focused_branch, parent_id);
+    assert_eq!(joined.focused_branch_id(), parent_id);
     let joined_ids: Vec<BranchId> = joined.branches().collect();
     assert_eq!(joined_ids, [parent_id]);
     assert!(matches!(
@@ -9737,7 +9741,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     // resumes under its original id. Two feasible siblings refuse the
     // decided finish.
     let root = make_root(vec![selecting_fact.clone()]);
-    let parent_id = root.focused_branch;
+    let parent_id = root.focused_branch_id();
     let (split_proof, record) = root
         .split_focused_execution_branch()
         .expect("the selecting fact should split to the sole then sibling");
@@ -9750,7 +9754,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let decided = advanced
         .finish_focused_execution_decided(&record)
         .expect("the sole checked sibling should form a decided path");
-    assert_eq!(decided.focused_branch, parent_id);
+    assert_eq!(decided.focused_branch_id(), parent_id);
     let decided_ids: Vec<BranchId> = decided.branches().collect();
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
@@ -9789,7 +9793,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     // sole sibling records `Branch { ensuring, .. }` with the empty
     // impossible arm and resumes the parent id.
     let root = make_root(vec![selecting_fact.clone()]);
-    let parent_id = root.focused_branch;
+    let parent_id = root.focused_branch_id();
     let (split_proof, record) = root
         .split_focused_execution_branch()
         .expect("the selecting fact should split to the sole then sibling");
@@ -9800,7 +9804,7 @@ fn decided_execution_branch_retains_one_checked_path_without_copying_context() {
     let decided = advanced
         .join_focused_execution_interface(&record, Vec::new())
         .expect("the sole checked sibling should finish through the interface");
-    assert_eq!(decided.focused_branch, parent_id);
+    assert_eq!(decided.focused_branch_id(), parent_id);
     let decided_ids: Vec<BranchId> = decided.branches().collect();
     assert_eq!(decided_ids, [parent_id]);
     assert!(matches!(
@@ -9959,7 +9963,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         // own lineage and rejoin as a logical `If` whose outcome paths
         // stay separate, resuming the parent obligation at function
         // exit under its original id.
-        let parent_id = root.focused_branch;
+        let parent_id = root.focused_branch_id();
         let (split_proof, record) = root
             .split_focused_execution_branch()
             .expect("the symbolic condition should split in-proof");
@@ -9985,7 +9989,7 @@ fn terminal_execution_branch_retains_distinct_outcomes_as_a_logical_if() {
         let sibling_joined = both_returned
             .join_focused_execution_terminal(&record)
             .expect("both returned siblings form a terminal logical case split");
-        assert_eq!(sibling_joined.focused_branch, parent_id);
+        assert_eq!(sibling_joined.focused_branch_id(), parent_id);
         let continuation_ids: Vec<BranchId> = sibling_joined.branches().collect();
         assert_eq!(continuation_ids, [parent_id]);
         assert!(matches!(

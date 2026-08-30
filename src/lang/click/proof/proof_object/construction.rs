@@ -25,7 +25,6 @@ impl<'a> Proof<'a> {
             )),
             state: self.state.clone(),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -60,7 +59,6 @@ impl<'a> Proof<'a> {
             context: ancestor.context.clone(),
             state: self.state.clone(),
             node: self.node.clone(),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -129,35 +127,37 @@ impl<'a> Proof<'a> {
                 click_function_environment,
                 theorem_environment,
             })),
-            state: Arc::new(ProofState {
-                locals: ProofLocals::default(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: ProofLocals::default(),
 
-                open_branches: OpenBranches::root({
-                    let context = BranchState {
-                        facts,
-                        unfolded_predicates: PersistentOrderedSet::default(),
-                        execution: None,
-                    };
-                    surface_goal
-                        .map(|surface| {
-                            OpenBranch::surface_proposition_in(
-                                context.clone(),
-                                goal.clone(),
-                                surface,
-                            )
-                        })
-                        .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
-                }),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                    open_branches: OpenBranches::root({
+                        let context = BranchState {
+                            facts,
+                            unfolded_predicates: PersistentOrderedSet::default(),
+                            execution: None,
+                        };
+                        surface_goal
+                            .map(|surface| {
+                                OpenBranch::surface_proposition_in(
+                                    context.clone(),
+                                    goal.clone(),
+                                    surface,
+                                )
+                            })
+                            .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
+                    }),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         }
     }
 
@@ -528,20 +528,22 @@ impl<'a> Proof<'a> {
                 requirement_label_indices,
                 requirement_facts: available,
             })),
-            state: Arc::new(ProofState {
-                locals: ProofLocals::default(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: ProofLocals::default(),
 
-                open_branches: OpenBranches::root(goal),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                    open_branches: OpenBranches::root(goal),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         }
     }
 }

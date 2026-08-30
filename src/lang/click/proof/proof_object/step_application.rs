@@ -118,14 +118,13 @@ impl<'a> Proof<'a> {
 
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(next_state),
+            state: KernelProofObject::new(next_state, self.focused_branch_id()),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(step)),
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth + 1,
             }),
-            focused_branch: self.focused_branch,
         })
     }
 
@@ -371,11 +370,11 @@ impl<'a> Proof<'a> {
         updated.checked_effects = Arc::new(effect_indices);
         updated.data = Arc::new(data);
         Ok(ProofState {
-            locals: self.state.locals.clone(),
-            open_branches: self
-                .state
-                .open_branches
-                .replace_obligation_at(self.focused_branch, Obligation::FunctionOutcome(updated)),
+            locals: self.state().locals.clone(),
+            open_branches: self.state.open_branches.replace_obligation_at(
+                self.focused_branch_id(),
+                Obligation::FunctionOutcome(updated),
+            ),
             added_facts: Arc::new(Vec::new()),
             checked_facts: Arc::new(frame_facts),
         })
@@ -466,16 +465,18 @@ impl<'a> Proof<'a> {
                 .expect("the checked loop effect goal remains present")
                 .closed = true;
             let open_branches = if retain_closed_loop_effect_goal {
-                self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
+                self.state().open_branches.replace_frontier_at(
+                    self.focused_branch_id(),
                     self.facts().clone(),
                     execution,
                 )
             } else {
-                self.state.open_branches.close_at(self.focused_branch)
+                self.state()
+                    .open_branches
+                    .close_at(self.focused_branch_id())
             };
             return Ok(ProofState {
-                locals: self.state.locals.clone(),
+                locals: self.state().locals.clone(),
                 open_branches,
                 added_facts: Arc::new(Vec::new()),
                 checked_facts: Arc::new(frame_facts),
@@ -520,10 +521,10 @@ impl<'a> Proof<'a> {
                     PostExecutionTactic::FrameRegion(region.clone()),
                 );
                 return Ok(ProofState {
-                    locals: self.state.locals.clone(),
+                    locals: self.state().locals.clone(),
 
-                    open_branches: self.state.open_branches.replace_frontier_at(
-                        self.focused_branch,
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
                         self.facts().clone(),
                         execution,
                     ),
@@ -573,10 +574,10 @@ impl<'a> Proof<'a> {
             },
         );
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_at(
+                self.focused_branch_id(),
                 OpenBranch::frontier(
                     EffectGoalSelection::None,
                     BranchState {
@@ -1164,17 +1165,20 @@ impl<'a> Proof<'a> {
             facts = facts.with_fact(fact.clone());
         }
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_at(self.focused_branch, {
-                let context = self.refined_branch_state(facts);
-                let mut refined = self.refined_proposition(context, goal, surface_goal);
-                let Obligation::Proposition(refined_goal) = &mut refined.obligation else {
-                    unreachable!("intro always refines a proposition goal")
-                };
-                refined_goal.surface_bindings = surface_bindings;
-                refined
-            }),
+            open_branches: self
+                .state()
+                .open_branches
+                .replace_at(self.focused_branch_id(), {
+                    let context = self.refined_branch_state(facts);
+                    let mut refined = self.refined_proposition(context, goal, surface_goal);
+                    let Obligation::Proposition(refined_goal) = &mut refined.obligation else {
+                        unreachable!("intro always refines a proposition goal")
+                    };
+                    refined_goal.surface_bindings = surface_bindings;
+                    refined
+                }),
             checked_facts: Arc::new(added_facts.clone()),
             added_facts: Arc::new(added_facts),
         })

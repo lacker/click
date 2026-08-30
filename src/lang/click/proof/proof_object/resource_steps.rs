@@ -145,11 +145,11 @@ impl<'a> Proof<'a> {
             })
         };
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
             open_branches: self
                 .state
                 .open_branches
-                .replace_at(self.focused_branch, goal),
+                .replace_at(self.focused_branch_id(), goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -229,7 +229,7 @@ impl<'a> Proof<'a> {
                 .with_state(goal_context),
         };
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
             // A nested proposition proof stated at this frontier unfolds its
             // own goal through the same checked operation. Other execution
             // goals retain their kind while installing the updated snapshot
@@ -237,7 +237,7 @@ impl<'a> Proof<'a> {
             open_branches: self
                 .state
                 .open_branches
-                .replace_at(self.focused_branch, goal),
+                .replace_at(self.focused_branch_id(), goal),
             added_facts: Arc::new(checked.added_facts.clone()),
             checked_facts: Arc::new(checked.added_facts),
         })
@@ -277,10 +277,10 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = checked.state.into();
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_frontier_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_frontier_at(
+                self.focused_branch_id(),
                 checked.facts,
                 execution,
             ),
@@ -320,10 +320,10 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = checked.state.into();
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_frontier_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_frontier_at(
+                self.focused_branch_id(),
                 checked.facts,
                 execution,
             ),
@@ -368,10 +368,10 @@ impl<'a> Proof<'a> {
         )?;
         execution.core.state = checked.state.into();
         Ok(ProofState {
-            locals: self.state.locals.clone(),
+            locals: self.state().locals.clone(),
 
-            open_branches: self.state.open_branches.replace_frontier_at(
-                self.focused_branch,
+            open_branches: self.state().open_branches.replace_frontier_at(
+                self.focused_branch_id(),
                 checked.facts,
                 execution,
             ),
@@ -435,9 +435,9 @@ impl<'a> Proof<'a> {
             execution: branch_state.execution.clone(),
         };
         Ok(ProofState {
-            locals: self.state.locals.clone(),
-            open_branches: self.state.open_branches.replace_at(
-                self.focused_branch,
+            locals: self.state().locals.clone(),
+            open_branches: self.state().open_branches.replace_at(
+                self.focused_branch_id(),
                 OpenBranch::function_outcome(updated, state),
             ),
             added_facts: Arc::new(Vec::new()),

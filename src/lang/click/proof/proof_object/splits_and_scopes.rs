@@ -16,7 +16,7 @@ impl<'a> Proof<'a> {
         &self,
         disjunction: ClickProposition,
     ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
-        if self.state.open_branches.is_discharged() {
+        if self.state().open_branches.is_discharged() {
             return Err(self.step_error("`cases` follows a completed proof"));
         }
         let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
@@ -45,25 +45,27 @@ impl<'a> Proof<'a> {
         let (split, ids, open_branches) = self
             .state
             .open_branches
-            .split_at(self.focused_branch, [arm(*left), arm(*right)]);
+            .split_at(self.focused_branch_id(), [arm(*left), arm(*right)]);
         Ok((
             Self {
                 context: self.context.clone(),
-                state: Arc::new(ProofState {
-                    locals: self.state.locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                }),
+                state: KernelProofObject::new(
+                    ProofState {
+                        locals: self.state().locals.clone(),
+                        open_branches,
+                        added_facts: Arc::new(Vec::new()),
+                        checked_facts: Arc::new(Vec::new()),
+                    },
+                    ids[0],
+                ),
                 // The marker records the split instance in provenance; its
                 // identity is what the join verifies (identity rule 3).
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
                     step: None,
-                    focused_branch: self.focused_branch,
+                    focused_branch: self.focused_branch_id(),
                     depth: self.node.depth,
                 }),
-                focused_branch: ids[0],
             },
             split,
             ids,
@@ -78,7 +80,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
-        if self.state.open_branches.is_discharged() {
+        if self.state().open_branches.is_discharged() {
             return Err(self.step_error("`if` follows a completed proof"));
         }
         let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
@@ -101,23 +103,25 @@ impl<'a> Proof<'a> {
         let (split, ids, open_branches) = self
             .state
             .open_branches
-            .split_at(self.focused_branch, [arm(then_fact), arm(else_fact)]);
+            .split_at(self.focused_branch_id(), [arm(then_fact), arm(else_fact)]);
         Ok((
             Self {
                 context: self.context.clone(),
-                state: Arc::new(ProofState {
-                    locals: self.state.locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                }),
+                state: KernelProofObject::new(
+                    ProofState {
+                        locals: self.state().locals.clone(),
+                        open_branches,
+                        added_facts: Arc::new(Vec::new()),
+                        checked_facts: Arc::new(Vec::new()),
+                    },
+                    ids[0],
+                ),
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
                     step: None,
-                    focused_branch: self.focused_branch,
+                    focused_branch: self.focused_branch_id(),
                     depth: self.node.depth,
                 }),
-                focused_branch: ids[0],
             },
             split,
             ids,
@@ -240,23 +244,25 @@ impl<'a> Proof<'a> {
         let (split, ids, open_branches) = self
             .state
             .open_branches
-            .split_at(self.focused_branch, [then_goal, else_goal]);
+            .split_at(self.focused_branch_id(), [then_goal, else_goal]);
         let first_path = then_path.clone();
         let successor = Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(first_path.clone()),
-                checked_facts: Arc::new(first_path),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(first_path.clone()),
+                    checked_facts: Arc::new(first_path),
+                },
+                ids[0],
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: ids[0],
         };
         let record = ExecutionProofCaseSplit {
             marker: successor.checkpoint(),
@@ -323,22 +329,24 @@ impl<'a> Proof<'a> {
         let (split, ids, open_branches) = self
             .state
             .open_branches
-            .split_at(self.focused_branch, [left_goal, right_goal]);
+            .split_at(self.focused_branch_id(), [left_goal, right_goal]);
         let successor = Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(left_path.clone()),
-                checked_facts: Arc::new(left_path.clone()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(left_path.clone()),
+                    checked_facts: Arc::new(left_path.clone()),
+                },
+                ids[0],
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: ids[0],
         };
         let record = ExecutionLogicalCasesSplit {
             marker: successor.checkpoint(),
@@ -360,7 +368,7 @@ impl<'a> Proof<'a> {
         let arm_index = usize::from(!take_left);
         let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused_branch.state = Arc::new(ProofState {
+        focused_branch.state = focused_branch.state.with_state(ProofState {
             locals: focused_branch.state.locals.clone(),
             open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(path_facts.clone()),
@@ -499,7 +507,7 @@ impl<'a> Proof<'a> {
         step: impl FnOnce(ProofCertificate, ProofCertificate) -> ProofStep,
     ) -> Result<Self, ClickError> {
         for (name, id) in [("left", ids[0]), ("right", ids[1])] {
-            if self.state.open_branches.get(id).is_some() {
+            if self.state().open_branches.get(id).is_some() {
                 return Err(
                     self.step_error(format!("cannot join `cases`: {name} arm is incomplete"))
                 );
@@ -511,12 +519,15 @@ impl<'a> Proof<'a> {
         })?;
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches: self.state.open_branches.clone(),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches: self.state().open_branches.clone(),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                marker.node.focused_branch,
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(parent.clone()),
                 step: Some(Arc::new(step(
@@ -526,7 +537,6 @@ impl<'a> Proof<'a> {
                 focused_branch: marker.node.focused_branch,
                 depth: parent.depth + 1,
             }),
-            focused_branch: marker.node.focused_branch,
         })
     }
 
@@ -545,7 +555,7 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, OutcomeSplit<'a>), ClickError> {
-        if self.state.open_branches.is_discharged() {
+        if self.state().open_branches.is_discharged() {
             return Err(self.step_error("execution outcome `if` follows a completed proof"));
         }
         let ProofContext::Execution(_) = self.context.as_ref() else {
@@ -644,7 +654,7 @@ impl<'a> Proof<'a> {
         let (split, ids, mut open_branches) = self
             .state
             .open_branches
-            .begin_split::<2>(self.focused_branch);
+            .begin_split::<2>(self.focused_branch_id());
         let mut path_facts: [Vec<Proposition>; 2] = [Vec::new(), Vec::new()];
         for arm_index in 0..2 {
             let mut execution = root_execution.clone();
@@ -686,19 +696,21 @@ impl<'a> Proof<'a> {
         }
         let successor = Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(path_facts[0].clone()),
-                checked_facts: Arc::new(path_facts[0].clone()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(path_facts[0].clone()),
+                    checked_facts: Arc::new(path_facts[0].clone()),
+                },
+                ids[0],
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: self.node.depth,
             }),
-            focused_branch: ids[0],
         };
         let record = OutcomeSplit {
             marker: successor.checkpoint(),
@@ -725,7 +737,7 @@ impl<'a> Proof<'a> {
     ) -> Result<Self, ClickError> {
         let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let delta = record.path_facts[arm_index].clone();
-        focused_branch.state = Arc::new(ProofState {
+        focused_branch.state = focused_branch.state.with_state(ProofState {
             locals: focused_branch.state.locals.clone(),
             open_branches: focused_branch.state.open_branches.clone(),
             added_facts: Arc::new(delta.clone()),
@@ -755,7 +767,7 @@ impl<'a> Proof<'a> {
             ("then", record.arm_branches[0]),
             ("else", record.arm_branches[1]),
         ] {
-            let Some(branch) = self.state.open_branches.get(id) else {
+            let Some(branch) = self.state().open_branches.get(id) else {
                 return Err(self.step_error(format!(
                     "execution outcome {name} arm is not an open execution frontier"
                 )));
@@ -831,7 +843,7 @@ impl<'a> Proof<'a> {
         let parent_node = record.marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join outcome `if`: the split marker lost its root")
         })?;
-        let open_branches = self.state.open_branches.join_at(
+        let open_branches = self.state().open_branches.join_at(
             record.arm_branches,
             parent_goal,
             OpenBranch::frontier(
@@ -846,12 +858,15 @@ impl<'a> Proof<'a> {
         let [then_certificate, else_certificate] = arm_certificates;
         Ok(Self {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
-                open_branches,
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                parent_goal,
+            ),
             node: Arc::new(ProofNode {
                 parent: Some(parent_node.clone()),
                 step: Some(Arc::new(ProofStep::If {
@@ -862,7 +877,6 @@ impl<'a> Proof<'a> {
                 focused_branch: parent_goal,
                 depth: parent_node.depth + 1,
             }),
-            focused_branch: parent_goal,
         })
     }
 
@@ -879,7 +893,7 @@ impl<'a> Proof<'a> {
         &self,
         proposition: ClickProposition,
     ) -> Result<ProofScope<'a>, ClickError> {
-        if self.state.open_branches.is_discharged() {
+        if self.state().open_branches.is_discharged() {
             return Err(self.step_error("`have` follows a completed proof"));
         }
         match (self.focused_obligation(), self.context.as_ref()) {
@@ -1019,20 +1033,22 @@ impl<'a> Proof<'a> {
         }
         let body = Proof {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
 
-                open_branches: OpenBranches::root(body_goal),
-                added_facts: Arc::new(Vec::new()),
-                checked_facts: Arc::new(Vec::new()),
-            }),
+                    open_branches: OpenBranches::root(body_goal),
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                BranchId::ROOT,
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
                 focused_branch: BranchId::ROOT,
                 depth: 0,
             }),
-            focused_branch: BranchId::ROOT,
         };
         Ok(ProofScope {
             root: self.clone(),
@@ -1083,24 +1099,26 @@ impl<'a> Proof<'a> {
         let introduced_facts = checked.added_facts.clone();
         let body = Proof {
             context: self.context.clone(),
-            state: Arc::new(ProofState {
-                locals: self.state.locals.clone(),
+            state: KernelProofObject::new(
+                ProofState {
+                    locals: self.state().locals.clone(),
 
-                open_branches: self.state.open_branches.replace_frontier_at(
-                    self.focused_branch,
-                    checked.facts,
-                    execution,
-                ),
-                added_facts: Arc::new(checked.added_facts.clone()),
-                checked_facts: Arc::new(checked.added_facts),
-            }),
+                    open_branches: self.state().open_branches.replace_frontier_at(
+                        self.focused_branch_id(),
+                        checked.facts,
+                        execution,
+                    ),
+                    added_facts: Arc::new(checked.added_facts.clone()),
+                    checked_facts: Arc::new(checked.added_facts),
+                },
+                self.focused_branch_id(),
+            ),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
-                focused_branch: self.focused_branch,
+                focused_branch: self.focused_branch_id(),
                 depth: 0,
             }),
-            focused_branch: self.focused_branch,
         };
         Ok(ProofScope {
             root: self.clone(),

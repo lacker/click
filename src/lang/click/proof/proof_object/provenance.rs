@@ -41,7 +41,7 @@ impl<'a> Proof<'a> {
     /// through markers follows the lineage to the root.
     pub(in crate::lang::click::proof) fn path_certificate(&self) -> ProofCertificate {
         let mut steps = Vec::new();
-        let mut goal = self.focused_branch;
+        let mut goal = self.focused_branch_id();
         let mut node = Some(self.node.clone());
         while let Some(current) = node {
             match &current.step {
