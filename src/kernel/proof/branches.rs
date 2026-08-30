@@ -57,6 +57,19 @@ impl BranchId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SplitId(u64);
 
+impl SplitId {
+    pub(crate) fn owns<const ARMS: usize>(&self, branches: [BranchId; ARMS]) -> bool {
+        branches
+            .iter()
+            .enumerate()
+            .all(|(arm, branch)| branch.0 == self.0 + 1 + arm as u64)
+    }
+
+    pub(crate) fn follows(&self, branch: BranchId) -> bool {
+        branch.0 < self.0
+    }
+}
+
 /// Persistent open branches paired with their lineage-local id allocator.
 ///
 /// A retired branch id is never reused. Candidate forks share the persistent

@@ -25,8 +25,8 @@ pub(crate) use fact_keys::{
 };
 pub(crate) use facts::ProofFacts;
 pub(crate) use object::{
-    ProofObject, ProofState, PropositionAssumptionContext, PropositionCloseError,
-    PropositionIntroduction,
+    ProofJoinError, ProofObject, ProofState, PropositionAssumptionContext, PropositionCloseError,
+    PropositionIntroduction, PropositionSplitError,
 };
 pub(crate) use obligations::{
     CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FunctionOutcomeObligation,

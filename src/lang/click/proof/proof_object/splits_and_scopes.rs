@@ -16,48 +16,32 @@ impl<'a> Proof<'a> {
         &self,
         disjunction: ClickProposition,
     ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
-        if self.state().open_branches.is_discharged() {
-            return Err(self.step_error("`cases` follows a completed proof"));
-        }
-        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
-            return Err(self.step_error("`cases` requires a proposition goal"));
-        };
-        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let kernel = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
-        if !self.facts().contains(&kernel) {
-            return Err(self.step_error(format!(
-                "`cases` requires its exact disjunction as an available fact: {kernel:?}"
-            )));
-        }
-        let Proposition::Or(left, right) = kernel else {
-            return Err(self.step_error(format!("`cases` requires a disjunction, got {kernel:?}")));
-        };
-        let arm = |disjunct: Proposition| {
-            OpenBranch::new(
-                Obligation::Proposition(goal.clone()),
-                BranchState {
-                    facts: branch_state.facts.with_fact(disjunct),
-                    unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                    execution: branch_state.execution.clone(),
-                },
-            )
-        };
-        let (split, ids, open_branches) = self
+        let (state, split, ids) = self
             .state
-            .open_branches
-            .split_at(self.focused_branch_id(), [arm(*left), arm(*right)]);
+            .split_proposition_cases(kernel)
+            .map_err(|error| match error {
+                PropositionSplitError::Completed => {
+                    self.step_error("`cases` follows a completed proof")
+                }
+                PropositionSplitError::NotProposition => {
+                    self.step_error("`cases` requires a proposition goal")
+                }
+                PropositionSplitError::MissingDisjunction(kernel) => self.step_error(format!(
+                    "`cases` requires its exact disjunction as an available fact: {kernel:?}"
+                )),
+                PropositionSplitError::ExpectedDisjunction(kernel) => {
+                    self.step_error(format!("`cases` requires a disjunction, got {kernel:?}"))
+                }
+                PropositionSplitError::NonComplementaryCases => {
+                    unreachable!("cases does not supply complementary branch facts")
+                }
+            })?
+            .into_parts();
         Ok((
             Self {
                 context: self.context.clone(),
-                state: KernelProofObject::new(
-                    ProofState {
-                        locals: self.state().locals.clone(),
-                        open_branches,
-                        added_facts: Arc::new(Vec::new()),
-                        checked_facts: Arc::new(Vec::new()),
-                    },
-                    ids[0],
-                ),
+                state,
                 // The marker records the split instance in provenance; its
                 // identity is what the join verifies (identity rule 3).
                 node: Arc::new(ProofNode {
@@ -80,42 +64,32 @@ impl<'a> Proof<'a> {
         &self,
         condition: ClickProposition,
     ) -> Result<(Self, SplitId, [BranchId; 2]), ClickError> {
-        if self.state().open_branches.is_discharged() {
-            return Err(self.step_error("`if` follows a completed proof"));
-        }
-        let Some(Obligation::Proposition(goal)) = self.focused_obligation() else {
-            return Err(self.step_error("proof `if` requires a proposition goal"));
-        };
-        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let then_fact = self.lower_surface_proposition(&condition, "proof `if` condition")?;
         let else_surface = ClickProposition::Not(Box::new(condition.clone()));
         let else_fact = self.lower_surface_proposition(&else_surface, "proof `if` negation")?;
-        let arm = |fact: Proposition| {
-            OpenBranch::new(
-                Obligation::Proposition(goal.clone()),
-                BranchState {
-                    facts: branch_state.facts.with_fact(fact),
-                    unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                    execution: branch_state.execution.clone(),
-                },
-            )
-        };
-        let (split, ids, open_branches) = self
+        let (state, split, ids) = self
             .state
-            .open_branches
-            .split_at(self.focused_branch_id(), [arm(then_fact), arm(else_fact)]);
+            .split_proposition_if(then_fact, else_fact)
+            .map_err(|error| match error {
+                PropositionSplitError::Completed => {
+                    self.step_error("`if` follows a completed proof")
+                }
+                PropositionSplitError::NotProposition => {
+                    self.step_error("proof `if` requires a proposition goal")
+                }
+                PropositionSplitError::NonComplementaryCases => self.step_error(
+                    "proof `if` condition and negation did not lower to complementary facts",
+                ),
+                PropositionSplitError::MissingDisjunction(_)
+                | PropositionSplitError::ExpectedDisjunction(_) => {
+                    unreachable!("proof if does not require a disjunction")
+                }
+            })?
+            .into_parts();
         Ok((
             Self {
                 context: self.context.clone(),
-                state: KernelProofObject::new(
-                    ProofState {
-                        locals: self.state().locals.clone(),
-                        open_branches,
-                        added_facts: Arc::new(Vec::new()),
-                        checked_facts: Arc::new(Vec::new()),
-                    },
-                    ids[0],
-                ),
+                state,
                 node: Arc::new(ProofNode {
                     parent: Some(self.node.clone()),
                     step: None,
@@ -510,28 +484,25 @@ impl<'a> Proof<'a> {
         ids: [BranchId; 2],
         step: impl FnOnce(ProofCertificate, ProofCertificate) -> ProofStep,
     ) -> Result<Self, ClickError> {
-        for (name, id) in [("left", ids[0]), ("right", ids[1])] {
-            if self.state().open_branches.get(id).is_some() {
-                return Err(
+        let state = self
+            .state
+            .join_closed_split(split, ids, marker.node.focused_branch)
+            .map_err(|error| match error {
+                ProofJoinError::ArmIncomplete(arm) => {
+                    let name = ["left", "right"][arm];
                     self.step_error(format!("cannot join `cases`: {name} arm is incomplete"))
-                );
-            }
-        }
+                }
+                ProofJoinError::InvalidSplit => {
+                    self.step_error(format!("cannot join: invalid split identity {split:?}"))
+                }
+            })?;
         let [left_steps, right_steps] = self.partition_steps_since(marker, split, ids)?;
         let parent = marker.node.parent.clone().ok_or_else(|| {
             self.step_error("cannot join `cases`: the split marker lost its root")
         })?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.clone(),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                marker.node.focused_branch,
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(parent.clone()),
                 step: Some(Arc::new(step(

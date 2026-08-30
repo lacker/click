@@ -57,8 +57,12 @@ selects the operation, translates its typed failure into the existing
 diagnostic, and records Surface provenance. Universal instantiation's guard
 discharge and theorem validation also live in kernel fact reasoning, so the
 language cannot publish an arbitrary conclusion after evaluating a Surface
-argument. Higher-level checked operations still need the same kernel-owned API
-treatment.
+argument. Proposition `if` and `cases` now ask the kernel to allocate their
+sibling branches, install only complementary or exact available case facts,
+and validate that both recorded child identities are closed before joining.
+Surface provenance still partitions and serializes each arm, but cannot create
+the semantic split or joined successor. Higher-level execution and resource
+operations still need the same kernel-owned API treatment.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

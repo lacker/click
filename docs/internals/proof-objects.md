@@ -49,6 +49,11 @@ choose the kernel proposition, introduced fact, or successor state.
 Conjunction extraction and explicit universal instantiation likewise accept
 lowered inputs, then let the kernel validate availability, guards, and the
 resulting fact before it publishes a successor.
+For proposition `if` and `cases`, the kernel allocates the audited split and
+sibling identities, checks complementary or available case facts, and owns the
+closed-arm join. Surface provenance independently proves that serialized arm
+steps descend through the exact split marker; it never manufactures branch
+state.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque

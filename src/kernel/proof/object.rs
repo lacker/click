@@ -45,6 +45,25 @@ pub(crate) struct ProofCompletion<'a> {
     _proof: std::marker::PhantomData<&'a ()>,
 }
 
+pub(crate) struct ProofSplit<L, O, E> {
+    proof: ProofObject<L, O, E>,
+    split: super::SplitId,
+    branches: [BranchId; 2],
+}
+
+pub(crate) enum PropositionSplitError {
+    Completed,
+    NotProposition,
+    MissingDisjunction(Proposition),
+    ExpectedDisjunction(Proposition),
+    NonComplementaryCases,
+}
+
+pub(crate) enum ProofJoinError {
+    InvalidSplit,
+    ArmIncomplete(usize),
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum PropositionAssumptionContext {
     Exact,
@@ -150,6 +169,39 @@ impl<L, O, E> ProofObject<L, O, E> {
         E: Clone,
     {
         Arc::unwrap_or_clone(self.state)
+    }
+}
+
+impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn join_closed_split(
+        &self,
+        split: super::SplitId,
+        branches: [BranchId; 2],
+        parent: BranchId,
+    ) -> Result<Self, ProofJoinError> {
+        if !split.owns(branches) || !split.follows(parent) {
+            return Err(ProofJoinError::InvalidSplit);
+        }
+        for (arm, branch) in branches.into_iter().enumerate() {
+            if self.state.open_branches.get(branch).is_some() {
+                return Err(ProofJoinError::ArmIncomplete(arm));
+            }
+        }
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.clone(),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            parent,
+        ))
+    }
+}
+
+impl<L, O, E> ProofSplit<L, O, E> {
+    pub(crate) fn into_parts(self) -> (ProofObject<L, O, E>, super::SplitId, [BranchId; 2]) {
+        (self.proof, self.split, self.branches)
     }
 }
 
@@ -483,6 +535,107 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             },
             self.focused_branch,
         ))
+    }
+
+    pub(crate) fn split_proposition_cases(
+        &self,
+        disjunction: Proposition,
+    ) -> Result<
+        ProofSplit<L, ProofObligation<P, Arc<OutcomeProofState<S>>>, E>,
+        PropositionSplitError,
+    > {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionSplitError::Completed)?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return Err(PropositionSplitError::NotProposition);
+        };
+        if !branch.state.facts.contains(&disjunction) {
+            return Err(PropositionSplitError::MissingDisjunction(disjunction));
+        }
+        let Proposition::Or(left, right) = disjunction else {
+            return Err(PropositionSplitError::ExpectedDisjunction(disjunction));
+        };
+        let arm = |disjunct: Proposition| {
+            ProofBranch::new(
+                ProofObligation::Proposition(goal.clone()),
+                ProofBranchState {
+                    facts: branch.state.facts.with_fact(disjunct),
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: branch.state.execution.clone(),
+                },
+            )
+        };
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [arm(*left), arm(*right)]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+        })
+    }
+
+    pub(crate) fn split_proposition_if(
+        &self,
+        then_fact: Proposition,
+        else_fact: Proposition,
+    ) -> Result<
+        ProofSplit<L, ProofObligation<P, Arc<OutcomeProofState<S>>>, E>,
+        PropositionSplitError,
+    > {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionSplitError::Completed)?;
+        let ProofObligation::Proposition(goal) = &branch.obligation else {
+            return Err(PropositionSplitError::NotProposition);
+        };
+        let negated_then = Proposition::Not(Box::new(then_fact.clone()));
+        if else_fact != negated_then
+            && !super::fact_reasoning::condition_polarity_forms(&negated_then).contains(&else_fact)
+        {
+            return Err(PropositionSplitError::NonComplementaryCases);
+        }
+        let arm = |fact: Proposition| {
+            ProofBranch::new(
+                ProofObligation::Proposition(goal.clone()),
+                ProofBranchState {
+                    facts: branch.state.facts.with_fact(fact),
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: branch.state.execution.clone(),
+                },
+            )
+        };
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [arm(then_fact), arm(else_fact)]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(Vec::new()),
+                    checked_facts: Arc::new(Vec::new()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+        })
     }
 }
 
