@@ -82,6 +82,9 @@ presentation attachment rather than the semantic execution-state wrapper.
 Smart region-closer attribution and smart-step/execute construction cursors
 are presentation-only as well; none remain in `ExecutionProofCore` or rebuild
 the frontier to record metadata.
+Checked statement steps, mid-execution `have`, frontier-local `loop`, and
+resource scope close publish their already checked result through the same
+frontier-shaped kernel operation instead of reconstructing `ProofState`.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back

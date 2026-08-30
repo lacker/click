@@ -18,10 +18,6 @@ impl<'a> Proof<'a> {
         // Every statement step executes in the whole proof context.
         let fact_context = Some(self.facts().assumptions());
         let checked = check_statement_step(&mut execution, context, &self.facts(), fact_context)?;
-        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
-            unreachable!("the frontier requirement was checked above");
-        };
-        let branch_state = &self.focused_branch().expect("focused branch exists").state;
         let mut checked = checked;
         // A fact the statement introduces (a callee's `ensures`, a store's
         // value) is recorded under its readable spelling at the successor
@@ -52,29 +48,19 @@ impl<'a> Proof<'a> {
             }
         }
         let added_facts = checked.added_facts;
-        let goal = OpenBranch::frontier(
-            frontier.selection,
-            BranchState {
-                facts: checked.facts,
-                unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                execution: Some(Arc::new(checked.execution)),
-            },
-        );
-        let open_branches = self
+        let state = self
             .state
-            .open_branches
-            .replace_at(self.focused_branch_id(), goal);
+            .publish_checked_frontier_transition(
+                checked.facts,
+                checked.execution,
+                added_facts.clone(),
+                added_facts,
+                false,
+            )
+            .map_err(|error| self.execution_update_error("`step`", error))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(added_facts.clone()),
-                    checked_facts: Arc::new(added_facts),
-                },
-                self.focused_branch_id(),
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(step)),
@@ -819,21 +805,13 @@ impl<'a> Proof<'a> {
                 ),
             },
         };
+        let state = self
+            .state
+            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
+            .map_err(|error| self.execution_update_error("`have`", error))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        proof_facts,
-                        execution,
-                    ),
-                    added_facts: Arc::new(added),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                self.focused_branch_id(),
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(have_step)),
@@ -969,21 +947,13 @@ impl<'a> Proof<'a> {
         })?
         .steps()[0]
             .clone();
+        let state = self
+            .state
+            .publish_checked_frontier_transition(proof_facts, execution, added, Vec::new(), false)
+            .map_err(|error| self.execution_update_error("`loop`", error))?;
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches: self.state().open_branches.replace_frontier_at(
-                        self.focused_branch_id(),
-                        proof_facts,
-                        execution,
-                    ),
-                    added_facts: Arc::new(added),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                self.focused_branch_id(),
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: Some(Arc::new(loop_step)),

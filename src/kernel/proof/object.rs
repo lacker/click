@@ -925,9 +925,9 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
 
     /// Publishes the result of a separately checked frontier transition while
     /// preserving every unrelated branch and the focused frontier's
-    /// obligation and unfold set. This deliberately narrow migration seam is
-    /// replaced by typed transition evidence as resource checking moves into
-    /// the kernel boundary.
+    /// obligation and unfold set. The caller remains responsible for checking
+    /// the semantic transition; replacing that checked-driver boundary with
+    /// typed kernel evidence would be a separate interface redesign.
     pub(crate) fn publish_checked_frontier_transition(
         &self,
         facts: ProofFacts,
