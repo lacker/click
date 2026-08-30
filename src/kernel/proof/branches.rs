@@ -1,7 +1,7 @@
 //! Persistent branch topology for the checked proof object.
 //!
 //! This module owns the soundness-critical identity and allocation rules for
-//! proof branches and audited splits. The Click proof layer supplies each
+//! proof branches and audited splits. The checked proof core supplies each
 //! branch's obligation and semantic payload, but cannot construct or reuse
 //! identities independently of this collection.
 

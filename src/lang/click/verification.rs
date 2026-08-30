@@ -1162,7 +1162,7 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                     detail,
                 )));
             };
-            let proof_objects = function_verified
+            let ordered_claim_proofs = function_verified
                 .iter()
                 .map(|verified| {
                     let key = if has_explicit_claims {
@@ -1189,8 +1189,8 @@ pub(in crate::lang::click) fn verify_c0_sources_with_environment(
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let rule =
-                c_verified_function_rule(contract_function, &proof_objects).ok_or_else(|| {
+            let rule = c_verified_function_rule(contract_function, &ordered_claim_proofs)
+                .ok_or_else(|| {
                     ClickError::new(format!(
                         "could not package verified contract for `{}`",
                         function_block.signature.name()

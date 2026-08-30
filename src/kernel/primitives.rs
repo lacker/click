@@ -12,12 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
 mod contracts;
+mod derivations;
 mod memory_state;
-mod proof_objects;
 mod resource_algebra;
 mod term_operations;
+pub(super) use derivations::*;
 use memory_state::*;
-pub(super) use proof_objects::*;
 pub(super) use resource_algebra::*;
 
 pub(super) const C_POINTER_BYTE_WIDTH: u32 = 8;

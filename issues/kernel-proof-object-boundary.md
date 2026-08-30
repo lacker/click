@@ -9,7 +9,7 @@ must only reject a proof or choose an unhelpful checked path. The code layout
 does not make that trust distinction clear.
 
 The first extraction moved branch and split identities plus persistent branch
-topology to `src/kernel/proof.rs`. Smart search now lives outside
+topology to `src/kernel/proof/branches.rs`. Smart search now lives outside
 `proof_object/` and consumes an immutable internal planning interface instead
 of the proof's private state, provenance node, focus, or constructors. The
 contextual Surface Click lowering has also moved out of `proof_object/`; the

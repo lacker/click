@@ -14,8 +14,8 @@ branch, inspect alternatives, and abandon candidates without cloning the
 complete logical or execution state.
 
 The kernel owns branch and split identities and the persistent open-branch
-topology in `src/kernel/proof.rs`; the remaining checked representation is
-being moved across the same boundary incrementally. Untrusted smart selection
+topology in `src/kernel/proof/branches.rs`; the remaining checked
+representation is being moved across the same boundary incrementally. Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
 Contextual Surface Click lowering likewise lives beside the language-layer
@@ -106,13 +106,13 @@ semantic proof engine.
 
 ## Kernel derivations
 
-Kernel structures in `src/kernel/primitives/proof_objects.rs` represent
-primitive semantic evidence and obligations. They are separate from the
-surface expansion: surface proof steps encode user-reviewable operations,
-while kernel derivations justify the underlying proposition, execution,
-memory, or resource transition. `Theorem` is authority for an established
-proposition; `PropositionDerivation` retains the checked reasoning tree; other
-typed evidence records execution and memory transitions.
+Kernel structures in `src/kernel/primitives/derivations.rs` represent typed
+semantic evidence and obligations. They are separate from the persistent proof
+object and from surface expansion: surface proof steps encode user-reviewable
+operations, while kernel derivations justify the underlying proposition,
+execution, memory, or resource transition. `Theorem` is authority for an
+established proposition; `PropositionDerivation` retains the checked reasoning
+tree; other typed evidence records execution and memory transitions.
 
 The target invariants are:
 
