@@ -6,7 +6,7 @@ use crate::kernel::proof::{
     ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState as KernelProofExecutionState,
     ProofFacts, ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
     ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
-    PropositionObligation as KernelPropositionObligation, SplitId,
+    PropositionIntroduction, PropositionObligation as KernelPropositionObligation, SplitId,
 };
 use crate::persistent::PersistentMap;
 
@@ -1628,27 +1628,22 @@ impl<'a> Proof<'a> {
         }
     }
 
-    fn apply_contradiction(&self, surface: &ClickProposition) -> Result<ProofState, ClickError> {
+    fn apply_contradiction(
+        &self,
+        surface: &ClickProposition,
+    ) -> Result<KernelProofHandle, ClickError> {
         let fact = self.lower_surface_proposition(surface, "`contradiction` fact")?;
-        let negated = Proposition::Not(Box::new(fact.clone()));
-        let opposite_condition = match &fact {
-            Proposition::ConditionIs(condition, value) => {
-                Some(Proposition::ConditionIs(condition.clone(), !value))
-            }
-            _ => None,
-        };
-        if !self.facts().contains(&fact)
-            || (!self.facts().contains(&negated)
-                && !opposite_condition
-                    .as_ref()
-                    .is_some_and(|opposite| self.facts().contains(opposite))
-                && !normalizes_context_free(&negated))
-        {
-            return Err(self.step_error(format!(
-                "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
-            )));
-        }
-        Ok(self.closed_state())
+        self.state
+            .apply_contradiction(&fact)
+            .map_err(|error| match error {
+                PropositionCloseError::ContradictionUnavailable(fact) => self.step_error(format!(
+                    "`contradiction` requires an exact fact and its exact negation or opposite condition polarity: {fact:?}"
+                )),
+                PropositionCloseError::Unavailable => {
+                    self.step_error("`contradiction` requires an open proof branch")
+                }
+                _ => unreachable!("kernel returned an unrelated contradiction error"),
+            })
     }
 
     fn proposition_goal(&self, message: &str) -> Result<&Proposition, ClickError> {
@@ -1673,19 +1668,6 @@ impl<'a> Proof<'a> {
         self.branch_execution()
             .and_then(|execution| execution.core.loop_effect_goal.as_ref())
             .is_some_and(|goal| goal.closed)
-    }
-
-    fn closed_state(&self) -> ProofState {
-        ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self
-                .state()
-                .open_branches
-                .close_at(self.focused_branch_id()),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        }
     }
 
     pub(in crate::lang::click::proof) fn step_error(

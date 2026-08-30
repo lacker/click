@@ -49,8 +49,9 @@ Kernel files:
   Language attachments are opaque parameters and are never interpreted as
   evidence by these modules. Goal-preserving fact/execution successors,
   strict frontier successors, obligation replacement, and conditional
-  discharge are kernel state operations. Primitive proposition-closing rules
-  are named `ProofObject` operations that return opaque checked successors.
+  discharge are kernel state operations. Primitive proposition refinement and
+  closing rules are named `ProofObject` operations that return opaque checked
+  successors.
   Completion witnesses and terminal execution-finalization views can be
   constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and

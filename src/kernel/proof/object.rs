@@ -56,12 +56,21 @@ pub(crate) enum PropositionCloseError {
     NotProposition,
     Unavailable,
     DoesNotNormalize,
+    ExpectedIntroduction(Proposition),
     ExpectedConjunction(Proposition),
     MissingConjuncts(Proposition, Proposition),
     ExpectedDisjunction(Proposition),
     MissingDisjunct(Proposition),
     ExpectedFiniteUniversal,
     MissingFiniteInstance,
+    ContradictionUnavailable(Proposition),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PropositionIntroduction {
+    Implication,
+    Universal { variable: crate::kernel::Variable },
+    Negation,
 }
 
 impl<'a, S> ProofExecutionView<'a, S> {
@@ -233,6 +242,69 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             .ok_or(PropositionCloseError::DoesNotNormalize)
     }
 
+    pub(crate) fn apply_intro(
+        &self,
+        presentation: impl FnOnce(&P, PropositionIntroduction) -> P,
+    ) -> Result<Self, PropositionCloseError> {
+        let (goal, facts) = self
+            .focused_proposition()
+            .ok_or(PropositionCloseError::NotProposition)?;
+        let (proposition, introduced, introduction) = match goal.proposition() {
+            Proposition::Implies(antecedent, consequent) => (
+                consequent.as_ref().clone(),
+                Some(antecedent.as_ref().clone()),
+                PropositionIntroduction::Implication,
+            ),
+            Proposition::ForAll { var, body, .. } => (
+                body.as_ref().clone(),
+                None,
+                PropositionIntroduction::Universal { variable: *var },
+            ),
+            Proposition::Not(body) => (
+                Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true),
+                Some(body.as_ref().clone()),
+                PropositionIntroduction::Negation,
+            ),
+            other => {
+                return Err(PropositionCloseError::ExpectedIntroduction(other.clone()));
+            }
+        };
+        let presentation = presentation(&goal.presentation, introduction);
+        let obligation = match goal.outcome.clone() {
+            Some(outcome) => {
+                super::PropositionObligation::at_outcome(proposition, presentation, outcome)
+            }
+            None => super::PropositionObligation::new(proposition, presentation),
+        };
+        let added_facts = introduced.into_iter().collect::<Vec<_>>();
+        let mut facts = facts.clone();
+        for fact in &added_facts {
+            facts = facts.with_fact(fact.clone());
+        }
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .expect("a proposition introduction retains its focused branch");
+        let branch_state = ProofBranchState {
+            facts,
+            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+            execution: branch.state.execution.clone(),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.replace_at(
+                    self.focused_branch,
+                    ProofBranch::new(ProofObligation::Proposition(obligation), branch_state),
+                ),
+                checked_facts: Arc::new(added_facts.clone()),
+                added_facts: Arc::new(added_facts),
+            },
+            self.focused_branch,
+        ))
+    }
+
     pub(crate) fn apply_split(&self) -> Result<Self, PropositionCloseError> {
         let (goal, facts) = self
             .focused_proposition()
@@ -291,6 +363,33 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             }
         }
         Ok(self.closed_focused())
+    }
+
+    pub(crate) fn apply_contradiction(
+        &self,
+        fact: &Proposition,
+    ) -> Result<Self, PropositionCloseError> {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(PropositionCloseError::Unavailable)?;
+        let negated = Proposition::Not(Box::new(fact.clone()));
+        let opposite_condition = match fact {
+            Proposition::ConditionIs(condition, value) => {
+                Some(Proposition::ConditionIs(condition.clone(), !value))
+            }
+            _ => None,
+        };
+        let contradictory = branch.state.facts.contains(fact)
+            && (branch.state.facts.contains(&negated)
+                || opposite_condition
+                    .as_ref()
+                    .is_some_and(|opposite| branch.state.facts.contains(opposite))
+                || super::fact_reasoning::normalizes_context_free(&negated));
+        contradictory
+            .then(|| self.closed_focused())
+            .ok_or_else(|| PropositionCloseError::ContradictionUnavailable(fact.clone()))
     }
 }
 

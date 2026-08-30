@@ -60,10 +60,12 @@ impl<'a> Proof<'a> {
         let checked_proposition_successor = match &step {
             ProofStep::Assumption => Some(self.apply_assumption()),
             ProofStep::Normalize => Some(self.apply_normalize()),
+            ProofStep::Intro => Some(self.apply_intro()),
             ProofStep::Split => Some(self.apply_split()),
             ProofStep::Left => Some(self.apply_left()),
             ProofStep::Right => Some(self.apply_right()),
             ProofStep::Enumerate => Some(self.apply_enumerate()),
+            ProofStep::Contradiction(surface) => Some(self.apply_contradiction(surface)),
             _ => None,
         };
         if let Some(successor) = checked_proposition_successor {
@@ -111,8 +113,6 @@ impl<'a> Proof<'a> {
             } => self.apply_fixed_state_instantiate_using(quantified, argument, premises),
             ProofStep::Extract(proposition) => self.apply_extract(proposition),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
-            ProofStep::Intro => self.apply_intro(),
-            ProofStep::Contradiction(surface) => self.apply_contradiction(surface),
             ProofStep::CloseInvariants => self.apply_close_invariants(),
             ProofStep::FrameUsing { region, premises } => {
                 if self.focused_outcome_data().is_some() {
@@ -1115,74 +1115,43 @@ impl<'a> Proof<'a> {
     // Preserve the rule/dispatcher frame boundary described above; `intro`
     // owns several by-value proposition variants.
     #[inline(never)]
-    pub(super) fn apply_intro(&self) -> Result<ProofState, ClickError> {
-        let goal = self
-            .proposition_goal("`intro` requires a proposition goal")?
-            .clone();
-        let mut surface_bindings = match self.focused_obligation() {
-            Some(Obligation::Proposition(goal)) => goal.surface_bindings.clone(),
-            _ => PersistentMap::default(),
-        };
-        let (goal, introduced, surface_goal) = match goal {
-            Proposition::Implies(antecedent, consequent) => (
-                *consequent,
-                Some(*antecedent),
-                match self.surface_goal() {
-                    Some(ClickProposition::Implies(_, consequent)) => {
-                        Some(consequent.as_ref().clone())
-                    }
-                    _ => None,
-                },
-            ),
-            Proposition::ForAll { var, body, .. } => {
-                let surface_goal = match self.surface_goal() {
-                    Some(ClickProposition::ForAll { name, body, .. }) => {
+    pub(super) fn apply_intro(&self) -> Result<KernelProofHandle, ClickError> {
+        self.state
+            .apply_intro(|current, introduction| {
+                let mut surface_bindings = current.surface_bindings.clone();
+                let surface = match (introduction, current.surface.as_deref()) {
+                    (
+                        PropositionIntroduction::Implication,
+                        Some(ClickProposition::Implies(_, consequent)),
+                    ) => Some(Arc::new(consequent.as_ref().clone())),
+                    (
+                        PropositionIntroduction::Universal { variable },
+                        Some(ClickProposition::ForAll { name, body, .. }),
+                    ) => {
                         surface_bindings = surface_bindings.with_inserted(
                             name.clone(),
                             ContractExpression::CFragment(CExpression::Value(CValue::Int32(
-                                Bitvector32Term::Variable(var),
+                                Bitvector32Term::Variable(variable),
                             ))),
                         );
-                        Some(body.as_ref().clone())
+                        Some(Arc::new(body.as_ref().clone()))
                     }
                     _ => None,
                 };
-                (*body, None, surface_goal)
-            }
-            Proposition::Not(body) => (
-                Proposition::ConditionIs(ConditionTerm::Constant(false), true),
-                Some(*body),
-                None,
-            ),
-            other => {
-                return Err(self.step_error(format!(
-                    "`intro` requires an implication, negation, or universal goal, got {other:?}"
-                )));
-            }
-        };
-        let mut facts = self.facts().clone();
-        let added_facts = introduced.into_iter().collect::<Vec<_>>();
-        for fact in &added_facts {
-            facts = facts.with_fact(fact.clone());
-        }
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self
-                .state()
-                .open_branches
-                .replace_at(self.focused_branch_id(), {
-                    let context = self.refined_branch_state(facts);
-                    let mut refined = self.refined_proposition(context, goal, surface_goal);
-                    let Obligation::Proposition(refined_goal) = &mut refined.obligation else {
-                        unreachable!("intro always refines a proposition goal")
-                    };
-                    refined_goal.surface_bindings = surface_bindings;
-                    refined
-                }),
-            checked_facts: Arc::new(added_facts.clone()),
-            added_facts: Arc::new(added_facts),
-        })
+                PropositionPresentation {
+                    surface,
+                    surface_bindings,
+                }
+            })
+            .map_err(|error| match error {
+                PropositionCloseError::NotProposition => {
+                    self.step_error("`intro` requires a proposition goal")
+                }
+                PropositionCloseError::ExpectedIntroduction(goal) => self.step_error(format!(
+                    "`intro` requires an implication, negation, or universal goal, got {goal:?}"
+                )),
+                _ => unreachable!("kernel returned an unrelated intro error"),
+            })
     }
 
     // Preserve the rule/dispatcher frame boundary described above.

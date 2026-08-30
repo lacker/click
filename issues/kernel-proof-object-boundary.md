@@ -48,12 +48,13 @@ shape now applies to result-aware function outcomes: the kernel owns the
 result, state, execution facts, requirements, and crossed effects used by
 outcome rules. The language attachment retains only Surface proposition
 records, selectors, and diagnostic provenance. Primitive proposition-closing
-rules (`assumption`, `normalize`, `split`, disjunction selection, and finite
-enumeration) are named `ProofObject` operations. They check the focused
-obligation and return an opaque kernel successor directly; the language
-dispatcher only selects the operation, translates its typed failure into the
-existing diagnostic, and records Surface provenance. Higher-level checked
-operations still need the same kernel-owned API treatment.
+rules (`assumption`, `normalize`, `intro`, `split`, disjunction selection,
+finite enumeration, and `contradiction`) are named `ProofObject` operations.
+They check or refine the focused obligation and return an opaque kernel
+successor directly; the language dispatcher only supplies opaque presentation,
+selects the operation, translates its typed failure into the existing
+diagnostic, and records Surface provenance. Higher-level checked operations
+still need the same kernel-owned API treatment.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and
