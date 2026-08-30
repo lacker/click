@@ -58,7 +58,10 @@ Kernel files:
   proof-level execution `if` accepts only opaque per-arm presentation and
   clones semantic execution state inside the kernel. Presentation-only
   frontier replacement preserves the kernel core, and loop-invariant closure
-  is checked as a named core update.
+  is checked as a named core update. Fresh proof contexts enter through a
+  kernel root constructor, and focused-arm bookkeeping can replace only
+  non-authoritative fact deltas; generic handle state replacement is confined
+  to kernel tests.
   Completion witnesses and terminal execution-finalization views can be
   constructed only by `ProofObject`.
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and

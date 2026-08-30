@@ -125,6 +125,22 @@ impl<'a, S> ProofExecutionView<'a, S> {
 }
 
 impl<L, O, E> ProofObject<L, O, E> {
+    pub(crate) fn root(locals: L, branch: ProofBranch<O, E>) -> Self
+    where
+        O: Clone,
+        E: Clone,
+    {
+        Self::new(
+            ProofState {
+                locals,
+                open_branches: ProofBranches::root(branch),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            BranchId::ROOT,
+        )
+    }
+
     pub(crate) fn new(state: ProofState<L, O, E>, focused_branch: BranchId) -> Self {
         Self {
             state: Arc::new(state),
@@ -172,6 +188,7 @@ impl<L, O, E> ProofObject<L, O, E> {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn with_state(&self, state: ProofState<L, O, E>) -> Self {
         Self::new(state, self.focused_branch)
     }
@@ -187,6 +204,24 @@ impl<L, O, E> ProofObject<L, O, E> {
         E: Clone,
     {
         Arc::unwrap_or_clone(self.state)
+    }
+}
+
+impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
+    pub(crate) fn with_fact_deltas(
+        &self,
+        added_facts: Vec<Proposition>,
+        checked_facts: Vec<Proposition>,
+    ) -> Self {
+        Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self.state.open_branches.clone(),
+                added_facts: Arc::new(added_facts),
+                checked_facts: Arc::new(checked_facts),
+            },
+            self.focused_branch,
+        )
     }
 }
 

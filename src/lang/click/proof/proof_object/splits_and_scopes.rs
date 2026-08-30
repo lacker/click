@@ -330,15 +330,13 @@ impl<'a> Proof<'a> {
         take_left: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_left);
-        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
+        let focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused_branch.state = focused_branch.state.with_state(ProofState {
-            locals: focused_branch.state.locals.clone(),
-            open_branches: focused_branch.state.open_branches.clone(),
-            added_facts: Arc::new(path_facts.clone()),
-            checked_facts: Arc::new(path_facts),
-        });
-        Ok(focused_branch)
+        Ok(focused_branch.with_kernel_state(
+            focused_branch
+                .state
+                .with_fact_deltas(path_facts.clone(), path_facts),
+        ))
     }
 
     /// Applies one recursively driven logical `cases` operation over an
@@ -697,15 +695,10 @@ impl<'a> Proof<'a> {
         record: &OutcomeSplit<'a>,
         arm_index: usize,
     ) -> Result<Self, ClickError> {
-        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
+        let focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let delta = record.path_facts[arm_index].clone();
-        focused_branch.state = focused_branch.state.with_state(ProofState {
-            locals: focused_branch.state.locals.clone(),
-            open_branches: focused_branch.state.open_branches.clone(),
-            added_facts: Arc::new(delta.clone()),
-            checked_facts: Arc::new(delta),
-        });
-        Ok(focused_branch)
+        Ok(focused_branch
+            .with_kernel_state(focused_branch.state.with_fact_deltas(delta.clone(), delta)))
     }
 
     /// Joins two exhaustive terminal outcome partitions after both sibling
@@ -996,16 +989,7 @@ impl<'a> Proof<'a> {
         }
         let body = Proof {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-
-                    open_branches: OpenBranches::root(body_goal),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
-            ),
+            state: KernelProofObject::root(self.state().locals.clone(), body_goal),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,

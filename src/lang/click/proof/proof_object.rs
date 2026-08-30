@@ -3,7 +3,7 @@ use super::*;
 use crate::kernel::proof::{
     BranchId, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError, FrontierObligation,
     FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
-    OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState, ProofBranches,
+    OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
     ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofJoinError,
     ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
     ProofState as KernelProofState, PropositionAssumptionContext, PropositionCloseError,
@@ -789,7 +789,6 @@ pub(in crate::lang::click::proof) fn linear_script_is_supported(tactics: &[Proof
             })
 }
 
-type OpenBranches = ProofBranches<OpenBranch>;
 type ProofState = KernelProofState<ProofLocals, Obligation, ExecutionProofState>;
 
 /// Proof-local surface names introduced by checked refinements such as
@@ -1237,6 +1236,14 @@ pub(in crate::lang::click::proof) fn old_reflexive_transport_source(
 }
 
 impl<'a> Proof<'a> {
+    fn with_kernel_state(&self, state: KernelProofHandle) -> Self {
+        Self {
+            context: self.context.clone(),
+            state,
+            node: self.node.clone(),
+        }
+    }
+
     fn state(&self) -> &ProofState {
         self.state.state()
     }
@@ -1450,39 +1457,28 @@ impl<'a> Proof<'a> {
         let facts = self.facts().with_selected_resource_separation(&goal);
         Ok(Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-
-                    open_branches: OpenBranches::root({
-                        let context = BranchState {
-                            facts,
-                            unfolded_predicates: match &outcome {
-                                Some(_) => self.focused_branch_unfolds().clone(),
-                                None => PersistentOrderedSet::default(),
-                            },
-                            execution: match &outcome {
-                                Some(_) => self.branch_execution().cloned(),
-                                None => None,
-                            },
-                        };
-                        let presentation = PropositionPresentation {
-                            surface: surface_goal.map(Arc::new),
-                            surface_bindings: PersistentMap::default(),
-                        };
-                        let obligation = match outcome.clone() {
-                            Some(outcome) => {
-                                PropositionObligation::at_outcome(goal, presentation, outcome)
-                            }
-                            None => PropositionObligation::new(goal, presentation),
-                        };
-                        OpenBranch::new(Obligation::Proposition(obligation), context)
-                    }),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
-            ),
+            state: KernelProofObject::root(self.state().locals.clone(), {
+                let context = BranchState {
+                    facts,
+                    unfolded_predicates: match &outcome {
+                        Some(_) => self.focused_branch_unfolds().clone(),
+                        None => PersistentOrderedSet::default(),
+                    },
+                    execution: match &outcome {
+                        Some(_) => self.branch_execution().cloned(),
+                        None => None,
+                    },
+                };
+                let presentation = PropositionPresentation {
+                    surface: surface_goal.map(Arc::new),
+                    surface_bindings: PersistentMap::default(),
+                };
+                let obligation = match outcome.clone() {
+                    Some(outcome) => PropositionObligation::at_outcome(goal, presentation, outcome),
+                    None => PropositionObligation::new(goal, presentation),
+                };
+                OpenBranch::new(Obligation::Proposition(obligation), context)
+            }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,

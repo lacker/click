@@ -70,7 +70,10 @@ presentation; the kernel validates complementary facts and clones the semantic
 execution core itself. Proof marks now replace only opaque frontier
 presentation through a kernel operation that preserves the semantic core, and
 `close_invariants` validates and updates the loop-region flag inside the
-kernel.
+kernel. Fresh pure, fixed-state, execution, loop-effect, focused-outcome, and
+nested-`have` roots now use the kernel root constructor; arm focusing can only
+replace non-authoritative fact deltas. The generic whole-handle state
+replacement helper is test-only.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

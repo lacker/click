@@ -1965,17 +1965,15 @@ impl<'a> Proof<'a> {
                 if take_then { "then" } else { "else" }
             )));
         };
-        let mut focused_branch = self.focus_branch(id)?;
+        let focused_branch = self.focus_branch(id)?;
         let path_facts = record.path_facts[arm_index]
             .clone()
             .expect("a recorded arm id has recorded path facts");
-        focused_branch.state = focused_branch.state.with_state(ProofState {
-            locals: focused_branch.state.locals.clone(),
-            open_branches: focused_branch.state.open_branches.clone(),
-            added_facts: Arc::new(path_facts.clone()),
-            checked_facts: Arc::new(path_facts),
-        });
-        Ok(focused_branch)
+        Ok(focused_branch.with_kernel_state(
+            focused_branch
+                .state
+                .with_fact_deltas(path_facts.clone(), path_facts),
+        ))
     }
 
     /// Focuses one proof-level execution case. No C transition is repeated;
@@ -1987,15 +1985,13 @@ impl<'a> Proof<'a> {
         take_then: bool,
     ) -> Result<Self, ClickError> {
         let arm_index = usize::from(!take_then);
-        let mut focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
+        let focused_branch = self.focus_branch(record.arm_branches[arm_index])?;
         let path_facts = record.path_facts[arm_index].clone();
-        focused_branch.state = focused_branch.state.with_state(ProofState {
-            locals: focused_branch.state.locals.clone(),
-            open_branches: focused_branch.state.open_branches.clone(),
-            added_facts: Arc::new(path_facts.clone()),
-            checked_facts: Arc::new(path_facts),
-        });
-        Ok(focused_branch)
+        Ok(focused_branch.with_kernel_state(
+            focused_branch
+                .state
+                .with_fact_deltas(path_facts.clone(), path_facts),
+        ))
     }
 
     /// Runs the narrow statement selector on this focused branch frontier until it

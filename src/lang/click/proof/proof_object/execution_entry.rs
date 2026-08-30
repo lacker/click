@@ -93,22 +93,16 @@ impl<'a> Proof<'a> {
                 theorem_environment,
                 constants: Arc::new(constants),
             })),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: ProofLocals::default(),
-
-                    open_branches: OpenBranches::root(OpenBranch::frontier(
-                        effect_goals,
-                        BranchState {
-                            facts: ProofFacts::from_ordered(&pure_facts),
-                            unfolded_predicates: PersistentOrderedSet::default(),
-                            execution: Some(Arc::new(execution)),
-                        },
-                    )),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
+            state: KernelProofObject::root(
+                ProofLocals::default(),
+                OpenBranch::frontier(
+                    effect_goals,
+                    BranchState {
+                        facts: ProofFacts::from_ordered(&pure_facts),
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(execution)),
+                    },
+                ),
             ),
             node: Arc::new(ProofNode {
                 parent: None,
@@ -162,21 +156,16 @@ impl<'a> Proof<'a> {
                     ..(*context.constants).clone()
                 }),
             })),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: ProofLocals::default(),
-                    open_branches: OpenBranches::root(OpenBranch::frontier(
-                        EffectGoalSelection::None,
-                        BranchState {
-                            facts: self.facts().clone(),
-                            unfolded_predicates: PersistentOrderedSet::default(),
-                            execution: Some(Arc::new(execution)),
-                        },
-                    )),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
+            state: KernelProofObject::root(
+                ProofLocals::default(),
+                OpenBranch::frontier(
+                    EffectGoalSelection::None,
+                    BranchState {
+                        facts: self.facts().clone(),
+                        unfolded_predicates: PersistentOrderedSet::default(),
+                        execution: Some(Arc::new(execution)),
+                    },
+                ),
             ),
             node: Arc::new(ProofNode {
                 parent: None,

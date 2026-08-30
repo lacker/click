@@ -127,31 +127,18 @@ impl<'a> Proof<'a> {
                 click_function_environment,
                 theorem_environment,
             })),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: ProofLocals::default(),
-
-                    open_branches: OpenBranches::root({
-                        let context = BranchState {
-                            facts,
-                            unfolded_predicates: PersistentOrderedSet::default(),
-                            execution: None,
-                        };
-                        surface_goal
-                            .map(|surface| {
-                                OpenBranch::surface_proposition_in(
-                                    context.clone(),
-                                    goal.clone(),
-                                    surface,
-                                )
-                            })
-                            .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
-                    }),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
-            ),
+            state: KernelProofObject::root(ProofLocals::default(), {
+                let context = BranchState {
+                    facts,
+                    unfolded_predicates: PersistentOrderedSet::default(),
+                    execution: None,
+                };
+                surface_goal
+                    .map(|surface| {
+                        OpenBranch::surface_proposition_in(context.clone(), goal.clone(), surface)
+                    })
+                    .unwrap_or_else(|| OpenBranch::proposition_in(context, goal))
+            }),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
@@ -528,16 +515,7 @@ impl<'a> Proof<'a> {
                 requirement_label_indices,
                 requirement_facts: available,
             })),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: ProofLocals::default(),
-
-                    open_branches: OpenBranches::root(goal),
-                    added_facts: Arc::new(Vec::new()),
-                    checked_facts: Arc::new(Vec::new()),
-                },
-                BranchId::ROOT,
-            ),
+            state: KernelProofObject::root(ProofLocals::default(), goal),
             node: Arc::new(ProofNode {
                 parent: None,
                 step: None,
