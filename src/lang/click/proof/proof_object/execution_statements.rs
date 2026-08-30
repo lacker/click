@@ -84,71 +84,52 @@ impl<'a> Proof<'a> {
         })
     }
 
-    pub(super) fn apply_execution_mark(&self, name: &str) -> Result<ProofState, ClickError> {
+    pub(super) fn apply_execution_mark(&self, name: &str) -> Result<KernelProofHandle, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`mark` requires an execution-frontier proof"));
         }
         self.require_execution_frontier("`mark`")?;
-        let mut execution = self
+        let execution = self
             .execution()
-            .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
+        let mut presentation = execution.presentation.clone();
         let selector = SnapshotSelector::Mark(name.to_string());
-        if execution
-            .presentation
-            .recorded_snapshots
-            .contains_key(&selector)
-        {
+        if presentation.recorded_snapshots.contains_key(&selector) {
             return Err(self.step_error(format!("duplicate proof mark `{name}`")));
         }
-        execution
-            .presentation
+        presentation
             .recorded_snapshots
             .insert(selector, (*execution.core.state).clone());
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
-
-            open_branches: self.state().open_branches.replace_frontier_at(
-                self.focused_branch_id(),
-                self.facts().clone(),
-                execution,
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        })
+        self.state
+            .replace_frontier_presentation(presentation)
+            .map_err(|error| self.execution_update_error("`mark`", error))
     }
 
-    pub(super) fn apply_close_invariants(&self) -> Result<ProofState, ClickError> {
+    pub(super) fn apply_close_invariants(&self) -> Result<KernelProofHandle, ClickError> {
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("`close_invariants` requires an execution-frontier proof"));
         }
-        self.require_execution_frontier("`close_invariants`")?;
-        let mut execution = self
-            .execution()
-            .cloned()
-            .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
-        if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
-            return Err(
-                self.step_error("`close_invariants` is only available in a loop-region proof")
-            );
-        }
-        if execution.core.region_invariants_closed {
-            return Err(
-                self.step_error("the invariant bundle was closed more than once on one path")
-            );
-        }
-        execution.core.region_invariants_closed = true;
-        Ok(ProofState {
-            locals: self.state().locals.clone(),
+        self.state
+            .close_frontier_invariants()
+            .map_err(|error| self.execution_update_error("`close_invariants`", error))
+    }
 
-            open_branches: self.state().open_branches.replace_frontier_at(
-                self.focused_branch_id(),
-                self.facts().clone(),
-                execution,
-            ),
-            added_facts: Arc::new(Vec::new()),
-            checked_facts: Arc::new(Vec::new()),
-        })
+    fn execution_update_error(&self, operation: &str, error: ExecutionUpdateError) -> ClickError {
+        match error {
+            ExecutionUpdateError::NotFrontier | ExecutionUpdateError::ClosedLoopEffect => self
+                .step_error(format!(
+                    "{operation} cannot advance C execution inside a proposition proof"
+                )),
+            ExecutionUpdateError::MissingExecution => {
+                self.step_error("execution-frontier proof lost its semantic state")
+            }
+            ExecutionUpdateError::NotLoopBody => {
+                self.step_error("`close_invariants` is only available in a loop-region proof")
+            }
+            ExecutionUpdateError::InvariantsAlreadyClosed => {
+                self.step_error("the invariant bundle was closed more than once on one path")
+            }
+        }
     }
 
     /// Checks the complete loop-invariant bundle at this back edge and

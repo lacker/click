@@ -74,6 +74,14 @@ pub(crate) enum FrontierSplitError {
     NonComplementaryCases,
 }
 
+pub(crate) enum ExecutionUpdateError {
+    NotFrontier,
+    MissingExecution,
+    ClosedLoopEffect,
+    NotLoopBody,
+    InvariantsAlreadyClosed,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) enum PropositionAssumptionContext {
     Exact,
@@ -665,6 +673,98 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
 impl<L: Clone, P: Clone, O: Clone, S: Clone>
     ProofObject<L, ProofObligation<P, O>, ProofExecutionState<S>>
 {
+    fn focused_frontier_execution(
+        &self,
+    ) -> Result<
+        (
+            &ProofBranch<ProofObligation<P, O>, ProofExecutionState<S>>,
+            &ProofExecutionState<S>,
+        ),
+        ExecutionUpdateError,
+    > {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(ExecutionUpdateError::NotFrontier)?;
+        if !matches!(branch.obligation, ProofObligation::Frontier(_)) {
+            return Err(ExecutionUpdateError::NotFrontier);
+        }
+        let execution = branch
+            .state
+            .execution
+            .as_deref()
+            .ok_or(ExecutionUpdateError::MissingExecution)?;
+        if execution
+            .core
+            .loop_effect_goal
+            .as_ref()
+            .is_some_and(|goal| goal.closed)
+        {
+            return Err(ExecutionUpdateError::ClosedLoopEffect);
+        }
+        Ok((branch, execution))
+    }
+
+    pub(crate) fn replace_frontier_presentation(
+        &self,
+        presentation: S,
+    ) -> Result<Self, ExecutionUpdateError> {
+        let (branch, execution) = self.focused_frontier_execution()?;
+        let state = ProofBranchState {
+            facts: branch.state.facts.clone(),
+            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+            execution: Some(Arc::new(ProofExecutionState::new(
+                execution.core.clone(),
+                presentation,
+            ))),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .with_branch_state_at(self.focused_branch, state),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            self.focused_branch,
+        ))
+    }
+
+    pub(crate) fn close_frontier_invariants(&self) -> Result<Self, ExecutionUpdateError> {
+        let (branch, execution) = self.focused_frontier_execution()?;
+        if execution.core.frontier.region != super::ExecutionRegionKind::LoopBody {
+            return Err(ExecutionUpdateError::NotLoopBody);
+        }
+        if execution.core.region_invariants_closed {
+            return Err(ExecutionUpdateError::InvariantsAlreadyClosed);
+        }
+        let mut core = execution.core.clone();
+        core.region_invariants_closed = true;
+        let state = ProofBranchState {
+            facts: branch.state.facts.clone(),
+            unfolded_predicates: branch.state.unfolded_predicates.clone(),
+            execution: Some(Arc::new(ProofExecutionState::new(
+                core,
+                execution.presentation.clone(),
+            ))),
+        };
+        Ok(Self::new(
+            ProofState {
+                locals: self.state.locals.clone(),
+                open_branches: self
+                    .state
+                    .open_branches
+                    .with_branch_state_at(self.focused_branch, state),
+                added_facts: Arc::new(Vec::new()),
+                checked_facts: Arc::new(Vec::new()),
+            },
+            self.focused_branch,
+        ))
+    }
+
     pub(crate) fn split_frontier_cases(
         &self,
         disjunction: Proposition,

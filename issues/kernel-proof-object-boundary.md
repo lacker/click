@@ -67,7 +67,10 @@ an execution frontier now uses the same kernel split: both siblings retain one
 shared checked execution core and differ only by their exact disjunct fact.
 Proof-level execution `if` likewise lets the language prepare only opaque arm
 presentation; the kernel validates complementary facts and clones the semantic
-execution core itself.
+execution core itself. Proof marks now replace only opaque frontier
+presentation through a kernel operation that preserves the semantic core, and
+`close_invariants` validates and updates the loop-region flag inside the
+kernel.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

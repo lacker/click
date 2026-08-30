@@ -72,6 +72,8 @@ impl<'a> Proof<'a> {
                 argument,
                 premises,
             } => Some(self.apply_fixed_state_instantiate_using(quantified, argument, premises)),
+            ProofStep::Mark(name) => Some(self.apply_execution_mark(name)),
+            ProofStep::CloseInvariants => Some(self.apply_close_invariants()),
             _ => None,
         };
         if let Some(successor) = checked_proposition_successor {
@@ -88,7 +90,6 @@ impl<'a> Proof<'a> {
         }
 
         let next_state = match &step {
-            ProofStep::Mark(name) => self.apply_execution_mark(name),
             ProofStep::ApplyTheoremUsing {
                 application,
                 premises,
@@ -113,7 +114,6 @@ impl<'a> Proof<'a> {
             ProofStep::Choose(choice) => self.apply_fixed_state_choose(choice),
             ProofStep::Witness(witness) => self.apply_fixed_state_witness(witness),
             ProofStep::Rewrite(equality) => self.apply_rewrite(equality),
-            ProofStep::CloseInvariants => self.apply_close_invariants(),
             ProofStep::FrameUsing { region, premises } => {
                 if self.focused_outcome_data().is_some() {
                     self.apply_outcome_frame_using(region.as_ref(), premises)

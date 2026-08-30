@@ -57,7 +57,9 @@ state. Logical `cases` at an execution frontier uses the same operation while
 sharing the unchanged execution core between both fact-local siblings. For a
 proof-level execution `if`, the language prepares each arm's opaque Surface
 record, while the kernel validates polarity and attaches those records to its
-own clones of the unchanged semantic core.
+own clones of the unchanged semantic core. Presentation-only proof marks use a
+kernel operation that cannot replace the execution core, while loop invariant
+closure is a named semantic-core update checked by the kernel.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque
