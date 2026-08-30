@@ -36,8 +36,12 @@ mod timing;
 use crate::kernel::fresh_int32_variable_for_propositions;
 use crate::kernel::proof::{
     ExecutionFrontier, ExecutionRegionKind, FrontierPosition, LoopEffectGoal, PersistentOrderedSet,
-    PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation, SharedValue, SharedVec,
-    old_reference_state,
+    PersistentSequence, PersistentSequenceIter, ProofExecutionContinuation,
+    QuantifiedEquivalenceKey, SharedValue, SharedVec, old_reference_state,
+    quantified_equivalence_index_key,
+};
+pub(in crate::lang::click) use crate::kernel::proof::{
+    SnapshotBlindPropositionKey, snapshot_blind_proposition_key,
 };
 use claim_proofs::finish_ordered_proof;
 pub(super) use claim_proofs::{
@@ -67,8 +71,7 @@ use execution_state::*;
 pub(super) use execution_state::{capture_c0_proof_site_expansion, capture_c0_tactic_expansion};
 use fact_reasoning::*;
 pub(super) use fact_reasoning::{
-    SnapshotBlindPropositionKey, condition_polarity_equivalent, exactly_available_fact,
-    search_condition_derivation, snapshot_blind_proposition_key,
+    condition_polarity_equivalent, exactly_available_fact, search_condition_derivation,
 };
 use fixed_state_proofs::*;
 #[cfg(test)]

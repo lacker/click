@@ -18,7 +18,8 @@ topology in `src/kernel/proof/branches.rs`; the remaining checked
 representation is being moved across the same boundary incrementally. Its
 surface-independent persistent containers already live in
 `src/kernel/proof/storage.rs`, while typed execution-frontier state lives in
-`src/kernel/proof/execution.rs`. Untrusted smart selection
+`src/kernel/proof/execution.rs` and the persistent fact store's structural keys
+live in `src/kernel/proof/fact_keys.rs`. Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.
 Contextual Surface Click lowering likewise lives beside the language-layer
