@@ -23,6 +23,9 @@ live in `src/kernel/proof/fact_keys.rs`. The fact store's semantic matching,
 transport, conflict, and snapshot-equivalence rules live beside those keys in
 `src/kernel/proof/fact_reasoning.rs`; Surface Click fact selection, diagnostic
 rendering, and budgeted smart premise search remain in the language layer.
+The persistent `ProofFacts` store and all of its semantic indexes live in
+`src/kernel/proof/facts.rs`; language code receives an opaque store and uses
+named queries and persistent successor operations rather than its fields.
 Untrusted smart selection
 lives outside `proof_object/` and may inspect its read-only planning interface
 or publish descendants created by checked proof operations.

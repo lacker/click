@@ -1,7 +1,7 @@
 use super::pure_theorems::PureTheoremContext;
 use super::*;
-use crate::kernel::proof::{BranchId, ProofBranches, SplitId};
-use crate::persistent::{PersistentMap, PersistentSet};
+use crate::kernel::proof::{BranchId, ProofBranches, ProofFacts, SplitId};
+use crate::persistent::PersistentMap;
 
 #[cfg(test)]
 use crate::persistent::persistent_node_allocations;
@@ -1619,76 +1619,6 @@ struct ProofNode {
     /// recorded attribution; it never infers ownership from final states.
     focused_branch: BranchId,
     depth: usize,
-}
-
-/// Persistent semantic fact state shared by every `Proof` kind.
-///
-/// The exact index serves local proof-step queries and `assumptions` retains
-/// the kernel's incrementally updated reasoning context. Forking shares both;
-/// adding one fact copies only logarithmic index/context paths.
-#[derive(Clone, Default)]
-pub(super) struct ProofFacts {
-    ordered: PersistentSequence<Proposition>,
-    prioritized: Option<Arc<PrioritizedProofFacts>>,
-    top_level_exact: PersistentSet<Proposition>,
-    exact: PersistentSet<Proposition>,
-    /// Every strict subtree of an available top-level conjunction. This is
-    /// the exact structural authority for `extract`; top-level facts are not
-    /// included merely because they are independently available.
-    proper_conjuncts: PersistentSet<Proposition>,
-    /// Atomic exact facts after the same direct-load normalization used by
-    /// condition check. This lets a branch reject its opposite path with an
-    /// indexed lookup instead of scanning every unrelated fact.
-    by_snapshot_blind: PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<Proposition>>,
-    /// Exact true int32 equalities keyed by constant, variable, or interned
-    /// memory-load operands. Keys have bounded comparison cost; a goal-local
-    /// rewrite search walks only atoms named by the goal and their buckets.
-    bitvector_equalities_by_atom:
-        PersistentMap<BitvectorEqualityAtomKey, PersistentSequence<Proposition>>,
-    by_quantified_equivalence:
-        PersistentMap<QuantifiedEquivalenceKey, PersistentSequence<Proposition>>,
-    /// Kernel-certified memory summaries for the selected execution
-    /// frontier. Structural frame checking consumes these as transition
-    /// evidence; they are not user premises and have no Surface spelling.
-    memory_effect_summaries: PersistentSequence<Proposition>,
-    /// Universal facts introduced specifically by a checked predicate unfold.
-    /// Outcome smart search never probes ambient theorem or path universals.
-    predicate_unfolded_universal_facts: PersistentSequence<Proposition>,
-    implications_by_consequent:
-        PersistentMap<SnapshotBlindPropositionKey, PersistentSequence<ImplicationCandidate>>,
-    assumptions: PureFactContext,
-    implicit_transport_assumptions: PureFactContext,
-    by_predicate: PersistentMap<String, PersistentSequence<Proposition>>,
-}
-
-/// A statement transition places its explicitly transported successor facts
-/// before the ambient facts retained at their original snapshots. Prefix
-/// batches preserve that semantic order without copying the ambient sequence.
-struct PrioritizedProofFacts {
-    parent: Option<Arc<PrioritizedProofFacts>>,
-    facts: Arc<Vec<Proposition>>,
-}
-
-/// One indexed prefix of an available implication chain. The consequent key
-/// selects this small candidate; checking still validates every antecedent
-/// and the exact/snapshot-equivalent consequent against the current facts.
-#[derive(Clone)]
-struct ImplicationCandidate {
-    antecedents: PersistentSequence<Proposition>,
-    consequent: Proposition,
-}
-
-/// A bounded-comparison selector for equality rewrite provenance. Complex
-/// arithmetic operands remain on the kernel-derivation path; this index covers
-/// the atomic value/snapshot operands that outcome arithmetic rewrites need.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum BitvectorEqualityAtomKey {
-    Constant(u32),
-    Variable(Variable),
-    MemoryLoad {
-        memory: (u32, u32),
-        pointer_hash: u64,
-    },
 }
 
 /// An equality with an `old(...)` operand can use that entry expression's

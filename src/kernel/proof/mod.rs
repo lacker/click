@@ -9,6 +9,7 @@ mod branches;
 mod execution;
 mod fact_keys;
 pub(crate) mod fact_reasoning;
+mod facts;
 mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranches, SplitId};
@@ -20,6 +21,7 @@ pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,
     snapshot_blind_proposition_key,
 };
+pub(crate) use facts::ProofFacts;
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,
 };

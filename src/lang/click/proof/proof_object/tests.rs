@@ -929,12 +929,8 @@ fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
         let initial = (0..size).map(indexed_fact).collect::<Vec<_>>();
         let facts = ProofFacts::from_ordered(&initial);
         let fork = facts.clone();
-        assert!(facts.exact.shares_root_with(&fork.exact));
-        assert!(
-            facts
-                .assumptions
-                .shares_persistent_storage_with(&fork.assumptions)
-        );
+        assert!(facts.shares_exact_index_with(&fork));
+        assert!(facts.shares_assumptions_with(&fork));
 
         let added = indexed_fact(size + 1);
         let before = fact_node_allocations();
@@ -944,7 +940,7 @@ fn proof_fact_forks_share_context_and_local_insertions_are_logarithmic() {
         allocation_samples.push((size, logarithmic_height, allocations));
         assert!(!facts.contains(&added));
         assert!(successor.contains(&added));
-        assert!(successor.assumptions.proves(&added));
+        assert!(successor.assumptions().proves(&added));
     }
     let (_, base_height, base_allocations) = allocation_samples[0];
     assert!(
@@ -970,10 +966,9 @@ fn statement_fact_prefix_preserves_successor_order_without_copying_ambient_histo
     let promoted = indexed_fact(2);
     let added = indexed_fact(3);
     let facts = ProofFacts::from_ordered(&[first.clone(), promoted.clone()]);
-    let ambient_tail = facts.ordered.clone();
     let successor = facts.with_statement_facts(vec![promoted.clone(), added.clone()]);
 
-    assert!(successor.ordered.shares_tail_with(&ambient_tail));
+    assert!(successor.shares_ordered_tail_with(&facts));
     assert_eq!(successor.to_vec(), vec![promoted, added, first]);
 }
 
@@ -1026,9 +1021,9 @@ fn proof_fact_predicate_index_ignores_unrelated_context() {
         let facts = ProofFacts::from_ordered(&initial);
         let fork = facts.clone();
 
-        assert!(facts.ordered.shares_tail_with(&fork.ordered));
-        assert!(facts.exact.shares_root_with(&fork.exact));
-        assert!(facts.by_predicate.shares_root_with(&fork.by_predicate));
+        assert!(facts.shares_ordered_tail_with(&fork));
+        assert!(facts.shares_exact_index_with(&fork));
+        assert!(facts.shares_predicate_index_with(&fork));
         assert_eq!(facts.to_vec(), initial);
         assert_eq!(
             facts.mentioning_predicate(&name).collect::<Vec<_>>(),
@@ -1075,8 +1070,7 @@ fn outcome_fact_resync_preserves_only_surviving_unfold_provenance() {
 
         assert_eq!(
             successor
-                .predicate_unfolded_universal_facts
-                .iter()
+                .predicate_unfolded_universal_facts()
                 .collect::<Vec<_>>(),
             vec![&surviving],
             "size {size} must retain only surviving checked-unfold provenance"
@@ -1418,11 +1412,7 @@ fn result_aware_fixed_state_goal_focus_shares_facts_and_checks_assumption() {
             fact_node_allocations() - before <= 1,
             "focusing a goal must share every persistent fact index"
         );
-        assert!(
-            root.facts()
-                .exact
-                .shares_root_with(&focused_branch.facts().exact)
-        );
+        assert!(root.facts().shares_exact_index_with(focused_branch.facts()));
         let retained_focused = focused_branch.clone();
         assert!(
             root.focus_fixed_state_goal(missing.clone())
@@ -2456,10 +2446,8 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
         let target_key = snapshot_blind_proposition_key(&target);
         assert_eq!(
             root.facts()
-                .implications_by_consequent
-                .get(&target_key)
-                .expect("selected consequent should be indexed")
-                .len(),
+                .implication_bucket_len(&target_key)
+                .expect("selected consequent should be indexed"),
             1,
             "unrelated implications must not enter the selected bucket"
         );
@@ -2467,10 +2455,8 @@ fn implication_extract_uses_indexed_consequent_and_alpha_equivalent_antecedent()
             .expect("a universal has an alpha-invariant key");
         assert_eq!(
             root.facts()
-                .by_quantified_equivalence
-                .get(&quantified_key)
-                .expect("alpha-equivalent antecedent should be indexed")
-                .len(),
+                .quantified_bucket_len(&quantified_key)
+                .expect("alpha-equivalent antecedent should be indexed"),
             1
         );
 
@@ -2628,10 +2614,8 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             .expect("the selected universal should have an alpha key");
         assert_eq!(
             root.facts()
-                .by_quantified_equivalence
-                .get(&key)
-                .expect("the selected universal should be indexed")
-                .len(),
+                .quantified_bucket_len(&key)
+                .expect("the selected universal should be indexed"),
             1,
             "unrelated facts must not enter the selected universal bucket"
         );
@@ -2639,7 +2623,7 @@ fn fixed_state_instantiate_uses_indexed_universal_and_only_named_guards() {
             .facts()
             .with_predicate_unfold_fact(kernel_quantified.clone());
         assert_eq!(
-            unfolded_facts.predicate_unfolded_universal_facts.len(),
+            unfolded_facts.predicate_unfolded_universal_facts().count(),
             1,
             "unrelated ambient facts and universals must not enter predicate-unfold search"
         );

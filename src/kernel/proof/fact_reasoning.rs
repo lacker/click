@@ -7,6 +7,16 @@ fn assumptions_from_propositions(propositions: &[Proposition]) -> PureFactContex
         .fold(PureFactContext::new(), PureFactContext::assume_proposition)
 }
 
+pub(crate) fn is_implicit_fact_transport_context(proposition: &Proposition) -> bool {
+    matches!(
+        proposition,
+        Proposition::CMemoryLoadable { .. }
+            | Proposition::CMemoryCanStore { .. }
+            | Proposition::CMemoryDisjoint { .. }
+            | Proposition::CResourceSeparate { .. }
+    )
+}
+
 /// The fixed set of condition forms accepted by
 /// `condition_polarity_equivalent`. Callers can probe an exact index for these
 /// instead of maintaining another project-sized index.

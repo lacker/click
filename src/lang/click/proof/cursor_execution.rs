@@ -325,16 +325,6 @@ fn is_memory_effect_proposition(proposition: &Proposition) -> bool {
     )
 }
 
-pub(super) fn is_implicit_fact_transport_context(proposition: &Proposition) -> bool {
-    matches!(
-        proposition,
-        Proposition::CMemoryLoadable { .. }
-            | Proposition::CMemoryCanStore { .. }
-            | Proposition::CMemoryDisjoint { .. }
-            | Proposition::CResourceSeparate { .. }
-    )
-}
-
 fn resource_is_direct_observed_core(
     required: &ResourceClause,
     established: &[ResourceClause],

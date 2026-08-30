@@ -36,6 +36,8 @@ Kernel files:
   `fact_keys.rs` owns structural fact-index keys over kernel propositions, and
   `fact_reasoning.rs` owns the surface-independent equivalence, transport,
   conflict, and availability rules used by the persistent fact store.
+  `facts.rs` owns that persistent store, its indexes, and its output-sensitive
+  ancestry/delta operations.
 - `functions.rs`: C function execution, argument binding, and call results.
 - `tests.rs`: kernel unit tests.
 

@@ -22,8 +22,10 @@ keys live in `src/kernel/proof/fact_keys.rs`, and surface-independent fact
 matching, transport, conflict, and equivalence rules live in
 `src/kernel/proof/fact_reasoning.rs`. Surface fact-selection policy,
 diagnostics, and budgeted smart premise search remain in the language layer.
-The remaining proof representation and checked operations still need a
-kernel-owned API.
+The persistent `ProofFacts` store and its semantic indexes now live in
+`src/kernel/proof/facts.rs`; language code can only use its named queries and
+persistent successor operations. The remaining proof representation and
+checked operations still need a kernel-owned API.
 
 ## Intended regression
 
