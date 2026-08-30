@@ -49,6 +49,7 @@ pub(crate) struct ProofSplit<L, O, E> {
     proof: ProofObject<L, O, E>,
     split: super::SplitId,
     branches: [BranchId; 2],
+    introduced_facts: [Vec<Proposition>; 2],
 }
 
 pub(crate) enum PropositionSplitError {
@@ -62,6 +63,14 @@ pub(crate) enum PropositionSplitError {
 pub(crate) enum ProofJoinError {
     InvalidSplit,
     ArmIncomplete(usize),
+}
+
+pub(crate) enum FrontierSplitError {
+    Completed,
+    NotFrontier,
+    MissingExecution,
+    MissingDisjunction(Proposition),
+    ExpectedDisjunction(Proposition),
 }
 
 #[derive(Clone, Copy)]
@@ -202,6 +211,17 @@ impl<L: Clone, O: Clone, E: Clone> ProofObject<L, O, E> {
 impl<L, O, E> ProofSplit<L, O, E> {
     pub(crate) fn into_parts(self) -> (ProofObject<L, O, E>, super::SplitId, [BranchId; 2]) {
         (self.proof, self.split, self.branches)
+    }
+
+    pub(crate) fn into_parts_with_facts(
+        self,
+    ) -> (
+        ProofObject<L, O, E>,
+        super::SplitId,
+        [BranchId; 2],
+        [Vec<Proposition>; 2],
+    ) {
+        (self.proof, self.split, self.branches, self.introduced_facts)
     }
 }
 
@@ -584,6 +604,7 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             ),
             split,
             branches,
+            introduced_facts: [Vec::new(), Vec::new()],
         })
     }
 
@@ -635,6 +656,66 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             ),
             split,
             branches,
+            introduced_facts: [Vec::new(), Vec::new()],
+        })
+    }
+}
+
+impl<L: Clone, P: Clone, O: Clone, S: Clone>
+    ProofObject<L, ProofObligation<P, O>, ProofExecutionState<S>>
+{
+    pub(crate) fn split_frontier_cases(
+        &self,
+        disjunction: Proposition,
+    ) -> Result<ProofSplit<L, ProofObligation<P, O>, ProofExecutionState<S>>, FrontierSplitError>
+    {
+        let branch = self
+            .state
+            .open_branches
+            .get(self.focused_branch)
+            .ok_or(FrontierSplitError::Completed)?;
+        let ProofObligation::Frontier(frontier) = &branch.obligation else {
+            return Err(FrontierSplitError::NotFrontier);
+        };
+        let execution = branch
+            .state
+            .execution
+            .clone()
+            .ok_or(FrontierSplitError::MissingExecution)?;
+        if !branch.state.facts.contains(&disjunction) {
+            return Err(FrontierSplitError::MissingDisjunction(disjunction));
+        }
+        let Proposition::Or(left, right) = disjunction else {
+            return Err(FrontierSplitError::ExpectedDisjunction(disjunction));
+        };
+        let introduced_facts = [vec![left.as_ref().clone()], vec![right.as_ref().clone()]];
+        let arm = |disjunct: Proposition| {
+            ProofBranch::new(
+                ProofObligation::Frontier(frontier.clone()),
+                ProofBranchState {
+                    facts: branch.state.facts.with_fact(disjunct),
+                    unfolded_predicates: branch.state.unfolded_predicates.clone(),
+                    execution: Some(execution.clone()),
+                },
+            )
+        };
+        let (split, branches, open_branches) = self
+            .state
+            .open_branches
+            .split_at(self.focused_branch, [arm(*left), arm(*right)]);
+        Ok(ProofSplit {
+            proof: Self::new(
+                ProofState {
+                    locals: self.state.locals.clone(),
+                    open_branches,
+                    added_facts: Arc::new(introduced_facts[0].clone()),
+                    checked_facts: Arc::new(introduced_facts[0].clone()),
+                },
+                branches[0],
+            ),
+            split,
+            branches,
+            introduced_facts,
         })
     }
 }

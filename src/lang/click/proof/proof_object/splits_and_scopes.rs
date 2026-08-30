@@ -270,55 +270,31 @@ impl<'a> Proof<'a> {
         &self,
         disjunction: ClickProposition,
     ) -> Result<(Self, ExecutionLogicalCasesSplit<'a>), ClickError> {
-        self.require_execution_frontier("`cases`")?;
-        let Some(Obligation::Frontier(frontier)) = self.focused_obligation() else {
-            unreachable!("the frontier requirement was checked above")
-        };
-        let branch_state = &self.focused_branch().expect("focused branch exists").state;
-        let parent_execution = branch_state
-            .execution
-            .clone()
-            .expect("an execution frontier owns its checked state");
         let lowered = self.lower_surface_proposition(&disjunction, "`cases` disjunction")?;
-        if !branch_state.facts.contains(&lowered) {
-            return Err(self.step_error(format!(
-                "`cases` requires its exact disjunction as an available fact: {lowered:?}"
-            )));
-        }
-        let Proposition::Or(left, right) = lowered else {
-            return Err(self.step_error(format!("`cases` requires a disjunction, got {lowered:?}")));
-        };
-        let arm = |disjunct: Proposition| {
-            let facts = branch_state.facts.with_fact(disjunct.clone());
-            (
-                OpenBranch::frontier(
-                    frontier.selection,
-                    BranchState {
-                        facts,
-                        unfolded_predicates: branch_state.unfolded_predicates.clone(),
-                        execution: Some(parent_execution.clone()),
-                    },
-                ),
-                vec![disjunct],
-            )
-        };
-        let (left_goal, left_path) = arm(*left);
-        let (right_goal, right_path) = arm(*right);
-        let (split, ids, open_branches) = self
+        let (state, split, ids, path_facts) = self
             .state
-            .open_branches
-            .split_at(self.focused_branch_id(), [left_goal, right_goal]);
+            .split_frontier_cases(lowered)
+            .map_err(|error| match error {
+                FrontierSplitError::Completed => {
+                    self.step_error("`cases` follows a completed proof")
+                }
+                FrontierSplitError::NotFrontier => {
+                    self.step_error("`cases` cannot advance C execution inside a proposition proof")
+                }
+                FrontierSplitError::MissingExecution => {
+                    self.step_error("execution-frontier proof lost its semantic state")
+                }
+                FrontierSplitError::MissingDisjunction(lowered) => self.step_error(format!(
+                    "`cases` requires its exact disjunction as an available fact: {lowered:?}"
+                )),
+                FrontierSplitError::ExpectedDisjunction(lowered) => {
+                    self.step_error(format!("`cases` requires a disjunction, got {lowered:?}"))
+                }
+            })?
+            .into_parts_with_facts();
         let successor = Self {
             context: self.context.clone(),
-            state: KernelProofObject::new(
-                ProofState {
-                    locals: self.state().locals.clone(),
-                    open_branches,
-                    added_facts: Arc::new(left_path.clone()),
-                    checked_facts: Arc::new(left_path.clone()),
-                },
-                ids[0],
-            ),
+            state,
             node: Arc::new(ProofNode {
                 parent: Some(self.node.clone()),
                 step: None,
@@ -330,7 +306,7 @@ impl<'a> Proof<'a> {
             marker: successor.checkpoint(),
             split,
             arm_branches: ids,
-            path_facts: [left_path, right_path],
+            path_facts,
         };
         Ok((successor, record))
     }

@@ -62,7 +62,9 @@ sibling branches, install only complementary or exact available case facts,
 and validate that both recorded child identities are closed before joining.
 Surface provenance still partitions and serializes each arm, but cannot create
 the semantic split or joined successor. Higher-level execution and resource
-operations still need the same kernel-owned API treatment.
+operations still need the same kernel-owned API treatment. Logical `cases` at
+an execution frontier now uses the same kernel split: both siblings retain one
+shared checked execution core and differ only by their exact disjunct fact.
 
 Language-only proof environments now live in
 `src/lang/click/proof/language_context.rs`, and Surface certificate lineage and

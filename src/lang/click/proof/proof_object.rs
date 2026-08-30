@@ -1,7 +1,7 @@
 use super::pure_theorems::PureTheoremContext;
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation,
+    BranchId, CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FrontierSplitError,
     FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState as KernelOutcomeProofState,
     ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState as KernelProofExecutionState,
     ProofFacts, ProofJoinError, ProofObject as KernelProofObject,

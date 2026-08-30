@@ -53,7 +53,8 @@ For proposition `if` and `cases`, the kernel allocates the audited split and
 sibling identities, checks complementary or available case facts, and owns the
 closed-arm join. Surface provenance independently proves that serialized arm
 steps descend through the exact split marker; it never manufactures branch
-state.
+state. Logical `cases` at an execution frontier uses the same operation while
+sharing the unchanged execution core between both fact-local siblings.
 Result-aware outcome state uses the same split as execution state: the kernel
 owns its result, C state, facts, requirements, and crossed effects, while
 Surface proposition records and diagnostic provenance remain an opaque
