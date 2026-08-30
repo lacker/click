@@ -68,6 +68,8 @@ production language code has no generic whole-handle state-replacement
 operation. Metadata capture consumes a frontier handle through a separate
 kernel operation that exposes only the opaque Surface presentation attachment;
 the callback cannot mutate the checked execution core or branch state.
+Ordered post-execution scheduling records are presentation methods as well;
+recording one does not expose or rebuild the semantic frontier.
 Structural loop-effect scopes may restore an already allocated retired cursor
 for provenance, but cannot invent a branch identity; the kernel also refuses
 to retire their frontier until its loop-effect goal is checked closed.

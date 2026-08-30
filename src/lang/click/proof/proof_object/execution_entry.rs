@@ -287,9 +287,8 @@ impl<'a> Proof<'a> {
         let ProofContext::Execution(context) = self.context.as_ref() else {
             return Err(self.step_error("post-execution tactics require an execution proof"));
         };
-        let mut execution = self
+        let execution = self
             .execution()
-            .cloned()
             .ok_or_else(|| self.step_error("execution proof lost its terminal state"))?;
         if !execution.core.frontier.is_at_function_exit() {
             return Err(
@@ -308,46 +307,67 @@ impl<'a> Proof<'a> {
             .and_then(|capture| capture.source_index)
             .filter(|selected| *selected != source_index)
             .and_then(|selected| nested_deferred_tactic_by_source(&tactic, selected));
-        if let Some((nested_tactic_index, nested_source_index)) = selected {
-            if begin_tactic_expansion_capture(
-                expansion_capture,
-                nested_source_index,
-                &execution.presentation.expansion,
-                context.constants.proof_site.as_ref(),
-            ) {
-                execution.presentation.expansion.deferred_tactic_capture =
+        let deferred_tactic_capture =
+            if let Some((nested_tactic_index, nested_source_index)) = selected {
+                if begin_tactic_expansion_capture(
+                    expansion_capture,
+                    nested_source_index,
+                    &execution.presentation.expansion,
+                    context.constants.proof_site.as_ref(),
+                ) {
                     Some(DeferredTacticCapture {
                         tactic_index: nested_tactic_index,
                         source_index: nested_source_index,
                         post_execution_index: DeferredTacticCapture::NESTED,
                         branch_skeleton: branch_skeleton(),
-                    });
-            }
-        } else if begin_tactic_expansion_capture(
-            expansion_capture,
-            source_index,
-            &execution.presentation.expansion,
-            context.constants.proof_site.as_ref(),
-        ) {
-            execution.presentation.expansion.deferred_tactic_capture =
+                    })
+                } else {
+                    None
+                }
+            } else if begin_tactic_expansion_capture(
+                expansion_capture,
+                source_index,
+                &execution.presentation.expansion,
+                context.constants.proof_site.as_ref(),
+            ) {
                 Some(DeferredTacticCapture {
                     tactic_index,
                     source_index,
                     post_execution_index: execution.presentation.post_execution_tactics.len(),
                     branch_skeleton: branch_skeleton(),
-                });
-        }
-        execution.defer_post_execution(tactic_index, source_index, tactic);
-        let mut state = (*self.state()).clone();
-        state.open_branches = state.open_branches.replace_execution_at(
-            self.focused_branch_id(),
-            self.facts().clone(),
-            execution,
-        );
+                })
+            } else {
+                None
+            };
+        let Self {
+            context,
+            state,
+            node,
+        } = self.clone();
+        let (state, ()) = state
+            .edit_frontier_presentation(|presentation| {
+                if let Some(capture) = deferred_tactic_capture {
+                    presentation.expansion.deferred_tactic_capture = Some(capture);
+                }
+                presentation.defer_post_execution(tactic_index, source_index, tactic);
+            })
+            .map_err(|error| match error {
+                ExecutionUpdateError::NotFrontier => self
+                    .step_error("post-execution tactic scheduling requires an execution frontier"),
+                ExecutionUpdateError::MissingExecution => {
+                    self.step_error("execution proof lost its terminal state")
+                }
+                ExecutionUpdateError::ClosedLoopEffect
+                | ExecutionUpdateError::NotLoopBody
+                | ExecutionUpdateError::InvariantsAlreadyClosed
+                | ExecutionUpdateError::LoopEffectNotClosed => {
+                    unreachable!("presentation scheduling checks only frontier ownership")
+                }
+            })?;
         Ok(Self {
-            context: self.context.clone(),
-            state: KernelProofObject::new(state, self.focused_branch_id()),
-            node: self.node.clone(),
+            context,
+            state,
+            node,
         })
     }
 

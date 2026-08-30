@@ -1287,7 +1287,7 @@ impl<'a> Proof<'a> {
                 .first()
                 .or_else(|| else_post_execution.first())
                 .expect("a nonempty terminal cursor has one attributed operation");
-            execution.defer_post_execution(
+            execution.presentation.defer_post_execution(
                 attribution.tactic_index,
                 attribution.source_index,
                 PostExecutionTactic::If {

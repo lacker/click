@@ -1737,15 +1737,14 @@ mod tests;
 pub(in crate::lang::click::proof) use fact_index::collect_surface_conjunct_leaves;
 pub(in crate::lang::click::proof) use outcomes_and_focus::frontier_premise_anchor;
 
-impl ExecutionProofState {
+impl ExecutionProofPresentation {
     pub(in crate::lang::click::proof) fn defer_post_execution(
         &mut self,
         tactic_index: usize,
         source_index: usize,
         tactic: PostExecutionTactic,
     ) {
-        self.presentation
-            .post_execution_tactics
+        self.post_execution_tactics
             .push(DeferredPostExecutionTactic {
                 tactic_index,
                 source_index,
@@ -1762,8 +1761,7 @@ impl ExecutionProofState {
         source_index: usize,
         tactic: PostExecutionTactic,
     ) {
-        self.presentation
-            .post_execution_tactics
+        self.post_execution_tactics
             .push(DeferredPostExecutionTactic {
                 tactic_index,
                 source_index,

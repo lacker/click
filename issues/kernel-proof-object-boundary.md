@@ -77,6 +77,8 @@ deltas through the same named operation. The generic whole-handle state
 replacement helper is test-only. Checked drivers can edit execution-frontier
 Surface metadata only through a kernel operation whose callback cannot access
 or replace the semantic execution core, facts, obligation, or proof deltas.
+Ordered post-execution scheduling helpers consequently live on the opaque
+presentation attachment rather than the semantic execution-state wrapper.
 The kernel also validates restoration of retired scope cursors and owns the
 operation that retires a structural loop-effect branch after its checked goal
 is closed. Production language code no longer consumes a kernel handle back

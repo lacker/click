@@ -797,7 +797,7 @@ impl<'a> Proof<'a> {
         }
 
         let mut execution = (*record.parent_execution).clone();
-        execution.defer_checked_post_execution(
+        execution.presentation.defer_checked_post_execution(
             checked_deferrals[0].tactic_index,
             checked_deferrals[0].source_index,
             PostExecutionTactic::CheckedFrameUsing {

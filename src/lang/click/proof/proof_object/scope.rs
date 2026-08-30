@@ -572,7 +572,7 @@ impl<'a> ProofScope<'a> {
             })?;
         let mut facts = body.facts().clone();
         if execution.core.frontier.is_at_function_exit() {
-            execution.defer_post_execution(
+            execution.presentation.defer_post_execution(
                 context.tactic_index,
                 *source_index,
                 PostExecutionTactic::CloseOpen {
@@ -1132,7 +1132,7 @@ impl<'a> ProofScope<'a> {
                     })?;
                 let mut facts = self.body.facts().clone();
                 if execution.core.frontier.is_at_function_exit() {
-                    execution.defer_post_execution(
+                    execution.presentation.defer_post_execution(
                         context.tactic_index,
                         source_index,
                         PostExecutionTactic::CloseOpen {

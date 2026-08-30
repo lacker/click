@@ -535,7 +535,7 @@ impl<'a> Proof<'a> {
                     tactic_index: context.tactic_index,
                     source_index: context.tactic_index,
                 });
-                execution.defer_checked_post_execution(
+                execution.presentation.defer_checked_post_execution(
                     origin.tactic_index,
                     origin.source_index,
                     PostExecutionTactic::FrameRegion(region.clone()),
@@ -583,7 +583,7 @@ impl<'a> Proof<'a> {
             tactic_index: context.tactic_index,
             source_index: context.tactic_index,
         });
-        execution.defer_checked_post_execution(
+        execution.presentation.defer_checked_post_execution(
             origin.tactic_index,
             origin.source_index,
             PostExecutionTactic::CheckedFrameUsing {
