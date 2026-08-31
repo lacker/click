@@ -17,6 +17,8 @@ predicate valid_pool(pool: struct pool*) {
 }
 
 verifying "pool_init.c";
+verifying "pool_grow.c";
+verifying "pool_shrink.c";
 verifying "pool_checkout.c";
 verifying "pool_transfer.c";
 verifying "pool_transfer_pipeline.c";
@@ -47,6 +49,41 @@ void pool_init(struct pool* pool, int32 capacity) {
         frame();
         simp();
     }
+}
+
+void pool_grow(struct pool* pool, int32 amount) {
+    requires valid_pool(pool);
+    requires 0 <= amount;
+    requires defined(pool->capacity + amount);
+    owns object(pool);
+    mutable pool->capacity;
+    produces amount of pool_slot(pool);
+
+    ensures valid_pool(pool);
+    ensures pool->capacity == old(pool->capacity) + amount;
+} by {
+    unfold(valid_pool);
+    execute();
+    frame();
+    simp();
+}
+
+void pool_shrink(struct pool* pool, int32 amount) {
+    requires valid_pool(pool);
+    requires 0 <= amount;
+    requires amount <= count(pool_slot(pool));
+    requires defined(pool->capacity - amount);
+    owns object(pool);
+    consumes amount of pool_slot(pool);
+    mutable pool->capacity;
+
+    ensures valid_pool(pool);
+    ensures pool->capacity == old(pool->capacity) - amount;
+} by {
+    unfold(valid_pool);
+    execute();
+    frame();
+    simp();
 }
 
 void pool_checkout(struct pool* pool, struct object* object) {

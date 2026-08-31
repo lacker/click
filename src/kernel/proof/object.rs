@@ -510,6 +510,21 @@ impl<L, P: Clone, O: Clone, S: Clone>
 impl<L: Clone, P: Clone, S: Clone, E: Clone>
     ProofObject<L, ProofObligation<P, Arc<OutcomeProofState<S>>>, E>
 {
+    /// Returns an owned, kernel-issued record of the exact root proposition
+    /// discharged by this proof. The record is available only after every
+    /// branch in the proof lineage has closed.
+    pub(crate) fn completed_proposition(&self) -> Option<super::CheckedProposition> {
+        self.completion()?;
+        let ProofObligation::Proposition(goal) = &self.state.open_branches.root_branch().obligation
+        else {
+            return None;
+        };
+        Some(super::CheckedProposition::new(
+            goal.proposition().clone(),
+            goal.outcome.as_deref().map(|outcome| outcome.core.clone()),
+        ))
+    }
+
     fn focused_proposition(
         &self,
     ) -> Option<(

@@ -30,8 +30,9 @@ pub(crate) use object::{
     PropositionSplitError,
 };
 pub(crate) use obligations::{
-    CheckedFrameAuthority, EffectGoalSelection, FrontierObligation, FunctionOutcomeObligation,
-    OutcomeProofCore, OutcomeProofState, ProofObligation, PropositionObligation,
+    CheckedFrameAuthority, CheckedProposition, EffectGoalSelection, FrontierObligation,
+    FunctionOutcomeObligation, OutcomeProofCore, OutcomeProofState, ProofObligation,
+    PropositionObligation,
 };
 pub(crate) use storage::{
     PersistentOrderedSet, PersistentSequence, PersistentSequenceIter, SharedValue, SharedVec,

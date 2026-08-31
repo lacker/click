@@ -716,9 +716,10 @@ mod exit_claim {
 
     /// A claim closed at function exit, holding the certificate that
     /// discharged it. Only this module can build one.
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     pub(super) struct ClosedClaim {
         certificate: ClaimCertificate,
+        checked_proposition: Option<crate::kernel::proof::CheckedProposition>,
     }
 
     impl ClosedClaim {
@@ -731,10 +732,16 @@ mod exit_claim {
                 ClaimCertificate::GroupedTransition | ClaimCertificate::ExactCheck => &[],
             }
         }
+
+        pub(super) fn checked_proposition(
+            &self,
+        ) -> Option<&crate::kernel::proof::CheckedProposition> {
+            self.checked_proposition.as_ref()
+        }
     }
 
     /// A claim's state in the per-path exit drain.
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     pub(super) enum ClaimClosure {
         /// Not discharged yet; carries the last closing attempt's message so
         /// the drain can explain an unproved claim.
@@ -778,6 +785,19 @@ mod exit_claim {
         pub(super) fn by_checked_certificate(certificate: &ProofCertificate) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::Claim(certificate.to_proof_tactics().to_vec()),
+                checked_proposition: None,
+            })
+        }
+
+        /// Close a proposition claim with the exact completed kernel
+        /// judgment that the checked certificate discharged.
+        pub(super) fn by_checked_proposition(
+            certificate: &ProofCertificate,
+            checked_proposition: crate::kernel::proof::CheckedProposition,
+        ) -> Self {
+            Self::Closed(ClosedClaim {
+                certificate: ClaimCertificate::Claim(certificate.to_proof_tactics().to_vec()),
+                checked_proposition: Some(checked_proposition),
             })
         }
 
@@ -788,6 +808,17 @@ mod exit_claim {
         pub(super) fn by_grouped_transition(_certificate: &ProofCertificate) -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::GroupedTransition,
+                checked_proposition: None,
+            })
+        }
+
+        pub(super) fn by_grouped_proposition(
+            _certificate: &ProofCertificate,
+            checked_proposition: crate::kernel::proof::CheckedProposition,
+        ) -> Self {
+            Self::Closed(ClosedClaim {
+                certificate: ClaimCertificate::GroupedTransition,
+                checked_proposition: Some(checked_proposition),
             })
         }
 
@@ -795,6 +826,7 @@ mod exit_claim {
         pub(super) fn by_exact_check() -> Self {
             Self::Closed(ClosedClaim {
                 certificate: ClaimCertificate::ExactCheck,
+                checked_proposition: None,
             })
         }
     }
@@ -3438,7 +3470,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                         let direct_certificate =
                                             crate::kernel::with_search_attempt_rollback(|| {
                                                 let attempt = || -> Result<
-                                                        Option<ProofCertificate>,
+                                                        Option<(
+                                                            ProofCertificate,
+                                                            Vec<crate::kernel::proof::CheckedProposition>,
+                                                        )>,
                                                         ClickError,
                                                     > {
                                         let transition_facts = path.execution_facts();
@@ -3626,7 +3661,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                             );
                                         }
                                         let completed = if surface_goals.is_empty() {
-                                            direct_proof.certificate_since(&direct_base)?
+                                            (
+                                                direct_proof.certificate_since(&direct_base)?,
+                                                Vec::new(),
+                                            )
                                         } else {
                                             direct_proof.complete_fixed_state_obligations_since(
                                                 &direct_base,
@@ -3639,7 +3677,14 @@ pub(super) fn finish_ordered_proof<'a>(
                                                 let keep = matches!(&outcome, Ok(Some(_)));
                                                 (outcome, keep)
                                             })?;
-                                        if let Some(certificate) = direct_certificate {
+                                        if let Some((certificate, checked_propositions)) =
+                                            direct_certificate
+                                        {
+                                            if checked_propositions.len() != direct_claims.len() {
+                                                return Err(ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: completed proposition authority did not match the checked claim set"
+                                                )));
+                                            }
                                             if proof_context.constants.grouped_contract {
                                                 // The grouped transition's tactic
                                                 // stream closes claims in order;
@@ -3666,10 +3711,15 @@ pub(super) fn finish_ordered_proof<'a>(
                                                             ))
                                                         })?
                                                 };
-                                                for (claim_index, _, _) in direct_claims {
+                                                for ((claim_index, _, _), checked_proposition) in
+                                                    direct_claims
+                                                        .into_iter()
+                                                        .zip(checked_propositions)
+                                                {
                                                     closures[claim_index] =
-                                                        ClaimClosure::by_grouped_transition(
+                                                        ClaimClosure::by_grouped_proposition(
                                                             &certificate,
+                                                            checked_proposition,
                                                         );
                                                 }
                                                 for (claim_index, _) in &direct_resource_claims {
@@ -3685,10 +3735,15 @@ pub(super) fn finish_ordered_proof<'a>(
                                                         .extend(certificate.to_proof_tactics());
                                                 }
                                             } else {
-                                                for (claim_index, _, _) in direct_claims {
+                                                for ((claim_index, _, _), checked_proposition) in
+                                                    direct_claims
+                                                        .into_iter()
+                                                        .zip(checked_propositions)
+                                                {
                                                     closures[claim_index] =
-                                                        ClaimClosure::by_checked_certificate(
+                                                        ClaimClosure::by_checked_proposition(
                                                             &certificate,
+                                                            checked_proposition,
                                                         );
                                                 }
                                                 // Resource productions were checked
@@ -3971,7 +4026,18 @@ pub(super) fn finish_ordered_proof<'a>(
                     specification.requires().len()
                 ))
             })?;
-                    for claim in claims {
+                    for (claim_index, claim) in claims.iter().enumerate() {
+                        let checked_proposition = closures[claim_index]
+                            .closed()
+                            .and_then(ClosedClaim::checked_proposition)
+                            .and_then(|completion| {
+                                c_checked_function_proposition(
+                                    function,
+                                    &specification,
+                                    &theorem,
+                                    completion,
+                                )
+                            });
                         verified.push(VerifiedCTheorem {
                             source_path: source_path.to_string(),
                             function_block: function_block.clone(),
@@ -3991,6 +4057,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
                             checked_execution: certified_executions[certified_path_index.0].clone(),
+                            checked_proposition,
                         });
                     }
                     // Expansion prints what verification holds: the tactics come out

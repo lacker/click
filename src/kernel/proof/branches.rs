@@ -77,6 +77,10 @@ impl SplitId {
 #[derive(Clone)]
 pub(crate) struct ProofBranches<B> {
     open: PersistentMap<BranchId, B>,
+    /// The checked judgment that created this proof lineage. Closing the root
+    /// retires its branch identity, but finalization still needs to identify
+    /// exactly which judgment the completed proof discharged.
+    root: Arc<B>,
     next_id: u64,
 }
 
@@ -84,9 +88,14 @@ impl<B: Clone> ProofBranches<B> {
     /// Creates a fresh proof's single root branch.
     pub(crate) fn root(branch: B) -> Self {
         Self {
-            open: PersistentMap::default().with_inserted(BranchId::ROOT, branch),
+            open: PersistentMap::default().with_inserted(BranchId::ROOT, branch.clone()),
+            root: Arc::new(branch),
             next_id: BranchId::ROOT.0 + 1,
         }
+    }
+
+    pub(crate) fn root_branch(&self) -> &B {
+        &self.root
     }
 
     pub(crate) fn get(&self, at: BranchId) -> Option<&B> {
@@ -116,6 +125,7 @@ impl<B: Clone> ProofBranches<B> {
         );
         Self {
             open: self.open.with_inserted(at, branch),
+            root: self.root.clone(),
             next_id: self.next_id,
         }
     }
@@ -128,6 +138,7 @@ impl<B: Clone> ProofBranches<B> {
         );
         Self {
             open: self.open.without_key(&at),
+            root: self.root.clone(),
             next_id: self.next_id,
         }
     }
@@ -140,6 +151,7 @@ impl<B: Clone> ProofBranches<B> {
         );
         Self {
             open: self.open.with_inserted(at, branch),
+            root: self.root.clone(),
             next_id: self.next_id,
         }
     }
@@ -170,6 +182,7 @@ impl<B: Clone> ProofBranches<B> {
             ids,
             Self {
                 open,
+                root: self.root.clone(),
                 next_id: self.next_id + 1 + ARMS as u64,
             },
         )
@@ -192,6 +205,7 @@ impl<B: Clone> ProofBranches<B> {
             ids,
             Self {
                 open: self.open.without_key(&at),
+                root: self.root.clone(),
                 next_id: self.next_id + 1 + ARMS as u64,
             },
         )
@@ -204,6 +218,7 @@ impl<B: Clone> ProofBranches<B> {
             id,
             Self {
                 open: self.open.with_inserted(id, branch),
+                root: self.root.clone(),
                 next_id: self.next_id + 1,
             },
         )
@@ -230,6 +245,7 @@ impl<B: Clone> ProofBranches<B> {
         );
         Self {
             open: open.with_inserted(parent, branch),
+            root: self.root.clone(),
             next_id: self.next_id,
         }
     }
@@ -256,6 +272,7 @@ impl<B: Clone> ProofBranches<B> {
         );
         Self {
             open: open.with_inserted(parent, branch),
+            root: self.root.clone(),
             next_id: self.next_id,
         }
     }

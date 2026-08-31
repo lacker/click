@@ -1101,9 +1101,17 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                     requested_termination.insert(function_block.signature.name().to_string());
                 }
             }
+            let checked_propositions = function_verified
+                .iter()
+                .filter_map(|verified| verified.checked_proposition.clone())
+                .collect::<Vec<_>>();
             let certified_claims = {
                 let _certification_timing = VerificationTimingPhase::new("certification");
-                c_verified_function_contract_claims(&contract_function, &contract_execution)
+                c_verified_function_contract_claims_with_checked_propositions(
+                    &contract_function,
+                    &contract_execution,
+                    &checked_propositions,
+                )
             };
             if instrumentation::enabled() {
                 instrumentation::emit(VerificationEvent::ContractClaimsFinished {
@@ -1112,9 +1120,10 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
                 });
             }
             let Some(certified_claims) = certified_claims else {
-                let detail = match c_unverified_function_contract_claims(
+                let detail = match c_unverified_function_contract_claims_with_checked_propositions(
                     &contract_function,
                     &contract_execution,
+                    &checked_propositions,
                 ) {
                     Ok(keys) if !keys.is_empty() => {
                         let described = keys

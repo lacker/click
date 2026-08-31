@@ -1597,6 +1597,7 @@ impl<'a> Proof<'a> {
         goals: &[ClickProposition],
     ) -> Result<ProofCertificate, ClickError> {
         self.complete_fixed_state_obligations_inner(None, goals)
+            .map(|(certificate, _)| certificate)
     }
 
     /// Completes the obligations with a certificate relative to `since`.
@@ -1610,7 +1611,13 @@ impl<'a> Proof<'a> {
         &self,
         since: &ProofCheckpoint<'a>,
         goals: &[ClickProposition],
-    ) -> Result<ProofCertificate, ClickError> {
+    ) -> Result<
+        (
+            ProofCertificate,
+            Vec<crate::kernel::proof::CheckedProposition>,
+        ),
+        ClickError,
+    > {
         self.complete_fixed_state_obligations_inner(Some(since), goals)
     }
 
@@ -1618,7 +1625,13 @@ impl<'a> Proof<'a> {
         &self,
         since: Option<&ProofCheckpoint<'a>>,
         goals: &[ClickProposition],
-    ) -> Result<ProofCertificate, ClickError> {
+    ) -> Result<
+        (
+            ProofCertificate,
+            Vec<crate::kernel::proof::CheckedProposition>,
+        ),
+        ClickError,
+    > {
         if goals.is_empty() {
             return Err(
                 self.step_error("fixed-state obligation completion requires at least one goal")
@@ -1638,13 +1651,15 @@ impl<'a> Proof<'a> {
             Some(since) => self.certificate_since(since)?.steps().to_vec(),
             None => self.certificate().steps().to_vec(),
         };
+        let mut checked_propositions = Vec::with_capacity(goals.len());
         for goal in goals {
             let closer = self
                 .focus_fixed_state_surface_goal(goal)?
                 .apply_step(ProofStep::Assumption)?;
+            checked_propositions.push(closer.completed_proposition()?);
             steps.extend_from_slice(closer.certificate().steps());
         }
-        Ok(ProofCertificate::from_steps(steps))
+        Ok((ProofCertificate::from_steps(steps), checked_propositions))
     }
 
     pub(super) fn is_complete(&self) -> bool {
@@ -1658,6 +1673,17 @@ impl<'a> Proof<'a> {
             .completion()
             .ok_or_else(|| self.step_error("cannot finalize a proof with open obligations"))?;
         Ok(self.certificate())
+    }
+
+    /// Extracts the exact semantic root discharged by this completed proof.
+    /// Unlike the surface certificate, this authority is constructed and
+    /// sealed by the kernel proof object.
+    pub(super) fn completed_proposition(
+        &self,
+    ) -> Result<crate::kernel::proof::CheckedProposition, ClickError> {
+        self.state
+            .completed_proposition()
+            .ok_or_else(|| self.step_error("completed proof is not a proposition judgment"))
     }
 
     pub(in crate::surface::proof) fn active_unfolded_predicates(&self) -> Vec<String> {

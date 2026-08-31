@@ -1,5 +1,46 @@
 use super::*;
 
+/// Binds a completed kernel proposition proof to the exact function path
+/// theorem that produced its outcome. This records proof authority; it does
+/// not attempt to prove or simplify the proposition again.
+pub(crate) fn c_checked_function_proposition(
+    function: &CFunction,
+    specification: &CFunctionSpecification,
+    theorem: &Theorem,
+    completion: &crate::kernel::proof::CheckedProposition,
+) -> Option<CCheckedFunctionProposition> {
+    let mut conclusion = theorem.proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    let theorem_specification = match conclusion {
+        Proposition::CFunctionSatisfiesSpecification {
+            function: proved_function,
+            specification,
+        }
+        | Proposition::CFunctionPartiallySatisfiesSpecification {
+            function: proved_function,
+            specification,
+        } if proved_function == function => specification,
+        _ => return None,
+    };
+    if theorem_specification != specification {
+        return None;
+    }
+    let outcome = completion.outcome()?;
+    let CFunctionOutcome::Return { value, state } = specification.outcome() else {
+        return None;
+    };
+    if outcome.result.as_ref() != value || &*outcome.state != state {
+        return None;
+    }
+    Some(CCheckedFunctionProposition {
+        function: function.clone(),
+        specification: specification.clone(),
+        proposition: completion.proposition().clone(),
+    })
+}
+
 pub fn c_function_outcomes_definitionally_equal(
     function: &CFunction,
     left: &CFunctionOutcome,
@@ -770,8 +811,11 @@ fn certify_c_function_execution_path_resource_representation_uncached(
 
 struct CertifiedFunctionClaimPath {
     caller_state: CState,
+    arguments: Vec<CExpression>,
+    outcome: CFunctionOutcome,
     return_state: Option<CState>,
     entry_state: CState,
+    required_resources: ResourceContext,
     entry_resources: ResourceContext,
     post_state: Option<CState>,
     post_resources: Option<ResourceContext>,
@@ -868,8 +912,11 @@ fn prepare_function_claim_path(
         }
         return Ok(CertifiedFunctionClaimPath {
             caller_state: caller_state.clone(),
+            arguments: arguments.to_vec(),
+            outcome: outcome.clone(),
             return_state: None,
             entry_state,
+            required_resources,
             entry_resources,
             post_state: None,
             post_resources: None,
@@ -967,8 +1014,11 @@ fn prepare_function_claim_path(
 
     Ok(CertifiedFunctionClaimPath {
         caller_state: caller_state.clone(),
+        arguments: arguments.to_vec(),
+        outcome: outcome.clone(),
         return_state: Some(return_state.clone()),
         entry_state,
+        required_resources,
         entry_resources,
         post_state: Some(post_state),
         post_resources: Some(post_resources),
@@ -982,11 +1032,15 @@ fn function_claim_holds_on_prepared_path(
     function: &CFunction,
     claim: &CFunctionContractClaim,
     path: &CertifiedFunctionClaimPath,
+    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
 ) -> bool {
     let CertifiedFunctionClaimPath {
         caller_state,
+        arguments,
+        outcome,
         return_state,
         entry_state,
+        required_resources,
         entry_resources,
         post_state,
         post_resources,
@@ -1087,12 +1141,84 @@ fn function_claim_holds_on_prepared_path(
                         .extend(finite_forall_instantiations(&path_propositions.clone()));
                     let path_assumptions =
                         assumptions_with_propositions(assumptions, &path_propositions);
-                    let proposition_holds = certification_proves_post_proposition(
-                        &path_assumptions,
-                        &path.proposition,
-                        return_state.memory(),
-                        execution_facts,
-                    );
+                    let proposition_holds = checked_propositions
+                        .get(&path.proposition)
+                        .into_iter()
+                        .flatten()
+                        .any(|proof| {
+                            let function_matches = proof.function == *function;
+                            let state_matches = proof.specification.state() == caller_state;
+                            let arguments_match = proof.specification.arguments() == arguments;
+                            let outcome_matches = c_function_outcomes_definitionally_equal(
+                                function,
+                                proof.specification.outcome(),
+                                outcome,
+                                assumptions,
+                            );
+                            let requirements_match =
+                                proof.specification.requires().iter().all(|requirement| {
+                                    match requirement {
+                                        Proposition::CResourceComposition(required) => {
+                                            resource_context_definitionally_contains(
+                                                required_resources,
+                                                required,
+                                                function.composite_resource_definitions(),
+                                                entry_state.memory(),
+                                                assumptions,
+                                            )
+                                        }
+                                        Proposition::Predicate { .. } => function
+                                            .predicate_unfoldings()
+                                            .iter()
+                                            .any(|unfolding| {
+                                                let mut budget = ExecutionBudget::default();
+                                                let Some((
+                                        predicate,
+                                        predicate_obligations,
+                                        body,
+                                        body_obligations,
+                                    )) = instantiate_contract_predicate_unfolding_with_obligations(
+                                        entry_state,
+                                        unfolding,
+                                        assumptions,
+                                        &mut budget,
+                                    )
+                                    else {
+                                        return false;
+                                    };
+                                                predicate == *requirement
+                                                    && predicate_obligations
+                                                        .iter()
+                                                        .chain(&body_obligations)
+                                                        .all(|obligation| {
+                                                            certification_proves_proposition(
+                                                                assumptions,
+                                                                obligation,
+                                                            )
+                                                        })
+                                                    && certification_proves_proposition(
+                                                        assumptions,
+                                                        &body,
+                                                    )
+                                            }),
+                                        _ => certification_proves_proposition(
+                                            assumptions,
+                                            requirement,
+                                        ),
+                                    }
+                                });
+                            function_matches
+                                && state_matches
+                                && arguments_match
+                                && outcome_matches
+                                && requirements_match
+                        })
+                        || certification_proves_post_proposition(
+                            &path_assumptions,
+                            &path.proposition,
+                            return_state.memory(),
+                            execution_facts,
+                        );
                     obligations_hold && proposition_holds
                 })
         }
@@ -1410,6 +1536,31 @@ pub fn c_verified_function_contract_claims(
     function: &CFunction,
     contract_execution: &CFunctionContractExecution,
 ) -> Option<Vec<CVerifiedFunctionContractClaim>> {
+    c_verified_function_contract_claims_with_checked_propositions(function, contract_execution, &[])
+}
+
+fn checked_proposition_index(
+    checked_propositions: &[CCheckedFunctionProposition],
+) -> BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>> {
+    let mut index = BTreeMap::new();
+    for checked in checked_propositions {
+        index
+            .entry(checked.proposition.clone())
+            .or_insert_with(Vec::new)
+            .push(checked);
+    }
+    index
+}
+
+/// Certifies contract claims while reusing proposition judgments already
+/// closed by the kernel proof object. Finalization still reconstructs the
+/// exact function paths and checks resources, effects, obligations, and claim
+/// coverage; it does not re-prove a matching proposition claim.
+pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
+    function: &CFunction,
+    contract_execution: &CFunctionContractExecution,
+    checked_propositions: &[CCheckedFunctionProposition],
+) -> Option<Vec<CVerifiedFunctionContractClaim>> {
     let execution = &contract_execution.execution;
     if execution.limit().is_some() || execution.paths().is_empty() {
         return None;
@@ -1438,6 +1589,7 @@ pub fn c_verified_function_contract_claims(
             },
         );
     }
+    let checked_propositions = checked_proposition_index(checked_propositions);
     function
         .contract_claims()
         .iter()
@@ -1455,9 +1607,14 @@ pub fn c_verified_function_contract_claims(
                 &claim_key,
                 operation_name,
                 || {
-                    paths
-                        .iter()
-                        .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
+                    paths.iter().all(|path| {
+                        function_claim_holds_on_prepared_path(
+                            function,
+                            claim,
+                            path,
+                            &checked_propositions,
+                        )
+                    })
                 },
             );
             if timings {
@@ -1487,6 +1644,21 @@ pub fn c_unverified_function_contract_claims(
     function: &CFunction,
     contract_execution: &CFunctionContractExecution,
 ) -> Result<Vec<CFunctionContractClaimKey>, String> {
+    c_unverified_function_contract_claims_with_checked_propositions(
+        function,
+        contract_execution,
+        &[],
+    )
+}
+
+/// Diagnostic counterpart to checked-proposition-aware finalization. Keeping
+/// the same evidence here ensures a later failing claim does not make an
+/// already checked proposition look unproved in the reported claim list.
+pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
+    function: &CFunction,
+    contract_execution: &CFunctionContractExecution,
+    checked_propositions: &[CCheckedFunctionProposition],
+) -> Result<Vec<CFunctionContractClaimKey>, String> {
     let execution = &contract_execution.execution;
     if let Some(limit) = execution.limit() {
         return Err(format!("symbolic execution reached its {limit:?} limit"));
@@ -1503,13 +1675,14 @@ pub fn c_unverified_function_contract_claims(
                 .map_err(|reason| format!("execution path {index} is invalid: {reason}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let checked_propositions = checked_proposition_index(checked_propositions);
     Ok(function
         .contract_claims()
         .iter()
         .filter(|claim| {
-            !paths
-                .iter()
-                .all(|path| function_claim_holds_on_prepared_path(function, claim, path))
+            !paths.iter().all(|path| {
+                function_claim_holds_on_prepared_path(function, claim, path, &checked_propositions)
+            })
         })
         .map(|claim| claim.key().clone())
         .collect())

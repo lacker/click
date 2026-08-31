@@ -14,11 +14,13 @@ to one pool.
 `valid_pool(pool)` is a copyable predicate rather than a resource. It relates
 the C counter to the current object population and states that capacity is the
 sum of checked-out objects and available slots. Initialization produces
-`capacity of pool_slot(pool)` algebraically. Checkout consumes one slot and
-packages ordinary object memory into an object resource. Transfer returns a
-slot to the source, consumes a destination slot, and moves the object resource
-while updating both counters. Return consumes the object resource, gives its
-memory back, and produces a slot.
+`capacity of pool_slot(pool)` algebraically. Growing the pool produces a
+runtime quantity of slots, while shrinking consumes exactly the requested
+quantity and therefore cannot remove capacity occupied by checked-out objects.
+Checkout consumes one slot and packages ordinary object memory into an object
+resource. Transfer returns a slot to the source, consumes a destination slot,
+and moves the object resource while updating both counters. Return consumes the
+object resource, gives its memory back, and produces a slot.
 Because declared resources may have multiple equal units, that final return
 explicitly requires `count(pool_object(pool, object)) == 1`; only the last
 unit may unwrap the population-wide body into raw object ownership.

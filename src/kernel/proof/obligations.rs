@@ -88,6 +88,34 @@ pub(crate) struct OutcomeProofCore {
     pub(crate) requirement_facts: Arc<Vec<Proposition>>,
 }
 
+/// Durable kernel evidence that one exact proposition judgment was closed.
+///
+/// The proposition and optional function outcome come from the root semantic
+/// obligation retained by [`ProofObject`](super::ProofObject); surface
+/// provenance cannot manufacture or retarget this value after completion.
+#[derive(Clone)]
+pub(crate) struct CheckedProposition {
+    proposition: Arc<Proposition>,
+    outcome: Option<OutcomeProofCore>,
+}
+
+impl CheckedProposition {
+    pub(super) fn new(proposition: Proposition, outcome: Option<OutcomeProofCore>) -> Self {
+        Self {
+            proposition: Arc::new(proposition),
+            outcome,
+        }
+    }
+
+    pub(crate) fn proposition(&self) -> &Proposition {
+        &self.proposition
+    }
+
+    pub(crate) fn outcome(&self) -> Option<&OutcomeProofCore> {
+        self.outcome.as_ref()
+    }
+}
+
 /// One checked function outcome paired with opaque language presentation.
 #[derive(Clone)]
 pub(crate) struct OutcomeProofState<S> {
