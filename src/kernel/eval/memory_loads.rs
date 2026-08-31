@@ -200,8 +200,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
             }];
         }
     } else if let Some(value) = memory.cells.iter().find_map(|(stored_pointer, value)| {
-        alias_cache
-            .resolution_equal(&pointer, stored_pointer, assumptions)
+        let equal = alias_cache.resolution_equal(&pointer, stored_pointer, assumptions);
+        // A bounded equality query can retain an alias guard before its
+        // nested separation search reaches a compact resource composition.
+        // Recheck separation at the top-level query before treating that
+        // materialized cell as authoritative. If both hold, the alias guard
+        // describes an unreachable branch and must not manufacture a typed
+        // load from the disjoint cell.
+        (equal && !alias_cache.resolution_distinct(&pointer, stored_pointer, assumptions))
             .then(|| value.clone())
     }) {
         if let Some(value) = canonicalized_pointer_value_from_int_cell(

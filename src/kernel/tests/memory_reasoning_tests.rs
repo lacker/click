@@ -2566,6 +2566,48 @@ fn memory_resolution_uses_compact_resource_composition_with_shallow_equalities()
     assert!(assumptions.ranges_directly_disjoint_from_pointer(&[left_range], &query_right,));
 }
 
+#[test]
+fn memory_resolution_uses_compact_composition_for_dependent_indexed_range() {
+    let arena = Bitvector32Term::Variable(Variable(93_414));
+    let data = Bitvector32Term::Variable(Variable(93_415));
+    let query_arena = Bitvector32Term::Variable(Variable(93_416));
+    let query_data = Bitvector32Term::Variable(Variable(93_417));
+    let start = Bitvector32Term::Variable(Variable(93_418));
+    let end = Bitvector32Term::Variable(Variable(93_419));
+    let index = Bitvector32Term::Variable(Variable(93_420));
+    let pointer = |base: Bitvector32Term| Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::scale_int32(base, 4),
+    };
+    let arena_fields = memory_range(pointer(arena.clone()), 0, 2);
+    let backing = CMemoryRange::new(pointer(data.clone()), start.clone(), end.clone());
+    let context = ResourceContext::new()
+        .unchecked_with_fact(CResourceFact::own_memory(arena_fields))
+        .unchecked_with_fact(CResourceFact::own_memory(backing));
+    let composition = context
+        .observable_facts(&PureFactContext::new())
+        .expect("the owned metadata and backing should compose")
+        .into_iter()
+        .find(|fact| matches!(fact, Proposition::CResourceComposition(_)))
+        .expect("multiple symbolic owned ranges should expose compact authority");
+    let absolute = Bitvector32Term::add(start.clone(), index);
+    let assumptions = PureFactContext::new()
+        .assume_proposition(composition)
+        .assume_condition(ConditionTerm::equal(query_arena.clone(), arena), true)
+        .assume_condition(ConditionTerm::equal(query_data.clone(), data), true)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(start, absolute.clone()),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(absolute.clone(), end), true);
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &pointer(query_arena),
+        &pointer(query_data).offset_by_int32_elements(absolute),
+        &assumptions,
+    ));
+}
+
 /// The on-demand form of the former materialized separation pairs: with only
 /// the compact composition assumed — zero pair facts — a separation between
 /// subranges of two distinct owned symbolic ranges must still be provable,

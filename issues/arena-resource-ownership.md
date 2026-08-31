@@ -15,22 +15,29 @@ certificate bug: applications of
 derivations were not retained for whole-function certification. The focused
 regression is `mdtests/region_relative_index_read.md`.
 
-The next boundary is shared arena metadata. `arena_read` reloads the backing
-pointer through `region->arena->data`. The region owns the selected backing
-cells but only views the arena's `data` field, so without a stable separation
-invariant the verifier must consider the backing element to alias that
-pointer-valued field. That alias would make an `int32` read a type mismatch.
-This is a real missing contract fact, not a range-containment failure.
+Shared arena metadata and `arena_read` now verify with existing machinery.
+Each `arena_region` contains one `arena_metadata(region->arena)` unit. Units
+with the same arena argument form one counted population whose shared body owns
+the stable `data` and `capacity` fields plus the backing allocation authority.
+Scoped opens borrow that body without duplicating it, so distinct live regions
+can share metadata while retaining exclusive ownership of their own backing
+intervals. No new surface form was needed.
 
-Do not add the separation fact as an ad hoc precondition to each accessor.
-The next experiment should model stable shared arena identity/metadata once,
-so every live region can rely on the same backing-pointer and separation facts
-while no region individually owns the shared arena fields. Determine whether
-the existing viewed-composite mechanism can express that invariant. If it
-cannot, the likely language gap is a general stable shared-resource operation
-or a way to name a checked ghost resource argument without first reloading it
-through the resource it helps expose. It is not an arena- or range-specific
-operation.
+The read experiment exposed a kernel alias-resolution bug. A bounded equality
+query could retain a speculative alias guard before its nested separation
+search reached the compact resource-composition fact. The fast materialized
+cell lookup then accepted that equality even when a top-level separation query
+proved the cells distinct, producing a spurious `type mismatch`. The lookup
+now checks the cached equality candidate against compact-composition
+separation before accepting the cell. `arena_read` is the end-to-end
+regression; a focused kernel test covers dependent indexed ranges in compact
+resource compositions.
+
+The next bounded blocker is `arena_write`. Its unfolded local execution proof
+can perform the indexed store and restore the region resource, but
+whole-function certification currently fails to reproduce that resource path.
+Reduce that mismatch before adding more arena operations. Do not add redundant
+accessor preconditions or weaken the mutable footprint to route around it.
 
 ## Violated invariant
 
