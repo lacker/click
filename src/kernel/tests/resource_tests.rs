@@ -8,6 +8,106 @@ fn unrelated_token_context(size: usize) -> ResourceContext {
     )
 }
 
+fn equality(left: Bitvector32Term, right: Bitvector32Term) -> Proposition {
+    Proposition::ConditionIs(
+        ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
+        true,
+    )
+}
+
+#[test]
+fn zero_owned_resource_is_identity_after_symbolic_resolution() {
+    let quantity = Bitvector32Term::Variable(Variable(910_000));
+    let intermediate = Bitvector32Term::Variable(Variable(910_001));
+    let assumptions = PureFactContext::new()
+        .assume_proposition(equality(quantity.clone(), intermediate.clone()))
+        .assume_proposition(equality(intermediate, Bitvector32Term::Constant(0)));
+    let required = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "empty".to_string(),
+            arguments: vec![int32(7)],
+        },
+        quantity,
+    );
+    let empty = ResourceContext::new();
+
+    assert!(empty.satisfies_fact(&required, &assumptions));
+    let remaining = empty
+        .clone()
+        .without_fact_delaying_normalization(&required, &assumptions)
+        .expect("consuming a symbolically zero resource must be an identity");
+    assert!(remaining.is_empty());
+
+    let positive =
+        CResourceFact::own_quantity(required.resource().clone(), Bitvector32Term::Constant(1));
+    assert!(!empty.satisfies_fact(&positive, &assumptions));
+    assert!(
+        empty
+            .without_fact_delaying_normalization(&positive, &assumptions)
+            .is_none()
+    );
+}
+
+#[test]
+fn zero_resource_identity_ignores_unrelated_resources() {
+    let quantity = Bitvector32Term::Variable(Variable(911_000));
+    let intermediate = Bitvector32Term::Variable(Variable(911_001));
+    let assumptions = PureFactContext::new()
+        .assume_proposition(equality(quantity.clone(), intermediate.clone()))
+        .assume_proposition(equality(intermediate, Bitvector32Term::Constant(0)));
+    let required = CResourceFact::own_quantity(
+        CResource::Token {
+            name: "empty".to_string(),
+            arguments: vec![int32(7)],
+        },
+        quantity,
+    );
+    let samples = [16, 64, 256, 1024]
+        .into_iter()
+        .map(|size| {
+            let context = unrelated_token_context(size);
+            let (remaining, work) = crate::instrumentation::measure_deterministic_work(|| {
+                context
+                    .clone()
+                    .without_fact_delaying_normalization(&required, &assumptions)
+            });
+            assert_eq!(remaining.expect("zero consumption should succeed"), context);
+            (size, work)
+        })
+        .collect::<Vec<_>>();
+
+    let base_work = samples[0].1;
+    assert!(
+        samples
+            .iter()
+            .all(|(_, work)| *work <= base_work.saturating_add(2)),
+        "zero-resource identity work changed with unrelated resources: {samples:?}"
+    );
+}
+
+#[test]
+fn zero_resource_count_witness_needs_no_population_bucket() {
+    let resource = CResourceFact::own_quantity(
+        CResource::Composite {
+            name: "empty".to_string(),
+            arguments: vec![int32(7)],
+        },
+        Bitvector32Term::Constant(0),
+    );
+    let claim = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(0),
+        ),
+        true,
+    );
+    let assumptions = PureFactContext::new().assume_proposition(claim.clone());
+    assert!(
+        prove_owned_resource_count_lower_bound(&CState::new(), &resource, &claim, &assumptions,)
+            .is_some()
+    );
+}
+
 #[test]
 fn resource_context_fork_updates_are_persistent_and_logarithmic() {
     for size in [16_usize, 64, 256, 1024, 4096] {

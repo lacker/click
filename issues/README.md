@@ -18,6 +18,4 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 1
-
-- [Zero counted-resource consumption loses the empty-family witness](zero-counted-resource-witness.md)
+## Other open issues: 0

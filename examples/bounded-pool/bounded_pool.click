@@ -26,6 +26,7 @@ verifying "pool_return.c";
 verifying "pool_destroy.c";
 verifying "pool_pipeline.c";
 verifying "pool_zero_pipeline.c";
+verifying "pool_resize_pipeline.c";
 
 void pool_init(struct pool* pool, int32 capacity) {
     requires 0 <= capacity;
@@ -258,6 +259,27 @@ void pool_zero_pipeline(struct pool* pool) {
     ensures pool->capacity == 0;
 } by {
     step();
+    step();
+    execute();
+    frame();
+    simp();
+}
+
+void pool_resize_pipeline(struct pool* pool) {
+    owns object(pool);
+    mutable pool->checked_out, pool->capacity;
+
+    ensures valid_pool(pool);
+    ensures pool->checked_out == 0;
+    ensures pool->capacity == 0;
+} by {
+    step();
+    step();
+    unfold(valid_pool);
+    observe(0 of pool_slot(pool));
+    have pool->capacity == 0 by {
+        simp();
+    }
     step();
     execute();
     frame();

@@ -34,4 +34,7 @@ that API boundary so its postcondition exposes the moved resource directly:
 the source population is empty and the destination population contains the
 object. A zero-capacity pipeline initializes and destroys an empty pool,
 checking that `0 of pool_slot(pool)` is the resource identity rather than a
-hidden unit.
+hidden unit. The resize pipeline starts with one slot, consumes that entire
+positive population through `pool_shrink`, explicitly observes the resulting
+zero population, and then destroys the pool. This checks that reaching zero
+removes ownership without making a later zero-resource operation fail.

@@ -1201,6 +1201,17 @@ impl ResourceContext {
         ) {
             return true;
         }
+        // Zero ownership is the multiplicative identity even when the zero
+        // is visible only after resolving a short chain of checked symbolic
+        // equalities. Pay for that bounded proof only after the indexed
+        // resource lookup misses, so ordinary positive-resource queries keep
+        // their direct fast path.
+        if fact
+            .owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_resolves_to_zero(quantity, assumptions))
+        {
+            return true;
+        }
         // A required fact may span several adjacent held resources; merge
         // them and retry once. Only memory resources have a split/merge
         // algebra: token and composite entailment is decided one fact at a
@@ -1524,7 +1535,11 @@ impl ResourceContext {
                 candidates.extend(remaining);
             }
         }
-        self.consume_fact_from_candidates(fact, assumptions, candidates)
+        if self.consume_fact_from_candidates(fact, assumptions, candidates) {
+            return true;
+        }
+        fact.owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_resolves_to_zero(quantity, assumptions))
     }
 
     fn consume_fact_from_candidates(
@@ -1971,6 +1986,18 @@ fn resource_quantity_is_zero(quantity: &Bitvector32Term, assumptions: &PureFactC
             ),
             true,
         ))
+}
+
+fn resource_quantity_resolves_to_zero(
+    quantity: &Bitvector32Term,
+    assumptions: &PureFactContext,
+) -> bool {
+    resource_quantity_is_zero(quantity, assumptions)
+        || crate::kernel::reasoning::bitvector_terms_proven_equal_for_memory_resolution(
+            quantity,
+            &Bitvector32Term::Constant(0),
+            assumptions,
+        )
 }
 
 fn consume_exact_resource_fact(

@@ -1945,7 +1945,24 @@ pub fn prove_owned_resource_count_lower_bound(
         }
         CResource::Memory(_) => return None,
     };
-    let count = state.counted_population(name, arguments)?.clone();
+    let count = match state.counted_population(name, arguments) {
+        Some(count) => count.clone(),
+        None => {
+            let zero = Bitvector32Term::Constant(0);
+            let quantity_is_zero = quantity == zero
+                || assumptions.proves(&Proposition::ConditionIs(
+                    ConditionTerm::Bitvector32Equal(
+                        Box::new(quantity.clone()),
+                        Box::new(zero.clone()),
+                    ),
+                    true,
+                ));
+            if !quantity_is_zero {
+                return None;
+            }
+            zero
+        }
+    };
     let conclusion =
         Proposition::ConditionIs(ConditionTerm::signed_less_equal(quantity, count), true);
     (claimed == &conclusion && assumptions.proves(&conclusion)).then(|| Theorem::new(conclusion))
