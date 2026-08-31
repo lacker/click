@@ -150,6 +150,32 @@ always wall-clock limits. `CLICK_DISABLE_TACTIC_BUDGETS=1` remains a narrow A/B
 diagnostic escape hatch; it must not be used for the ordinary correctness
 gate.
 
+### Surface throughput measurements
+
+Deterministic work curves remain the correctness authority, but they do not
+say whether the verifier's constant factor is pleasant for a user. Measure
+surface throughput separately with an optimized `click verify` build, warm
+filesystem caches, and the physical lines of the selected C and Click sources.
+State the corpus, machine, worker count, and whether elapsed wall time or CPU
+time is being reported. Do not combine compiler build time with verification
+time or use profiler runs as the ordinary-command latency measurement.
+
+On 2026-08-30 at `e988b120`, an 8-core Apple M3 MacBook Air verified the 19
+example projects, selecting 6,866 physical C and Click lines. A temporary build
+forcing the only optional invariant-path worker pool to one worker completed in
+12.88--15.59 seconds, or about 440--530 lines per wall-clock second. Ordinary
+optimized warm runs took 14.74--14.98 seconds, about 460 lines per second; their
+user CPU time was 12.89--13.02 seconds, confirming that this corpus is
+effectively single-threaded. Across nontrivial individual projects, proof
+density produced roughly 250--1,700 lines per second. About 500 lines per second
+is therefore a reasonable planning estimate for this corpus, not a
+hardware-independent SLA or a substitute for multi-size scaling tests.
+
+This snapshot also gives a concrete interpretation to an aspirational target:
+10,000 selected lines in three seconds is about 3,300 lines per second, roughly
+six to seven times this corpus-wide baseline. Re-measure after substantial
+checker or corpus changes instead of treating the dated numbers as permanent.
+
 The direct CLI is itself the bounding mechanism: `click verify --time-limit`
 cooperatively interrupts execution, proposition derivation, memory resolution,
 and resource search. Do not wrap Click in an external timeout command; a proof
