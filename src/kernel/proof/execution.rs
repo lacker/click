@@ -7,7 +7,8 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     CConditionOutcome, CExpression, CFunctionExecutionCandidates, CLoopEffectCheck, CState,
-    CStatement, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact, Proposition, Theorem,
+    CStatement, CStatementOutcome, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact,
+    Proposition, Theorem,
 };
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -41,6 +42,130 @@ pub(crate) struct LoopEffectGoal {
 pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
     Condition(Theorem),
+    Branch(CheckedExecutionBranch),
+}
+
+/// One exhaustive nonterminal C `if`, checked against its exact source arms
+/// and retained as a nested execution-evidence node.
+#[derive(Clone)]
+pub(crate) struct CheckedExecutionBranch {
+    split: CheckedBranchSplit,
+    arms: [CheckedExecutionBranchArm; 2],
+    joined_state: CState,
+}
+
+#[derive(Clone)]
+struct CheckedExecutionBranchArm {
+    facts: ProofFacts,
+    events: Vec<CheckedExecutionEvent>,
+}
+
+impl CheckedExecutionBranch {
+    #[allow(clippy::too_many_arguments)]
+    fn check(
+        split: CheckedBranchSplit,
+        root_facts: &ProofFacts,
+        arm_theorems: [&Theorem; 2],
+        arm_facts: [&ProofFacts; 2],
+        parent: &ExecutionProofCore,
+        arms: [&ExecutionProofCore; 2],
+    ) -> Result<Self, &'static str> {
+        let condition = &split.condition;
+        let parent_at_unstepped_function_entry = parent.frontier.is_at_function_entry()
+            && parent.execution_evidence.len() == 1
+            && parent.execution_evidence[0].is_empty();
+        if split.state != *parent.state && !parent_at_unstepped_function_entry {
+            return Err("the branch split does not start at the parent execution state");
+        }
+        if parent.execution_evidence.len() != 1 {
+            return Err("the branch parent does not have one execution trace");
+        }
+        if arms.iter().any(|arm| arm.execution_evidence.len() != 1) {
+            return Err("a branch arm does not have one execution trace");
+        }
+        if arms.iter().any(|arm| !arm.frontier.is_at_region_boundary()) {
+            return Err("a branch arm has not reached its typed boundary");
+        }
+        if *arms[0].state != *arms[1].state {
+            return Err("the branch arms do not have one joined state");
+        }
+        if !split.validates_exhaustive_join(
+            &split.state,
+            condition,
+            root_facts,
+            [Some(arm_theorems[0]), Some(arm_theorems[1])],
+            [Some(arm_facts[0]), Some(arm_facts[1])],
+        ) {
+            return Err("the branch arms do not exhaust the checked condition split");
+        }
+        let parent_trace = &parent.execution_evidence[0];
+        let full_source = prepend_checked_evidence_statement(
+            split.branch_statement.clone(),
+            split.continuation.clone(),
+        );
+        let mut checked_arms = Vec::with_capacity(2);
+        for (index, arm) in arms.iter().enumerate() {
+            let events = arm.execution_evidence[0]
+                .suffix_since(parent_trace)
+                .ok_or("a branch arm trace does not descend from the parent trace")?;
+            // Even an empty source arm has this condition event. Its exact
+            // theorem also fixes the arm's polarity through the checked split.
+            if !matches!(
+                events.first(),
+                Some(CheckedExecutionEvent::Condition(theorem)) if theorem == arm_theorems[index]
+            ) {
+                return Err("a branch arm does not begin with its checked condition theorem");
+            }
+            let progress = check_evidence_events(
+                &events,
+                arm_facts[index],
+                split.state.clone(),
+                Some(full_source.clone()),
+            )
+            .ok_or("a branch arm theorem trace does not follow its exact C source")?;
+            if progress.completed.is_some() || progress.remaining != split.continuation {
+                return Err("a branch arm theorem trace does not reach the shared continuation");
+            }
+            if progress.state != *arm.state {
+                return Err("a branch arm theorem trace does not reach its recorded state");
+            }
+            checked_arms.push(CheckedExecutionBranchArm {
+                facts: arm_facts[index].clone(),
+                events,
+            });
+        }
+        let [then_arm, else_arm] = checked_arms
+            .try_into()
+            .map_err(|_| "the checked branch does not have exactly two arms")?;
+        Ok(Self {
+            split,
+            arms: [then_arm, else_arm],
+            joined_state: (*arms[0].state).clone(),
+        })
+    }
+
+    pub(crate) fn matches_source(
+        &self,
+        state: &CState,
+        branch_statement: &CStatement,
+        continuation: &Option<CStatement>,
+    ) -> bool {
+        &self.split.state == state
+            && &self.split.branch_statement == branch_statement
+            && &self.split.continuation == continuation
+    }
+
+    pub(crate) fn joined_state(&self) -> &CState {
+        &self.joined_state
+    }
+
+    pub(crate) fn arm_facts(&self, index: usize) -> &ProofFacts {
+        &self.arms[index].facts
+    }
+
+    pub(crate) fn arm_events(&self, index: usize) -> &[CheckedExecutionEvent] {
+        &self.arms[index].events
+    }
 }
 
 /// One path retained from a complete kernel C-condition evaluation.
@@ -80,6 +205,8 @@ impl CheckedBranchPath {
 #[derive(Clone)]
 pub(crate) struct CheckedBranchSplit {
     state: CState,
+    branch_statement: CStatement,
+    continuation: Option<CStatement>,
     condition: CExpression,
     root_facts: ProofFacts,
     paths: Vec<CheckedBranchPath>,
@@ -93,9 +220,14 @@ pub(crate) enum CheckedBranchSplitError {
 impl CheckedBranchSplit {
     pub(crate) fn check(
         state: CState,
-        condition: CExpression,
+        branch_statement: CStatement,
+        continuation: Option<CStatement>,
         root_facts: &ProofFacts,
     ) -> Result<Self, CheckedBranchSplitError> {
+        let CStatement::If { condition, .. } = &branch_statement else {
+            return Err(CheckedBranchSplitError::InvalidEvidence);
+        };
+        let condition = condition.clone();
         let evaluation = crate::kernel::prove_symbolic_c_condition_evaluation(
             state.clone(),
             condition.clone(),
@@ -136,6 +268,8 @@ impl CheckedBranchSplit {
         }
         Ok(Self {
             state,
+            branch_statement,
+            continuation,
             condition,
             root_facts: root_facts.clone(),
             paths,
@@ -280,6 +414,246 @@ impl<S> DerefMut for ProofExecutionState<S> {
     }
 }
 
+fn checked_evidence_conclusion(theorem: &Theorem) -> &Proposition {
+    let mut conclusion = theorem.proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    conclusion
+}
+
+fn checked_evidence_premises_hold(theorem: &Theorem, facts: &ProofFacts) -> bool {
+    let mut proposition = theorem.proposition();
+    while let Proposition::Implies(premise, body) = proposition {
+        if !facts.assumptions().proves_exact(premise) && !facts.assumptions().proves(premise) {
+            return false;
+        }
+        proposition = body;
+    }
+    true
+}
+
+fn split_checked_evidence_statement(statement: CStatement) -> (CStatement, Option<CStatement>) {
+    match statement {
+        CStatement::Seq(first, second) => {
+            let (head, first_tail) = split_checked_evidence_statement(Arc::unwrap_or_clone(first));
+            let tail = match first_tail {
+                Some(first_tail) => CStatement::Seq(Arc::new(first_tail), second),
+                None => Arc::unwrap_or_clone(second),
+            };
+            (head, Some(tail))
+        }
+        statement => (statement, None),
+    }
+}
+
+fn prepend_checked_evidence_statement(
+    statement: CStatement,
+    tail: Option<CStatement>,
+) -> CStatement {
+    match tail {
+        Some(tail) => CStatement::Seq(Arc::new(statement), Arc::new(tail)),
+        None => statement,
+    }
+}
+
+fn checked_statement_event(
+    theorem: &Theorem,
+    facts: &ProofFacts,
+    state: &CState,
+    statement: &CStatement,
+) -> Option<CStatementOutcome> {
+    if !checked_evidence_premises_hold(theorem, facts) {
+        return None;
+    }
+    let (proved_state, proved_statement, outcome) = match checked_evidence_conclusion(theorem) {
+        Proposition::CStatementExecutes {
+            state,
+            statement,
+            outcome,
+        }
+        | Proposition::CStatementVerifies {
+            state,
+            statement,
+            outcome,
+        } => (state, statement, outcome),
+        _ => return None,
+    };
+    (proved_state == state && proved_statement == statement).then(|| outcome.clone())
+}
+
+fn checked_condition_event(
+    theorem: &Theorem,
+    facts: &ProofFacts,
+    state: &CState,
+    statement: CStatement,
+    tail: Option<CStatement>,
+) -> Option<Option<CStatement>> {
+    if !checked_evidence_premises_hold(theorem, facts) {
+        return None;
+    }
+    let (proved_state, proved_condition, value) = match checked_evidence_conclusion(theorem) {
+        Proposition::CConditionEvaluates {
+            state,
+            condition,
+            outcome: CConditionOutcome::Value(value),
+        } => (state, condition, *value),
+        _ => return None,
+    };
+    if proved_state != state {
+        return None;
+    }
+    let selected = match statement {
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } if &condition == proved_condition => {
+            if value {
+                *then_branch
+            } else {
+                *else_branch
+            }
+        }
+        CStatement::While {
+            condition,
+            invariant,
+            invariant_checks,
+            effect_checks,
+            body,
+        } if &condition == proved_condition => {
+            if value {
+                let loop_head = CStatement::While {
+                    condition,
+                    invariant,
+                    invariant_checks,
+                    effect_checks,
+                    body: body.clone(),
+                };
+                prepend_checked_evidence_statement(*body, Some(loop_head))
+            } else {
+                CStatement::Skip
+            }
+        }
+        _ => return None,
+    };
+    Some(if matches!(selected, CStatement::Skip) {
+        tail
+    } else {
+        Some(prepend_checked_evidence_statement(selected, tail))
+    })
+}
+
+struct CheckedEvidenceProgress {
+    state: CState,
+    remaining: Option<CStatement>,
+    completed: Option<CStatementOutcome>,
+}
+
+/// Checks a retained event tree by following kernel theorem conclusions
+/// through an exact source tree. This does not evaluate a C operation.
+fn check_evidence_events(
+    events: &[CheckedExecutionEvent],
+    facts: &ProofFacts,
+    mut state: CState,
+    mut remaining: Option<CStatement>,
+) -> Option<CheckedEvidenceProgress> {
+    let mut completed = None;
+    for event in events {
+        if completed.is_some() {
+            return None;
+        }
+        let source = remaining.take()?;
+        let (next_statement, tail) = split_checked_evidence_statement(source);
+        match event {
+            CheckedExecutionEvent::Statement(theorem) => {
+                match checked_statement_event(theorem, facts, &state, &next_statement)? {
+                    CStatementOutcome::Normal(next_state) => {
+                        state = next_state;
+                        remaining = tail;
+                    }
+                    outcome @ (CStatementOutcome::Return { .. }
+                    | CStatementOutcome::VerificationDiverges) => {
+                        if tail.is_some() {
+                            return None;
+                        }
+                        completed = Some(outcome);
+                    }
+                    CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_) => return None,
+                }
+            }
+            CheckedExecutionEvent::Condition(theorem) => {
+                remaining = checked_condition_event(theorem, facts, &state, next_statement, tail)?;
+            }
+            CheckedExecutionEvent::Branch(branch) => {
+                let CStatement::If { .. } = &next_statement else {
+                    return None;
+                };
+                if !branch.matches_source(&state, &next_statement, &tail) {
+                    return None;
+                }
+                let full_source = prepend_checked_evidence_statement(next_statement, tail.clone());
+                for arm_index in 0..2 {
+                    let arm = check_evidence_events(
+                        branch.arm_events(arm_index),
+                        branch.arm_facts(arm_index),
+                        state.clone(),
+                        Some(full_source.clone()),
+                    )?;
+                    if arm.completed.is_some()
+                        || arm.remaining != tail
+                        || arm.state != *branch.joined_state()
+                    {
+                        return None;
+                    }
+                }
+                state = branch.joined_state().clone();
+                remaining = tail;
+            }
+        }
+    }
+    Some(CheckedEvidenceProgress {
+        state,
+        remaining,
+        completed,
+    })
+}
+
+fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(), &'static str> {
+    for event in events {
+        let (theorem, statement) = match event {
+            CheckedExecutionEvent::Statement(theorem) => (theorem, true),
+            CheckedExecutionEvent::Condition(theorem) => (theorem, false),
+            CheckedExecutionEvent::Branch(branch) => {
+                for arm in &branch.arms {
+                    validate_checked_event_shapes(&arm.events)?;
+                }
+                continue;
+            }
+        };
+        let right_shape = if statement {
+            matches!(
+                checked_evidence_conclusion(theorem),
+                Proposition::CStatementExecutes { .. } | Proposition::CStatementVerifies { .. }
+            )
+        } else {
+            matches!(
+                checked_evidence_conclusion(theorem),
+                Proposition::CConditionEvaluates { .. }
+            )
+        };
+        if !right_shape {
+            return Err(if statement {
+                "retained statement evidence has a non-statement conclusion"
+            } else {
+                "retained condition evidence has a non-condition conclusion"
+            });
+        }
+    }
+    Ok(())
+}
+
 impl ExecutionProofCore {
     pub(crate) fn at_entry(state: CState, frontier: ExecutionFrontier) -> Self {
         Self {
@@ -331,37 +705,43 @@ impl ExecutionProofCore {
         }
     }
 
+    /// Records a branch node only after [`CheckedExecutionBranch::check`]
+    /// has validated exact source coverage, both persistent arm suffixes,
+    /// the common continuation, and the joined state.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_exhaustive_branch_join(
+        &mut self,
+        split: CheckedBranchSplit,
+        root_facts: &ProofFacts,
+        arm_theorems: [&Theorem; 2],
+        arm_facts: [&ProofFacts; 2],
+        parent: &ExecutionProofCore,
+        arms: [&ExecutionProofCore; 2],
+    ) -> Result<(), &'static str> {
+        let parent_trace = match parent.execution_evidence.as_slice() {
+            [trace] => trace,
+            _ => return Err("the branch parent does not have one execution trace"),
+        };
+        let branch = CheckedExecutionBranch::check(
+            split,
+            root_facts,
+            arm_theorems,
+            arm_facts,
+            parent,
+            arms,
+        )?;
+        let mut trace = parent_trace.clone();
+        trace.push(CheckedExecutionEvent::Branch(branch));
+        self.execution_evidence = vec![trace].into();
+        Ok(())
+    }
+
     /// Checks that every retained event carries the kernel judgment its tag
     /// promises. This is intentionally cheaper than executing any C: it only
     /// inspects the conclusions of already-issued theorem objects.
     pub(crate) fn validate_execution_evidence_shapes(&self) -> Result<(), &'static str> {
         for trace in &self.execution_evidence {
-            for event in trace.iter() {
-                let (theorem, statement) = match event {
-                    CheckedExecutionEvent::Statement(theorem) => (theorem, true),
-                    CheckedExecutionEvent::Condition(theorem) => (theorem, false),
-                };
-                let mut conclusion = theorem.proposition();
-                while let Proposition::Implies(_, body) = conclusion {
-                    conclusion = body;
-                }
-                let right_shape = if statement {
-                    matches!(
-                        conclusion,
-                        Proposition::CStatementExecutes { .. }
-                            | Proposition::CStatementVerifies { .. }
-                    )
-                } else {
-                    matches!(conclusion, Proposition::CConditionEvaluates { .. })
-                };
-                if !right_shape {
-                    return Err(if statement {
-                        "retained statement evidence has a non-statement conclusion"
-                    } else {
-                        "retained condition evidence has a non-condition conclusion"
-                    });
-                }
-            }
+            validate_checked_event_shapes(&trace.to_vec())?;
         }
         Ok(())
     }
@@ -406,6 +786,147 @@ impl ExecutionFrontier {
 
     pub(crate) fn execution_start_state<'a>(&'a self, current_state: &'a CState) -> &'a CState {
         self.execution_start_state.as_ref().unwrap_or(current_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn condition_event(
+        state: &CState,
+        condition: &CExpression,
+        value: bool,
+    ) -> CheckedExecutionEvent {
+        CheckedExecutionEvent::Condition(Theorem::new(Proposition::CConditionEvaluates {
+            state: state.clone(),
+            condition: condition.clone(),
+            outcome: CConditionOutcome::Value(value),
+        }))
+    }
+
+    #[test]
+    fn checked_condition_evidence_preserves_the_tail_for_empty_if_arms() {
+        let state = CState::new();
+        let condition = CExpression::Variable("x".to_string());
+        let branch = CStatement::If {
+            condition: condition.clone(),
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(CStatement::Skip),
+        };
+        let tail = CStatement::Return(CExpression::Variable("x".to_string()));
+        let source = prepend_checked_evidence_statement(branch, Some(tail.clone()));
+
+        for value in [true, false] {
+            let progress = check_evidence_events(
+                &[condition_event(&state, &condition, value)],
+                &ProofFacts::default(),
+                state.clone(),
+                Some(source.clone()),
+            )
+            .expect("a checked empty arm should advance directly to the shared tail");
+            assert_eq!(progress.state, state);
+            assert_eq!(progress.remaining, Some(tail.clone()));
+            assert!(progress.completed.is_none());
+        }
+    }
+
+    #[test]
+    fn checked_condition_evidence_rejects_a_different_source_condition() {
+        let state = CState::new();
+        let source_condition = CExpression::Variable("x".to_string());
+        let theorem_condition = CExpression::Variable("y".to_string());
+        let source = CStatement::If {
+            condition: source_condition,
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(CStatement::Skip),
+        };
+        assert!(
+            check_evidence_events(
+                &[condition_event(&state, &theorem_condition, true)],
+                &ProofFacts::default(),
+                state,
+                Some(source),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn checked_branch_join_accepts_empty_arms_only_at_the_artifact_tail() {
+        let state = CState::new();
+        let condition = CExpression::Variable("x".to_string());
+        let branch_statement = CStatement::If {
+            condition: condition.clone(),
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(CStatement::Skip),
+        };
+        let continuation = Some(CStatement::Return(CExpression::Variable("x".to_string())));
+        let then_theorem = match condition_event(&state, &condition, true) {
+            CheckedExecutionEvent::Condition(theorem) => theorem,
+            _ => unreachable!(),
+        };
+        let else_theorem = match condition_event(&state, &condition, false) {
+            CheckedExecutionEvent::Condition(theorem) => theorem,
+            _ => unreachable!(),
+        };
+        let root_facts = ProofFacts::default();
+        let split = CheckedBranchSplit {
+            state: state.clone(),
+            branch_statement,
+            continuation,
+            condition,
+            root_facts: root_facts.clone(),
+            paths: vec![
+                CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(true),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    theorem: then_theorem.clone(),
+                },
+                CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(false),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    theorem: else_theorem.clone(),
+                },
+            ],
+        };
+        let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        let mut then_arm = parent.clone();
+        then_arm.record_condition_transition(then_theorem.clone());
+        then_arm.frontier.region = ExecutionRegionKind::BranchArm;
+        then_arm.frontier.position = FrontierPosition::RegionBoundary;
+        let mut else_arm = parent.clone();
+        else_arm.record_condition_transition(else_theorem.clone());
+        else_arm.frontier.region = ExecutionRegionKind::BranchArm;
+        else_arm.frontier.position = FrontierPosition::RegionBoundary;
+
+        let checked = CheckedExecutionBranch::check(
+            split.clone(),
+            &root_facts,
+            [&then_theorem, &else_theorem],
+            [&root_facts, &root_facts],
+            &parent,
+            [&then_arm, &else_arm],
+        )
+        .expect("the exact empty arms should join at the retained continuation");
+        assert_eq!(checked.joined_state(), &state);
+        assert_eq!(checked.arm_events(0).len(), 1);
+        assert_eq!(checked.arm_events(1).len(), 1);
+
+        assert!(
+            CheckedExecutionBranch::check(
+                split,
+                &root_facts,
+                [&else_theorem, &then_theorem],
+                [&root_facts, &root_facts],
+                &parent,
+                [&then_arm, &else_arm],
+            )
+            .is_err(),
+            "swapped arm evidence must not certify the source partition"
+        );
     }
 }
 

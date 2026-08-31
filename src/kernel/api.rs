@@ -1932,17 +1932,185 @@ fn prepend_proof_evidence_statement(statement: CStatement, tail: Option<CStateme
     }
 }
 
-/// Seals a proof-directed straight-line execution from the kernel theorems
-/// retained for its individual C transitions.
+struct SealedProofEvidenceProgress {
+    state: CState,
+    remaining: Option<CStatement>,
+    completed: Option<(CStatementOutcome, PureFactContext)>,
+}
+
+/// Follows retained kernel theorem judgments through their exact source tree.
+/// Nested branch nodes recurse over two checked arm deltas and rejoin once;
+/// no C expression or statement is evaluated here.
+fn seal_proof_evidence_events(
+    function: &CFunction,
+    events: &[crate::kernel::proof::CheckedExecutionEvent],
+    mut state: CState,
+    mut remaining: Option<CStatement>,
+    assumptions: &PureFactContext,
+    candidate: &CFunctionExecutionCandidate,
+) -> Option<SealedProofEvidenceProgress> {
+    use crate::kernel::proof::CheckedExecutionEvent;
+
+    let mut completed = None;
+    for event in events {
+        if completed.is_some() {
+            return None;
+        }
+        let source = remaining.take()?;
+        let (next_statement, tail) = split_proof_evidence_statement(source);
+        match event {
+            CheckedExecutionEvent::Statement(theorem) => {
+                if !proof_evidence_premises_are_retained(theorem, assumptions, candidate) {
+                    return None;
+                }
+                let theorem_assumptions = proof_evidence_assumptions(theorem, assumptions);
+                let (proved_state, proved_statement, outcome) =
+                    match proof_evidence_conclusion(theorem) {
+                        Proposition::CStatementVerifies {
+                            state,
+                            statement,
+                            outcome,
+                        } => (state, statement, outcome),
+                        _ => return None,
+                    };
+                if proved_statement != &next_statement
+                    || !execution_evidence_states_match(
+                        function,
+                        &state,
+                        proved_state,
+                        &theorem_assumptions,
+                    )
+                {
+                    return None;
+                }
+                match outcome {
+                    CStatementOutcome::Normal(next_state) => {
+                        state = next_state.clone();
+                        remaining = tail;
+                    }
+                    CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
+                        if tail.is_some() {
+                            return None;
+                        }
+                        completed = Some((outcome.clone(), theorem_assumptions));
+                    }
+                    CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_) => return None,
+                }
+            }
+            CheckedExecutionEvent::Condition(theorem) => {
+                if !proof_evidence_premises_are_retained(theorem, assumptions, candidate) {
+                    return None;
+                }
+                let theorem_assumptions = proof_evidence_assumptions(theorem, assumptions);
+                let (proved_state, proved_condition, value) =
+                    match proof_evidence_conclusion(theorem) {
+                        Proposition::CConditionEvaluates {
+                            state,
+                            condition,
+                            outcome: CConditionOutcome::Value(value),
+                        } => (state, condition, *value),
+                        _ => return None,
+                    };
+                if !execution_evidence_states_match(
+                    function,
+                    &state,
+                    proved_state,
+                    &theorem_assumptions,
+                ) {
+                    return None;
+                }
+                let selected = match next_statement {
+                    CStatement::If {
+                        condition,
+                        then_branch,
+                        else_branch,
+                    } if &condition == proved_condition => {
+                        if value {
+                            *then_branch
+                        } else {
+                            *else_branch
+                        }
+                    }
+                    CStatement::While {
+                        condition,
+                        invariant,
+                        invariant_checks,
+                        effect_checks,
+                        body,
+                    } if &condition == proved_condition => {
+                        if value {
+                            let loop_head = CStatement::While {
+                                condition,
+                                invariant,
+                                invariant_checks,
+                                effect_checks,
+                                body: body.clone(),
+                            };
+                            prepend_proof_evidence_statement(*body, Some(loop_head))
+                        } else {
+                            CStatement::Skip
+                        }
+                    }
+                    _ => return None,
+                };
+                remaining = if matches!(selected, CStatement::Skip) {
+                    tail
+                } else {
+                    Some(prepend_proof_evidence_statement(selected, tail))
+                };
+                state = proved_state.clone();
+            }
+            CheckedExecutionEvent::Branch(branch) => {
+                if !branch.matches_source(&state, &next_statement, &tail) {
+                    return None;
+                }
+                let full_source = prepend_proof_evidence_statement(next_statement, tail.clone());
+                for arm_index in 0..2 {
+                    let arm_assumptions = branch.arm_facts(arm_index).assumptions();
+                    let arm = seal_proof_evidence_events(
+                        function,
+                        branch.arm_events(arm_index),
+                        state.clone(),
+                        Some(full_source.clone()),
+                        arm_assumptions,
+                        candidate,
+                    )?;
+                    if arm.completed.is_some()
+                        || arm.remaining != tail
+                        || !execution_evidence_states_match(
+                            function,
+                            &arm.state,
+                            branch.joined_state(),
+                            arm_assumptions,
+                        )
+                    {
+                        return None;
+                    }
+                }
+                state = branch.joined_state().clone();
+                remaining = tail;
+            }
+        }
+    }
+    Some(SealedProofEvidenceProgress {
+        state,
+        remaining,
+        completed,
+    })
+}
+
+/// Seals a proof-directed execution from the kernel theorems retained for its
+/// individual C transitions and exhaustive shared-continuation branches.
 ///
 /// This performs no C evaluation. It checks that each theorem names the next
 /// source operation, that theorem outcome states form one continuous path
 /// modulo definitionally equal resource representations, and that the final
 /// outcome is exactly the candidate published at the function frontier.
-/// Branch joins require their own typed evidence and deliberately return
-/// `None` until that evidence is available.
+/// Nested branch evidence is checked recursively and rejoins its common tail
+/// once, without flattening later execution into a family of path products.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn checked_c_function_execution_from_linear_evidence(
+pub(crate) fn checked_c_function_execution_from_proof_evidence(
     candidates: &CFunctionExecutionCandidates,
     checked_function: &CFunction,
     evidence: &[crate::kernel::proof::PersistentSequence<
@@ -1953,8 +2121,6 @@ pub(crate) fn checked_c_function_execution_from_linear_evidence(
     execution_semantics: CExecutionSemantics,
     mode: CFunctionContractExecutionMode,
 ) -> Option<CCheckedFunctionExecution> {
-    use crate::kernel::proof::CheckedExecutionEvent;
-
     if candidates.paths.len() != evidence.len()
         || !proof_evidence_function_refines_same_source(&candidates.function, checked_function)
     {
@@ -1976,133 +2142,16 @@ pub(crate) fn checked_c_function_execution_from_linear_evidence(
     }
     let mut sealed_paths = Vec::with_capacity(candidates.paths.len());
     for (candidate, trace) in candidates.paths.iter().zip(evidence) {
-        let mut state = c_function_entry_state(&candidates.state, function, &candidates.arguments)?;
-        let mut remaining = Some(function.body.clone());
-        let mut completed = None;
-        for event in trace.iter() {
-            if completed.is_some() {
-                return None;
-            }
-            let source = remaining.take()?;
-            let (next_statement, tail) = split_proof_evidence_statement(source);
-            match event {
-                CheckedExecutionEvent::Statement(theorem) => {
-                    if !proof_evidence_premises_are_retained(theorem, &assumptions, candidate) {
-                        return None;
-                    }
-                    let theorem_assumptions = proof_evidence_assumptions(theorem, &assumptions);
-                    let (proved_state, proved_statement, outcome) =
-                        match proof_evidence_conclusion(theorem) {
-                            Proposition::CStatementVerifies {
-                                state,
-                                statement,
-                                outcome,
-                            } => (state, statement, outcome),
-                            _ => return None,
-                        };
-                    if proved_statement != &next_statement
-                        || !execution_evidence_states_match(
-                            function,
-                            &state,
-                            proved_state,
-                            &theorem_assumptions,
-                        )
-                    {
-                        return None;
-                    }
-                    match outcome {
-                        CStatementOutcome::Normal(next_state) => {
-                            state = next_state.clone();
-                            remaining = tail;
-                        }
-                        CStatementOutcome::Return { .. }
-                        | CStatementOutcome::VerificationDiverges => {
-                            if tail.is_some() {
-                                return None;
-                            }
-                            completed = Some(outcome.clone());
-                        }
-                        CStatementOutcome::UndefinedBehavior(_)
-                        | CStatementOutcome::RuntimeError(_) => return None,
-                    }
-                }
-                CheckedExecutionEvent::Condition(theorem) => {
-                    if !proof_evidence_premises_are_retained(theorem, &assumptions, candidate) {
-                        return None;
-                    }
-                    let theorem_assumptions = proof_evidence_assumptions(theorem, &assumptions);
-                    let (proved_state, proved_condition, value) =
-                        match proof_evidence_conclusion(theorem) {
-                            Proposition::CConditionEvaluates {
-                                state,
-                                condition,
-                                outcome: CConditionOutcome::Value(value),
-                            } => (state, condition, *value),
-                            _ => return None,
-                        };
-                    if !execution_evidence_states_match(
-                        function,
-                        &state,
-                        proved_state,
-                        &theorem_assumptions,
-                    ) {
-                        return None;
-                    }
-                    let selected = match next_statement {
-                        CStatement::If {
-                            condition,
-                            then_branch,
-                            else_branch,
-                        } if &condition == proved_condition => {
-                            if value {
-                                *then_branch
-                            } else {
-                                *else_branch
-                            }
-                        }
-                        // A concretely stepped loop condition puts the body
-                        // and loop head back in front of the source tail. A
-                        // verified loop summary instead appears as one
-                        // statement theorem and takes the arm above.
-                        CStatement::While {
-                            condition,
-                            invariant,
-                            invariant_checks,
-                            effect_checks,
-                            body,
-                        } if &condition == proved_condition => {
-                            if value {
-                                let loop_head = CStatement::While {
-                                    condition,
-                                    invariant,
-                                    invariant_checks,
-                                    effect_checks,
-                                    body: body.clone(),
-                                };
-                                prepend_proof_evidence_statement(*body, Some(loop_head))
-                            } else {
-                                CStatement::Skip
-                            }
-                        }
-                        _ => return None,
-                    };
-                    remaining = if matches!(selected, CStatement::Skip) {
-                        tail
-                    } else {
-                        Some(prepend_proof_evidence_statement(selected, tail))
-                    };
-                    state = proved_state.clone();
-                }
-            }
-        }
-        let completed = completed?;
-        let statement_assumptions = proof_evidence_assumptions(
-            match trace.iter().last()? {
-                CheckedExecutionEvent::Statement(theorem)
-                | CheckedExecutionEvent::Condition(theorem) => theorem,
-            },
+        let events = trace.to_vec();
+        let progress = seal_proof_evidence_events(
+            function,
+            &events,
+            c_function_entry_state(&candidates.state, function, &candidates.arguments)?,
+            Some(function.body.clone()),
             &assumptions,
-        );
+            candidate,
+        )?;
+        let (completed, statement_assumptions) = progress.completed?;
         let (outcome, obligations) = c_function_outcome_from_statement_outcome(
             &candidates.state,
             function,

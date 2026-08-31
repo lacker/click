@@ -1309,7 +1309,7 @@ pub(super) fn finish_ordered_proof<'a>(
                             &proof_execution.presentation.post_execution_tactics,
                         )
                         && let Some(checked) =
-                            crate::kernel::checked_c_function_execution_from_linear_evidence(
+                            crate::kernel::checked_c_function_execution_from_proof_evidence(
                                 execution,
                                 function,
                                 &proof_execution.core.execution_evidence,

@@ -127,6 +127,11 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("`branch` source region did not contain a C `if`"));
         };
+        let branch_statement = CStatement::If {
+            condition: condition.clone(),
+            then_branch: then_branch.clone(),
+            else_branch: else_branch.clone(),
+        };
         let surface_condition = surface_at_snapshot(
             &surface_c_condition(&condition),
             &ProgramPointRef {
@@ -137,7 +142,8 @@ impl<'a> Proof<'a> {
         let (checked_condition_split, transitions) = certified_proof_condition_split(
             &current_state,
             &self.facts(),
-            &condition,
+            &branch_statement,
+            remaining.as_ref(),
             &format!(
                 "`{}` tactic {}: `branch`",
                 context.claim_label, context.tactic_index
@@ -1382,6 +1388,7 @@ impl<'a> Proof<'a> {
         continuation_index: usize,
         continuation_remaining: Option<Arc<CStatement>>,
         execution_start_state: CState,
+        checked_condition_split: CheckedBranchSplit,
         require_empty: bool,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
@@ -1404,6 +1411,24 @@ impl<'a> Proof<'a> {
             return Err(self.step_error("execution `branch` arms reached different C states"));
         }
         let mut execution = parent_execution.clone();
+        let [Some(then_theorem), Some(else_theorem)] =
+            [arms[0].condition_theorem, arms[1].condition_theorem]
+        else {
+            return Err(self.step_error("checked C branch join lost one of its condition theorems"));
+        };
+        execution
+            .core
+            .record_exhaustive_branch_join(
+                checked_condition_split,
+                parent_facts,
+                [then_theorem, else_theorem],
+                [arms[0].facts, arms[1].facts],
+                &parent_execution.core,
+                [&arms[0].execution.core, &arms[1].execution.core],
+            )
+            .map_err(|message| {
+                self.step_error(format!("checked C branch join rejected: {message}"))
+            })?;
         execution.core.has_empty_execution_branch_leaf |= arms
             .iter()
             .any(|arm| arm.execution.core.has_empty_execution_branch_leaf);
@@ -1606,6 +1631,7 @@ impl<'a> Proof<'a> {
             record.continuation_index,
             record.continuation_remaining.clone(),
             record.execution_start_state.clone(),
+            record.checked_condition_split.clone(),
             require_empty,
             arms,
         )?;

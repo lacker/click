@@ -99,12 +99,18 @@ fn empty_frontier_branch_uses_the_checked_structural_join() {
         }
     "#;
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     verify_c0_sources(click_source, &[("identity.c", c_source)]).unwrap_or_else(|error| {
         panic!(
             "empty frontier branch should retain and check its structural proof: {}",
             error.message()
         )
     });
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a shared-continuation C branch should seal from its retained arm evidence"
+    );
 }
 
 #[test]
@@ -218,6 +224,46 @@ fn terminal_frontier_branch_seals_without_a_body_rerun() {
         crate::kernel::take_checked_function_body_execution_count(),
         0,
         "terminal C branch proof and opaque certification should reuse the retained path evidence"
+    );
+}
+
+#[test]
+fn successive_shared_continuation_branches_seal_without_path_multiplication() {
+    let c_source = r#"
+        int32 two_branches(int32 x, int32 y) {
+            if (x < 0) {
+            } else {
+            }
+            if (y < 0) {
+            } else {
+            }
+            return x;
+        }
+    "#;
+    let click_source = r#"
+        verifying "two_branches.c";
+
+        int32 two_branches(int32 x, int32 y) {
+            ensures result == x;
+        } by {
+            branch { then {} else {} }
+            branch { then {} else {} }
+            step();
+            simp();
+        }
+    "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("two_branches.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "successive shared-continuation branches should retain a nested evidence node apiece: {}",
+            error.message()
+        )
+    });
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "successive joins should seal one continuation rather than flattening all path combinations"
     );
 }
 

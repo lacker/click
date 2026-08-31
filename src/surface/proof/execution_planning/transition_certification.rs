@@ -22,32 +22,42 @@ pub(in crate::surface::proof) fn certified_proof_condition_transitions(
     condition: &CExpression,
     context_label: &str,
 ) -> Result<Vec<CertifiedProofConditionTransition>, ClickError> {
-    certified_proof_condition_split(state, pure_facts, condition, context_label)
+    let branch = CStatement::If {
+        condition: condition.clone(),
+        then_branch: Box::new(CStatement::Skip),
+        else_branch: Box::new(CStatement::Skip),
+    };
+    certified_proof_condition_split(state, pure_facts, &branch, None, context_label)
         .map(|(_, transitions)| transitions)
 }
 
 pub(in crate::surface::proof) fn certified_proof_condition_split(
     state: &CState,
     pure_facts: &ProofFacts,
-    condition: &CExpression,
+    branch_statement: &CStatement,
+    continuation: Option<&CStatement>,
     context_label: &str,
 ) -> Result<(CheckedBranchSplit, Vec<CertifiedProofConditionTransition>), ClickError> {
-    let split = CheckedBranchSplit::check(state.clone(), condition.clone(), pure_facts).map_err(
-        |error| match error {
-            CheckedBranchSplitError::Limit(crate::kernel::ExecutionLimit::Deadline) => {
-                ClickError::new(format!(
-                    "verification budget exhausted inside {}",
-                    crate::instrumentation::deadline_context()
-                ))
-            }
-            CheckedBranchSplitError::Limit(limit) => ClickError::new(format!(
-                "{context_label} hit condition execution limit {limit:?}"
-            )),
-            CheckedBranchSplitError::InvalidEvidence => ClickError::new(format!(
-                "{context_label} received malformed checked condition evidence"
-            )),
-        },
-    )?;
+    let split = CheckedBranchSplit::check(
+        state.clone(),
+        branch_statement.clone(),
+        continuation.cloned(),
+        pure_facts,
+    )
+    .map_err(|error| match error {
+        CheckedBranchSplitError::Limit(crate::kernel::ExecutionLimit::Deadline) => {
+            ClickError::new(format!(
+                "verification budget exhausted inside {}",
+                crate::instrumentation::deadline_context()
+            ))
+        }
+        CheckedBranchSplitError::Limit(limit) => ClickError::new(format!(
+            "{context_label} hit condition execution limit {limit:?}"
+        )),
+        CheckedBranchSplitError::InvalidEvidence => ClickError::new(format!(
+            "{context_label} received malformed checked condition evidence"
+        )),
+    })?;
     let transitions = split
         .paths()
         .iter()

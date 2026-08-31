@@ -8215,9 +8215,19 @@ fn proof_condition_split_filters_conflicts_without_rebuilding_facts() {
         Box::new(CExpression::Value(int32(0))),
     );
     let empty = ProofFacts::default();
-    let (checked_split, unconstrained) =
-        certified_proof_condition_split(&state, &empty, &condition, "persistent condition split")
-            .expect("a symbolic comparison should expose both paths");
+    let branch = CStatement::If {
+        condition: condition.clone(),
+        then_branch: Box::new(CStatement::Skip),
+        else_branch: Box::new(CStatement::Skip),
+    };
+    let (checked_split, unconstrained) = certified_proof_condition_split(
+        &state,
+        &empty,
+        &branch,
+        None,
+        "persistent condition split",
+    )
+    .expect("a symbolic comparison should expose both paths");
     assert_eq!(unconstrained.len(), 2);
     let mut arm_theorems = [None, None];
     let mut arm_facts = [None, None];

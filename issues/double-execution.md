@@ -4,21 +4,23 @@
 
 The first migration slice is complete. The proof object now retains the kernel
 theorem for each checked statement and condition transition, and the kernel can
-seal a complete linear trace into the checked function execution consumed by
-claim and opaque-contract certification without executing the C body again.
+seal a complete trace, including nested shared-continuation branch evidence,
+into the checked function execution consumed by claim and opaque-contract
+certification without executing the C body again.
 Deterministic regressions require zero whole-body executions for ordinary
 grouped proofs, including a proof that carries an abstract resource predicate,
 for explicit C branches whose arms return directly from the function, for a
 bounded concretely stepped loop, and for a loop discharged by a verified loop
-summary.
+summary. Shared-continuation C joins now retain one kernel-checked nested event:
+the split owns the exact source `if` and tail, both arm deltas descend from the
+same persistent trace, and final sealing checks the two arms before resuming
+the continuation once. Successive joins therefore do not multiply paths.
 
 Unsupported evidence shapes deliberately retain the old independent check for
-now. Terminal C joins retain their already-aligned path traces; shared-
-continuation C joins still need a checked composition that collapses two arm
-histories into one common successor. The remaining slices are that composition,
-proof-level case partitions, post-execution resource folds and opens,
-and counted-population entry normalization. Once those are represented, the
-fallback and its cache can be removed rather than weakened piecemeal.
+now. Terminal C joins retain their already-aligned path traces. The remaining
+slices are proof-level case partitions, post-execution resource folds and
+opens, and counted-population entry normalization. Once those are represented,
+the fallback and its cache can be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim
@@ -112,12 +114,12 @@ Checking and storage are proportional to the evidence actually written in the
 two arms, and sequential joined branches remain linear in the proof rather
 than forming a Cartesian product.
 
-The checked-split foundation is implemented: branch entry retains every kernel
-condition path, including infeasible and error outcomes, and joins reject a
-different state, condition, fact root, unmet path prerequisite, arm polarity,
-theorem, or incomplete coverage. The remaining branch step is to retain both
-checked arm deltas inside one nested execution-evidence node and teach final
-sealing to consume that node at the common continuation.
+The shared-continuation composition is implemented. Branch entry retains every
+kernel condition path, including infeasible and error outcomes, and joins reject
+a different state, condition, fact root, unmet path prerequisite, arm polarity,
+theorem, or incomplete coverage. Both checked arm deltas are retained inside one
+nested execution-evidence node, and final sealing consumes that node at the
+common continuation without executing the C body.
 
 Proof-level case partitions need the same exhaustiveness boundary. A sealer
 must not accept an arbitrary subset of candidate indexes merely because each
