@@ -183,6 +183,45 @@ fn linear_frontier_branch_uses_the_checked_structural_join() {
 }
 
 #[test]
+fn terminal_frontier_branch_seals_without_a_body_rerun() {
+    let c_source = r#"
+        int32 choose_sign(int32 x) {
+            if (x < 0) {
+                return 1;
+            } else {
+                return 2;
+            }
+        }
+    "#;
+    let click_source = r#"
+        verifying "choose_sign.c";
+
+        int32 choose_sign(int32 x) {
+            ensures result == 1 or result == 2;
+        } by {
+            branch {
+                then { step(); }
+                else { step(); }
+            }
+            simp();
+        }
+    "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("choose_sign.c", c_source)]).unwrap_or_else(|error| {
+        panic!(
+            "terminal C branch should retain its checked path evidence: {}",
+            error.message()
+        )
+    });
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "terminal C branch proof and opaque certification should reuse the retained path evidence"
+    );
+}
+
+#[test]
 fn decided_frontier_branch_retains_the_only_feasible_checked_arm() {
     let c_source = r#"
         int32 constant_negative(int32 x) {

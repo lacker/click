@@ -7,13 +7,16 @@ theorem for each checked statement and condition transition, and the kernel can
 seal a complete linear trace into the checked function execution consumed by
 claim and opaque-contract certification without executing the C body again.
 Deterministic regressions require zero whole-body executions for ordinary
-grouped proofs, including a proof that carries an abstract resource predicate.
+grouped proofs, including a proof that carries an abstract resource predicate,
+and for explicit C branches whose arms return directly from the function.
 
 Unsupported evidence shapes deliberately retain the old independent check for
-now. The next slices are typed evidence for branch joins, proof-level case
-partitions, post-execution resource folds and opens, counted-population entry
-normalization, and loops. Once those are represented, the fallback and its
-cache can be removed rather than weakened piecemeal.
+now. Terminal C joins retain their already-aligned path traces; shared-
+continuation C joins still need a checked composition that collapses two arm
+histories into one common successor. The remaining slices are that composition,
+proof-level case partitions, post-execution resource folds and opens,
+counted-population entry normalization, and loops. Once those are represented,
+the fallback and its cache can be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim

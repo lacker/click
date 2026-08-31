@@ -1089,6 +1089,7 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
+        let mut execution_evidence = Vec::new();
         let mut outcome_provenance = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
             let completed = arm
@@ -1097,6 +1098,12 @@ impl<'a> Proof<'a> {
                 .frontier
                 .execution()
                 .expect("validated terminal arm is at function exit");
+            if completed.paths().len() != arm.execution.core.execution_evidence.len() {
+                return Err(self.step_error(format!(
+                    "{} terminal branch arm lost its checked execution evidence",
+                    if arm_index == 0 { "then" } else { "else" }
+                )));
+            }
             for (arm_path_index, path) in completed.paths().iter().enumerate() {
                 let mut path_facts = path.execution_facts();
                 for proposition in &arm.introduced_facts {
@@ -1115,6 +1122,8 @@ impl<'a> Proof<'a> {
                     })
                 {
                     paths.push((path.outcome().clone(), path_facts, obligations));
+                    execution_evidence
+                        .push(arm.execution.core.execution_evidence[arm_path_index].clone());
                     let mut provenance = arm.execution.provenance_for_outcome(arm_path_index);
                     if proof_case_split {
                         provenance.branch_decisions.push(ExecutionBranchDecision {
@@ -1150,6 +1159,7 @@ impl<'a> Proof<'a> {
         execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: outcomes,
         };
+        execution.core.execution_evidence = execution_evidence.into();
         execution.presentation.branch_decisions =
             parent_execution.presentation.branch_decisions.clone();
         execution.presentation.outcome_provenance = Arc::new(outcome_provenance);
