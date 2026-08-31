@@ -218,6 +218,8 @@ pub(in crate::surface::proof) fn kernel_standard_theorem_derivation_in_current_s
             | "int32_move_one_from_right_to_left_preserves_sum"
             | "int32_one_plus_below_max_is_defined"
             | "int32_one_plus_strictly_increases"
+            | "int32_increment_upper_bound"
+            | "int32_add_nonnegative_right_is_at_least_left"
             | "int32_lt_implies_le"
             | "int32_lt_le_transitive"
     ) {
@@ -290,6 +292,22 @@ pub(in crate::surface::proof) fn kernel_standard_theorem_derivation_in_current_s
                 ));
             };
             prove_int32_one_plus_strictly_increases(value.clone())
+        }
+        "int32_increment_upper_bound" => {
+            let [value, upper] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard ordering theorem has the wrong arity",
+                ));
+            };
+            prove_int32_increment_upper_bound(value.clone(), upper.clone())
+        }
+        "int32_add_nonnegative_right_is_at_least_left" => {
+            let [left, right] = terms.as_slice() else {
+                return Err(ClickError::new(
+                    "standard ordering theorem has the wrong arity",
+                ));
+            };
+            prove_int32_add_nonnegative_right_is_at_least_left(left.clone(), right.clone())
         }
         "int32_nonnegative_add_within_max_is_defined" => {
             let [value, amount] = terms.as_slice() else {
