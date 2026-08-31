@@ -20,4 +20,4 @@ when evidence exposes one.
 
 ## Other open issues: 1
 
-- [Owned-vector range-disjointness memo bypass](owned-vector-range-disjointness-memo-bypass.md)
+- [Owned-vector call-havoc crossing cache](owned-vector-call-havoc-crossing-cache.md)
