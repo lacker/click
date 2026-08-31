@@ -1311,6 +1311,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         && let Some(checked) =
                             crate::kernel::checked_c_function_execution_from_linear_evidence(
                                 execution,
+                                function,
                                 &proof_execution.core.execution_evidence,
                                 execution_start_assumptions.clone(),
                                 function_environment.clone(),

@@ -204,11 +204,59 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
             }
         "#;
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let verified = verify_c0_sources(click_source, &[("count_two.c", c_source)])
         .expect("small tactics should traverse concrete loop heads and iterations");
 
     assert_eq!(verified.len(), 1);
     assert_eq!(verified[0].proof_kind(), ProofKind::TacticScript);
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a concrete loop trace should seal without rerunning the function body"
+    );
+}
+
+#[test]
+fn verified_loop_summary_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 count_to_three() {
+                int32 i;
+                i = 0;
+                while (i < 3) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_three.c";
+
+            int32 count_to_three() {
+                ensures result == 3;
+            } by {
+                step();
+                step();
+                have i == 0 by {
+                    simp();
+                }
+                loop {
+                    invariant i >= 0;
+                    invariant i <= 3;
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("count_to_three.c", c_source)])
+        .expect("verified loop summary should retain its checked statement theorem");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a verified loop summary should seal without rerunning the function body"
+    );
 }
 
 #[test]

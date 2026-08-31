@@ -1895,6 +1895,22 @@ fn execution_evidence_states_match(
         )
 }
 
+fn proof_evidence_function_refines_same_source(original: &CFunction, checked: &CFunction) -> bool {
+    original.return_type() == checked.return_type()
+        && original.name() == checked.name()
+        && original.parameters() == checked.parameters()
+        && original.source_body() == checked.source_body()
+        && original.resource_requires() == checked.resource_requires()
+        && original.resource_ensures() == checked.resource_ensures()
+        && original.contract_requires() == checked.contract_requires()
+        && original.contract_ensures() == checked.contract_ensures()
+        && original.contract_mutable() == checked.contract_mutable()
+        && original.contract_claims() == checked.contract_claims()
+        && original.opaque_contract_supported() == checked.opaque_contract_supported()
+        && original.composite_resource_definitions() == checked.composite_resource_definitions()
+        && original.predicate_unfoldings() == checked.predicate_unfoldings()
+}
+
 fn split_proof_evidence_statement(statement: CStatement) -> (CStatement, Option<CStatement>) {
     match statement {
         CStatement::Seq(first, second) => {
@@ -1928,6 +1944,7 @@ fn prepend_proof_evidence_statement(statement: CStatement, tail: Option<CStateme
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn checked_c_function_execution_from_linear_evidence(
     candidates: &CFunctionExecutionCandidates,
+    checked_function: &CFunction,
     evidence: &[crate::kernel::proof::PersistentSequence<
         crate::kernel::proof::CheckedExecutionEvent,
     >],
@@ -1938,10 +1955,12 @@ pub(crate) fn checked_c_function_execution_from_linear_evidence(
 ) -> Option<CCheckedFunctionExecution> {
     use crate::kernel::proof::CheckedExecutionEvent;
 
-    if candidates.paths.len() != evidence.len() {
+    if candidates.paths.len() != evidence.len()
+        || !proof_evidence_function_refines_same_source(&candidates.function, checked_function)
+    {
         return None;
     }
-    let function = &candidates.function;
+    let function = checked_function;
     // Counted populations are materialized as contract-entry ghost state.
     // The transition theorems retain the resulting C states, but the direct
     // artifact does not yet retain the separate derivation that relates each
@@ -2115,7 +2134,7 @@ pub(crate) fn checked_c_function_execution_from_linear_evidence(
     }
     Some(CCheckedFunctionExecution {
         state: candidates.state.clone(),
-        function: candidates.function.clone(),
+        function: checked_function.clone(),
         arguments: candidates.arguments.clone(),
         assumptions,
         environment,
