@@ -86,6 +86,38 @@ Smart-tactic search may try more than one checked successor before selecting
 one, but ordinary verification does not currently run a mandatory second
 per-tactic certification pass for the selected successor. Keep that property.
 
+## Shared-continuation partition design
+
+A nonterminal branch must not remain as a flat family of every path through
+the rest of the function. Sequential two-way branches would otherwise grow
+that family exponentially even when every branch immediately rejoins the same
+state.
+
+Instead, branch entry should retain one kernel-issued condition-partition
+artifact tied to the exact checked fact context that created it. The artifact
+records the complete feasible condition outcomes; Surface code cannot assemble
+one from unrelated arm theorems. At the join, the kernel checks that:
+
+- the artifact belongs to the unchanged branch-root fact context;
+- every feasible outcome is represented exactly once by the matching arm;
+- each arm's evidence is an append-only delta from the same parent trace;
+- both deltas execute the selected source arm and reach the checked common
+  successor; and
+- no condition premise, arm path, or successor state is supplied only by
+  Surface bookkeeping.
+
+The result is one nested checked branch event appended to the parent trace,
+not two live continuation paths. Later statements append once after that node.
+Checking and storage are proportional to the evidence actually written in the
+two arms, and sequential joined branches remain linear in the proof rather
+than forming a Cartesian product.
+
+Proof-level case partitions need the same exhaustiveness boundary. A sealer
+must not accept an arbitrary subset of candidate indexes merely because each
+selected path checks independently; it may select groups only through a
+kernel-issued partition artifact proving that the groups collectively cover
+the parent context.
+
 ## Intended regression
 
 Add deterministic tests that reset the checked whole-function execution
