@@ -21,10 +21,12 @@ smart tactic searches by trying the same checked operations on persistent
 descendants of the current state. Search may rank candidates, abandon paths,
 or hit a budget; it succeeds only by producing a completed checked state.
 
-Internally, Click represents this persistent state and its checked transition
-history with a proof object. Cheap structural sharing lets a smart tactic try
-alternatives without copying the complete state. The proof object is an
-implementation model, not a separate artifact that proof authors manipulate.
+Internally, Click represents this persistent semantic state with a kernel proof
+object. Separate language-layer proof provenance records the
+surface-expressible operations that produced its checked successors. Cheap
+structural sharing lets a smart tactic try alternatives without copying the
+complete state. Neither object is a separate artifact that proof authors
+manipulate.
 
 Expansion can extract the surface-expressible operations attributed to a smart
 proof site and render them as an explicit proof. Click then verifies the

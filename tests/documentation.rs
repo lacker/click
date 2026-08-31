@@ -1029,8 +1029,6 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
         "canonical load variables",
         "canonical name",
         "canonical names",
-        "effect fact",
-        "effect facts",
         "memory dag",
         "proof frontier",
         "raw load",
@@ -1054,6 +1052,18 @@ fn canonical_documentation_terms_have_no_retired_aliases() {
                 continue;
             }
             let lower = text.to_ascii_lowercase();
+            let without_memory_effect_facts = lower
+                .replace("memory-effect facts", "")
+                .replace("memory-effect fact", "");
+            if without_memory_effect_facts.contains("effect fact") {
+                failures.push(format!(
+                    "{}:{}: qualify `effect fact` as `memory-effect fact` or use `execution fact`",
+                    path.strip_prefix(&docs)
+                        .expect("docs-relative path")
+                        .display(),
+                    line + 1
+                ));
+            }
             for alias in retired {
                 if lower.contains(alias) {
                     failures.push(format!(

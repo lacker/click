@@ -1,9 +1,10 @@
 # Proof objects
 
-Click's internal `Proof` object is the persistent checked representation of an
-evolving proof. It lets explicit tactics and smart search share one semantic
-transition boundary while retaining enough provenance to explain or expand the
-result.
+Click's kernel `ProofObject` is the persistent semantic representation of an
+evolving proof. The language-layer `Proof` wrapper pairs that opaque handle
+with source context and proof provenance. Together they let explicit tactics
+and smart search share one checked-transition boundary while keeping semantic
+authority separate from the record used to explain or expand the result.
 
 ## Persistent proof state
 

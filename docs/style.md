@@ -78,17 +78,21 @@ diagnostic.
   proof together with the dependencies needed to check it.
 - **Proof state** is the user-facing model of the current goals, facts,
   resources, and execution frontier.
-- A **proof object** is the internal persistent representation of proof state
-  and checked transition history. Use the term in Internals, not as an artifact
-  that proof authors manipulate.
+- A **proof object** is the kernel-owned persistent representation of semantic
+  proof state, open branches, and focus. **Proof provenance** is the separate
+  language-layer record of surface-expressible checked operations. Use both
+  terms in Internals, not as artifacts that proof authors manipulate.
 - A **certificate** is a surface-expressible explicit proof used as
   independently checkable output, especially by expansion. It is not a
   required intermediate artifact of ordinary verification.
-- A **certificate step** is one simple operation in that internal
-  serialization; a **simple tactic** is the Surface Click command that requests
-  the corresponding checked transition.
-- A **kernel derivation** is trusted typed evidence for a proposition or state
-  transition. Don't call a certificate or an evolving proof object a kernel
+- A **certificate step** is one explicit node in that internal serialization.
+  It may be a simple operation or a nested control structure, but never a smart
+  tactic; a **simple tactic** is a Surface Click command that requests one
+  deterministic checked operation.
+- A **kernel derivation** is standalone trusted typed evidence produced by a
+  kernel rule. A checked proof-object successor can also embody transition
+  authority without retaining a separate derivation value. Don't call a
+  certificate, proof provenance, or an evolving proof object a kernel
   derivation.
 - **Expansion** replaces smart proof source with an extracted explicit proof
   and verifies the complete rewritten source through ordinary verification.
@@ -98,6 +102,9 @@ diagnostic.
 - A **program point** is a location in C. An **execution frontier** combines
   one current program point with its symbolic state and pending continuations.
   Use *frontier* only as its short form.
+- A **proof branch** is one independently evolving open proof. A **C branch**
+  is source control flow with syntactic arms, and an **execution path** is one
+  symbolic route through C. Do not use these terms interchangeably.
 - A **visit** is one execution path's arrival at a program point. A
   **snapshot** is immutable symbolic state retained from a selected visit; a
   **snapshot selector** names it using a program point or proof-local mark.
@@ -110,9 +117,10 @@ diagnostic.
 - A **load term** reads one memory snapshot. Its **load variable** is the
   canonical form shared across derivation steps that don't write the cell.
   Crossing a write requires explicit **fact transport**, not a snapshot bridge.
-- An **execution fact** is produced while symbolically executing a path. Use
-  this term instead of *effect fact*, which is easily confused with contract
-  effects.
+- An **execution fact** is produced while symbolically executing a path. A
+  **memory-effect fact** is the retained subset that carries mutation, free, or
+  transport evidence. Use the qualified term; bare *effect fact* is easily
+  confused with a contract effect.
 - A **memory derivation DAG** records how memory snapshots were produced. Don't
   shorten this to *memory DAG* in explanatory prose.
 

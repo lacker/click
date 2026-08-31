@@ -20,9 +20,9 @@ will have exactly the names used here.
   should be replaceable by a sequence of simple tactics when it succeeds.
   Smart search is best-effort and incomplete; the simple tactic language, not
   automatic discovery, is the proof-expressivity boundary.
-- A **control-flow tactic** creates proof scopes or subgoals in which other
-  tactics run. Structurally, this includes `have`, proof-level `if`, `branch`,
-  and `loop`. Timing and expansion additionally give the selectable `have` source
+- A **control tactic** creates proof scopes or branches in which other tactics
+  run. Structurally, this includes `have`, `open`, proof-level `if`, `cases`,
+  `branch`, and `loop`. Timing and expansion additionally give the selectable `have` source
   occurrence the class of its supported body: SMART, SIMPLE, or CONTROL.
 - A **pure proof** derives a proposition without a symbolic C state.
 - A **fixed-state proof** reasons against one fixed symbolic C state. It has no

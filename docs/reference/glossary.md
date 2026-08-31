@@ -15,19 +15,23 @@ input and a **premise** when a particular rule consumes it.
 
 The proof artifacts are also distinct. A **proof clause** contains source
 syntax, usually a **proof script**. Checking advances the **proof state**
-through checked operations; internally, a persistent **proof object** retains
-that state and its transition history. Expansion can serialize part of that
-history as an explicit proof, sometimes called a **certificate**. **Kernel
-derivations** are the trusted evidence underlying checked transitions.
+through checked transitions. Internally, the kernel's persistent **proof
+object** owns that semantic state, its branches, and its focus; separate
+**proof provenance** records the surface-expressible operations that produced
+checked successors. Expansion can serialize selected provenance as an explicit
+proof, sometimes called a **certificate**. Some kernel rules also produce typed
+**kernel derivations** as standalone proof authority.
 
 For execution, a **program point** is a static location in the C function, and
 a **visit** is one path's arrival there. An **execution frontier** combines one
 current program point with its symbolic state and pending continuations. A
-branch's **arms** may create several path-local frontiers, one for each feasible
-**execution path**; continuing arms join at a shared **continuation**. A
-**snapshot** is immutable symbolic state retained from a selected visit; an
-**outcome** is a completed path with its final state, while a **result** is only
-the value returned by that path.
+**proof branch** is one independently evolving open proof and can own one such
+frontier. A **C branch** has syntactic **arms** that may lead to distinct
+**execution paths**; an explicit frontier-local branch proof can join its
+continuing arms at a shared **continuation**. A **snapshot** is immutable
+symbolic state retained from a selected visit; a successful returning
+**outcome** contains its final state, while a **result** is only its returned
+value.
 
 ## A
 
@@ -46,8 +50,10 @@ A pointer or reference that can designate storage also designated by another
 ### Ambient fact
 
 A fact available in the current proof context but not named as an explicit
-premise of the current tactic. Smart tactics may search ambient facts; a simple
-tactic uses only the facts its surface form selects.
+premise of the current tactic. Smart tactics may search ambient facts. A simple
+tactic can instead make only the deterministic, rule-specific ambient lookups
+documented for that operation; forms with `using` name their premises
+explicitly.
 
 ### Antecedent
 
@@ -62,8 +68,9 @@ the `else` arm. An arm can produce zero or more feasible execution paths.
 
 ### Assumption
 
-A proposition temporarily available as true in a proof context. A contract
-  requirement becomes an assumption when Click verifies the function body.
+A proposition temporarily available as true in a proof context. A proposition
+requirement becomes an assumption when Click verifies the function body; a
+resource requirement instead becomes a held resource fact.
 
 ### Audit
 
@@ -118,10 +125,18 @@ Search stopped by deterministic work budgets. Failure to find a proof within
 
 ### Branch
 
-One path created by a conditional or by proof case analysis. Branches carry
-  path-specific facts and must satisfy the required join conditions.
+A general split into alternatives. Prefer [proof branch](#proof-branch) for an
+open proof, [C branch](#c-branch) for source control flow, and [execution
+path](#execution-path) for one symbolic route through C.
 
 ## C
+
+### C branch
+
+A C control-flow construct with syntactic arms, such as an `if` statement.
+Crossing a C branch does not by itself mean that an ordinary `step()` forks the
+proof object: `step()` requires enough information to select one arm, while the
+explicit `branch` control tactic proves and joins every feasible arm.
 
 ### C fragment
 
@@ -162,16 +177,27 @@ not be materialized during ordinary verification.
 
 ### Certificate step
 
-One explicit surface-expressible operation in the internal certificate
-serialization. `ProofStep` is the implementation type; it has no smart-tactic
-variant. The corresponding checked transition, not the serialized step by
-itself, advances the proof state.
+One explicit surface-expressible node in the internal certificate
+serialization. `ProofStep` is the implementation type; it has simple-operation
+variants and nested control variants, but no smart-tactic variant. The checked
+operations represented by the node, not the serialization by itself, advance
+the proof state.
 
 ### Certification
 
-Independently checked construction of the kernel authority needed to accept a
-claim, contract, or transition. Planning can propose evidence, but certification
-reconstructs or validates it without trusting the planner's success result.
+Independent kernel checking that assembles the authority needed to accept a
+complete function contract and install its opaque call rule. Contract
+certification rechecks the exact function, claims, paths, and prerequisites; it
+is the separately measured `CERTIFICATION` phase. Ordinary simple and smart
+tactics do not advance through a separate plan-then-certify pass: both use checked
+proof-object transitions directly.
+
+### Checked transition
+
+A kernel-validated operation from one immutable proof state to a successor.
+The successor itself is semantic authority that the operation was accepted.
+Some rules additionally return a standalone kernel derivation, but every
+transition need not retain a separate derivation value.
 
 ### Claim
 
@@ -232,10 +258,12 @@ Evidence that the current assumptions cannot all hold, such as exact facts `P`
 and `not P`. From a contradiction, any proposition follows; the
 `contradiction` tactic records the conflicting evidence explicitly.
 
-### Control-flow tactic
+### Control tactic
 
-A tactic that follows or structures C execution, such as `if`, `branch`, or
-  `loop`. See [Tactics](tactics/index.md).
+A tactic that owns nested proof structure, such as `have`, `open`, `if`,
+`cases`, `branch`, or `loop`. A control tactic may create scopes, split proof
+branches, or join C branch arms; it is not necessarily C control flow. See
+[Tactics](tactics/index.md).
 
 ## D
 
@@ -268,9 +296,10 @@ each feasible disjunct.
 
 ### Effect
 
-A contract clause that describes what a function may change in memory or in
-an abstract resource. Body verification proves the implementation stays inside
-that effect; callers use the checked effect as the change boundary.
+A contract clause that bounds what a function may change in memory. Body
+verification proves the implementation stays inside that memory effect;
+callers use it as the change boundary. Abstract-resource transfer is described
+separately by resource requirements and guarantees.
 
 ### Elaboration
 
@@ -287,8 +316,9 @@ larger range can entail access to a covered subrange.
 
 A pure fact produced or certified while symbolically executing one path. The
 `ExecutionPureFact` representation can also record whether the fact is public,
-which store produced it, or how it was transported. Some implementation fields
-historically call these *effect facts*; use *execution fact* in prose.
+which store produced it, or how it was transported. A [memory-effect
+fact](#memory-effect-fact) is a specific retained subset of execution facts,
+not a synonym for the whole collection.
 
 ### Execution frontier
 
@@ -311,7 +341,7 @@ proof](#fixed-state-proof), which can reason about C state without advancing it.
 ### Expansion
 
 Replacement of smart proof syntax with an explicit proof extracted from its
-checked transition history. Click verifies the complete rewritten source. See
+proof provenance. Click verifies the complete rewritten source. See
 [Expansion](../concepts/expansion.md).
 
 ## F
@@ -330,16 +360,26 @@ the `transport` tactic can select additional explicit evidence.
 
 ### Focus
 
-The open goal selected for the next proof operation. Focusing changes which
-goal a tactic addresses; it does not make an unproved proposition available as
-a fact.
+The open proof branch and goal selected for the next proof operation. Focusing
+selects that branch's local facts and semantic state but does not alter them or
+make an unproved proposition available as a fact.
+
+### Fixed-state proof
+
+An internal C-aware proof that reasons against one fixed symbolic C state. It
+can refine propositions or logical resources but does not advance C execution.
+Mid-execution `have` proofs and result-aware outcome proofs are fixed-state
+proofs with different available data. Contrast with a pure theorem proof,
+which has no symbolic C state, and an execution proof, which advances a
+frontier.
 
 ### Fold
 
 To replace an exposed composite-resource body with its named form. Folding
-consumes the required body facts and resources and produces the composite
-resource fact. Predicates can be unfolded but don't have a corresponding
-surface `fold` operation.
+checks the required pure body facts, consumes the contained resource facts, and
+produces the composite resource fact. The pure facts remain available.
+Predicates can be unfolded but don't have a corresponding surface `fold`
+operation.
 
 ### Footprint
 
@@ -370,9 +410,11 @@ in a partial run.
 ### Ghost state
 
 Proof-only state that doesn't exist in the executable C program. Click calls
-this *spec state* and currently represents it through immutable spec terms,
-proof-local witnesses, snapshots, and logical resources rather than arbitrary
-mutable ghost variables. See [Spec state](../concepts/spec-state.md).
+this *spec state* in public documentation and currently represents it through
+immutable spec terms, proof-local witnesses, snapshots, and logical resources
+rather than arbitrary mutable ghost variables. Some internal implementation
+names still use the conventional word *ghost*. See [Spec
+state](../concepts/spec-state.md).
 
 ### Goal
 
@@ -420,15 +462,18 @@ A proposition or resource condition that holds initially and is preserved by
 
 ### Join
 
-The operation that reconciles multiple symbolic paths into a state suitable
-for following common control flow.
+The operation that reconciles the continuing arms of an explicit C branch into
+a frontier suitable for following their shared continuation. Proof-level `if`
+at an execution frontier instead leaves separate proof branches that continue
+independently to completion.
 
 ## K
 
 ### Kernel
 
 The trusted checker and semantic core that validates proof transitions and
-  produces typed evidence. See [Kernel](../internals/kernel.md).
+produces opaque checked successors or typed evidence. See
+[Kernel](../internals/kernel.md).
 
 ### Kernel Click
 
@@ -438,9 +483,10 @@ Click's internal, explicit representation after validation and lowering.
 ### Kernel derivation
 
 A typed theorem, proof tree, or transition evidence produced by a trusted
-kernel rule and naming the exact premises it used. Checked proof operations
-construct or validate these derivations; they don't trust the planner that
-selected an operation.
+kernel rule and naming the exact premises it used. Rules that consume a kernel
+derivation validate its conclusion and premises directly. Other checked proof
+operations can embody their authority in an opaque proof-object successor
+without retaining a standalone derivation value.
 
 ### Kernel variable
 
@@ -498,10 +544,11 @@ Markdown. The gate verifies mdtests with deterministic bounds.
 
 ### Memory block
 
-The allocation identity at the base of a kernel pointer. Two pointers in
-different blocks cannot alias; offsets locate ranges and cells within one
-block. Stack objects, heap allocations, and symbolic external storage receive
-distinct block identities.
+A storage-identity component of a kernel pointer. Two pointers in different
+blocks cannot alias; offsets locate ranges and cells within one block. Definite
+stack objects and fresh heap allocations receive distinct block identities.
+Potentially aliasing external argument pointers share an external block and
+use symbolic offsets until facts prove how they relate.
 
 ### Memory cell
 
@@ -516,6 +563,14 @@ snapshots to the operations that produced them, such as stores, declarations,
 and call havoc. It supports bounded reasoning about whether a cell changed.
 See [Memory derivation DAG](../internals/memory-dag.md).
 
+### Memory-effect fact
+
+An execution fact retained specifically as evidence about a memory transition,
+such as a mutation summary, a completed free, or theorem-backed fact transport.
+These facts survive the public-execution-fact projection because later frame
+and transport checks need their provenance. They are a subset of execution
+facts, not contract effect clauses.
+
 ### Memory range
 
 A contiguous half-open region of a memory block. Surface ranges use element
@@ -524,11 +579,12 @@ kernel `CMemoryRange`.
 
 ### Memory snapshot
 
-An immutable, interned `CMemory` value representing memory in one symbolic
-state. A program-point snapshot contains a complete symbolic C
-state; its memory component is a memory snapshot. Kernel memory-valued terms
-and memory-load terms can carry this value, but the snapshot itself is a
-semantic value rather than a source expression.
+An immutable `CMemory` value representing memory in one symbolic state. A
+program-point snapshot contains a complete symbolic `CState`, whose memory
+component is structurally shared but is not itself necessarily an interned
+handle. When memory is embedded in a load term or the memory derivation DAG,
+Click uses an interned `SharedCMemory` handle. Both are semantic values rather
+than source expressions.
 
 ### Modus ponens
 
@@ -557,6 +613,13 @@ requires justification. Some execution obligations may become path assumptions
 when the rule permits it; a verification condition is explicitly
 non-assumable.
 
+### Observe
+
+To project the declared non-consuming view and immediate pure facts of one
+held composite resource while leaving the composite folded. A derived resource
+view records which owned resource supports it, so consuming that support also
+removes the projection.
+
 ### `old`
 
 A snapshot form that evaluates its subject in function-entry state rather
@@ -569,11 +632,21 @@ verified contract without re-executing its body at the call site; an opaque
 predicate or resource keeps its body unavailable until an explicit rule
 exposes it.
 
+### Open
+
+To expose one composite-resource body inside a nested proof scope and require
+that body to be foldable again when the scope closes. `open` provides scoped
+access; unlike `unfold`, it does not leave the body exposed after the nested
+proof completes.
+
 ### Outcome
 
-One completed symbolic execution path together with its final state and, for a
-returning path, its result value. A function can have several feasible
-outcomes. The result is only the returned value, not the whole outcome.
+One result of symbolic execution. A successful returning function outcome
+contains its final state and result value. Kernel evaluation can also report a
+diverging verification outcome, undefined behavior, or a runtime/model error;
+successful verification rejects the latter two. A function can have several
+feasible returning outcomes. The result is only the returned value, not the
+whole outcome.
 
 ### Ownership
 
@@ -599,15 +672,6 @@ by choosing a branch arm. The opposite arm receives the opposite polarity.
 Memory-access authority granted by a viewed or owned memory resource fact. A
 viewed fact permits reads; an owned fact permits reads and writes. Permission
 is the meaning of those memory resources, not a separate proof-state store.
-
-### Fixed-state proof
-
-An internal C-aware proof that reasons against one fixed symbolic C state. It
-can refine propositions or logical resources but does not advance C execution.
-Mid-execution `have` proofs and result-aware outcome proofs are fixed-state
-proofs with different available data. Contrast with a pure theorem proof,
-which has no symbolic C state, and an execution proof, which advances a
-frontier.
 
 ### Population
 
@@ -657,6 +721,13 @@ stage for either kind of language, not a synonym for *program language*.
 
 Evidence that every goal generated by a claim is valid under its assumptions.
 
+### Proof branch
+
+One independently evolving open proof inside a proof object. A branch owns one
+current obligation and its branch-local facts and semantic state. Explicit
+proof case analysis or structural C branching can replace one branch with
+sibling branches; completing or joining them retires those branch identities.
+
 ### Proof clause
 
 The `by ...` source attached to a theorem, contract claim, effect, or loop
@@ -667,7 +738,10 @@ proof script.
 
 The facts, resources, local bindings, selected snapshots, and structural data
 available to a proof operation. An *assumption context* or *fact context* is a
-narrower internal index over the proposition facts in that context.
+narrower internal index over the proposition facts in that context. The Rust
+type currently named `ProofContext` is narrower still: it is a language-layer
+checking environment attached outside the kernel proof state, not this entire
+logical context.
 
 ### Proof mark
 
@@ -677,17 +751,24 @@ location in Click source.
 
 ### Proof object
 
-The internal persistent representation that owns open goals, semantic state,
-and checked successor transitions during proof construction. Cheap structural
-sharing lets smart tactics search alternatives efficiently. Proof authors
-interact with the [proof state](#proof-state), not with this implementation
-object. Kernel evidence types are called [kernel derivations](#kernel-derivation)
-in prose.
+The kernel-owned persistent representation of open proof branches, semantic
+state, and focus during proof construction. Each checked transition returns a
+new proof object that structurally shares unchanged state with its ancestor.
+Surface-language context and proof provenance live outside the kernel handle.
+Proof authors interact with the [proof state](#proof-state), not with this
+implementation object.
+
+### Proof provenance
+
+The language-layer record of which surface-expressible checked operations lead
+from one proof object to a successor. Provenance can be filtered by source
+occurrence and serialized as a certificate for expansion. It describes a
+checked transition lineage but is not semantic state or proof authority.
 
 ### Proof script
 
 An ordered Surface Click tactic block inside a proof clause. A script can mix
-simple, smart, and control-flow tactics. An expanded script containing only
+simple, smart, and control tactics. An expanded script containing only
 surface-expressible checked operations can serve as a certificate.
 
 ### Proof site
@@ -768,6 +849,13 @@ A group of related resources governed by one algebra for validity, entailment,
 composition, splitting, core views, and consumption. Memory resources are the
 main built-in family; declared resources use exact-match family rules.
 
+### Resource projection
+
+A derived viewed resource fact supported by one held resource, normally an
+owned composite or memory resource. The resource context indexes projections
+by their exact support so consuming that support removes only its projections,
+without scanning unrelated resources.
+
 ### Result
 
 The value returned by one successful C execution outcome and referenced as
@@ -808,9 +896,9 @@ A `.click` file associated with existing C source. It adds specifications and
 ### Simple tactic
 
 A deterministic proof-state operation checked directly without heuristic
-planning or search and retained in the proof object's provenance. Its checking
-must be fast and output-sensitive, using indexed ambient context rather than
-scanning unrelated state. See [Smart and simple
+planning or search. Its accepted surface operation is retained in separate
+proof provenance. Checking must be fast and output-sensitive, using indexed
+ambient context rather than scanning unrelated state. See [Smart and simple
 tactics](../concepts/smart-and-simple-tactics.md).
 
 ### Smart tactic
@@ -907,10 +995,10 @@ A proof-script command that requests a transition of the current proof state.
 
 ### Term
 
-A Kernel Click expression denoting a symbolic value: a constant, a
-  variable, arithmetic over other terms, or a memory load from a snapshot.
-  Symbolic execution, lowering, and contract evaluation each produce terms,
-  and different terms can denote one value.
+A typed Kernel Click semantic value. Terms include scalar constants,
+variables, arithmetic, pointers, memory loads, complete memory or C states, and
+execution outcomes. Symbolic execution, lowering, and contract evaluation each
+produce terms, and different scalar terms can denote one value.
 
 ### Termination
 
@@ -920,14 +1008,17 @@ for supported loops and recursive calls.
 
 ### Theorem
 
-A named proposition with a checked proof that can be applied in later proofs.
+A proposition with checked proof authority. A Surface Click theorem declaration
+gives such a proposition a name for later application. The kernel `Theorem`
+type is an opaque authority value and need not itself carry a source-level
+name.
 
 ### Theory prover
 
 A checked decision or derivation procedure for one logical domain, such as
 bitvector arithmetic, orders, equality, or memory separation. It is distinct
-from the smart planner: a theory result is accepted only through kernel rules
-and checked evidence.
+from the smart planner: the trusted kernel either validates its selected
+evidence or performs the deterministic domain check directly.
 
 ### Trusted computing base
 
@@ -944,9 +1035,10 @@ A C operation for which the modeled language assigns no valid program
 
 ### Unfold
 
-To replace one named predicate or composite resource with one layer of its
-body. Unfolding a resource consumes the composite fact and exposes its immediate
-body facts and resources; it doesn't recursively expose every nested layer.
+To expose one definition layer of a named predicate, a pure-function
+application, or a composite resource. Unfolding a resource consumes the
+composite resource fact and exposes its immediate pure facts and contained
+resources; it doesn't recursively expose every nested layer.
 
 ## V
 

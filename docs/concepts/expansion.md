@@ -6,9 +6,9 @@ explicit proof script without changing the claim being proved.
 
 The workflow is:
 
-1. Verify the target and retain the checked transition history attributed to
-   the selected smart proof site.
-2. Extract the surface-expressible explicit operations from that history.
+1. Verify the target and retain the proof provenance attributed to the
+   selected smart proof site.
+2. Extract the surface-expressible explicit operations from that provenance.
 3. Render the operations as Surface Click.
 4. Replace the selected proof site in output or in place.
 5. Verify the complete rewritten source through the ordinary verification

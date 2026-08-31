@@ -5,8 +5,8 @@ after ordinary verification succeeds, or while diagnosing an unexpected
 timeout. A profile of a non-verifying target is an incomplete frontier, not a
 normal optimization baseline.
 
-The report separates smart-tactic work, simple-tactic checking, and
-control-flow proof work. Thresholds filter categories for readability; they do
+The report separates smart-tactic work, simple-tactic checking, and nested
+control-tactic work. Thresholds filter categories for readability; they do
 not change whether a proof is valid. The total elapsed time also includes work
 that can't be charged cleanly to a single displayed site.
 

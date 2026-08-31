@@ -1,7 +1,7 @@
 # Proof tactics
 
 This page is the reference inventory for Click's proof language. A tactic is
-either **smart**, **simple**, or **control flow**:
+either **smart**, **simple**, or **control**:
 
 - Smart tactics may inspect ambient facts, choose premises, split paths, or
   search for a proof. They are the tactics that `click profile` may recommend
@@ -11,7 +11,7 @@ either **smart**, **simple**, or **control flow**:
   an input to the operation, as it is for `step()`. They are the leaves emitted
   by `click expand` and must be fast and output-sensitive: their work may scale
   with relevant input and produced state, but not unrelated ambient state.
-- Control-flow tactics contain or join proof scripts. Their descendants, not
+- Control tactics contain, scope, split, or join proof scripts. Their descendants, not
   the container itself, determine whether an expanded proof is simple.
 
 `by auto;` and an omitted proof clause invoke the default orchestrator. They
@@ -171,7 +171,7 @@ complete rewritten surface proof through the ordinary entry point.
 | `transport(P, Q) using { R; ... }` | simple | Derive target proposition `Q` from exact source `P` using only the listed snapshot and frame evidence. | An absent source, mismatched target, or insufficient evidence fails. Click checks that transport only; expansion is unchanged, and profiling charges the named evidence. | [`field_derived_precise_effect_after_metadata_write.md`](https://github.com/lacker/click/blob/master/mdtests/field_derived_precise_effect_after_metadata_write.md) |
 | `unfold(name)` | simple | Replace an exact predicate fact, or a current predicate goal, with one definition-body layer. | An unknown predicate, absent fact, or inapplicable goal fails. Click opens exactly the named predicate layer; expansion is unchanged, and profiling charges the produced proposition. | [`sorted_predicate.md`](https://github.com/lacker/click/blob/master/mdtests/sorted_predicate.md) |
 | `unfold(resource(args))` | simple | Replace the exact held composite resource with one supported body layer. | An unknown or absent resource, bodyless definition, or undecided guard fails. Click opens exactly one resource layer; expansion is unchanged, and profiling charges the produced body. | [`composite_resource_composes_token.md`](https://github.com/lacker/click/blob/master/mdtests/composite_resource_composes_token.md) |
-| `fold(resource)` | simple | Consume explicit current body facts and resources and produce the named composite resource. | A missing body member, false body fact, or undecided guard fails. Click folds exactly the named resource; expansion is unchanged, and profiling charges its body. | [`composite_resource_composes_token.md`](https://github.com/lacker/click/blob/master/mdtests/composite_resource_composes_token.md) |
+| `fold(resource)` | simple | Check the exact current pure body facts, consume the contained resource facts, and produce the named composite resource. Pure facts remain available. | A missing body member, false body fact, or undecided guard fails. Click folds exactly the named resource; expansion is unchanged, and profiling charges its body. | [`composite_resource_composes_token.md`](https://github.com/lacker/click/blob/master/mdtests/composite_resource_composes_token.md) |
 | `observe(resource)` | simple | Keep a held composite folded while projecting its declared non-consuming view and immediate facts. | An absent resource or unsupported projection fails; owned contained resource facts never leak. Click performs one projection layer, expansion is unchanged, and profiling charges that layer. | [`composite_resource_folded_nested_fact_projection.md`](https://github.com/lacker/click/blob/master/mdtests/composite_resource_folded_nested_fact_projection.md) |
 | `close_invariants()` | simple | At a loop back edge, discharge the explicit invariant bundle and finish the preservation transition. | Any missing invariant fact or resource fails. Click checks the bundle exactly; expansion is unchanged, and profiling charges the explicit invariants. | [`c_decreases_loop.md`](https://github.com/lacker/click/blob/master/mdtests/c_decreases_loop.md) |
 

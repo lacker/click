@@ -319,7 +319,7 @@ are told apart by shape: example projects win whenever a Click sidecar is found
 under the directory, so their `README.md` files are not mistaken for mdtests.
 
 The defaults report smart tactics at 2 seconds, simple tactics at
-500 milliseconds, control-flow containers at 6 seconds, and stop each project
+500 milliseconds, control-tactic containers at 6 seconds, and stop each project
 after 30 seconds. Override them with `--smart-threshold`,
 `--simple-threshold`, `--control-threshold`, and `--time-limit`;
 `--threshold` is shorthand for setting all three class thresholds equally.

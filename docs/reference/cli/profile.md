@@ -24,7 +24,7 @@ its own deadline and report.
 | --- | ---: | --- |
 | `--smart-threshold DURATION` | `2s` | Report a completed smart tactic in a verified proof as an expansion candidate. |
 | `--simple-threshold DURATION` | `500ms` | Report a slow simple tactic as a verifier performance defect. |
-| `--control-threshold DURATION` | `2s` | Report a slow control-flow container and its nested work. |
+| `--control-threshold DURATION` | `2s` | Report a slow control-tactic container and its nested work. |
 | `--threshold DURATION` | none | Set all three tactic-class thresholds together. It cannot be combined with a class-specific threshold. |
 | `--time-limit DURATION` | `30s` | Set the wall-clock limit for each project. |
 | `--top COUNT` | `8` | Limit each function and claim attribution ranking to a positive number of rows. |

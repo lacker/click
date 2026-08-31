@@ -22,7 +22,7 @@ Use the [technical reference](reference/index.md) to look up exact behavior:
 - [Language](reference/language/index.md) documents Surface Click and the
   supported C0 subset.
 - [Tactics](reference/tactics/index.md) inventories the proof operations and
-  identifies simple, smart, and control-flow forms.
+  identifies simple, smart, and control forms.
 - [Command-line interface](reference/cli/index.md) documents verification,
   profiling, expansion, and auditing.
 - [Standard library](reference/library/index.md) documents every public symbol

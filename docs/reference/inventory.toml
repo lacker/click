@@ -1871,8 +1871,8 @@ id = "glossary.contract"
 path = "reference/glossary.md#contract"
 
 [[item]]
-id = "glossary.control-flow-tactic"
-path = "reference/glossary.md#control-flow-tactic"
+id = "glossary.control-tactic"
+path = "reference/glossary.md#control-tactic"
 
 [[item]]
 id = "glossary.definedness"
@@ -2437,3 +2437,35 @@ path = "reference/glossary.md#certification"
 [[item]]
 id = "glossary.materialization"
 path = "reference/glossary.md#materialization"
+
+[[item]]
+id = "glossary.c-branch"
+path = "reference/glossary.md#c-branch"
+
+[[item]]
+id = "glossary.checked-transition"
+path = "reference/glossary.md#checked-transition"
+
+[[item]]
+id = "glossary.memory-effect-fact"
+path = "reference/glossary.md#memory-effect-fact"
+
+[[item]]
+id = "glossary.observe"
+path = "reference/glossary.md#observe"
+
+[[item]]
+id = "glossary.open"
+path = "reference/glossary.md#open"
+
+[[item]]
+id = "glossary.proof-branch"
+path = "reference/glossary.md#proof-branch"
+
+[[item]]
+id = "glossary.proof-provenance"
+path = "reference/glossary.md#proof-provenance"
+
+[[item]]
+id = "glossary.resource-projection"
+path = "reference/glossary.md#resource-projection"
