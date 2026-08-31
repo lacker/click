@@ -34,10 +34,13 @@ regression; a focused kernel test covers dependent indexed ranges in compact
 resource compositions.
 
 The next bounded blocker is `arena_write`. Its unfolded local execution proof
-can perform the indexed store and restore the region resource, but
-whole-function certification currently fails to reproduce that resource path.
-Reduce that mismatch before adding more arena operations. Do not add redundant
-accessor preconditions or weaken the mutable footprint to route around it.
+can perform the indexed store and restore the region resource, but the hidden
+second whole-function execution currently fails to reproduce that resource
+path. This is now tracked as the general
+[double-execution issue](double-execution.md): retain the proof object's typed
+execution evidence rather than teaching a second executor to imitate its
+resource representation. Do not add redundant accessor preconditions or
+weaken the mutable footprint to route around it.
 
 ## Violated invariant
 
