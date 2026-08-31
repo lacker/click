@@ -112,6 +112,13 @@ Checking and storage are proportional to the evidence actually written in the
 two arms, and sequential joined branches remain linear in the proof rather
 than forming a Cartesian product.
 
+The checked-split foundation is implemented: branch entry retains every kernel
+condition path, including infeasible and error outcomes, and joins reject a
+different state, condition, fact root, unmet path prerequisite, arm polarity,
+theorem, or incomplete coverage. The remaining branch step is to retain both
+checked arm deltas inside one nested execution-evidence node and teach final
+sealing to consume that node at the common continuation.
+
 Proof-level case partitions need the same exhaustiveness boundary. A sealer
 must not accept an arbitrary subset of candidate indexes merely because each
 selected path checks independently; it may select groups only through a

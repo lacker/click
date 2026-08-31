@@ -8215,14 +8215,52 @@ fn proof_condition_split_filters_conflicts_without_rebuilding_facts() {
         Box::new(CExpression::Value(int32(0))),
     );
     let empty = ProofFacts::default();
-    let unconstrained = certified_proof_condition_transitions(
-        &state,
-        &empty,
-        &condition,
-        "persistent condition split",
-    )
-    .expect("a symbolic comparison should expose both paths");
+    let (checked_split, unconstrained) =
+        certified_proof_condition_split(&state, &empty, &condition, "persistent condition split")
+            .expect("a symbolic comparison should expose both paths");
     assert_eq!(unconstrained.len(), 2);
+    let mut arm_theorems = [None, None];
+    let mut arm_facts = [None, None];
+    for transition in &unconstrained {
+        let arm_index = usize::from(!transition.is_true);
+        arm_theorems[arm_index] = Some(&transition.theorem);
+        arm_facts[arm_index] = Some(&transition.pure_facts);
+    }
+    assert!(checked_split.validates_exhaustive_join(
+        &state,
+        &condition,
+        &empty,
+        arm_theorems,
+        arm_facts,
+    ));
+    assert!(!checked_split.validates_exhaustive_join(
+        &CState::new(),
+        &condition,
+        &empty,
+        arm_theorems,
+        arm_facts,
+    ));
+    assert!(!checked_split.validates_exhaustive_join(
+        &state,
+        &CExpression::Value(int32(1)),
+        &empty,
+        arm_theorems,
+        arm_facts,
+    ));
+    assert!(!checked_split.validates_exhaustive_join(
+        &state,
+        &condition,
+        &empty.with_fact(indexed_fact(99_999)),
+        arm_theorems,
+        arm_facts,
+    ));
+    assert!(!checked_split.validates_exhaustive_join(
+        &state,
+        &condition,
+        &empty,
+        [arm_theorems[1], arm_theorems[0]],
+        arm_facts,
+    ));
     let rejected_path_fact = unconstrained[0]
         .path_facts
         .first()
@@ -8596,7 +8634,10 @@ fn empty_execution_branch_joins_checked_proof_arms_at_the_shared_frontier() {
         );
     }
     let (_, base_height, base_allocations) = allocation_samples[0];
-    assert!(base_allocations <= 160);
+    assert!(
+        base_allocations <= 160,
+        "small checked execution branch allocated {base_allocations} persistent nodes"
+    );
     for (size, height, allocations) in allocation_samples {
         let allocation_bound = base_allocations + 32 * (height - base_height);
         assert!(

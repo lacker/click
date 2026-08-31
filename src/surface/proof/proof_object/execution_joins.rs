@@ -134,7 +134,7 @@ impl<'a> Proof<'a> {
                 kind: ProgramPointKind::Entry,
             },
         )?;
-        let transitions = certified_proof_condition_transitions(
+        let (checked_condition_split, transitions) = certified_proof_condition_split(
             &current_state,
             &self.facts(),
             &condition,
@@ -269,6 +269,7 @@ impl<'a> Proof<'a> {
             continuation_index: source_region.continuation_node,
             continuation_remaining: remaining.map(Arc::new),
             execution_start_state,
+            checked_condition_split,
             arms,
         })
     }
@@ -1724,6 +1725,7 @@ impl<'a> Proof<'a> {
         id: BranchId,
         steps: Vec<ProofStep>,
     ) -> Result<(EffectGoalSelection, CheckedExecutionJoinArm<'v>), ClickError> {
+        self.validate_checked_execution_split(record)?;
         let base_facts = record.base_facts[arm_index]
             .as_ref()
             .expect("a recorded arm id has a recorded fact base");
@@ -1743,6 +1745,44 @@ impl<'a> Proof<'a> {
             base_execution,
             Some(condition_theorem),
         )
+    }
+
+    fn validate_checked_execution_split(
+        &self,
+        record: &ExecutionSplit<'a>,
+    ) -> Result<(), ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            return Err(self.step_error("checked C branch split lost its execution context"));
+        };
+        let (_, current_state, statement, _) = next_top_level_statement_from_frontier_position(
+            record.parent_execution.view(context),
+            &record.parent_execution.core.state,
+            context.function,
+            context.arguments,
+            context.claim_label,
+            context.tactic_index,
+            "branch join",
+        )?;
+        let CStatement::If { condition, .. } = statement else {
+            return Err(self.step_error("checked C branch split no longer names a C `if`"));
+        };
+        let arm_theorems = [
+            record.condition_theorems[0].as_ref(),
+            record.condition_theorems[1].as_ref(),
+        ];
+        let arm_facts = [record.base_facts[0].as_ref(), record.base_facts[1].as_ref()];
+        if !record.checked_condition_split.validates_exhaustive_join(
+            &current_state,
+            &condition,
+            &record.parent_facts,
+            arm_theorems,
+            arm_facts,
+        ) {
+            return Err(self.step_error(
+                "checked C branch split does not exhaust its recorded condition paths",
+            ));
+        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2586,6 +2626,7 @@ impl<'a> Proof<'a> {
             split,
             arm_branches: arm_ids,
             condition_theorems,
+            checked_condition_split: prepared.checked_condition_split,
             base_facts,
             base_executions,
             path_facts,

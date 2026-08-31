@@ -1,4 +1,5 @@
 use super::*;
+use crate::kernel::proof::{CheckedBranchSplit, CheckedBranchSplitError};
 
 #[derive(Clone)]
 pub(in crate::surface::proof) struct CertifiedProofConditionTransition {
@@ -14,27 +15,40 @@ pub(in crate::surface::proof) struct CertifiedProofConditionTransition {
 /// This is the non-planning branch operation: it neither minimizes premises
 /// nor reconstructs a certificate. Each feasible path receives only its
 /// kernel-issued path facts, appended persistently to the shared ancestor.
+#[cfg(test)]
 pub(in crate::surface::proof) fn certified_proof_condition_transitions(
     state: &CState,
     pure_facts: &ProofFacts,
     condition: &CExpression,
     context_label: &str,
 ) -> Result<Vec<CertifiedProofConditionTransition>, ClickError> {
-    let assumptions = pure_facts.assumptions().clone();
-    let evaluation =
-        prove_symbolic_c_condition_evaluation(state.clone(), condition.clone(), assumptions);
-    if let Some(limit) = evaluation.limit() {
-        if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
-            return Err(ClickError::new(format!(
-                "verification budget exhausted inside {}",
-                crate::instrumentation::deadline_context()
-            )));
-        }
-        return Err(ClickError::new(format!(
-            "{context_label} hit condition execution limit {limit:?}"
-        )));
-    }
-    evaluation
+    certified_proof_condition_split(state, pure_facts, condition, context_label)
+        .map(|(_, transitions)| transitions)
+}
+
+pub(in crate::surface::proof) fn certified_proof_condition_split(
+    state: &CState,
+    pure_facts: &ProofFacts,
+    condition: &CExpression,
+    context_label: &str,
+) -> Result<(CheckedBranchSplit, Vec<CertifiedProofConditionTransition>), ClickError> {
+    let split = CheckedBranchSplit::check(state.clone(), condition.clone(), pure_facts).map_err(
+        |error| match error {
+            CheckedBranchSplitError::Limit(crate::kernel::ExecutionLimit::Deadline) => {
+                ClickError::new(format!(
+                    "verification budget exhausted inside {}",
+                    crate::instrumentation::deadline_context()
+                ))
+            }
+            CheckedBranchSplitError::Limit(limit) => ClickError::new(format!(
+                "{context_label} hit condition execution limit {limit:?}"
+            )),
+            CheckedBranchSplitError::InvalidEvidence => ClickError::new(format!(
+                "{context_label} received malformed checked condition evidence"
+            )),
+        },
+    )?;
+    let transitions = split
         .paths()
         .iter()
         .filter(|path| {
@@ -66,22 +80,20 @@ pub(in crate::surface::proof) fn certified_proof_condition_transitions(
                     )));
                 }
             }
-            match implication_body(path.theorem().proposition()) {
-                Proposition::CConditionEvaluates {
-                    outcome: CConditionOutcome::Value(is_true),
-                    ..
-                } => Ok(CertifiedProofConditionTransition {
+            match path.outcome() {
+                CConditionOutcome::Value(is_true) => Ok(CertifiedProofConditionTransition {
                     is_true: *is_true,
                     pure_facts: successor_facts,
                     path_facts,
                     theorem: path.theorem().clone(),
                 }),
                 other => Err(ClickError::new(format!(
-                    "{context_label} produced an invalid condition theorem: {other:?}"
+                    "{context_label} produced an invalid condition outcome: {other:?}"
                 ))),
             }
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((split, transitions))
 }
 
 pub(in crate::surface::proof) fn certified_condition_transitions(

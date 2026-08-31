@@ -1,8 +1,8 @@
 use super::pure_theorems::PureTheoremContext;
 use super::*;
 use crate::kernel::proof::{
-    BranchId, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError, FrontierObligation,
-    FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
+    BranchId, CheckedBranchSplit, CheckedFrameAuthority, EffectGoalSelection, ExecutionUpdateError,
+    FrontierObligation, FrontierSplitError, FunctionOutcomeObligation, OutcomeProofCore,
     OutcomeProofState as KernelOutcomeProofState, ProofBranch, ProofBranchState,
     ProofExecutionState as KernelProofExecutionState, ProofFacts, ProofFocusError, ProofJoinError,
     ProofObject as KernelProofObject, ProofObligation as KernelBranchObligation,
@@ -170,6 +170,7 @@ pub(super) struct ExecutionSplit<'a> {
     split: SplitId,
     arm_branches: [Option<BranchId>; 2],
     condition_theorems: [Option<Theorem>; 2],
+    checked_condition_split: CheckedBranchSplit,
     base_facts: [Option<ProofFacts>; 2],
     base_executions: [Option<Arc<ExecutionProofState>>; 2],
     path_facts: [Option<Vec<Proposition>>; 2],
@@ -312,6 +313,7 @@ struct PreparedExecutionBranch {
     continuation_index: usize,
     continuation_remaining: Option<Arc<CStatement>>,
     execution_start_state: CState,
+    checked_condition_split: CheckedBranchSplit,
     arms: [Option<PreparedExecutionArm>; 2],
 }
 

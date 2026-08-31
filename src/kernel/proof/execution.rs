@@ -4,10 +4,10 @@
 //! execution proof must advance. It contains no Surface Click syntax,
 //! certificate builder, diagnostic cursor, or smart-planning state.
 
-use super::{PersistentOrderedSet, PersistentSequence, SharedValue, SharedVec};
+use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
-    CFunctionExecutionCandidates, CLoopEffectCheck, CState, CStatement, CVerifiedLoopRule,
-    ExecutionPureFact, Proposition, Theorem,
+    CConditionOutcome, CExpression, CFunctionExecutionCandidates, CLoopEffectCheck, CState,
+    CStatement, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact, Proposition, Theorem,
 };
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -41,6 +41,167 @@ pub(crate) struct LoopEffectGoal {
 pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
     Condition(Theorem),
+}
+
+/// One path retained from a complete kernel C-condition evaluation.
+#[derive(Clone)]
+pub(crate) struct CheckedBranchPath {
+    outcome: CConditionOutcome,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<crate::kernel::ProofObligation>,
+    theorem: Theorem,
+}
+
+impl CheckedBranchPath {
+    pub(crate) fn outcome(&self) -> &CConditionOutcome {
+        &self.outcome
+    }
+
+    pub(crate) fn facts(&self) -> &[ExecutionPureFact] {
+        &self.facts
+    }
+
+    pub(crate) fn obligations(&self) -> &[crate::kernel::ProofObligation] {
+        &self.obligations
+    }
+
+    pub(crate) fn theorem(&self) -> &Theorem {
+        &self.theorem
+    }
+}
+
+/// Kernel-issued complete evaluation of one C branch condition at one exact
+/// checked proof-fact root.
+///
+/// This retains every symbolic path, including paths later proved infeasible
+/// and error outcomes. Only [`Self::validates_exhaustive_join`] converts it
+/// into arm-coverage authority, after checking the original state, condition,
+/// fact root, path prerequisites, and one-for-one feasible theorem coverage.
+#[derive(Clone)]
+pub(crate) struct CheckedBranchSplit {
+    state: CState,
+    condition: CExpression,
+    root_facts: ProofFacts,
+    paths: Vec<CheckedBranchPath>,
+}
+
+pub(crate) enum CheckedBranchSplitError {
+    Limit(ExecutionLimit),
+    InvalidEvidence,
+}
+
+impl CheckedBranchSplit {
+    pub(crate) fn check(
+        state: CState,
+        condition: CExpression,
+        root_facts: &ProofFacts,
+    ) -> Result<Self, CheckedBranchSplitError> {
+        let evaluation = crate::kernel::prove_symbolic_c_condition_evaluation(
+            state.clone(),
+            condition.clone(),
+            root_facts.assumptions().clone(),
+        );
+        if let Some(limit) = evaluation.limit() {
+            return Err(CheckedBranchSplitError::Limit(limit));
+        }
+        let paths = evaluation
+            .paths()
+            .iter()
+            .filter_map(|path| {
+                let mut conclusion = path.theorem().proposition();
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                let Proposition::CConditionEvaluates {
+                    state: proved_state,
+                    condition: proved_condition,
+                    outcome,
+                } = conclusion
+                else {
+                    return None;
+                };
+                if proved_state != &state || proved_condition != &condition {
+                    return None;
+                }
+                Some(CheckedBranchPath {
+                    outcome: outcome.clone(),
+                    facts: path.facts().to_vec(),
+                    obligations: path.obligations().to_vec(),
+                    theorem: path.theorem().clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        if paths.len() != evaluation.paths().len() {
+            return Err(CheckedBranchSplitError::InvalidEvidence);
+        }
+        Ok(Self {
+            state,
+            condition,
+            root_facts: root_facts.clone(),
+            paths,
+        })
+    }
+
+    pub(crate) fn paths(&self) -> &[CheckedBranchPath] {
+        &self.paths
+    }
+
+    fn has_exact_root(&self, root_facts: &ProofFacts) -> bool {
+        self.root_facts
+            .introduced_since(root_facts)
+            .is_some_and(|delta| delta.is_empty())
+            && root_facts
+                .introduced_since(&self.root_facts)
+                .is_some_and(|delta| delta.is_empty())
+    }
+
+    pub(crate) fn validates_exhaustive_join(
+        &self,
+        state: &CState,
+        condition: &CExpression,
+        root_facts: &ProofFacts,
+        arm_theorems: [Option<&Theorem>; 2],
+        arm_facts: [Option<&ProofFacts>; 2],
+    ) -> bool {
+        if &self.state != state || &self.condition != condition || !self.has_exact_root(root_facts)
+        {
+            return false;
+        }
+        let mut required = [None, None];
+        for path in &self.paths {
+            let infeasible = path
+                .facts
+                .iter()
+                .any(|fact| root_facts.directly_conflicts_with(fact.proposition()));
+            if infeasible {
+                continue;
+            }
+            let CConditionOutcome::Value(value) = path.outcome else {
+                return false;
+            };
+            let arm_index = usize::from(!value);
+            let Some(arm_facts) = arm_facts[arm_index] else {
+                return false;
+            };
+            if arm_facts.introduced_since(root_facts).is_none()
+                || path
+                    .facts
+                    .iter()
+                    .any(|fact| !arm_facts.contains(fact.proposition()))
+                || path
+                    .obligations
+                    .iter()
+                    .any(|obligation| !arm_facts.assumptions().proves(obligation.proposition()))
+            {
+                return false;
+            }
+            let slot = &mut required[arm_index];
+            if slot.replace(&path.theorem).is_some() {
+                return false;
+            }
+        }
+        required == arm_theorems
+    }
 }
 
 /// One checked execution path's current semantic frontier.
