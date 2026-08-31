@@ -34,6 +34,10 @@ is tracked in `issues/audit-existing-c-source-fidelity.md`.
 
 Current projects:
 
+- `arena/` fixes the C0 implementation boundary for a first-fit allocator
+  whose regions will exercise user-defined suballocation and lifetime
+  ownership; its current sidecar is a parser-only scaffold tracked by the
+  arena resource-ownership issue.
 - `input-cursor/` verifies independently mutable cursors over a shared viewed
   input resource.
 - `jsonc-refcount/` verifies synthetic json-c-shaped field reads and writes on
