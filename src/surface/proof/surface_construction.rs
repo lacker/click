@@ -1966,14 +1966,14 @@ pub(super) fn append_proof_step_for_operation(
             TacticClass::Simple(_) => construction
                 .proof_certificate_builder
                 .push_source_tactic(tactic.clone()),
-            TacticClass::ControlFlow(_) => {
+            TacticClass::Control(_) => {
                 match ProofCertificate::from_proof_tactics(std::slice::from_ref(tactic)) {
                     Ok(_) => construction
                         .proof_certificate_builder
                         .push_source_tactic(tactic.clone()),
                     Err(error) => construction
                         .proof_certificate_builder
-                        .block(format!("could not lower control-flow tactic: {error:?}")),
+                        .block(format!("could not lower control tactic: {error:?}")),
                 }
             }
             TacticClass::Smart(_) => {}

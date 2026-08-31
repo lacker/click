@@ -41,7 +41,7 @@ itself the problem being diagnosed. Incomplete runs never offer expansion.
 defaults:
   --smart-threshold 2s      smart tactics in verified proofs are expansion candidates
   --simple-threshold 500ms  slow simple tactics are verifier bugs; do not expand them
-  --control-threshold 2s    inspect slow control-flow containers and their nested steps
+  --control-threshold 2s    inspect slow control-tactic containers and their nested steps
   --time-limit 30s          wall-clock limit per project
   --top 8                   maximum function/claim attribution rows per project
 

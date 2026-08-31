@@ -771,7 +771,7 @@ fn tactic_certificate_rejects_a_direct_smart_tactic() {
 }
 
 #[test]
-fn tactic_certificate_rejects_smart_tactics_in_nested_control_flow() {
+fn tactic_certificate_rejects_smart_tactics_in_nested_control_tactics() {
     let condition = ClickProposition::Comparison {
         left: current_var("x"),
         operator: ComparisonOperator::Equal,

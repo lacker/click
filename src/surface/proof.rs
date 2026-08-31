@@ -1164,7 +1164,7 @@ mod certificate_tests {
     }
 
     #[test]
-    fn post_execution_timing_charges_have_as_control_flow() {
+    fn post_execution_timing_charges_have_as_control() {
         let have = PostExecutionTactic::Have(ProofHave {
             proposition: ClickProposition::Comparison {
                 left: ContractExpression::CFragment(CExpression::Value(int32(1))),
@@ -1514,7 +1514,7 @@ enum ProofCaseAssumptionKind {
 }
 
 // Pure proofs and fixed-state `have` proofs use flat logical cases. Execution
-// proofs use `InternalProofNode` for frontier-local control flow.
+// proofs use `InternalProofNode` for frontier-local control structure.
 fn expand_proof_if_cases(tactics: &[ProofTactic]) -> Result<Vec<ExpandedProofCase>, ClickError> {
     expand_structured_proof_cases(tactics)
 }

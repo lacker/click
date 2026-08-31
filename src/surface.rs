@@ -1933,7 +1933,7 @@ pub enum SmartTacticKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ControlFlowTactic {
+pub enum ControlTactic {
     Have,
     Open,
     If,
@@ -1946,7 +1946,7 @@ pub enum ControlFlowTactic {
 pub enum TacticClass {
     Simple(SimpleTactic),
     Smart(SmartTacticKind),
-    ControlFlow(ControlFlowTactic),
+    Control(ControlTactic),
 }
 
 /// One user-selectable proof-tactic form exposed by the Surface Click parser.
@@ -2664,7 +2664,7 @@ fn validate_certificate_tactics(
                 tactic_class,
                 path: path.clone(),
             }),
-            TacticClass::ControlFlow(ControlFlowTactic::Have) => {
+            TacticClass::Control(ControlTactic::Have) => {
                 let ProofTactic::Have(proof_have) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2673,7 +2673,7 @@ fn validate_certificate_tactics(
                 path.pop();
                 result
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Open) => {
+            TacticClass::Control(ControlTactic::Open) => {
                 let ProofTactic::Open(proof_open) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2682,7 +2682,7 @@ fn validate_certificate_tactics(
                 path.pop();
                 result
             }
-            TacticClass::ControlFlow(ControlFlowTactic::If) => {
+            TacticClass::Control(ControlTactic::If) => {
                 let ProofTactic::If(proof_if) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2698,7 +2698,7 @@ fn validate_certificate_tactics(
                     else_result
                 }
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Cases) => {
+            TacticClass::Control(ControlTactic::Cases) => {
                 let ProofTactic::Cases(proof_cases) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2715,7 +2715,7 @@ fn validate_certificate_tactics(
                     right_result
                 }
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Branch) => {
+            TacticClass::Control(ControlTactic::Branch) => {
                 let ProofTactic::Branch(proof_branch) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2732,7 +2732,7 @@ fn validate_certificate_tactics(
                     else_result
                 }
             }
-            TacticClass::ControlFlow(ControlFlowTactic::Loop) => {
+            TacticClass::Control(ControlTactic::Loop) => {
                 let ProofTactic::Loop(loop_clause) = tactic else {
                     unreachable!("tactic class and variant must agree")
                 };
@@ -2836,12 +2836,12 @@ impl ProofTactic {
             Self::SmartFrame(_) => TacticClass::Smart(SmartTacticKind::Frame),
             Self::Simp => TacticClass::Smart(SmartTacticKind::Simp),
             Self::SimpUsing(_) => TacticClass::Smart(SmartTacticKind::Simp),
-            Self::Have(_) => TacticClass::ControlFlow(ControlFlowTactic::Have),
-            Self::Open(_) => TacticClass::ControlFlow(ControlFlowTactic::Open),
-            Self::If(_) => TacticClass::ControlFlow(ControlFlowTactic::If),
-            Self::Cases(_) => TacticClass::ControlFlow(ControlFlowTactic::Cases),
-            Self::Branch(_) => TacticClass::ControlFlow(ControlFlowTactic::Branch),
-            Self::Loop(_) => TacticClass::ControlFlow(ControlFlowTactic::Loop),
+            Self::Have(_) => TacticClass::Control(ControlTactic::Have),
+            Self::Open(_) => TacticClass::Control(ControlTactic::Open),
+            Self::If(_) => TacticClass::Control(ControlTactic::If),
+            Self::Cases(_) => TacticClass::Control(ControlTactic::Cases),
+            Self::Branch(_) => TacticClass::Control(ControlTactic::Branch),
+            Self::Loop(_) => TacticClass::Control(ControlTactic::Loop),
         }
     }
 }

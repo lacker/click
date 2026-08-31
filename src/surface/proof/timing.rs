@@ -63,7 +63,7 @@ pub(in crate::surface) fn source_site_kind(tactic: &ProofTactic) -> SourceSiteKi
     match tactic.class() {
         TacticClass::Simple(_) => SourceSiteKind::SimpleOperation,
         TacticClass::Smart(_) => SourceSiteKind::ExpandableAutomation,
-        TacticClass::ControlFlow(_) => SourceSiteKind::ControlContainer,
+        TacticClass::Control(_) => SourceSiteKind::ControlContainer,
     }
 }
 
