@@ -2,14 +2,18 @@
 
 ## Status
 
-Ordinary function verification currently checks the selected C execution while
-advancing the proof object, then executes the whole C function again while
-finishing its claims. The first pass already receives kernel theorems for each
-checked statement and condition transition, but
-`CFunctionExecutionCandidates` deliberately discards those theorems and keeps
-only outcomes. `finish_ordered_proof` consequently calls
-`prove_checked_c_function_execution_with_environment` to reproduce the path
-before it will build the final function theorem.
+The first migration slice is complete. The proof object now retains the kernel
+theorem for each checked statement and condition transition, and the kernel can
+seal a complete linear trace into the checked function execution consumed by
+claim and opaque-contract certification without executing the C body again.
+Deterministic regressions require zero whole-body executions for ordinary
+grouped proofs, including a proof that carries an abstract resource predicate.
+
+Unsupported evidence shapes deliberately retain the old independent check for
+now. The next slices are typed evidence for branch joins, proof-level case
+partitions, post-execution resource folds and opens, counted-population entry
+normalization, and loops. Once those are represented, the fallback and its
+cache can be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim
@@ -115,4 +119,3 @@ function as a fallback.
   certification model. It continues to describe `click expand` and
   `click audit` as independent artifact checks.
 - `scripts/check.sh` passes.
-

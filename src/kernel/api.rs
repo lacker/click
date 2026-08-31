@@ -1824,6 +1824,312 @@ pub fn prove_checked_c_function_execution_with_environment(
     }
 }
 
+fn proof_evidence_conclusion(theorem: &Theorem) -> &Proposition {
+    let mut conclusion = theorem.proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    conclusion
+}
+
+fn proof_evidence_assumptions(theorem: &Theorem, base: &PureFactContext) -> PureFactContext {
+    let mut assumptions = base.clone();
+    let mut proposition = theorem.proposition();
+    while let Proposition::Implies(premise, body) = proposition {
+        assumptions = assumptions.assume_proposition(premise.as_ref().clone());
+        proposition = body;
+    }
+    assumptions
+}
+
+fn proof_evidence_premises_are_retained(
+    theorem: &Theorem,
+    assumptions: &PureFactContext,
+    candidate: &CFunctionExecutionCandidate,
+) -> bool {
+    let execution_facts = candidate.execution_facts();
+    let mut proposition = theorem.proposition();
+    while let Proposition::Implies(premise, body) = proposition {
+        if !assumptions.proves_exact(premise)
+            && !execution_facts
+                .iter()
+                .any(|fact| fact.proposition() == premise.as_ref())
+            && !candidate
+                .obligations
+                .iter()
+                .any(|obligation| obligation.proposition() == premise.as_ref())
+        {
+            return false;
+        }
+        proposition = body;
+    }
+    true
+}
+
+fn execution_evidence_states_match(
+    function: &CFunction,
+    left: &CState,
+    right: &CState,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let mut left_without_ghost_difference = left.clone();
+    left_without_ghost_difference.resources = right.resources.clone();
+    left_without_ghost_difference.counted_populations = right.counted_populations.clone();
+    left_without_ghost_difference == *right
+        && contract_certification::resource_contexts_definitionally_equal_with_definitions(
+            function.composite_resource_definitions(),
+            left.memory(),
+            left.resources(),
+            right.memory(),
+            right.resources(),
+            assumptions,
+        )
+        && counted_populations_definitionally_equal(
+            left,
+            right,
+            function.composite_resource_definitions(),
+            assumptions,
+        )
+}
+
+fn split_proof_evidence_statement(statement: CStatement) -> (CStatement, Option<CStatement>) {
+    match statement {
+        CStatement::Seq(first, second) => {
+            let (head, first_tail) = split_proof_evidence_statement(Arc::unwrap_or_clone(first));
+            let tail = match first_tail {
+                Some(first_tail) => CStatement::Seq(Arc::new(first_tail), second),
+                None => Arc::unwrap_or_clone(second),
+            };
+            (head, Some(tail))
+        }
+        statement => (statement, None),
+    }
+}
+
+fn prepend_proof_evidence_statement(statement: CStatement, tail: Option<CStatement>) -> CStatement {
+    match tail {
+        Some(tail) => CStatement::Seq(Arc::new(statement), Arc::new(tail)),
+        None => statement,
+    }
+}
+
+/// Seals a proof-directed straight-line execution from the kernel theorems
+/// retained for its individual C transitions.
+///
+/// This performs no C evaluation. It checks that each theorem names the next
+/// source operation, that theorem outcome states form one continuous path
+/// modulo definitionally equal resource representations, and that the final
+/// outcome is exactly the candidate published at the function frontier.
+/// Branch joins require their own typed evidence and deliberately return
+/// `None` until that evidence is available.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn checked_c_function_execution_from_linear_evidence(
+    candidates: &CFunctionExecutionCandidates,
+    evidence: &[crate::kernel::proof::PersistentSequence<
+        crate::kernel::proof::CheckedExecutionEvent,
+    >],
+    assumptions: PureFactContext,
+    environment: CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    mode: CFunctionContractExecutionMode,
+) -> Option<CCheckedFunctionExecution> {
+    use crate::kernel::proof::CheckedExecutionEvent;
+
+    if candidates.paths.len() != evidence.len() {
+        return None;
+    }
+    let function = &candidates.function;
+    // Counted populations are materialized as contract-entry ghost state.
+    // The transition theorems retain the resulting C states, but the direct
+    // artifact does not yet retain the separate derivation that relates each
+    // population to the multiplicity of the declared resource requirements.
+    // Keep using the independent checker for that proof shape until the
+    // entry-resource preparation is typed evidence as well.
+    if c_function_entry_state(&candidates.state, function, &candidates.arguments)?
+        .counted_populations()
+        .next()
+        .is_some()
+    {
+        return None;
+    }
+    let mut sealed_paths = Vec::with_capacity(candidates.paths.len());
+    for (candidate, trace) in candidates.paths.iter().zip(evidence) {
+        let mut state = c_function_entry_state(&candidates.state, function, &candidates.arguments)?;
+        let mut remaining = Some(function.body.clone());
+        let mut completed = None;
+        for event in trace.iter() {
+            if completed.is_some() {
+                return None;
+            }
+            let source = remaining.take()?;
+            let (next_statement, tail) = split_proof_evidence_statement(source);
+            match event {
+                CheckedExecutionEvent::Statement(theorem) => {
+                    if !proof_evidence_premises_are_retained(theorem, &assumptions, candidate) {
+                        return None;
+                    }
+                    let theorem_assumptions = proof_evidence_assumptions(theorem, &assumptions);
+                    let (proved_state, proved_statement, outcome) =
+                        match proof_evidence_conclusion(theorem) {
+                            Proposition::CStatementVerifies {
+                                state,
+                                statement,
+                                outcome,
+                            } => (state, statement, outcome),
+                            _ => return None,
+                        };
+                    if proved_statement != &next_statement
+                        || !execution_evidence_states_match(
+                            function,
+                            &state,
+                            proved_state,
+                            &theorem_assumptions,
+                        )
+                    {
+                        return None;
+                    }
+                    match outcome {
+                        CStatementOutcome::Normal(next_state) => {
+                            state = next_state.clone();
+                            remaining = tail;
+                        }
+                        CStatementOutcome::Return { .. }
+                        | CStatementOutcome::VerificationDiverges => {
+                            if tail.is_some() {
+                                return None;
+                            }
+                            completed = Some(outcome.clone());
+                        }
+                        CStatementOutcome::UndefinedBehavior(_)
+                        | CStatementOutcome::RuntimeError(_) => return None,
+                    }
+                }
+                CheckedExecutionEvent::Condition(theorem) => {
+                    if !proof_evidence_premises_are_retained(theorem, &assumptions, candidate) {
+                        return None;
+                    }
+                    let theorem_assumptions = proof_evidence_assumptions(theorem, &assumptions);
+                    let (proved_state, proved_condition, value) =
+                        match proof_evidence_conclusion(theorem) {
+                            Proposition::CConditionEvaluates {
+                                state,
+                                condition,
+                                outcome: CConditionOutcome::Value(value),
+                            } => (state, condition, *value),
+                            _ => return None,
+                        };
+                    if !execution_evidence_states_match(
+                        function,
+                        &state,
+                        proved_state,
+                        &theorem_assumptions,
+                    ) {
+                        return None;
+                    }
+                    let selected = match next_statement {
+                        CStatement::If {
+                            condition,
+                            then_branch,
+                            else_branch,
+                        } if &condition == proved_condition => {
+                            if value {
+                                *then_branch
+                            } else {
+                                *else_branch
+                            }
+                        }
+                        // A concretely stepped loop condition puts the body
+                        // and loop head back in front of the source tail. A
+                        // verified loop summary instead appears as one
+                        // statement theorem and takes the arm above.
+                        CStatement::While {
+                            condition,
+                            invariant,
+                            invariant_checks,
+                            effect_checks,
+                            body,
+                        } if &condition == proved_condition => {
+                            if value {
+                                let loop_head = CStatement::While {
+                                    condition,
+                                    invariant,
+                                    invariant_checks,
+                                    effect_checks,
+                                    body: body.clone(),
+                                };
+                                prepend_proof_evidence_statement(*body, Some(loop_head))
+                            } else {
+                                CStatement::Skip
+                            }
+                        }
+                        _ => return None,
+                    };
+                    remaining = if matches!(selected, CStatement::Skip) {
+                        tail
+                    } else {
+                        Some(prepend_proof_evidence_statement(selected, tail))
+                    };
+                    state = proved_state.clone();
+                }
+            }
+        }
+        let completed = completed?;
+        let statement_assumptions = proof_evidence_assumptions(
+            match trace.iter().last()? {
+                CheckedExecutionEvent::Statement(theorem)
+                | CheckedExecutionEvent::Condition(theorem) => theorem,
+            },
+            &assumptions,
+        );
+        let (outcome, obligations) = c_function_outcome_from_statement_outcome(
+            &candidates.state,
+            function,
+            completed,
+            candidate.obligations.clone(),
+            &statement_assumptions,
+        );
+        if outcome != candidate.outcome {
+            return None;
+        }
+        let proposition = Proposition::CFunctionVerifies {
+            state: candidates.state.clone(),
+            function: function.clone(),
+            arguments: candidates.arguments.clone(),
+            outcome: candidate.outcome.clone(),
+        };
+        sealed_paths.push(SymbolicCExecutionPath {
+            assumptions: assumptions.clone(),
+            facts: candidate.facts.clone(),
+            effect_facts: candidate.effect_facts.clone(),
+            obligations,
+            theorem: Theorem::new(wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &candidate.facts,
+                &candidate.obligations,
+            )),
+        });
+    }
+    Some(CCheckedFunctionExecution {
+        state: candidates.state.clone(),
+        function: candidates.function.clone(),
+        arguments: candidates.arguments.clone(),
+        assumptions,
+        environment,
+        execution_semantics,
+        mode,
+        execution: SymbolicCExecution {
+            paths: sealed_paths,
+            limit: None,
+        },
+        entry_derivations: Vec::new(),
+        entry_prerequisites: Vec::new(),
+    })
+}
+
 /// Attaches kernel-issued entry-fact derivations to a checked execution.
 ///
 /// The checked execution remains sealed: only derivations concluding in one

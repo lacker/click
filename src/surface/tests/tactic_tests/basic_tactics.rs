@@ -157,7 +157,7 @@ fn grouped_function_certificates_share_finalized_specification() {
 }
 
 #[test]
-fn grouped_auto_uses_one_deterministic_execution_proof() {
+fn grouped_auto_seals_the_proof_execution_without_a_body_rerun() {
     let c_source = r#"
             int32 set(int32 p[], int32 value) {
                 p[0] = value;
@@ -195,13 +195,13 @@ fn grouped_auto_uses_one_deterministic_execution_proof() {
     );
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
-        1,
-        "claim certification and final contract certification should share one checked body execution"
+        0,
+        "claim certification and final contract certification should seal the retained statement evidence"
     );
 }
 
 #[test]
-fn grouped_resource_predicate_proof_reuses_checked_body_execution() {
+fn grouped_resource_predicate_proof_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 return_zero(int32 p[]) {
                 return 0;
@@ -237,8 +237,8 @@ fn grouped_resource_predicate_proof_reuses_checked_body_execution() {
     assert_eq!(verified.len(), 3);
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
-        1,
-        "named resource facts and their unfolded authority should permit final certificate reuse"
+        0,
+        "named resource facts and their unfolded authority should permit direct proof-evidence sealing"
     );
 }
 

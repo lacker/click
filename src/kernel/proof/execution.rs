@@ -30,6 +30,19 @@ pub(crate) struct LoopEffectGoal {
     pub(crate) closed: bool,
 }
 
+/// Kernel-issued evidence for one semantic C transition accepted by this
+/// proof path.
+///
+/// The proof driver may choose which feasible transition to take, but it
+/// cannot manufacture either theorem. Retaining the exact theorem here lets
+/// function-exit certification check the chosen path without executing the C
+/// body again.
+#[derive(Clone)]
+pub(crate) enum CheckedExecutionEvent {
+    Statement(Theorem),
+    Condition(Theorem),
+}
+
 /// One checked execution path's current semantic frontier.
 #[derive(Clone, Default)]
 pub(crate) struct ExecutionFrontier {
@@ -56,6 +69,11 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) state: SharedValue<CState>,
     pub(crate) frontier: ExecutionFrontier,
     pub(crate) effect_facts: SharedVec<ExecutionPureFact>,
+    /// One append-only evidence trace per operational outcome represented by
+    /// this frontier. Ordinary in-flight execution has one trace; a single C
+    /// operation with several return outcomes can complete several traces at
+    /// once. Forked proofs share every unchanged trace prefix.
+    pub(crate) execution_evidence: SharedVec<PersistentSequence<CheckedExecutionEvent>>,
     pub(crate) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(crate) execution_abstraction: bool,
     pub(crate) loop_effect_goal: Option<LoopEffectGoal>,
@@ -107,6 +125,7 @@ impl ExecutionProofCore {
             state: state.into(),
             frontier,
             effect_facts: Default::default(),
+            execution_evidence: vec![PersistentSequence::default()].into(),
             frontier_loop_rules: Default::default(),
             execution_abstraction: false,
             loop_effect_goal: None,
@@ -121,6 +140,69 @@ impl ExecutionProofCore {
             has_structured_branch_history: false,
             unfolded_predicates: Default::default(),
         }
+    }
+
+    pub(crate) fn record_statement_transition(&mut self, theorem: Theorem) {
+        debug_assert_eq!(self.execution_evidence.len(), 1);
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
+        }
+    }
+
+    pub(crate) fn record_statement_outcomes(&mut self, theorems: Vec<Theorem>) {
+        debug_assert_eq!(self.execution_evidence.len(), 1);
+        let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
+        self.execution_evidence = theorems
+            .into_iter()
+            .map(|theorem| {
+                let mut trace = prefix.clone();
+                trace.push(CheckedExecutionEvent::Statement(theorem));
+                trace
+            })
+            .collect::<Vec<_>>()
+            .into();
+    }
+
+    pub(crate) fn record_condition_transition(&mut self, theorem: Theorem) {
+        debug_assert_eq!(self.execution_evidence.len(), 1);
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::Condition(theorem.clone()));
+        }
+    }
+
+    /// Checks that every retained event carries the kernel judgment its tag
+    /// promises. This is intentionally cheaper than executing any C: it only
+    /// inspects the conclusions of already-issued theorem objects.
+    pub(crate) fn validate_execution_evidence_shapes(&self) -> Result<(), &'static str> {
+        for trace in &self.execution_evidence {
+            for event in trace.iter() {
+                let (theorem, statement) = match event {
+                    CheckedExecutionEvent::Statement(theorem) => (theorem, true),
+                    CheckedExecutionEvent::Condition(theorem) => (theorem, false),
+                };
+                let mut conclusion = theorem.proposition();
+                while let Proposition::Implies(_, body) = conclusion {
+                    conclusion = body;
+                }
+                let right_shape = if statement {
+                    matches!(
+                        conclusion,
+                        Proposition::CStatementExecutes { .. }
+                            | Proposition::CStatementVerifies { .. }
+                    )
+                } else {
+                    matches!(conclusion, Proposition::CConditionEvaluates { .. })
+                };
+                if !right_shape {
+                    return Err(if statement {
+                        "retained statement evidence has a non-statement conclusion"
+                    } else {
+                        "retained condition evidence has a non-condition conclusion"
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 

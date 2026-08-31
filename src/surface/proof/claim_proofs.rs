@@ -1026,6 +1026,31 @@ fn cached_independent_execution(
     execution
 }
 
+fn post_execution_changes_resource_representation(
+    tactics: &PersistentSequence<DeferredPostExecutionTactic>,
+) -> bool {
+    fn deferred_changes_resource_representation(deferred: &DeferredPostExecutionTactic) -> bool {
+        match &deferred.tactic {
+            PostExecutionTactic::Fold(_) | PostExecutionTactic::CloseOpen { .. } => true,
+            PostExecutionTactic::If {
+                then_tactics,
+                else_tactics,
+                ..
+            } => {
+                then_tactics
+                    .iter()
+                    .any(deferred_changes_resource_representation)
+                    || else_tactics
+                        .iter()
+                        .any(deferred_changes_resource_representation)
+            }
+            _ => false,
+        }
+    }
+
+    tactics.iter().any(deferred_changes_resource_representation)
+}
+
 fn proof_case_fact_conflicts(
     fact: &Proposition,
     assumptions: &PureFactContext,
@@ -1094,6 +1119,10 @@ pub(super) fn finish_ordered_proof<'a>(
         direct_view.context,
         direct_view.branch_path,
     );
+    proof_execution
+        .core
+        .validate_execution_evidence_shapes()
+        .map_err(|message| ClickError::new(format!("{proof_label}: {message}")))?;
     let retained_surface = {
         let record = &proof_execution.presentation.surface_record;
         let mut retained = ProofCertificateBuilder {
@@ -1250,8 +1279,47 @@ pub(super) fn finish_ordered_proof<'a>(
             let certified_execution = crate::instrumentation::measure_operation(
                 function_block.signature().name(),
                 &proof_label,
-                "independent kernel certification",
+                "kernel execution certification",
                 || {
+                    let execution_semantics = if proof_execution.core.concrete_loop_execution
+                        || !proof_execution.core.frontier_loop_rules.is_empty()
+                    {
+                        CExecutionSemantics::APPLY_VERIFIED_RULES
+                    } else {
+                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+                    };
+                    let execution_mode = if proof_execution.core.concrete_loop_execution {
+                        CFunctionContractExecutionMode::ExecuteLoops
+                    } else {
+                        CFunctionContractExecutionMode::VerifyLoops
+                    };
+                    let execution_start_assumptions =
+                        assumptions_from_propositions(&certification_facts);
+                    if case_groups.len() == 1
+                        // Outcome predicate unfolding can add checked claim
+                        // authority that is not part of the C transition
+                        // trace. Until that derivation is typed evidence too,
+                        // retain the independent cross-check for this shape.
+                        && proof_execution.core.unfolded_predicates.is_empty()
+                        // Outcome resource folds change the state against
+                        // which contract predicates and counts are lowered.
+                        // They need their own typed evidence before direct
+                        // sealing can cover this shape.
+                        && !post_execution_changes_resource_representation(
+                            &proof_execution.presentation.post_execution_tactics,
+                        )
+                        && let Some(checked) =
+                            crate::kernel::checked_c_function_execution_from_linear_evidence(
+                                execution,
+                                &proof_execution.core.execution_evidence,
+                                execution_start_assumptions.clone(),
+                                function_environment.clone(),
+                                execution_semantics,
+                                execution_mode,
+                            )
+                    {
+                        return checked;
+                    }
                     if proof_execution.core.frontier_loop_rules.is_empty()
                         && let Some((_, _, _, execution)) = certification_cache.iter().find(
                             |(facts, cached_state, concrete_loop_execution, _)| {
@@ -1264,8 +1332,6 @@ pub(super) fn finish_ordered_proof<'a>(
                     {
                         execution.clone()
                     } else {
-                        let execution_start_assumptions =
-                            assumptions_from_propositions(&certification_facts);
                         let execution = cached_independent_execution(
                             pre_state,
                             function,
@@ -1280,18 +1346,8 @@ pub(super) fn finish_ordered_proof<'a>(
                                     arguments.to_vec(),
                                     execution_start_assumptions.clone(),
                                     function_environment.clone(),
-                                    if proof_execution.core.concrete_loop_execution
-                                        || !proof_execution.core.frontier_loop_rules.is_empty()
-                                    {
-                                        CExecutionSemantics::APPLY_VERIFIED_RULES
-                                    } else {
-                                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                                    },
-                                    if proof_execution.core.concrete_loop_execution {
-                                        CFunctionContractExecutionMode::ExecuteLoops
-                                    } else {
-                                        CFunctionContractExecutionMode::VerifyLoops
-                                    },
+                                    execution_semantics,
+                                    execution_mode,
                                 )
                             },
                         );

@@ -636,6 +636,9 @@ pub(super) fn execute_branch_step_from_frontier_position(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
+    execution
+        .core
+        .record_condition_transition(condition_transition.theorem.clone());
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
@@ -832,6 +835,9 @@ fn execute_concrete_loop_head_step(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
+    execution
+        .core
+        .record_condition_transition(condition_transition.theorem.clone());
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     execution.core.frontier.execution_start_state = Some(execution_start_state);
@@ -1679,6 +1685,12 @@ fn execute_step_from_frontier_position_selecting_path(
                 .skip(1)
                 .all(|transition| transition.introduced_facts.contains(fact))
         });
+        execution.core.record_statement_outcomes(
+            transitions
+                .iter()
+                .map(|transition| transition.theorem.clone())
+                .collect(),
+        );
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
@@ -1909,6 +1921,9 @@ fn execute_step_from_frontier_position_selecting_path(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
+    execution
+        .core
+        .record_statement_transition(transition.theorem.clone());
     let state: &mut CState = &mut execution.core.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a

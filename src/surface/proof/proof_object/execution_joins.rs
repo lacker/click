@@ -251,6 +251,9 @@ impl<'a> Proof<'a> {
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
             ));
+            arm_execution
+                .core
+                .record_condition_transition(transition.theorem.clone());
             arms[usize::from(!take_then)] = Some(PreparedExecutionArm {
                 facts: transition.pure_facts,
                 execution: arm_execution,
