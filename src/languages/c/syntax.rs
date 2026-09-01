@@ -760,6 +760,13 @@ struct Parser {
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
     variable_structs: BTreeMap<String, String>,
+    /// The names declared in each open lexical scope, innermost last:
+    /// the function's parameters, then one entry per `{ ... }` block and
+    /// per `for` statement. Click's kernel keys a local by its name alone,
+    /// so a declaration that shadows a name still in scope would silently
+    /// overwrite the outer object; the parser rejects it instead. Sibling
+    /// scopes may reuse a name because the earlier object is dead.
+    scopes: Vec<Vec<String>>,
     abi: CAbi,
 }
 
@@ -772,8 +779,42 @@ impl Parser {
             position: 0,
             structs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            scopes: Vec::new(),
             abi,
         })
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(Vec::new());
+    }
+
+    /// Closes the innermost scope; its names, and any struct layouts they
+    /// carried, are no longer visible.
+    fn pop_scope(&mut self) {
+        for name in self.scopes.pop().unwrap_or_default() {
+            self.variable_structs.remove(&name);
+        }
+    }
+
+    /// Records a parameter or local declaration in the innermost scope, or
+    /// rejects it when the name is still visible from an enclosing scope.
+    /// Call right after consuming the name token so the error points at it.
+    fn declare_name(&mut self, name: &str) -> Result<(), C0SyntaxError> {
+        if self
+            .scopes
+            .iter()
+            .any(|scope| scope.iter().any(|known| known == name))
+        {
+            return Err(self.error_at_previous(format!(
+                "`{name}` is already declared in an enclosing scope; a block-scoped \
+                 declaration may not shadow a parameter or local"
+            )));
+        }
+        match self.scopes.last_mut() {
+            Some(scope) => scope.push(name.to_string()),
+            None => self.scopes.push(vec![name.to_string()]),
+        }
+        Ok(())
     }
 
     /// The source position of the next unconsumed token, or of the end of
@@ -808,9 +849,11 @@ impl Parser {
         let return_type = self.parse_type()?.c_type;
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
+        self.push_scope();
         let parameters = self.parse_parameters()?;
         self.expect(Token::RParen)?;
         let mut body = self.parse_block_statement()?;
+        self.pop_scope();
         validate_function_returns(&body, return_type)?;
         if return_type == C0Type::Void {
             body = C0Statement::Seq(
@@ -917,6 +960,7 @@ impl Parser {
                 return Err(self.error_here("function parameters cannot have type `void`"));
             }
             let name = self.expect_ident("parameter name")?;
+            self.declare_name(&name)?;
             let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
@@ -1065,6 +1109,7 @@ impl Parser {
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
         self.expect(Token::LBrace)?;
+        self.push_scope();
         let mut statements = Vec::new();
         while self.peek() != Some(&Token::RBrace) {
             if self.peek().is_none() {
@@ -1073,6 +1118,7 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
         self.expect(Token::RBrace)?;
+        self.pop_scope();
 
         Ok(balanced_statement_sequence(statements).unwrap_or(C0Statement::Skip))
     }
@@ -1125,6 +1171,7 @@ impl Parser {
             Some(Token::Ident(name)) if name == "int32" || name == "uint8" || name == "struct" => {
                 let parsed_type = self.parse_type()?;
                 let name = self.expect_ident("local name")?;
+                self.declare_name(&name)?;
                 let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
                 if parsed_type.struct_name.is_some() {
                     if c_type != parsed_type.c_type {
@@ -1206,6 +1253,9 @@ impl Parser {
                 Some("for") => {
                     self.position += 1;
                     self.expect(Token::LParen)?;
+                    // A `for` declaration is scoped to the statement, so two
+                    // consecutive loops may each declare `int32 i`.
+                    self.push_scope();
                     let init = self.parse_for_initializer()?;
                     self.expect(Token::Semicolon)?;
                     let condition = self.parse_expression()?;
@@ -1213,6 +1263,7 @@ impl Parser {
                     let step = self.parse_scalar_update_statement("for-loop step")?;
                     self.expect(Token::RParen)?;
                     let body = self.parse_block_statement()?;
+                    self.pop_scope();
                     let body = C0Statement::Seq(Box::new(body), Box::new(step));
                     Ok(C0Statement::Seq(
                         Box::new(init),
@@ -1267,6 +1318,7 @@ impl Parser {
         if matches!(self.peek_ident(), Some("int32" | "uint8")) {
             let parsed_type = self.parse_type()?;
             let name = self.expect_ident("for-loop local name")?;
+            self.declare_name(&name)?;
             if self.peek() != Some(&Token::Equal) {
                 return Err(self.error_here("for-loop declarations require an initializer"));
             }

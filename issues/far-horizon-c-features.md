@@ -18,6 +18,12 @@ file when the last one is split.
 - **Varargs, `volatile`, concurrency, atomics.** None has syntax or kernel
   semantics, and the roadmap does not mention them, so there is no documented
   rejection story for code that uses them.
+- **Shadowing block-scoped declarations.** The kernel keys a local by its
+  name alone (`local:{name}`), so the parser rejects a declaration that
+  shadows a parameter or an enclosing local
+  (`mdtests/c_block_scope_rejects_shadowing_local.md`); sibling blocks may
+  reuse a name. Modeling block scope properly (scope-indexed local keys and a
+  scoped struct-layout map) would lift the restriction.
 - **Resource exhaustion outside the heap.** Stack depth for recursion,
   address-space limits, and allocation of locals are unmodeled, so a
   verified function can still crash the real machine. This is a documentation

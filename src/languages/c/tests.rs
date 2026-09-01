@@ -2137,6 +2137,74 @@ fn c0_equality_binds_looser_than_relational_comparison() {
 }
 
 #[test]
+fn c0_syntax_rejects_a_declaration_that_shadows_an_enclosing_local() {
+    let error = syntax::parse_function(
+        r#"
+        int32 shadow(int32 c) {
+            int32 y = 10;
+            if (c < 0) { int32 y = 5; } else { int32 y = 5; }
+            return y;
+        }
+        "#,
+    )
+    .expect_err("an inner `int32 y` shadows the outer local");
+    assert!(
+        error
+            .message()
+            .contains("`y` is already declared in an enclosing scope"),
+        "{}",
+        error.message()
+    );
+    assert!(
+        error.position().is_some(),
+        "the diagnostic names the declaration"
+    );
+}
+
+#[test]
+fn c0_syntax_rejects_a_declaration_that_shadows_a_parameter() {
+    let error = syntax::parse_function(
+        r#"
+        struct S { int32 a; int32 b; };
+        struct T { int32 b; int32 z; };
+        int32 pick2(struct S* p, struct T* q, int32 c) {
+            if (c < 0) { struct T *p = q; p->b = 1; }
+            return p->b;
+        }
+        "#,
+    )
+    .expect_err("an inner `struct T *p` shadows the parameter");
+    assert!(
+        error
+            .message()
+            .contains("`p` is already declared in an enclosing scope"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
+fn c0_syntax_accepts_sibling_scopes_reusing_a_name() {
+    // `q->z` exists only in `T` and `q->a` only in `S`: the second arm parses
+    // only if the first arm's struct binding for `q` ended with its block.
+    syntax::parse_function(
+        r#"
+        struct S { int32 a; int32 b; };
+        struct T { int32 b; int32 z; };
+        int32 siblings(struct S* s, struct T* t, int32 c) {
+            int32 r;
+            if (c < 0) { int32 v = 1; r = v; } else { int32 v = 2; r = v; }
+            for (int32 i = 0; i < 2; i++) { r = r + i; }
+            for (int32 i = 0; i < 2; i++) { r = r + i; }
+            if (c < 0) { struct T *q = t; r = q->z; } else { struct S *q = s; r = q->a; }
+            return r;
+        }
+        "#,
+    )
+    .expect("names reused in sibling scopes are distinct objects");
+}
+
+#[test]
 fn c0_syntax_targets_kernel_known_function_call_assignment() {
     let increment = syntax::parse_function(
         r#"

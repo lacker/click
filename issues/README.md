@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 16
+## Soundness issues: 15
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
@@ -33,7 +33,6 @@ Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 - [Make `intro` bind a variable fresh with respect to the available facts](have-binder-capture.md)
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
-- [Model C block scope for local declarations](c-block-scoping.md)
 - [Decide pointer-offset equality in the offset model, not modulo 2^32](pointer-offset-wrap.md)
 - [Check the witnessing load's snapshot before certifying loadability](loadability-witness-snapshot.md)
 - [Account for memory and call writes to the termination measure](termination-measure-aliasing.md)
