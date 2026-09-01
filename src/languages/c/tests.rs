@@ -2104,6 +2104,39 @@ fn c0_clamp_demo_proves_symbolic_branch_specifications() {
 }
 
 #[test]
+fn c0_equality_binds_looser_than_relational_comparison() {
+    let mixed = syntax::parse_function(
+        r#"
+        int32 mixed(int32 a, int32 b, int32 c) {
+            return a == b < c;
+        }
+        "#,
+    )
+    .expect("a mixed equality and relational chain should parse");
+    assert!(matches!(
+        mixed.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Equal(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Variable(name) if name == "a")
+                && matches!(right.as_ref(), syntax::C0Expression::LessThan(_, _))
+    ));
+
+    let paired = syntax::parse_function(
+        r#"
+        int32 paired(int32 a, int32 b, int32 c, int32 d) {
+            return a < b == c < d;
+        }
+        "#,
+    )
+    .expect("relational operands on both sides of `==` should parse");
+    assert!(matches!(
+        paired.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Equal(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::LessThan(_, _))
+                && matches!(right.as_ref(), syntax::C0Expression::LessThan(_, _))
+    ));
+}
+
+#[test]
 fn c0_syntax_targets_kernel_known_function_call_assignment() {
     let increment = syntax::parse_function(
         r#"

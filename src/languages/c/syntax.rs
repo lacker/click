@@ -1484,16 +1484,37 @@ impl Parser {
     }
 
     fn parse_bitwise_and(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut expression = self.parse_compare()?;
+        let mut expression = self.parse_equality()?;
         while self.peek() == Some(&Token::Amp) {
             self.position += 1;
-            let right = self.parse_compare()?;
+            let right = self.parse_equality()?;
             expression = C0Expression::BitwiseAnd(Box::new(expression), Box::new(right));
         }
         Ok(expression)
     }
 
-    fn parse_compare(&mut self) -> Result<C0Expression, C0SyntaxError> {
+    /// Equality binds more loosely than the ordered comparisons, as in C
+    /// (C11 6.5.8 and 6.5.9): `a == b < c` is `a == (b < c)`.
+    fn parse_equality(&mut self) -> Result<C0Expression, C0SyntaxError> {
+        let mut expression = self.parse_relational()?;
+        loop {
+            expression = match self.peek() {
+                Some(Token::EqualEqual) => {
+                    self.position += 1;
+                    let right = self.parse_relational()?;
+                    C0Expression::Equal(Box::new(expression), Box::new(right))
+                }
+                Some(Token::BangEqual) => {
+                    self.position += 1;
+                    let right = self.parse_relational()?;
+                    C0Expression::NotEqual(Box::new(expression), Box::new(right))
+                }
+                _ => return Ok(expression),
+            };
+        }
+    }
+
+    fn parse_relational(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut expression = self.parse_shift()?;
         loop {
             expression = match self.peek() {
@@ -1516,16 +1537,6 @@ impl Parser {
                     self.position += 1;
                     let right = self.parse_shift()?;
                     C0Expression::GreaterEqual(Box::new(expression), Box::new(right))
-                }
-                Some(Token::EqualEqual) => {
-                    self.position += 1;
-                    let right = self.parse_shift()?;
-                    C0Expression::Equal(Box::new(expression), Box::new(right))
-                }
-                Some(Token::BangEqual) => {
-                    self.position += 1;
-                    let right = self.parse_shift()?;
-                    C0Expression::NotEqual(Box::new(expression), Box::new(right))
                 }
                 _ => return Ok(expression),
             };
