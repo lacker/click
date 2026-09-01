@@ -2013,6 +2013,7 @@ struct SealedProofEvidenceProgress {
     state: CState,
     remaining: Option<CStatement>,
     completed: Option<(CStatementOutcome, PureFactContext)>,
+    interface_execution_facts: Vec<ExecutionPureFact>,
 }
 
 fn proof_evidence_initial_state(
@@ -2188,6 +2189,7 @@ fn seal_proof_evidence_events(
 
     let mut completed = None;
     let mut current_assumptions = assumptions.clone();
+    let mut interface_execution_facts = Vec::new();
     for event in events {
         if completed.is_some() {
             return None;
@@ -2349,6 +2351,16 @@ fn seal_proof_evidence_events(
                 remaining = tail;
                 if let Some(successor_facts) = branch.interface_successor_facts() {
                     current_assumptions = successor_facts.assumptions().clone();
+                    for fact in branch.interface_execution_facts() {
+                        if !interface_execution_facts
+                            .iter()
+                            .any(|retained: &ExecutionPureFact| {
+                                retained.proposition() == fact.proposition()
+                            })
+                        {
+                            interface_execution_facts.push(fact.clone());
+                        }
+                    }
                 }
             }
             CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
@@ -2358,6 +2370,7 @@ fn seal_proof_evidence_events(
         state,
         remaining,
         completed,
+        interface_execution_facts,
     })
 }
 
@@ -2473,15 +2486,24 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             arguments: candidates.arguments.clone(),
             outcome: candidate.outcome.clone(),
         };
+        let mut sealed_facts = candidate.facts.clone();
+        for fact in progress.interface_execution_facts {
+            if !sealed_facts
+                .iter()
+                .any(|retained| retained.proposition() == fact.proposition())
+            {
+                sealed_facts.push(fact);
+            }
+        }
         sealed_paths.push(SymbolicCExecutionPath {
             assumptions: assumptions.clone(),
-            facts: candidate.facts.clone(),
+            facts: sealed_facts.clone(),
             effect_facts: candidate.effect_facts.clone(),
             obligations,
             theorem: Theorem::new(wrap_proof_facts(
                 proposition,
                 &assumptions,
-                &candidate.facts,
+                &sealed_facts,
                 &candidate.obligations,
             )),
         });

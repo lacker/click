@@ -918,13 +918,8 @@ impl<'a> Proof<'a> {
         // Artifact retention is an optimization over an already-checked
         // interface join. Shapes not yet covered by the typed kernel rule
         // keep the existing independent-certification fallback.
-        // Start with the mixed pure/resource shape that exposed the missing
-        // evidence. Pure-only result abstractions still need typed outcome
-        // transport, while resource-only joins gain nothing from checking a
-        // state-parametric fact artifact.
         if let Some(interface_specs) = interface_specs.as_ref()
             && !interface_specs.is_empty()
-            && !joined_state.resources().facts().is_empty()
         {
             let _ = execution.core.record_interface_branch_join(
                 checked_condition_split,

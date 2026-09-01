@@ -11,7 +11,7 @@ use crate::kernel::{
     ExecutionLimit, ExecutionPureFact, Proposition, PureFactContext, ResourceContext,
     SpecProposition, Theorem,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -204,6 +204,7 @@ pub(crate) struct CheckedExecutionBranch {
     arms: [CheckedExecutionBranchArm; 2],
     joined_state: CState,
     interface_successor_facts: Option<ProofFacts>,
+    interface_execution_facts: Vec<ExecutionPureFact>,
 }
 
 #[derive(Clone)]
@@ -294,6 +295,7 @@ impl CheckedExecutionBranch {
             arms: [then_arm, else_arm],
             joined_state: (*arms[0].state).clone(),
             interface_successor_facts: None,
+            interface_execution_facts: Vec::new(),
         })
     }
 
@@ -343,16 +345,6 @@ impl CheckedExecutionBranch {
             .collect::<BTreeMap<_, _>>();
         if &expected_stable_locals != stable_join_locals {
             return Err("the interface stable-local set is not exact");
-        }
-        let mut continuation_variables = BTreeSet::new();
-        if let Some(continuation) = &split.continuation {
-            collect_c_statement_variable_names(continuation, &mut continuation_variables);
-        }
-        if continuation_variables
-            .iter()
-            .any(|name| !stable_join_locals.contains_key(name))
-        {
-            return Err("the interface continuation reads an abstracted local");
         }
         let sibling_states = [&*arms[0].state, &*arms[1].state];
         let abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
@@ -408,13 +400,13 @@ impl CheckedExecutionBranch {
         let introduced = successor_facts
             .introduced_since(root_facts)
             .ok_or("the interface successor facts do not descend from the branch root")?;
-        for fact in introduced {
+        for fact in &introduced {
             let common_arm_fact = arm_facts
                 .iter()
-                .all(|facts| facts.assumptions().proves(&fact));
+                .all(|facts| facts.assumptions().proves(fact));
             let interface_fact = interface_specs
                 .iter()
-                .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, &fact));
+                .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, fact));
             if !common_arm_fact && !interface_fact {
                 return Err("the interface successor contains an unchecked new fact");
             }
@@ -462,6 +454,10 @@ impl CheckedExecutionBranch {
             arms: [then_arm, else_arm],
             joined_state: joined_state.clone(),
             interface_successor_facts: Some(successor_facts.clone()),
+            interface_execution_facts: introduced
+                .into_iter()
+                .map(ExecutionPureFact::certified)
+                .collect(),
         })
     }
 
@@ -495,85 +491,9 @@ impl CheckedExecutionBranch {
     pub(crate) fn interface_successor_facts(&self) -> Option<&ProofFacts> {
         self.interface_successor_facts.as_ref()
     }
-}
 
-fn collect_c_expression_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
-    match expression {
-        CExpression::Value(_) => {}
-        CExpression::Variable(name) => {
-            names.insert(name.clone());
-        }
-        CExpression::AddressOf(body)
-        | CExpression::Not(body)
-        | CExpression::Load(body)
-        | CExpression::BitwiseNot(body) => collect_c_expression_variable_names(body, names),
-        CExpression::PointerOffsetBytes { pointer, .. }
-        | CExpression::TypedLoad { pointer, .. } => {
-            collect_c_expression_variable_names(pointer, names);
-        }
-        CExpression::LessThan(left, right)
-        | CExpression::LessEqual(left, right)
-        | CExpression::GreaterThan(left, right)
-        | CExpression::GreaterEqual(left, right)
-        | CExpression::Equal(left, right)
-        | CExpression::NotEqual(left, right)
-        | CExpression::And(left, right)
-        | CExpression::Or(left, right)
-        | CExpression::Add(left, right)
-        | CExpression::Subtract(left, right)
-        | CExpression::Multiply(left, right)
-        | CExpression::Divide(left, right)
-        | CExpression::Remainder(left, right)
-        | CExpression::ShiftLeft(left, right)
-        | CExpression::ShiftRight(left, right)
-        | CExpression::BitwiseAnd(left, right)
-        | CExpression::BitwiseOr(left, right)
-        | CExpression::BitwiseXor(left, right)
-        | CExpression::Index(left, right) => {
-            collect_c_expression_variable_names(left, names);
-            collect_c_expression_variable_names(right, names);
-        }
-    }
-}
-
-fn collect_c_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
-    match statement {
-        CStatement::Skip | CStatement::Declare { .. } | CStatement::HeapAllocate { .. } => {}
-        CStatement::Assign { expression, .. }
-        | CStatement::Return(expression)
-        | CStatement::Assert {
-            condition: expression,
-            ..
-        } => collect_c_expression_variable_names(expression, names),
-        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
-            for argument in arguments {
-                collect_c_expression_variable_names(argument, names);
-            }
-        }
-        CStatement::HeapFree { pointer } => collect_c_expression_variable_names(pointer, names),
-        CStatement::Seq(first, second) => {
-            collect_c_statement_variable_names(first, names);
-            collect_c_statement_variable_names(second, names);
-        }
-        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
-            collect_c_expression_variable_names(pointer, names);
-            collect_c_expression_variable_names(value, names);
-        }
-        CStatement::If {
-            condition,
-            then_branch,
-            else_branch,
-        } => {
-            collect_c_expression_variable_names(condition, names);
-            collect_c_statement_variable_names(then_branch, names);
-            collect_c_statement_variable_names(else_branch, names);
-        }
-        CStatement::While {
-            condition, body, ..
-        } => {
-            collect_c_expression_variable_names(condition, names);
-            collect_c_statement_variable_names(body, names);
-        }
+    pub(crate) fn interface_execution_facts(&self) -> &[ExecutionPureFact] {
+        &self.interface_execution_facts
     }
 }
 
@@ -1612,9 +1532,9 @@ mod tests {
             .expect("the simple interface should lower")
             .remove(0)
             .proposition;
-        let successor_facts = root_facts.with_fact(checked_fact);
+        let successor_facts = root_facts.with_fact(checked_fact.clone());
 
-        CheckedExecutionBranch::check_interface(
+        let checked = CheckedExecutionBranch::check_interface(
             split.clone(),
             &root_facts,
             [&then_theorem, &else_theorem],
@@ -1627,6 +1547,15 @@ mod tests {
             &successor_facts,
         )
         .expect("the exact fact-only abstraction should check");
+        assert_eq!(
+            checked
+                .interface_execution_facts()
+                .iter()
+                .map(ExecutionPureFact::proposition)
+                .collect::<Vec<_>>(),
+            vec![&checked_fact],
+            "only the validated successor delta gains execution-fact authority"
+        );
 
         let forged_fact = Proposition::ConditionIs(
             crate::kernel::ConditionTerm::signed_less_than(

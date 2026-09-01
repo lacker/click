@@ -34,15 +34,17 @@ executions for a post-execution fold, nested composite-resource scopes, and an
 explicit owned quantity; a negative kernel test rejects changed memory values
 and changed population counts.
 
-A mixed pure/resource `branch ensuring` can now retain one checked interface
-branch event. The artifact validates both exact source-arm traces, the
-exhaustive condition split, the deterministic abstract successor, every
-state-parametric exported fact, and whole-context resource availability in
-both arms. It also requires the continuation to read only locals whose values
-agree across the arms. Exact common non-scalar memory is preserved; differing
-memory still receives the conservative havoc. The owned-quantity regression
-now seals with zero whole-body executions, and kernel negatives reject an
-unproved successor fact and a resource absent from both arms.
+Pure and mixed pure/resource `branch ensuring` proofs can now retain one
+checked interface branch event. The artifact validates both exact source-arm
+traces, the exhaustive condition split, the deterministic abstract successor,
+every state-parametric exported fact, and whole-context resource availability
+in both arms. Its validated successor-fact delta becomes certified execution
+evidence rather than a caller assumption, so a continuation may read an
+abstracted local and use the interface fact to establish the function outcome.
+Exact common non-scalar memory is preserved; differing memory still receives
+the conservative havoc. Pure-result and owned-quantity regressions now seal
+with zero whole-body executions, and kernel negatives reject an unproved
+successor fact and a resource absent from both arms.
 
 A quantified resource close after C execution remains on the fallback. That
 operation can change an observed exit population used by an outcome predicate;
@@ -57,15 +59,12 @@ only the finished claim proof, not equivalent execution evidence. The
 `resource_count_patterns` mdtest pins this distinction.
 
 Unsupported evidence shapes deliberately retain the old independent check for
-now. A pure-only interface whose continuation reads an abstracted local still
-needs typed outcome transport: the interface fact justifies reasoning at the
-abstract frontier, but does not yet reconstruct the concrete function outcome
-used by contract certification. Transformed resource interfaces with exports
-beyond the state-parametric fact rule likewise remain on the fallback. Outcome
-predicate unfolding, quantified exit-population transitions, and implicit
-counted-resource closure are the other explicit guards in claim finishing.
-Once these forms are typed evidence, the fallback and its cache can be removed
-rather than weakened piecemeal.
+now. Transformed resource interfaces with exports beyond the state-parametric
+fact rule remain on the fallback, as do interface facts that require recorded
+snapshot or proof-mark lowering. Outcome predicate unfolding, quantified
+exit-population transitions, and implicit counted-resource closure are the
+other explicit guards in claim finishing. Once these forms are typed evidence,
+the fallback and its cache can be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim

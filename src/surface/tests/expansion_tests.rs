@@ -7917,6 +7917,7 @@ fn branch_interface_retains_its_checked_abstract_join() {
         }
     "#;
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let ((((verified, events), certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
@@ -7930,6 +7931,11 @@ fn branch_interface_retains_its_checked_abstract_join() {
             }
         });
     let verified = verified.expect("the checked branch interface should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a pure checked branch interface must seal from retained outcome evidence"
+    );
     assert_eq!(flat_units, 1, "the branch proof should retain one Proof");
     assert_eq!(
         context_exports, 0,
