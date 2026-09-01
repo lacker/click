@@ -16,11 +16,17 @@ the split owns the exact source `if` and tail, both arm deltas descend from the
 same persistent trace, and final sealing checks the two arms before resuming
 the continuation once. Successive joins therefore do not multiply paths.
 
+Proof-level `if` cases now retain a kernel-issued complementary partition at
+the unchanged C frontier. Direct sealing requires both arms to be represented,
+rejects duplicate decisions on one retained path, and checks each retained
+path against its corresponding case decisions. A mid-execution two-arm proof
+case therefore seals with zero whole-body executions. Terminal C joins retain
+their already-aligned path traces.
+
 Unsupported evidence shapes deliberately retain the old independent check for
-now. Terminal C joins retain their already-aligned path traces. The remaining
-slices are proof-level case partitions, post-execution resource folds and
-opens, and counted-population entry normalization. Once those are represented,
-the fallback and its cache can be removed rather than weakened piecemeal.
+now. The remaining slices are post-execution resource folds and opens, and
+counted-population entry normalization. Once those are represented, the
+fallback and its cache can be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim
@@ -121,11 +127,14 @@ theorem, or incomplete coverage. Both checked arm deltas are retained inside one
 nested execution-evidence node, and final sealing consumes that node at the
 common continuation without executing the C body.
 
-Proof-level case partitions need the same exhaustiveness boundary. A sealer
-must not accept an arbitrary subset of candidate indexes merely because each
-selected path checks independently; it may select groups only through a
-kernel-issued partition artifact proving that the groups collectively cover
-the parent context.
+Proof-level case partitions use the same exhaustiveness boundary. The kernel
+issues one partition only for complementary facts rooted in the same checked
+fact context and records each arm as a zero-source-advance execution event.
+The sealer accepts a multi-case family only when every partition has both arms
+and the artifact's case decisions correspond, modulo kernel-checked condition
+polarity equivalence, to the candidate path decisions. It cannot accept an
+arbitrary subset of candidate indexes merely because each selected path checks
+independently.
 
 ## Intended regression
 

@@ -1938,6 +1938,145 @@ struct SealedProofEvidenceProgress {
     completed: Option<(CStatementOutcome, PureFactContext)>,
 }
 
+fn proof_case_partitions_match_paths(
+    evidence: &[crate::kernel::proof::PersistentSequence<
+        crate::kernel::proof::CheckedExecutionEvent,
+    >],
+    expected_path_facts: &[Vec<Proposition>],
+) -> bool {
+    use crate::kernel::proof::CheckedExecutionEvent;
+
+    fn collect(
+        events: &[CheckedExecutionEvent],
+        covered: &mut std::collections::BTreeMap<usize, [bool; 2]>,
+        path_partitions: &mut std::collections::BTreeSet<usize>,
+        mut path_facts: Option<&mut Vec<Proposition>>,
+    ) -> bool {
+        for event in events {
+            match event {
+                CheckedExecutionEvent::ProofCase(arm) => {
+                    if !arm.is_valid()
+                        || arm.arm_index() >= 2
+                        || !path_partitions.insert(arm.identity())
+                    {
+                        return false;
+                    }
+                    covered.entry(arm.identity()).or_default()[arm.arm_index()] = true;
+                    if let Some(path_facts) = path_facts.as_deref_mut() {
+                        path_facts.push(canonical_condition_fact(arm.case_fact()));
+                    }
+                }
+                CheckedExecutionEvent::Branch(branch) => {
+                    for arm_index in 0..2 {
+                        let mut nested_partitions = std::collections::BTreeSet::new();
+                        if !collect(
+                            branch.arm_events(arm_index),
+                            covered,
+                            &mut nested_partitions,
+                            None,
+                        ) {
+                            return false;
+                        }
+                    }
+                }
+                CheckedExecutionEvent::Statement(_) | CheckedExecutionEvent::Condition(_) => {}
+            }
+        }
+        true
+    }
+
+    if evidence.len() != expected_path_facts.len() {
+        return false;
+    }
+    let mut covered = std::collections::BTreeMap::new();
+    for (trace, expected) in evidence.iter().zip(expected_path_facts) {
+        let mut path_partitions = std::collections::BTreeSet::new();
+        let mut actual = Vec::new();
+        if !collect(
+            &trace.to_vec(),
+            &mut covered,
+            &mut path_partitions,
+            Some(&mut actual),
+        ) || actual.len() != expected.len()
+            || !actual.iter().zip(expected).all(|(actual, expected)| {
+                crate::kernel::proof::fact_reasoning::condition_polarity_equivalent(
+                    actual, expected,
+                )
+            })
+        {
+            return false;
+        }
+    }
+    covered.values().all(|arms| *arms == [true, true])
+}
+
+#[cfg(test)]
+mod proof_case_evidence_tests {
+    use super::*;
+    use crate::kernel::proof::{
+        CheckedProofCasePartition, ExecutionFrontier, ExecutionProofCore, ProofFacts,
+    };
+
+    #[test]
+    fn proof_case_family_requires_both_arms_and_exact_path_correspondence() {
+        let root = ProofFacts::default();
+        let then_fact = Proposition::Predicate {
+            name: "case".to_string(),
+            arguments: Vec::new(),
+        };
+        let else_fact = Proposition::Not(Box::new(then_fact.clone()));
+        let partition =
+            CheckedProofCasePartition::check(&root, then_fact.clone(), else_fact.clone())
+                .expect("complementary facts should create a checked partition");
+        let mut then_core =
+            ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
+        let then_facts = root.with_fact(then_fact.clone());
+        assert!(then_core.record_proof_case_arm(partition.clone(), 0, then_facts));
+        let mut else_core =
+            ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
+        let else_facts = root.with_fact(else_fact.clone());
+        assert!(else_core.record_proof_case_arm(partition.clone(), 1, else_facts));
+        let evidence = vec![
+            then_core.execution_evidence[0].clone(),
+            else_core.execution_evidence[0].clone(),
+        ];
+        let expected = vec![
+            vec![canonical_condition_fact(&then_fact)],
+            vec![canonical_condition_fact(&else_fact)],
+        ];
+
+        assert!(proof_case_partitions_match_paths(&evidence, &expected));
+        assert!(!proof_case_partitions_match_paths(
+            &evidence[..1],
+            &expected[..1],
+        ));
+        assert!(!proof_case_partitions_match_paths(
+            &evidence,
+            &[expected[1].clone(), expected[0].clone()],
+        ));
+
+        let mut duplicate_then_core = then_core.clone();
+        assert!(duplicate_then_core.record_proof_case_arm(
+            partition,
+            0,
+            root.with_fact(then_fact.clone()),
+        ));
+        assert!(!proof_case_partitions_match_paths(
+            &[
+                duplicate_then_core.execution_evidence[0].clone(),
+                else_core.execution_evidence[0].clone(),
+            ],
+            &[
+                vec![
+                    canonical_condition_fact(&then_fact),
+                    canonical_condition_fact(&then_fact),
+                ],
+                vec![canonical_condition_fact(&else_fact)],
+            ],
+        ));
+    }
+}
+
 /// Follows retained kernel theorem judgments through their exact source tree.
 /// Nested branch nodes recurse over two checked arm deltas and rejoin once;
 /// no C expression or statement is evaluated here.
@@ -1952,18 +2091,26 @@ fn seal_proof_evidence_events(
     use crate::kernel::proof::CheckedExecutionEvent;
 
     let mut completed = None;
+    let mut current_assumptions = assumptions.clone();
     for event in events {
         if completed.is_some() {
             return None;
+        }
+        if let CheckedExecutionEvent::ProofCase(arm) = event {
+            if !arm.is_valid() {
+                return None;
+            }
+            current_assumptions = arm.facts().assumptions().clone();
+            continue;
         }
         let source = remaining.take()?;
         let (next_statement, tail) = split_proof_evidence_statement(source);
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
-                if !proof_evidence_premises_are_retained(theorem, assumptions, candidate) {
+                if !proof_evidence_premises_are_retained(theorem, &current_assumptions, candidate) {
                     return None;
                 }
-                let theorem_assumptions = proof_evidence_assumptions(theorem, assumptions);
+                let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
                 let (proved_state, proved_statement, outcome) =
                     match proof_evidence_conclusion(theorem) {
                         Proposition::CStatementVerifies {
@@ -1999,10 +2146,10 @@ fn seal_proof_evidence_events(
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
-                if !proof_evidence_premises_are_retained(theorem, assumptions, candidate) {
+                if !proof_evidence_premises_are_retained(theorem, &current_assumptions, candidate) {
                     return None;
                 }
-                let theorem_assumptions = proof_evidence_assumptions(theorem, assumptions);
+                let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
                 let (proved_state, proved_condition, value) =
                     match proof_evidence_conclusion(theorem) {
                         Proposition::CConditionEvaluates {
@@ -2091,6 +2238,7 @@ fn seal_proof_evidence_events(
                 state = branch.joined_state().clone();
                 remaining = tail;
             }
+            CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
         }
     }
     Some(SealedProofEvidenceProgress {
@@ -2116,12 +2264,14 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
     evidence: &[crate::kernel::proof::PersistentSequence<
         crate::kernel::proof::CheckedExecutionEvent,
     >],
+    expected_path_case_facts: &[Vec<Proposition>],
     assumptions: PureFactContext,
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mode: CFunctionContractExecutionMode,
 ) -> Option<CCheckedFunctionExecution> {
     if candidates.paths.len() != evidence.len()
+        || !proof_case_partitions_match_paths(evidence, expected_path_case_facts)
         || !proof_evidence_function_refines_same_source(&candidates.function, checked_function)
     {
         return None;

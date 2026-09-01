@@ -464,9 +464,10 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
                 frame();
                 simp();
             }
-        "#;
+    "#;
     let sources = &[("identity_after_prefix.c", c_source)];
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let (((verified, certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
@@ -486,6 +487,11 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
     assert_eq!(
         certificate_checks, 0,
         "ordinary verification must not check a stitched certificate"
+    );
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "an exhaustive proof-level case split should seal its retained execution paths"
     );
 
     let expanded = expand_c0_claim_source(

@@ -5,8 +5,9 @@
 //! attachments as evidence.
 
 use super::{
-    BranchId, EffectGoalSelection, FrontierObligation, OutcomeProofState, PersistentOrderedSet,
-    ProofBranch, ProofBranchState, ProofBranches, ProofExecutionState, ProofFacts, ProofObligation,
+    BranchId, CheckedProofCasePartition, EffectGoalSelection, FrontierObligation,
+    OutcomeProofState, PersistentOrderedSet, ProofBranch, ProofBranchState, ProofBranches,
+    ProofExecutionState, ProofFacts, ProofObligation,
 };
 use crate::kernel::Proposition;
 use std::ops::Deref;
@@ -1464,25 +1465,31 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
             return Err(FrontierSplitError::NonComplementaryCases);
         }
         let introduced_facts = [vec![then_fact.clone()], vec![else_fact.clone()]];
+        let partition = CheckedProofCasePartition::check(
+            &branch.state.facts,
+            then_fact.clone(),
+            else_fact.clone(),
+        )
+        .expect("the checked complementary facts form a proof-case partition");
         let [then_presentation, else_presentation] = presentations;
-        let arm = |fact: Proposition, presentation: S| {
+        let arm = |arm_index: usize, fact: Proposition, presentation: S| {
+            let facts = branch.state.facts.with_fact(fact);
+            let mut core = execution.core.clone();
+            assert!(core.record_proof_case_arm(partition.clone(), arm_index, facts.clone()));
             ProofBranch::new(
                 ProofObligation::Frontier(frontier.clone()),
                 ProofBranchState {
-                    facts: branch.state.facts.with_fact(fact),
+                    facts,
                     unfolded_predicates: branch.state.unfolded_predicates.clone(),
-                    execution: Some(Arc::new(ProofExecutionState::new(
-                        execution.core.clone(),
-                        presentation,
-                    ))),
+                    execution: Some(Arc::new(ProofExecutionState::new(core, presentation))),
                 },
             )
         };
         let (split, branches, open_branches) = self.state.open_branches.split_at(
             self.focused_branch,
             [
-                arm(then_fact, then_presentation),
-                arm(else_fact, else_presentation),
+                arm(0, then_fact, then_presentation),
+                arm(1, else_fact, else_presentation),
             ],
         );
         Ok(ProofSplit {

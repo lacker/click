@@ -43,6 +43,73 @@ pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
     Condition(Theorem),
     Branch(CheckedExecutionBranch),
+    ProofCase(CheckedProofCaseArm),
+}
+
+/// One kernel-issued complementary logical partition over an unchanged C
+/// execution frontier.
+#[derive(Clone)]
+pub(crate) struct CheckedProofCasePartition {
+    identity: Arc<()>,
+    root_facts: ProofFacts,
+    case_facts: [Proposition; 2],
+}
+
+/// One arm of a checked logical partition. This event advances no C source;
+/// it changes only the authoritative fact context for later evidence.
+#[derive(Clone)]
+pub(crate) struct CheckedProofCaseArm {
+    partition: Arc<CheckedProofCasePartition>,
+    arm_index: usize,
+    facts: ProofFacts,
+}
+
+impl CheckedProofCasePartition {
+    pub(crate) fn check(
+        root_facts: &ProofFacts,
+        then_fact: Proposition,
+        else_fact: Proposition,
+    ) -> Option<Arc<Self>> {
+        let negated_then = Proposition::Not(Box::new(then_fact.clone()));
+        if else_fact != negated_then
+            && !super::fact_reasoning::condition_polarity_forms(&negated_then).contains(&else_fact)
+        {
+            return None;
+        }
+        Some(Arc::new(Self {
+            identity: Arc::new(()),
+            root_facts: root_facts.clone(),
+            case_facts: [then_fact, else_fact],
+        }))
+    }
+}
+
+impl CheckedProofCaseArm {
+    pub(crate) fn identity(&self) -> usize {
+        Arc::as_ptr(&self.partition.identity) as usize
+    }
+
+    pub(crate) fn arm_index(&self) -> usize {
+        self.arm_index
+    }
+
+    pub(crate) fn facts(&self) -> &ProofFacts {
+        &self.facts
+    }
+
+    pub(crate) fn case_fact(&self) -> &Proposition {
+        &self.partition.case_facts[self.arm_index]
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.arm_index < 2
+            && self
+                .facts
+                .introduced_since(&self.partition.root_facts)
+                .is_some_and(|introduced| {
+                    introduced == vec![self.partition.case_facts[self.arm_index].clone()]
+                })
+    }
 }
 
 /// One exhaustive nonterminal C `if`, checked against its exact source arms
@@ -559,15 +626,23 @@ fn check_evidence_events(
     mut remaining: Option<CStatement>,
 ) -> Option<CheckedEvidenceProgress> {
     let mut completed = None;
+    let mut current_facts = facts.clone();
     for event in events {
         if completed.is_some() {
             return None;
+        }
+        if let CheckedExecutionEvent::ProofCase(arm) = event {
+            if !arm.is_valid() {
+                return None;
+            }
+            current_facts = arm.facts.clone();
+            continue;
         }
         let source = remaining.take()?;
         let (next_statement, tail) = split_checked_evidence_statement(source);
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
-                match checked_statement_event(theorem, facts, &state, &next_statement)? {
+                match checked_statement_event(theorem, &current_facts, &state, &next_statement)? {
                     CStatementOutcome::Normal(next_state) => {
                         state = next_state;
                         remaining = tail;
@@ -584,7 +659,8 @@ fn check_evidence_events(
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
-                remaining = checked_condition_event(theorem, facts, &state, next_statement, tail)?;
+                remaining =
+                    checked_condition_event(theorem, &current_facts, &state, next_statement, tail)?;
             }
             CheckedExecutionEvent::Branch(branch) => {
                 let CStatement::If { .. } = &next_statement else {
@@ -611,6 +687,7 @@ fn check_evidence_events(
                 state = branch.joined_state().clone();
                 remaining = tail;
             }
+            CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
         }
     }
     Some(CheckedEvidenceProgress {
@@ -628,6 +705,12 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
             CheckedExecutionEvent::Branch(branch) => {
                 for arm in &branch.arms {
                     validate_checked_event_shapes(&arm.events)?;
+                }
+                continue;
+            }
+            CheckedExecutionEvent::ProofCase(arm) => {
+                if !arm.is_valid() {
+                    return Err("retained proof-case evidence has an invalid checked arm");
                 }
                 continue;
             }
@@ -703,6 +786,26 @@ impl ExecutionProofCore {
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Condition(theorem.clone()));
         }
+    }
+
+    pub(crate) fn record_proof_case_arm(
+        &mut self,
+        partition: Arc<CheckedProofCasePartition>,
+        arm_index: usize,
+        facts: ProofFacts,
+    ) -> bool {
+        let arm = CheckedProofCaseArm {
+            partition,
+            arm_index,
+            facts,
+        };
+        if !arm.is_valid() {
+            return false;
+        }
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::ProofCase(arm.clone()));
+        }
+        true
     }
 
     /// Records a branch node only after [`CheckedExecutionBranch::check`]

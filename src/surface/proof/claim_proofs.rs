@@ -1295,12 +1295,11 @@ pub(super) fn finish_ordered_proof<'a>(
                     };
                     let execution_start_assumptions =
                         assumptions_from_propositions(&certification_facts);
-                    if case_groups.len() == 1
-                        // Outcome predicate unfolding can add checked claim
-                        // authority that is not part of the C transition
-                        // trace. Until that derivation is typed evidence too,
-                        // retain the independent cross-check for this shape.
-                        && proof_execution.core.unfolded_predicates.is_empty()
+                    // Outcome predicate unfolding can add checked claim
+                    // authority that is not part of the C transition
+                    // trace. Until that derivation is typed evidence too,
+                    // retain the independent cross-check for this shape.
+                    if proof_execution.core.unfolded_predicates.is_empty()
                         // Outcome resource folds change the state against
                         // which contract predicates and counts are lowered.
                         // They need their own typed evidence before direct
@@ -1313,6 +1312,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 execution,
                                 function,
                                 &proof_execution.core.execution_evidence,
+                                &path_case_facts,
                                 execution_start_assumptions.clone(),
                                 function_environment.clone(),
                                 execution_semantics,
