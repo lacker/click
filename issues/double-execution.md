@@ -65,6 +65,10 @@ snapshot or proof-mark lowering. Outcome predicate unfolding, quantified
 exit-population transitions, and implicit counted-resource closure are the
 other explicit guards in claim finishing. Once these forms are typed evidence,
 the fallback and its cache can be removed rather than weakened piecemeal.
+The branch-interface resource projection and observation boundary is tracked
+in [Make branch joins preserve explicit checked interfaces](branch-joins.md);
+that issue owns the join-semantics cleanup rather than widening this migration
+issue into a general branch redesign.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim
