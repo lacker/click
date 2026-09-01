@@ -572,6 +572,45 @@ pub(in crate::kernel) fn canonicalized_symbolic_load_value(
 const LOAD_VARIABLE_BASE: u64 = 1 << 40;
 const LOAD_VARIABLE_RANGE: u64 = 1 << 40;
 
+/// The most load identities one verification session may mint. The registry
+/// is the only guard against two distinct loads sharing an id (the defining
+/// equations `Var(id) == load(memory, pointer)` circulate as ambient truths),
+/// so it must never forget an entry mid-session; exhausting it is a loud
+/// verifier failure, never a silent clear.
+const LOAD_VARIABLE_REGISTRY_CAPACITY: usize = 1_000_000;
+
+#[cfg(test)]
+thread_local! {
+    static LOAD_VARIABLE_REGISTRY_CAPACITY_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn load_variable_registry_capacity() -> usize {
+    #[cfg(test)]
+    if let Some(capacity) = LOAD_VARIABLE_REGISTRY_CAPACITY_OVERRIDE.with(|cell| cell.get()) {
+        return capacity;
+    }
+    LOAD_VARIABLE_REGISTRY_CAPACITY
+}
+
+/// Runs `body` with the registry capacity lowered so a test can reach it.
+#[cfg(test)]
+pub(crate) fn with_load_variable_registry_capacity<T>(
+    capacity: usize,
+    body: impl FnOnce() -> T,
+) -> T {
+    let previous =
+        LOAD_VARIABLE_REGISTRY_CAPACITY_OVERRIDE.with(|cell| cell.replace(Some(capacity)));
+    let result = body();
+    LOAD_VARIABLE_REGISTRY_CAPACITY_OVERRIDE.with(|cell| cell.set(previous));
+    result
+}
+
+#[cfg(test)]
+pub(crate) fn load_variable_registry_len() -> usize {
+    LOAD_VARIABLE_REGISTRY.with(|registry| registry.borrow().len())
+}
+
 /// Whether a kernel variable id lies in the reserved load-variable id space.
 /// Structural: no registry consultation, so the answer is deterministic
 /// and thread-agnostic.
@@ -1267,7 +1306,9 @@ fn offset_mentions_a_memory_load(offset: &PointerOffsetTerm) -> bool {
 /// execution — writes the same load with the same variable without sharing
 /// any allocator state, and certificates check across runs. A thread-local
 /// registry detects hash collisions between distinct load identities and
-/// stops verification loudly instead of silently conflating them.
+/// stops verification loudly instead of silently conflating them; it is
+/// never cleared within a session, and exhausting its capacity is likewise
+/// a loud failure rather than a silent reset.
 pub(crate) fn load_variable_for_cell(memory: &SharedCMemory, pointer: &Pointer) -> Variable {
     load_variable_for_cell_with_origin(memory, pointer, memory)
 }
@@ -1297,9 +1338,13 @@ pub(crate) fn load_variable_for_cell_with_origin(
                 "load-variable collision: {variable:?} represents two distinct loads"
             );
         } else {
-            if registry.len() >= 1_000_000 {
-                registry.clear();
-            }
+            assert!(
+                registry.len() < load_variable_registry_capacity(),
+                "load-variable registry capacity exhausted: this verification session minted \
+                 {} distinct load identities; the registry never forgets an entry because \
+                 it is the only collision guard for load-variable ids",
+                registry.len()
+            );
             registry.insert(variable, (memory.clone(), pointer.clone(), origin.clone()));
         }
     });

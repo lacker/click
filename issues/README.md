@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 17
+## Soundness issues: 16
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
@@ -45,7 +45,6 @@ and [double-execution](double-execution.md) removes that mask:
 - [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
 - [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)
 - [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
-- [Fail loudly on load-variable capacity and clear the proved cache per session](identity-collision-guards.md)
 - [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 

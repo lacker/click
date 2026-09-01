@@ -40,6 +40,8 @@ pub(crate) use eval::registered_load_for_variable;
 pub(crate) use eval::registered_load_origin_for_variable;
 pub(crate) use eval::resolve_pending_heap_allocations;
 pub(crate) use eval::terms_have_same_canonical_form;
+#[cfg(test)]
+pub(crate) use eval::{load_variable_registry_len, with_load_variable_registry_capacity};
 pub(crate) use functions::unreturned_allocation_at_function_exit;
 pub(crate) use memory_provenance::c_memory_load_is_unchanged;
 pub use memory_provenance::*;
@@ -122,6 +124,7 @@ impl VerificationSession {
             assumptions::clear_context_inconsistency_memos();
             assumptions::clear_frame_expansion_memo();
             api::clear_representation_certificate_cache();
+            api::clear_context_free_forall_cache();
         }
         Self { fresh: outermost }
     }

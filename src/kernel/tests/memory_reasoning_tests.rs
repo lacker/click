@@ -3289,3 +3289,32 @@ fn added_composition_carrier_keeps_snapshot_premise_work_bounded() {
         "an added carrier multiplied premise work: {work_four} -> {work_five}"
     );
 }
+
+#[test]
+#[should_panic(expected = "load-variable registry capacity exhausted")]
+fn load_variable_registry_fails_loudly_at_capacity_instead_of_clearing() {
+    let _session = crate::kernel::VerificationSession::enter();
+    let pointer = |block: &str| Pointer {
+        block: block.into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = intern_c_memory(
+        CMemory::new()
+            .with_block("local:a", 4)
+            .with_block("local:b", 4)
+            .with_block("local:c", 4),
+    );
+    crate::kernel::with_load_variable_registry_capacity(2, || {
+        let first = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
+        load_variable_for_cell_with_origin(&memory, &pointer("local:b"), &memory);
+        // Re-registering an identity the registry already knows is not growth
+        // and must keep returning the same variable.
+        let again = load_variable_for_cell_with_origin(&memory, &pointer("local:a"), &memory);
+        assert_eq!(first, again);
+        assert_eq!(crate::kernel::load_variable_registry_len(), 2);
+        // The third distinct identity exceeds the capacity: the registry must
+        // fail loudly here rather than forget the entries that guard against
+        // id collisions.
+        load_variable_for_cell_with_origin(&memory, &pointer("local:c"), &memory);
+    });
+}

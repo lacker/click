@@ -380,6 +380,48 @@ fn closed_forall_cache_accepts_only_kernel_proved_facts() {
 }
 
 #[test]
+fn context_free_forall_cache_is_scoped_to_one_verification_session() {
+    let _outer = crate::kernel::VerificationSession::enter();
+    let variable = Variable(91_000);
+    let reflexive = Proposition::ForAll {
+        var: variable,
+        sort: Sort::CInt32,
+        body: Box::new(Proposition::ConditionIs(
+            ConditionTerm::equal(
+                Bitvector32Term::Variable(variable),
+                Bitvector32Term::Variable(variable),
+            ),
+            true,
+        )),
+    };
+    assert!(
+        crate::kernel::api::contract_certification::certification_proves_context_free_forall(
+            &reflexive
+        )
+    );
+    assert!(
+        crate::kernel::api::contract_certification::context_free_forall_cache_len() >= 1,
+        "a proved closed fact is cached within the session"
+    );
+
+    // A nested entry joins the session and keeps the cache.
+    {
+        let _nested = crate::kernel::VerificationSession::enter();
+        assert!(crate::kernel::api::contract_certification::context_free_forall_cache_len() >= 1);
+    }
+    drop(_outer);
+
+    // A fresh outermost session starts with an empty cache, like every other
+    // per-session kernel table.
+    let _fresh = crate::kernel::VerificationSession::enter();
+    assert_eq!(
+        crate::kernel::api::contract_certification::context_free_forall_cache_len(),
+        0,
+        "a fact proved in one session must be re-derived in the next"
+    );
+}
+
+#[test]
 fn int32_increment_upper_bound_axiom_has_the_exact_implication() {
     let value = Bitvector32Term::Variable(Variable(90_000));
     let upper = Bitvector32Term::Variable(Variable(90_001));

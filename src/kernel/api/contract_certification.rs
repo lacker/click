@@ -2679,6 +2679,26 @@ pub(super) fn certification_proves_condition_from_verified_pure_implication(
     })
 }
 
+thread_local! {
+    /// Closed quantified facts already proved from the empty context on this
+    /// thread. Scoped to one `VerificationSession`: the proofs may consult
+    /// per-session tables (the load-variable registry, memory provenance), so
+    /// an entry must not outlive the session that established it.
+    static CONTEXT_FREE_FORALL_PROVED: std::cell::RefCell<BTreeSet<Proposition>> =
+        const { std::cell::RefCell::new(BTreeSet::new()) };
+}
+
+/// Forgets every context-free proved fact; `VerificationSession::enter`
+/// calls this alongside the other per-session tables.
+pub(crate) fn clear_context_free_forall_cache() {
+    CONTEXT_FREE_FORALL_PROVED.with(|proved| proved.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn context_free_forall_cache_len() -> usize {
+    CONTEXT_FREE_FORALL_PROVED.with(|proved| proved.borrow().len())
+}
+
 /// Reuses a closed quantified fact only after the kernel has proved it from
 /// previously proved closed quantified facts. Contract certification sees
 /// the same ordered global theorem facts once per function; this cache keeps
@@ -2691,18 +2711,15 @@ pub(in crate::kernel) fn certification_proves_context_free_forall(
     if !matches!(proposition, Proposition::ForAll { .. }) {
         return false;
     }
-    thread_local! {
-        static PROVED: std::cell::RefCell<BTreeSet<Proposition>> =
-            const { std::cell::RefCell::new(BTreeSet::new()) };
-    }
-    if PROVED.with(|proved| proved.borrow().contains(proposition)) {
+    if CONTEXT_FREE_FORALL_PROVED.with(|proved| proved.borrow().contains(proposition)) {
         return true;
     }
-    let proved_facts = PROVED.with(|proved| proved.borrow().iter().cloned().collect::<Vec<_>>());
+    let proved_facts = CONTEXT_FREE_FORALL_PROVED
+        .with(|proved| proved.borrow().iter().cloned().collect::<Vec<_>>());
     let closed_assumptions = assumptions_with_propositions(&PureFactContext::new(), &proved_facts);
     let proved = certification_proves_proposition(&closed_assumptions, proposition);
     if proved && crate::instrumentation::exceeded_verification_limit_context().is_none() {
-        PROVED.with(|cache| {
+        CONTEXT_FREE_FORALL_PROVED.with(|cache| {
             let mut cache = cache.borrow_mut();
             if cache.len() >= 128 {
                 cache.pop_first();
