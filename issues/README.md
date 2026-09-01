@@ -18,7 +18,72 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 2
+## Architecture issues: 2
 
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
+
+## Soundness issues: 18
+
+Reachable from ordinary C plus a sidecar (false "verified" verdict today):
+
+- [Havoc pointer- and array-typed locals at the loop head](loop-havoc-pointer-locals.md)
+- [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
+- [Require vacuity outside the range in the FiniteForAll derivation rule](finite-forall-vacuity.md)
+- [Make `intro` bind a variable fresh with respect to the available facts](have-binder-capture.md)
+- [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
+- [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
+- [Model C block scope for local declarations](c-block-scoping.md)
+- [Parse equality below relational precedence](c-comparison-precedence.md)
+- [Decide pointer-offset equality in the offset model, not modulo 2^32](pointer-offset-wrap.md)
+- [Check the witnessing load's snapshot before certifying loadability](loadability-witness-snapshot.md)
+- [Account for memory and call writes to the termination measure](termination-measure-aliasing.md)
+
+Reachable through the kernel API; the untrusted surface currently masks them
+and [double-execution](double-execution.md) removes that mask:
+
+- [Check every premise in contract certification's finite-forall instantiator](contract-finite-forall-premises.md)
+- [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
+- [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)
+- [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
+- [Fail loudly on load-variable capacity and clear the proved cache per session](identity-collision-guards.md)
+- [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
+- [Close five latent kernel asymmetries](kernel-hardening-batch.md)
+
+## Functionality gaps: 27
+
+C language coverage:
+
+- [Extend the integer model beyond int32 and uint8](integer-types.md)
+- [Accept standard C type spellings and typedefs](c-type-spellings.md)
+- [Widen the struct model](struct-model.md)
+- [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
+- [Model file-scope objects, statics, and string literals](global-variables.md)
+- [Model break, continue, do-while, switch, and goto](non-structured-control-flow.md)
+- [Parse the everyday C syntax the C0 frontend rejects](c-syntax-conveniences.md)
+- [Allow function calls in expression position](calls-in-expressions.md)
+- [Specify external and libc functions without a body](external-function-contracts.md)
+- [Evaluate pointer relational comparison and pointer subtraction](pointer-comparison-and-subtraction.md)
+- [Support pointer-to-pointer types](pointer-to-pointer.md)
+- [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
+- [Placeholder for floating point, function pointers, varargs, volatile, and concurrency](far-horizon-c-features.md)
+- [Verify one unchanged existing-source fixture](audit-existing-c-source-fidelity.md)
+
+Semantics and reasoning:
+
+- [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
+- [Reason about byte-width element indices](byte-element-index-reasoning.md)
+- [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
+- [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
+- [Allow memory reads in `requires` propositions](memory-reads-in-requires.md)
+- [Join branches that differ in heap deallocation](conditional-deallocation-joins.md)
+- [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
+- [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
+- [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)
+- [Instantiate universals with symbolic bounds and index facts under folds](quantifier-reasoning-coverage.md)
+
+Proof language and tooling:
+
+- [Lift proof-shape restrictions that force restructuring](proof-shape-restrictions.md)
+- [Fix the incremental verification marker and cache key](incremental-verify-marker.md)
+- [Export a machine-checkable proof artifact](exportable-certificate.md)
