@@ -34,6 +34,16 @@ executions for a post-execution fold, nested composite-resource scopes, and an
 explicit owned quantity; a negative kernel test rejects changed memory values
 and changed population counts.
 
+A mixed pure/resource `branch ensuring` can now retain one checked interface
+branch event. The artifact validates both exact source-arm traces, the
+exhaustive condition split, the deterministic abstract successor, every
+state-parametric exported fact, and whole-context resource availability in
+both arms. It also requires the continuation to read only locals whose values
+agree across the arms. Exact common non-scalar memory is preserved; differing
+memory still receives the conservative havoc. The owned-quantity regression
+now seals with zero whole-body executions, and kernel negatives reject an
+unproved successor fact and a resource absent from both arms.
+
 A quantified resource close after C execution remains on the fallback. That
 operation can change an observed exit population used by an outcome predicate;
 the checked entry artifact does not establish this exit transition. The guard
@@ -47,15 +57,15 @@ only the finished claim proof, not equivalent execution evidence. The
 `resource_count_patterns` mdtest pins this distinction.
 
 Unsupported evidence shapes deliberately retain the old independent check for
-now. The next known shape is a two-arm `branch ensuring` interface: its checked
-abstraction currently publishes a theorem for the whole source `if`, but the
-artifact does not retain the per-arm evidence establishing the interface facts
-and abstract successor state. Direct sealing therefore rejects that theorem's
-otherwise-unretained interface premise and performs one independent execution.
-Outcome predicate unfolding, quantified exit-population transitions, and
-implicit counted-resource closure are the other explicit guards in claim
-finishing. Once these forms are typed evidence, the fallback and its cache can
-be removed rather than weakened piecemeal.
+now. A pure-only interface whose continuation reads an abstracted local still
+needs typed outcome transport: the interface fact justifies reasoning at the
+abstract frontier, but does not yet reconstruct the concrete function outcome
+used by contract certification. Transformed resource interfaces with exports
+beyond the state-parametric fact rule likewise remain on the fallback. Outcome
+predicate unfolding, quantified exit-population transitions, and implicit
+counted-resource closure are the other explicit guards in claim finishing.
+Once these forms are typed evidence, the fallback and its cache can be removed
+rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim

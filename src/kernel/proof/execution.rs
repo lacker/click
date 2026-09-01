@@ -7,9 +7,11 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     CConditionOutcome, CExpression, CFunction, CFunctionExecutionCandidates, CLoopEffectCheck,
-    CState, CStatement, CStatementOutcome, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact,
-    Proposition, PureFactContext, Theorem,
+    CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule, ExecutionBudget,
+    ExecutionLimit, ExecutionPureFact, Proposition, PureFactContext, ResourceContext,
+    SpecProposition, Theorem,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -201,6 +203,7 @@ pub(crate) struct CheckedExecutionBranch {
     split: CheckedBranchSplit,
     arms: [CheckedExecutionBranchArm; 2],
     joined_state: CState,
+    interface_successor_facts: Option<ProofFacts>,
 }
 
 #[derive(Clone)]
@@ -290,6 +293,175 @@ impl CheckedExecutionBranch {
             split,
             arms: [then_arm, else_arm],
             joined_state: (*arms[0].state).clone(),
+            interface_successor_facts: None,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_interface(
+        split: CheckedBranchSplit,
+        root_facts: &ProofFacts,
+        arm_theorems: [&Theorem; 2],
+        arm_facts: [&ProofFacts; 2],
+        parent: &ExecutionProofCore,
+        arms: [&ExecutionProofCore; 2],
+        stable_join_locals: &BTreeMap<String, CValue>,
+        interface_specs: &[SpecProposition],
+        joined_state: &CState,
+        successor_facts: &ProofFacts,
+    ) -> Result<Self, &'static str> {
+        let parent_at_unstepped_function_entry = parent.frontier.is_at_function_entry()
+            && parent.execution_evidence.len() == 1
+            && parent.execution_evidence[0].is_empty();
+        if split.state != *parent.state && !parent_at_unstepped_function_entry {
+            return Err("the interface split does not start at the parent state");
+        }
+        if parent.execution_evidence.len() != 1
+            || arms.iter().any(|arm| arm.execution_evidence.len() != 1)
+        {
+            return Err("the interface branch does not have one trace per frontier");
+        }
+        if arms.iter().any(|arm| !arm.frontier.is_at_region_boundary()) {
+            return Err("an interface arm has not reached its typed boundary");
+        }
+        if !split.validates_exhaustive_join(
+            &split.state,
+            &split.condition,
+            root_facts,
+            [Some(arm_theorems[0]), Some(arm_theorems[1])],
+            [Some(arm_facts[0]), Some(arm_facts[1])],
+        ) {
+            return Err("the interface arms do not exhaust the checked condition split");
+        }
+
+        let expected_stable_locals = arms[0]
+            .state
+            .locals()
+            .object_values()
+            .filter(|(name, value)| arms[1].state.locals().get(name) == Some(*value))
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        if &expected_stable_locals != stable_join_locals {
+            return Err("the interface stable-local set is not exact");
+        }
+        let mut continuation_variables = BTreeSet::new();
+        if let Some(continuation) = &split.continuation {
+            collect_c_statement_variable_names(continuation, &mut continuation_variables);
+        }
+        if continuation_variables
+            .iter()
+            .any(|name| !stable_join_locals.contains_key(name))
+        {
+            return Err("the interface continuation reads an abstracted local");
+        }
+        let sibling_states = [&*arms[0].state, &*arms[1].state];
+        let abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
+            &arms[0].state,
+            &sibling_states,
+            stable_join_locals,
+        )
+        .map_err(|_| "the then interface state could not be abstracted")?;
+        let abstract_else = crate::kernel::abstract_c_state_for_interface_join_across(
+            &arms[1].state,
+            &sibling_states,
+            stable_join_locals,
+        )
+        .map_err(|_| "the else interface state could not be abstracted")?;
+        if abstract_then != abstract_else {
+            return Err("the interface arms do not have one deterministic abstraction");
+        }
+        if joined_state
+            .clone()
+            .with_resource_context(ResourceContext::new())
+            != abstract_then
+        {
+            return Err("the interface successor is not the checked arm abstraction");
+        }
+        for (arm, facts) in arms.iter().zip(arm_facts) {
+            if arm
+                .state
+                .resources()
+                .clone()
+                .without_facts(joined_state.resources().facts(), facts.assumptions())
+                .is_none()
+            {
+                return Err("the interface successor resources are not owned by both arms");
+            }
+        }
+
+        let reference_state = parent
+            .frontier
+            .execution_start_state
+            .as_ref()
+            .unwrap_or(&split.state);
+        for spec in interface_specs {
+            for (arm, facts) in arms.iter().zip(arm_facts) {
+                if !interface_spec_is_established(spec, &arm.state, reference_state, facts) {
+                    return Err("an interface fact is not established by both concrete arms");
+                }
+            }
+            if !interface_spec_is_established(spec, joined_state, reference_state, successor_facts)
+            {
+                return Err("an interface fact is not retained at the abstract successor");
+            }
+        }
+        let introduced = successor_facts
+            .introduced_since(root_facts)
+            .ok_or("the interface successor facts do not descend from the branch root")?;
+        for fact in introduced {
+            let common_arm_fact = arm_facts
+                .iter()
+                .all(|facts| facts.assumptions().proves(&fact));
+            let interface_fact = interface_specs
+                .iter()
+                .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, &fact));
+            if !common_arm_fact && !interface_fact {
+                return Err("the interface successor contains an unchecked new fact");
+            }
+        }
+
+        let parent_trace = &parent.execution_evidence[0];
+        let full_source = prepend_checked_evidence_statement(
+            split.branch_statement.clone(),
+            split.continuation.clone(),
+        );
+        let mut checked_arms = Vec::with_capacity(2);
+        for (index, arm) in arms.iter().enumerate() {
+            let events = arm.execution_evidence[0]
+                .suffix_since(parent_trace)
+                .ok_or("an interface arm trace does not descend from the parent trace")?;
+            if !matches!(
+                events.first(),
+                Some(CheckedExecutionEvent::Condition(theorem)) if theorem == arm_theorems[index]
+            ) {
+                return Err("an interface arm does not begin with its checked condition theorem");
+            }
+            let progress = check_evidence_events(
+                &events,
+                arm_facts[index],
+                split.state.clone(),
+                Some(full_source.clone()),
+            )
+            .ok_or("an interface arm trace does not follow its exact C source")?;
+            if progress.completed.is_some() || progress.remaining != split.continuation {
+                return Err("an interface arm trace does not reach the shared continuation");
+            }
+            if progress.state != *arm.state {
+                return Err("an interface arm trace does not reach its recorded state");
+            }
+            checked_arms.push(CheckedExecutionBranchArm {
+                facts: arm_facts[index].clone(),
+                events,
+            });
+        }
+        let [then_arm, else_arm] = checked_arms
+            .try_into()
+            .map_err(|_| "the checked interface branch does not have exactly two arms")?;
+        Ok(Self {
+            split,
+            arms: [then_arm, else_arm],
+            joined_state: joined_state.clone(),
+            interface_successor_facts: Some(successor_facts.clone()),
         })
     }
 
@@ -319,6 +491,136 @@ impl CheckedExecutionBranch {
     pub(crate) fn arm_events(&self, index: usize) -> &[CheckedExecutionEvent] {
         &self.arms[index].events
     }
+
+    pub(crate) fn interface_successor_facts(&self) -> Option<&ProofFacts> {
+        self.interface_successor_facts.as_ref()
+    }
+}
+
+fn collect_c_expression_variable_names(expression: &CExpression, names: &mut BTreeSet<String>) {
+    match expression {
+        CExpression::Value(_) => {}
+        CExpression::Variable(name) => {
+            names.insert(name.clone());
+        }
+        CExpression::AddressOf(body)
+        | CExpression::Not(body)
+        | CExpression::Load(body)
+        | CExpression::BitwiseNot(body) => collect_c_expression_variable_names(body, names),
+        CExpression::PointerOffsetBytes { pointer, .. }
+        | CExpression::TypedLoad { pointer, .. } => {
+            collect_c_expression_variable_names(pointer, names);
+        }
+        CExpression::LessThan(left, right)
+        | CExpression::LessEqual(left, right)
+        | CExpression::GreaterThan(left, right)
+        | CExpression::GreaterEqual(left, right)
+        | CExpression::Equal(left, right)
+        | CExpression::NotEqual(left, right)
+        | CExpression::And(left, right)
+        | CExpression::Or(left, right)
+        | CExpression::Add(left, right)
+        | CExpression::Subtract(left, right)
+        | CExpression::Multiply(left, right)
+        | CExpression::Divide(left, right)
+        | CExpression::Remainder(left, right)
+        | CExpression::ShiftLeft(left, right)
+        | CExpression::ShiftRight(left, right)
+        | CExpression::BitwiseAnd(left, right)
+        | CExpression::BitwiseOr(left, right)
+        | CExpression::BitwiseXor(left, right)
+        | CExpression::Index(left, right) => {
+            collect_c_expression_variable_names(left, names);
+            collect_c_expression_variable_names(right, names);
+        }
+    }
+}
+
+fn collect_c_statement_variable_names(statement: &CStatement, names: &mut BTreeSet<String>) {
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } | CStatement::HeapAllocate { .. } => {}
+        CStatement::Assign { expression, .. }
+        | CStatement::Return(expression)
+        | CStatement::Assert {
+            condition: expression,
+            ..
+        } => collect_c_expression_variable_names(expression, names),
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_c_expression_variable_names(argument, names);
+            }
+        }
+        CStatement::HeapFree { pointer } => collect_c_expression_variable_names(pointer, names),
+        CStatement::Seq(first, second) => {
+            collect_c_statement_variable_names(first, names);
+            collect_c_statement_variable_names(second, names);
+        }
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            collect_c_expression_variable_names(pointer, names);
+            collect_c_expression_variable_names(value, names);
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_c_expression_variable_names(condition, names);
+            collect_c_statement_variable_names(then_branch, names);
+            collect_c_statement_variable_names(else_branch, names);
+        }
+        CStatement::While {
+            condition, body, ..
+        } => {
+            collect_c_expression_variable_names(condition, names);
+            collect_c_statement_variable_names(body, names);
+        }
+    }
+}
+
+fn interface_spec_paths(
+    spec: &SpecProposition,
+    state: &CState,
+    reference_state: &CState,
+) -> Option<Vec<crate::kernel::spec::SpecPropositionPath>> {
+    crate::kernel::spec::lower_spec_proposition_at_state_with_loop_entry(
+        state,
+        spec,
+        Some(reference_state),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::new(),
+    )
+    .ok()
+}
+
+fn interface_spec_is_established(
+    spec: &SpecProposition,
+    state: &CState,
+    reference_state: &CState,
+    facts: &ProofFacts,
+) -> bool {
+    interface_spec_paths(spec, state, reference_state).is_some_and(|paths| {
+        paths.into_iter().any(|path| {
+            facts.assumptions().proves(&path.proposition)
+                && path
+                    .facts
+                    .iter()
+                    .all(|fact| facts.assumptions().proves(fact.proposition()))
+                && path
+                    .obligations
+                    .iter()
+                    .all(|obligation| facts.assumptions().proves(obligation.proposition()))
+        })
+    })
+}
+
+fn interface_spec_lowers_to(
+    spec: &SpecProposition,
+    state: &CState,
+    reference_state: &CState,
+    expected: &Proposition,
+) -> bool {
+    interface_spec_paths(spec, state, reference_state)
+        .is_some_and(|paths| paths.iter().any(|path| &path.proposition == expected))
 }
 
 /// One path retained from a complete kernel C-condition evaluation.
@@ -766,13 +1068,17 @@ fn check_evidence_events(
                     )?;
                     if arm.completed.is_some()
                         || arm.remaining != tail
-                        || arm.state != *branch.joined_state()
+                        || (branch.interface_successor_facts().is_none()
+                            && arm.state != *branch.joined_state())
                     {
                         return None;
                     }
                 }
                 state = branch.joined_state().clone();
                 remaining = tail;
+                if let Some(successor_facts) = branch.interface_successor_facts() {
+                    current_facts = successor_facts.clone();
+                }
             }
             CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
         }
@@ -948,6 +1254,45 @@ impl ExecutionProofCore {
         Ok(())
     }
 
+    /// Records a two-arm `branch ensuring` only after the kernel has checked
+    /// both source traces, the deterministic abstraction, every retained
+    /// interface fact, and whole-context resource availability in both arms.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn record_interface_branch_join(
+        &mut self,
+        split: CheckedBranchSplit,
+        root_facts: &ProofFacts,
+        arm_theorems: [&Theorem; 2],
+        arm_facts: [&ProofFacts; 2],
+        parent: &ExecutionProofCore,
+        arms: [&ExecutionProofCore; 2],
+        stable_join_locals: &BTreeMap<String, CValue>,
+        interface_specs: &[SpecProposition],
+        joined_state: &CState,
+        successor_facts: &ProofFacts,
+    ) -> Result<(), &'static str> {
+        let parent_trace = match parent.execution_evidence.as_slice() {
+            [trace] => trace,
+            _ => return Err("the interface parent does not have one execution trace"),
+        };
+        let branch = CheckedExecutionBranch::check_interface(
+            split,
+            root_facts,
+            arm_theorems,
+            arm_facts,
+            parent,
+            arms,
+            stable_join_locals,
+            interface_specs,
+            joined_state,
+            successor_facts,
+        )?;
+        let mut trace = parent_trace.clone();
+        trace.push(CheckedExecutionEvent::Branch(branch));
+        self.execution_evidence = vec![trace].into();
+        Ok(())
+    }
+
     /// Checks that every retained event carries the kernel judgment its tag
     /// promises. This is intentionally cheaper than executing any C: it only
     /// inspects the conclusions of already-issued theorem objects.
@@ -1005,8 +1350,8 @@ impl ExecutionFrontier {
 mod tests {
     use super::*;
     use crate::kernel::{
-        Bitvector32Term, CCompositeResourceDefinition, CMemory, CType, CValue, Pointer,
-        PointerBlock, PointerOffsetTerm, c_function,
+        Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition, CMemory, CResourceFact,
+        CType, CValue, Pointer, PointerBlock, PointerOffsetTerm, SpecExpression, c_function, int32,
     };
 
     fn condition_event(
@@ -1199,6 +1544,133 @@ mod tests {
             )
             .is_err(),
             "swapped arm evidence must not certify the source partition"
+        );
+    }
+
+    #[test]
+    fn checked_interface_branch_rejects_unproved_facts_and_unowned_resources() {
+        let state = CState::new()
+            .with_local("x", int32(7))
+            .with_local("flag", int32(0));
+        let condition = CExpression::Variable("flag".to_string());
+        let branch_statement = CStatement::If {
+            condition: condition.clone(),
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(CStatement::Skip),
+        };
+        let continuation = Some(CStatement::Return(CExpression::Variable("x".to_string())));
+        let then_theorem = match condition_event(&state, &condition, true) {
+            CheckedExecutionEvent::Condition(theorem) => theorem,
+            _ => unreachable!(),
+        };
+        let else_theorem = match condition_event(&state, &condition, false) {
+            CheckedExecutionEvent::Condition(theorem) => theorem,
+            _ => unreachable!(),
+        };
+        let root_facts = ProofFacts::default();
+        let split = CheckedBranchSplit {
+            state: state.clone(),
+            branch_statement,
+            continuation,
+            condition,
+            root_facts: root_facts.clone(),
+            paths: vec![
+                CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(true),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    theorem: then_theorem.clone(),
+                },
+                CheckedBranchPath {
+                    outcome: CConditionOutcome::Value(false),
+                    facts: Vec::new(),
+                    obligations: Vec::new(),
+                    theorem: else_theorem.clone(),
+                },
+            ],
+        };
+        let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        let mut then_arm = parent.clone();
+        then_arm.record_condition_transition(then_theorem.clone());
+        then_arm.frontier.region = ExecutionRegionKind::BranchArm;
+        then_arm.frontier.position = FrontierPosition::RegionBoundary;
+        let mut else_arm = parent.clone();
+        else_arm.record_condition_transition(else_theorem.clone());
+        else_arm.frontier.region = ExecutionRegionKind::BranchArm;
+        else_arm.frontier.position = FrontierPosition::RegionBoundary;
+        let stable_join_locals = state
+            .locals()
+            .object_values()
+            .map(|(name, value)| (name.to_string(), value.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let spec = SpecProposition::Comparison {
+            left: SpecExpression::CExpression(CExpression::Variable("x".to_string())),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::CExpression(CExpression::Variable("x".to_string())),
+        };
+        let checked_fact = interface_spec_paths(&spec, &state, &state)
+            .expect("the simple interface should lower")
+            .remove(0)
+            .proposition;
+        let successor_facts = root_facts.with_fact(checked_fact);
+
+        CheckedExecutionBranch::check_interface(
+            split.clone(),
+            &root_facts,
+            [&then_theorem, &else_theorem],
+            [&root_facts, &root_facts],
+            &parent,
+            [&then_arm, &else_arm],
+            &stable_join_locals,
+            std::slice::from_ref(&spec),
+            &state,
+            &successor_facts,
+        )
+        .expect("the exact fact-only abstraction should check");
+
+        let forged_fact = Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::signed_less_than(
+                Bitvector32Term::Constant(1),
+                Bitvector32Term::Constant(0),
+            ),
+            true,
+        );
+        assert!(
+            CheckedExecutionBranch::check_interface(
+                split.clone(),
+                &root_facts,
+                [&then_theorem, &else_theorem],
+                [&root_facts, &root_facts],
+                &parent,
+                [&then_arm, &else_arm],
+                &stable_join_locals,
+                std::slice::from_ref(&spec),
+                &state,
+                &successor_facts.with_fact(forged_fact),
+            )
+            .is_err(),
+            "an unrelated successor fact must not gain interface authority"
+        );
+
+        let forged_resource = CResourceFact::own_token("missing".to_string(), Vec::new());
+        let forged_state = state
+            .clone()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(forged_resource));
+        assert!(
+            CheckedExecutionBranch::check_interface(
+                split,
+                &root_facts,
+                [&then_theorem, &else_theorem],
+                [&root_facts, &root_facts],
+                &parent,
+                [&then_arm, &else_arm],
+                &stable_join_locals,
+                std::slice::from_ref(&spec),
+                &forged_state,
+                &successor_facts,
+            )
+            .is_err(),
+            "a resource absent from both arms must not gain interface authority"
         );
     }
 }

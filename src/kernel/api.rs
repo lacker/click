@@ -380,6 +380,28 @@ pub fn abstract_c_state_for_join_across(
     sibling_states: &[&CState],
     stable_entry_locals: &BTreeMap<String, CValue>,
 ) -> Result<CState, String> {
+    abstract_c_state_for_join_across_with_policy(state, sibling_states, stable_entry_locals, false)
+}
+
+/// Builds a branch-interface abstraction while retaining non-scalar memory
+/// when every checked arm has the exact same such memory. This avoids
+/// forgetting an already-established immutable frame merely because scalar
+/// locals differ across the branch. Any disagreement uses the ordinary
+/// conservative memory havoc.
+pub fn abstract_c_state_for_interface_join_across(
+    state: &CState,
+    sibling_states: &[&CState],
+    stable_entry_locals: &BTreeMap<String, CValue>,
+) -> Result<CState, String> {
+    abstract_c_state_for_join_across_with_policy(state, sibling_states, stable_entry_locals, true)
+}
+
+fn abstract_c_state_for_join_across_with_policy(
+    state: &CState,
+    sibling_states: &[&CState],
+    stable_entry_locals: &BTreeMap<String, CValue>,
+    preserve_exact_common_memory: bool,
+) -> Result<CState, String> {
     let mut existing_variables = BTreeSet::new();
     for sibling in sibling_states {
         collect_c_state_bitvector_variables(sibling, &mut existing_variables);
@@ -434,9 +456,25 @@ pub fn abstract_c_state_for_join_across(
         abstract_objects.push((name.clone(), abstract_value, *c_type));
     }
 
-    abstract_state.memory = abstract_state
-        .memory
-        .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+    let comparable_memory = |state: &CState| {
+        let mut memory = state.memory.clone();
+        std::sync::Arc::make_mut(&mut memory.blocks)
+            .retain(|block, _| !preserved_blocks.contains(block));
+        std::sync::Arc::make_mut(&mut memory.cells)
+            .retain(|pointer, _| !preserved_blocks.contains(&pointer.block));
+        memory
+    };
+    let common_memory = preserve_exact_common_memory && {
+        let expected = comparable_memory(state);
+        sibling_states
+            .iter()
+            .all(|sibling| comparable_memory(sibling) == expected)
+    };
+    if !common_memory {
+        abstract_state.memory = abstract_state
+            .memory
+            .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+    }
     for (name, value, c_type) in abstract_objects {
         sync_stack_local(&mut abstract_state, &name, &value);
         abstract_state.locals.set_typed(name, value, c_type);
@@ -2296,18 +2334,22 @@ fn seal_proof_evidence_events(
                     )?;
                     if arm.completed.is_some()
                         || arm.remaining != tail
-                        || !execution_evidence_states_match(
-                            function,
-                            &arm.state,
-                            branch.joined_state(),
-                            arm_assumptions,
-                        )
+                        || (branch.interface_successor_facts().is_none()
+                            && !execution_evidence_states_match(
+                                function,
+                                &arm.state,
+                                branch.joined_state(),
+                                arm_assumptions,
+                            ))
                     {
                         return None;
                     }
                 }
                 state = branch.joined_state().clone();
                 remaining = tail;
+                if let Some(successor_facts) = branch.interface_successor_facts() {
+                    current_assumptions = successor_facts.assumptions().clone();
+                }
             }
             CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
         }

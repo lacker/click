@@ -8102,6 +8102,7 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
         }
     "#;
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let ((verified, events), checked_interface_joins) =
         crate::surface::proof::count_checked_execution_interface_joins(|| {
             crate::instrumentation::collect(|| {
@@ -8112,6 +8113,11 @@ fn branch_interface_normalizes_an_entailed_owned_quantity_on_proof() {
     assert!(
         checked_interface_joins > 0,
         "the quantity interface must reach the checked two-arm Proof join"
+    );
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a checked `branch ensuring` must seal from its retained arm evidence"
     );
     assert!(
         events.iter().all(|event| !matches!(

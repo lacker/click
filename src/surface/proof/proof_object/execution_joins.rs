@@ -604,9 +604,33 @@ impl<'a> Proof<'a> {
         continuation_index: usize,
         continuation_remaining: &Option<Arc<CStatement>>,
         execution_start_state: CState,
+        checked_condition_split: CheckedBranchSplit,
         assertions: Vec<ProofAssertion>,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
+        let interface_reference_state = parent_execution
+            .core
+            .frontier
+            .execution_start_state(&parent_execution.core.state)
+            .clone();
+        let interface_specs = assertions
+            .iter()
+            .filter_map(|assertion| match assertion {
+                ProofAssertion::Fact(fact) => Some(lower_branch_interface_fact(
+                    fact,
+                    context.parsed_function,
+                    &interface_reference_state,
+                    context.arguments,
+                    context.predicate_environment,
+                    context.click_function_environment,
+                )),
+                ProofAssertion::Resource(_) => None,
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok();
         let join_continuation = derive_execution_join_continuation(
             parent_execution,
             continuation_remaining,
@@ -883,6 +907,39 @@ impl<'a> Proof<'a> {
             }
         }
 
+        let [Some(then_theorem), Some(else_theorem)] =
+            [arms[0].condition_theorem, arms[1].condition_theorem]
+        else {
+            return Err(
+                self.step_error("checked interface join lost one of its condition theorems")
+            );
+        };
+        let joined_state = (*execution.core.state).clone();
+        // Artifact retention is an optimization over an already-checked
+        // interface join. Shapes not yet covered by the typed kernel rule
+        // keep the existing independent-certification fallback.
+        // Start with the mixed pure/resource shape that exposed the missing
+        // evidence. Pure-only result abstractions still need typed outcome
+        // transport, while resource-only joins gain nothing from checking a
+        // state-parametric fact artifact.
+        if let Some(interface_specs) = interface_specs.as_ref()
+            && !interface_specs.is_empty()
+            && !joined_state.resources().facts().is_empty()
+        {
+            let _ = execution.core.record_interface_branch_join(
+                checked_condition_split,
+                parent_facts,
+                [then_theorem, else_theorem],
+                [arms[0].facts, arms[1].facts],
+                &parent_execution.core,
+                [&arms[0].execution.core, &arms[1].execution.core],
+                &stable_join_locals,
+                interface_specs,
+                &joined_state,
+                &facts,
+            );
+        }
+
         #[cfg(test)]
         CHECKED_EXECUTION_INTERFACE_JOINS.with(|count| count.set(count.get() + 1));
 
@@ -944,6 +1001,7 @@ impl<'a> Proof<'a> {
             record.continuation_index,
             &record.continuation_remaining,
             record.execution_start_state.clone(),
+            record.checked_condition_split.clone(),
             assertions,
             arms,
         )?;

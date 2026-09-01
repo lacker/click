@@ -216,6 +216,46 @@ pub(in crate::surface) fn annotated_function(
     ))
 }
 
+/// Lowers one `branch ensuring` fact as a state-parametric kernel
+/// proposition. Unlike fixed-state proof lowering, this keeps C bindings as
+/// expressions so the kernel can check the same interface against both
+/// concrete arm states and the abstract successor state.
+pub(in crate::surface) fn lower_branch_interface_fact(
+    proposition: &ClickProposition,
+    parsed_function: &syntax::C0Function,
+    entry_state: &CState,
+    arguments: &[CExpression],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<SpecProposition, ClickError> {
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        function_effects: &[],
+        predicate_environment,
+        click_function_environment,
+        entry_state,
+        entry_values: parameter_values(parsed_function.parameters(), arguments)?,
+        parameter_array_element_types: parsed_function
+            .parameters()
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
+        quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_300_000,
+    };
+    lowerer
+        .click_proposition_to_spec_proposition(proposition, &SpecElaborationContext::default())
+        .map_err(ClickError::new)
+}
+
 pub(in crate::surface) fn function_contract_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,

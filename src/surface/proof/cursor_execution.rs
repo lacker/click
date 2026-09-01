@@ -1,5 +1,5 @@
 use super::*;
-use crate::kernel::abstract_c_state_for_join_across;
+use crate::kernel::abstract_c_state_for_interface_join_across;
 use std::sync::Arc;
 
 ///
@@ -109,7 +109,9 @@ pub(super) fn apply_branch_interface_with_proof_facts(
     }
     let entry_state = execution.core.frontier.execution_start_state(state).clone();
     let abstraction = match sibling_join_states {
-        Some(states) => abstract_c_state_for_join_across(state, states, stable_join_locals),
+        Some(states) => {
+            abstract_c_state_for_interface_join_across(state, states, stable_join_locals)
+        }
         None => abstract_c_state_for_join(state, stable_join_locals),
     };
     let mut abstract_state = abstraction.map_err(|message| {
