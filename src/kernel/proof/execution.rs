@@ -6,7 +6,8 @@
 
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
-    CConditionOutcome, CExpression, CFunction, CFunctionExecutionCandidates, CLoopEffectCheck,
+    Bitvector32Term, CCompositeResourceDefinition, CConditionOutcome, CExpression, CFunction,
+    CFunctionExecutionCandidates, CLoopEffectCheck, CMemoryRange, CResourceFact, CResourceSpec,
     CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule, ExecutionBudget,
     ExecutionLimit, ExecutionPureFact, Proposition, PureFactContext, ResourceContext,
     SpecProposition, Theorem,
@@ -46,6 +47,495 @@ pub(crate) enum CheckedExecutionEvent {
     Condition(Theorem),
     Branch(CheckedExecutionBranch),
     ProofCase(CheckedProofCaseArm),
+    ResourceObservation(CheckedResourceObservation),
+    ResourceRewrite(CheckedResourceRewrite),
+}
+
+/// Kernel-checked evidence for a fold, unfold, or scoped open/close that
+/// changes only the definitional representation of one composite resource.
+#[derive(Clone)]
+pub(crate) struct CheckedResourceRewrite {
+    before_state: CState,
+    pub(crate) after_state: CState,
+    pub(crate) before_facts: ProofFacts,
+    pub(crate) after_facts: ProofFacts,
+    definition: CCompositeResourceDefinition,
+}
+
+impl CheckedResourceRewrite {
+    pub(crate) fn before_state(&self) -> &CState {
+        &self.before_state
+    }
+
+    fn check(
+        function: &CFunction,
+        before_state: &CState,
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+    ) -> Result<Self, &'static str> {
+        let assumptions = before_facts.assumptions();
+        if before_state
+            .resources()
+            .directly_supporting_fact(selected, assumptions)
+            .is_none()
+            && after_state
+                .resources()
+                .directly_supporting_fact(selected, after_facts.assumptions())
+                .is_none()
+        {
+            return Err("the rewritten composite is absent from both resource representations");
+        }
+        let crate::kernel::CResource::Composite { name, .. } = selected.resource() else {
+            return Err("resource rewrite evidence requires a composite resource");
+        };
+        let definition = function
+            .composite_resource_definitions()
+            .iter()
+            .find(|definition| definition.name() == name)
+            .cloned()
+            .ok_or("the rewritten composite definition is not registered on the function")?;
+
+        let mut concrete_after = after_state.clone();
+        concrete_after.memory = before_state.memory.clone();
+        concrete_after.resources = before_state.resources.clone();
+        concrete_after.counted_populations = before_state.counted_populations.clone();
+        if concrete_after != *before_state
+            || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                before_state.memory(),
+                after_state.memory(),
+                assumptions,
+            )
+            || !crate::kernel::api::counted_populations_definitionally_equal(
+                before_state,
+                after_state,
+                function.composite_resource_definitions(),
+                assumptions,
+            )
+        {
+            return Err("resource rewrite changed more than a definitional representation");
+        }
+        let expansion_matches = |folded: &CState, exposed: &CState| {
+            let Some(authority) = folded
+                .resources()
+                .directly_supporting_fact(selected, assumptions)
+            else {
+                return false;
+            };
+            let Some(expanded) = crate::kernel::functions::expand_composite_resource_fact(
+                folded.resources(),
+                authority,
+                function.composite_resource_definitions(),
+                folded.memory(),
+                assumptions,
+            ) else {
+                return false;
+            };
+            let normalized_expanded = expanded.clone().normalized(assumptions);
+            let normalized_exposed = exposed.resources().clone().normalized(assumptions);
+            resource_contexts_match_modulo_redundant_views(
+                &normalized_expanded,
+                &normalized_exposed,
+                assumptions,
+            )
+                || crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
+                function.composite_resource_definitions(),
+                exposed.memory(),
+                &expanded,
+                exposed.memory(),
+                exposed.resources(),
+                assumptions,
+            )
+        };
+        let open_borrow_matches = |folded: &CState, opened: &CState| {
+            let Some(authority) = folded
+                .resources()
+                .directly_supporting_fact(selected, assumptions)
+            else {
+                return false;
+            };
+            let singleton = ResourceContext::new().unchecked_with_fact(authority.clone());
+            let Some(body) = crate::kernel::functions::expand_composite_resource_fact(
+                &singleton,
+                authority,
+                function.composite_resource_definitions(),
+                folded.memory(),
+                assumptions,
+            ) else {
+                return false;
+            };
+            let Ok(expected) = folded
+                .resources()
+                .clone()
+                .try_compose_with_facts_delaying_normalization(
+                    body.facts().iter().cloned(),
+                    assumptions,
+                )
+            else {
+                return false;
+            };
+            let expected = expected.normalized(assumptions);
+            let actual = opened.resources().clone().normalized(assumptions);
+            resource_contexts_match_modulo_redundant_views(&expected, &actual, assumptions)
+        };
+        if before_state.resources() != after_state.resources()
+            && !expansion_matches(before_state, after_state)
+            && !expansion_matches(after_state, before_state)
+            && !open_borrow_matches(before_state, after_state)
+            && !open_borrow_matches(after_state, before_state)
+        {
+            return Err("resource rewrite does not match the selected composite definition");
+        }
+
+        let introduced = after_facts
+            .introduced_since(before_facts)
+            .ok_or("resource rewrite facts do not descend from the input facts")?;
+        let temporary = ResourceContext::new().unchecked_with_fact(selected.clone());
+        let expanded = crate::kernel::functions::expand_composite_resource_fact(
+            &temporary,
+            selected,
+            function.composite_resource_definitions(),
+            after_state.memory(),
+            assumptions,
+        )
+        .ok_or("the rewritten composite body could not be instantiated")?;
+        let children = expanded
+            .facts()
+            .iter()
+            .filter(|fact| *fact != selected)
+            .cloned()
+            .collect::<Vec<_>>();
+        let child_context = ResourceContext::new().unchecked_with_facts(children);
+        let mut allowed = child_context.observable_facts_assuming_valid(assumptions);
+        allowed.push(Proposition::CResourceComposition(child_context.clone()));
+        allowed.extend(
+            after_state
+                .resources()
+                .observable_facts_assuming_valid(after_facts.assumptions()),
+        );
+        let relation_authority = CResourceFact::own(selected.resource().clone());
+        if let Some(propositions) =
+            crate::kernel::functions::evaluate_composite_resource_relation_propositions(
+                &relation_authority,
+                function.composite_resource_definitions(),
+                after_state.memory(),
+                assumptions,
+            )
+        {
+            allowed.extend(propositions);
+        }
+        if let Some(propositions) =
+            crate::kernel::functions::evaluate_composite_resource_loadable_propositions(
+                selected,
+                function.composite_resource_definitions(),
+                after_state.memory(),
+                assumptions,
+            )
+        {
+            allowed.extend(propositions);
+        }
+        if let Some(propositions) =
+            crate::kernel::functions::evaluate_composite_resource_fact_propositions(
+                selected,
+                function.composite_resource_definitions(),
+                after_state.memory(),
+                &child_context,
+                assumptions,
+            )
+        {
+            allowed.extend(propositions);
+        }
+        let allowed_assumptions = allowed.iter().fold(assumptions.clone(), |facts, fact| {
+            facts.assume_proposition(fact.clone())
+        });
+        if introduced.iter().any(|fact| {
+            !allowed.contains(fact)
+                && !resource_composition_is_supported_by(fact, &child_context, assumptions)
+                && !allowed_assumptions.proves(fact)
+        }) {
+            return Err("resource rewrite produced an unchecked pure-fact delta");
+        }
+
+        Ok(Self {
+            before_state: before_state.clone(),
+            after_state: after_state.clone(),
+            before_facts: before_facts.clone(),
+            after_facts: after_facts.clone(),
+            definition,
+        })
+    }
+
+    fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
+        if state != &self.before_state || facts.introduced_since(&self.before_facts).is_none() {
+            return None;
+        }
+        Some(
+            self.after_facts
+                .introduced_since(&self.before_facts)?
+                .into_iter()
+                .fold(facts.clone(), |facts, fact| {
+                    if facts.contains_top_level(&fact) {
+                        facts
+                    } else {
+                        facts.with_fact(fact)
+                    }
+                }),
+        )
+    }
+
+    pub(crate) fn advances_sealed(&self, function: &CFunction, state: &CState) -> bool {
+        function
+            .composite_resource_definitions()
+            .contains(&self.definition)
+            && state == &self.before_state
+    }
+}
+
+/// Kernel-checked evidence for one source-ordered, non-consuming, one-layer
+/// observation of a folded composite resource. The event advances no C
+/// source; it changes only the ghost-resource representation and the exact
+/// facts available to later retained C theorems.
+#[derive(Clone)]
+pub(crate) struct CheckedResourceObservation {
+    before_state: CState,
+    pub(crate) after_state: CState,
+    pub(crate) before_facts: ProofFacts,
+    pub(crate) after_facts: ProofFacts,
+    definition: CCompositeResourceDefinition,
+}
+
+impl CheckedResourceObservation {
+    pub(crate) fn before_state(&self) -> &CState {
+        &self.before_state
+    }
+
+    fn check(
+        function: &CFunction,
+        before_state: &CState,
+        before_facts: &ProofFacts,
+        observed: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+        derivations: &PersistentOrderedSet<Theorem>,
+    ) -> Result<Self, &'static str> {
+        let assumptions = before_facts.assumptions();
+        let zero_quantity = observed.has_proven_zero_quantity(assumptions);
+        if !zero_quantity
+            && before_state
+                .resources()
+                .directly_supporting_fact(observed, assumptions)
+                .is_none()
+        {
+            return Err("the observed resource is not available in the input state");
+        }
+        let crate::kernel::CResource::Composite { name, .. } = observed.resource() else {
+            return Err("resource observation evidence requires a composite resource");
+        };
+        let definition = function
+            .composite_resource_definitions()
+            .iter()
+            .find(|definition| definition.name() == name)
+            .cloned()
+            .ok_or("the observed composite definition is not registered on the function")?;
+
+        let mut concrete_after = after_state.clone();
+        concrete_after.memory = before_state.memory.clone();
+        concrete_after.resources = before_state.resources.clone();
+        if concrete_after != *before_state
+            || !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                before_state.memory(),
+                after_state.memory(),
+                assumptions,
+            )
+        {
+            return Err("resource observation changed concrete execution state");
+        }
+
+        let observation_authority = before_state
+            .resources()
+            .directly_supporting_fact(observed, assumptions)
+            .unwrap_or(observed);
+        let projects_body =
+            observed.is_view() || observed.has_proven_positive_quantity(assumptions);
+        let (children, raw_children) = if !projects_body {
+            (Vec::new(), Vec::new())
+        } else {
+            let definition_authority = CResourceFact::own(observed.resource().clone());
+            let temporary =
+                ResourceContext::new().unchecked_with_fact(definition_authority.clone());
+            let (_, children, raw_children) =
+                crate::kernel::functions::expand_composite_resource_fact_with_children(
+                    &temporary,
+                    &definition_authority,
+                    function.composite_resource_definitions(),
+                    after_state.memory(),
+                    assumptions,
+                )
+                .ok_or("the observed composite body could not be instantiated")?;
+            (children, raw_children)
+        };
+        let body_is_already_exposed = raw_children.iter().any(CResourceFact::is_own)
+            && raw_children
+                .iter()
+                .filter(|fact| fact.is_own())
+                .all(|fact| {
+                    before_state
+                        .resources()
+                        .directly_supporting_fact(fact, assumptions)
+                        .is_some()
+                });
+        let expected_views = if body_is_already_exposed {
+            Vec::new()
+        } else {
+            raw_children
+                .iter()
+                .filter_map(|fact| fact.core_with_assumptions(assumptions))
+                .filter(|fact| !before_state.resources().contains_exact_representation(fact))
+                .collect::<Vec<_>>()
+        };
+        let Some(resource_delta) = after_state
+            .resources()
+            .facts()
+            .strip_prefix(before_state.resources().facts())
+        else {
+            return Err("resource observation changed an existing resource representation");
+        };
+        if resource_delta != expected_views.as_slice() {
+            return Err("resource observation produced an unchecked resource delta");
+        }
+
+        let introduced = after_facts
+            .introduced_since(before_facts)
+            .ok_or("resource observation facts do not descend from the input facts")?;
+        let child_context = ResourceContext::new().unchecked_with_facts(children);
+        let mut allowed = child_context.observable_facts_assuming_valid(assumptions);
+        allowed.push(Proposition::CResourceComposition(child_context.clone()));
+        let relation_authority = CResourceFact::own(observed.resource().clone());
+        if projects_body
+            && let Some(propositions) =
+                crate::kernel::functions::evaluate_composite_resource_relation_propositions(
+                    &relation_authority,
+                    function.composite_resource_definitions(),
+                    after_state.memory(),
+                    assumptions,
+                )
+        {
+            allowed.extend(propositions);
+        }
+        if projects_body
+            && let Some(propositions) =
+                crate::kernel::functions::evaluate_composite_resource_loadable_propositions(
+                    observation_authority,
+                    function.composite_resource_definitions(),
+                    after_state.memory(),
+                    assumptions,
+                )
+        {
+            allowed.extend(propositions);
+        }
+        if projects_body
+            && let Some(propositions) =
+                crate::kernel::functions::evaluate_composite_resource_fact_propositions(
+                    observation_authority,
+                    function.composite_resource_definitions(),
+                    after_state.memory(),
+                    &child_context,
+                    assumptions,
+                )
+        {
+            allowed.extend(propositions);
+        }
+        allowed.extend(
+            derivations
+                .iter()
+                .map(|theorem| theorem.proposition().clone()),
+        );
+        let allowed_assumptions = allowed.iter().fold(assumptions.clone(), |facts, fact| {
+            facts.assume_proposition(fact.clone())
+        });
+        if introduced.iter().any(|fact| {
+            !allowed.contains(fact)
+                && !resource_composition_is_supported_by(fact, &child_context, assumptions)
+                && !allowed_assumptions.proves(fact)
+        }) {
+            return Err("resource observation produced an unchecked pure-fact delta");
+        }
+
+        Ok(Self {
+            before_state: before_state.clone(),
+            after_state: after_state.clone(),
+            before_facts: before_facts.clone(),
+            after_facts: after_facts.clone(),
+            definition,
+        })
+    }
+
+    fn advance_checked(&self, state: &CState, facts: &ProofFacts) -> Option<ProofFacts> {
+        if state != &self.before_state || facts.introduced_since(&self.before_facts).is_none() {
+            return None;
+        }
+        Some(
+            self.after_facts
+                .introduced_since(&self.before_facts)?
+                .into_iter()
+                .fold(facts.clone(), |facts, fact| {
+                    if facts.contains_top_level(&fact) {
+                        facts
+                    } else {
+                        facts.with_fact(fact)
+                    }
+                }),
+        )
+    }
+
+    pub(crate) fn advances_sealed(&self, function: &CFunction, state: &CState) -> bool {
+        function
+            .composite_resource_definitions()
+            .contains(&self.definition)
+            && state == &self.before_state
+    }
+}
+
+fn resource_composition_is_supported_by(
+    proposition: &Proposition,
+    available: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> bool {
+    let Proposition::CResourceComposition(required) = proposition else {
+        return false;
+    };
+    available
+        .clone()
+        .without_facts(required.facts(), assumptions)
+        .is_some()
+}
+
+fn resource_contexts_match_modulo_redundant_views(
+    left: &ResourceContext,
+    right: &ResourceContext,
+    assumptions: &PureFactContext,
+) -> bool {
+    let owned_counts = |context: &ResourceContext| {
+        context.facts().iter().filter(|fact| fact.is_own()).fold(
+            BTreeMap::<CResourceFact, usize>::new(),
+            |mut counts, fact| {
+                *counts.entry(fact.clone()).or_default() += 1;
+                counts
+            },
+        )
+    };
+    owned_counts(left) == owned_counts(right)
+        && left
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_view())
+            .all(|fact| right.satisfies_fact(fact, assumptions))
+        && right
+            .facts()
+            .iter()
+            .filter(|fact| fact.is_view())
+            .all(|fact| left.satisfies_fact(fact, assumptions))
 }
 
 /// Kernel-issued evidence for the exact contract-entry state from which a
@@ -100,6 +590,14 @@ impl CheckedFunctionEntry {
             assumptions,
         )
         .then_some(rebased_entry)
+    }
+
+    pub(crate) fn trace_entry_state(
+        &self,
+        function: &CFunction,
+        arguments: &[CExpression],
+    ) -> Option<&CState> {
+        (&self.function == function && self.arguments == arguments).then_some(&self.entry_state)
     }
 
     pub(crate) fn resource_relation_assumptions(
@@ -205,12 +703,49 @@ pub(crate) struct CheckedExecutionBranch {
     joined_state: CState,
     interface_successor_facts: Option<ProofFacts>,
     interface_execution_facts: Vec<ExecutionPureFact>,
+    interface_effect_facts: Vec<ExecutionPureFact>,
+    interface_resource_definitions: Option<Vec<crate::kernel::CCompositeResourceDefinition>>,
 }
 
 #[derive(Clone)]
 struct CheckedExecutionBranchArm {
     facts: ProofFacts,
     events: Vec<CheckedExecutionEvent>,
+}
+
+fn branch_split_starts_at_parent(
+    parent: &ExecutionProofCore,
+    split_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    root_facts: &ProofFacts,
+) -> bool {
+    if split_state == &*parent.state {
+        return true;
+    }
+    if !parent.frontier.is_at_function_entry()
+        || parent.execution_evidence.len() != 1
+        || parent.execution_evidence[0].iter().any(|event| {
+            !matches!(
+                event,
+                CheckedExecutionEvent::ResourceObservation(_)
+                    | CheckedExecutionEvent::ResourceRewrite(_)
+            )
+        })
+    {
+        return false;
+    }
+    let Some(entry_state) =
+        crate::kernel::c_function_entry_state(&parent.state, function, arguments)
+    else {
+        return false;
+    };
+    crate::kernel::api::execution_evidence_states_match(
+        function,
+        &entry_state,
+        split_state,
+        root_facts.assumptions(),
+    )
 }
 
 impl CheckedExecutionBranch {
@@ -222,12 +757,12 @@ impl CheckedExecutionBranch {
         arm_facts: [&ProofFacts; 2],
         parent: &ExecutionProofCore,
         arms: [&ExecutionProofCore; 2],
+        function: &CFunction,
+        arguments: &[CExpression],
+        arm_effect_facts: [&[ExecutionPureFact]; 2],
     ) -> Result<Self, &'static str> {
         let condition = &split.condition;
-        let parent_at_unstepped_function_entry = parent.frontier.is_at_function_entry()
-            && parent.execution_evidence.len() == 1
-            && parent.execution_evidence[0].is_empty();
-        if split.state != *parent.state && !parent_at_unstepped_function_entry {
+        if !branch_split_starts_at_parent(parent, &split.state, function, arguments, root_facts) {
             return Err("the branch split does not start at the parent execution state");
         }
         if parent.execution_evidence.len() != 1 {
@@ -235,6 +770,9 @@ impl CheckedExecutionBranch {
         }
         if arms.iter().any(|arm| arm.execution_evidence.len() != 1) {
             return Err("a branch arm does not have one execution trace");
+        }
+        if !arm_effect_deltas_are_exact(parent, arms, arm_effect_facts) {
+            return Err("a branch arm effect delta is not exact");
         }
         if arms.iter().any(|arm| !arm.frontier.is_at_region_boundary()) {
             return Err("a branch arm has not reached its typed boundary");
@@ -290,12 +828,21 @@ impl CheckedExecutionBranch {
         let [then_arm, else_arm] = checked_arms
             .try_into()
             .map_err(|_| "the checked branch does not have exactly two arms")?;
+        let interface_effect_facts = checked_interface_effect_facts(
+            &split.state,
+            &arms[0].state,
+            arms,
+            arm_facts,
+            arm_effect_facts,
+        )?;
         Ok(Self {
             split,
             arms: [then_arm, else_arm],
             joined_state: (*arms[0].state).clone(),
             interface_successor_facts: None,
             interface_execution_facts: Vec::new(),
+            interface_effect_facts,
+            interface_resource_definitions: None,
         })
     }
 
@@ -307,21 +854,25 @@ impl CheckedExecutionBranch {
         arm_facts: [&ProofFacts; 2],
         parent: &ExecutionProofCore,
         arms: [&ExecutionProofCore; 2],
+        function: &CFunction,
+        arguments: &[CExpression],
         stable_join_locals: &BTreeMap<String, CValue>,
         interface_specs: &[SpecProposition],
+        interface_resource_specs: &[CResourceSpec],
+        arm_effect_facts: [&[ExecutionPureFact]; 2],
         joined_state: &CState,
         successor_facts: &ProofFacts,
     ) -> Result<Self, &'static str> {
-        let parent_at_unstepped_function_entry = parent.frontier.is_at_function_entry()
-            && parent.execution_evidence.len() == 1
-            && parent.execution_evidence[0].is_empty();
-        if split.state != *parent.state && !parent_at_unstepped_function_entry {
+        if !branch_split_starts_at_parent(parent, &split.state, function, arguments, root_facts) {
             return Err("the interface split does not start at the parent state");
         }
         if parent.execution_evidence.len() != 1
             || arms.iter().any(|arm| arm.execution_evidence.len() != 1)
         {
             return Err("the interface branch does not have one trace per frontier");
+        }
+        if !arm_effect_deltas_are_exact(parent, arms, arm_effect_facts) {
+            return Err("an interface arm effect delta is not exact");
         }
         if arms.iter().any(|arm| !arm.frontier.is_at_region_boundary()) {
             return Err("an interface arm has not reached its typed boundary");
@@ -369,16 +920,60 @@ impl CheckedExecutionBranch {
         {
             return Err("the interface successor is not the checked arm abstraction");
         }
-        for (arm, facts) in arms.iter().zip(arm_facts) {
-            if arm
+        let mut arm_interface_resources = [Vec::new(), Vec::new()];
+        let mut successor_interface_resources = Vec::new();
+        let mut successor_interface_resource_facts = Vec::new();
+        for spec in interface_resource_specs {
+            for (index, (arm, facts)) in arms.iter().zip(arm_facts).enumerate() {
+                let fact = evaluate_interface_resource_spec(spec, &arm.state, facts)
+                    .ok_or("an interface resource does not lower in a concrete arm")?;
+                arm_interface_resources[index].push(fact);
+            }
+            let fact = evaluate_interface_resource_spec(spec, joined_state, successor_facts)
+                .ok_or("an interface resource does not lower at the abstract successor")?;
+            if let Some(proposition) = interface_resource_intrinsic_fact(spec, &fact, joined_state)
+            {
+                successor_interface_resource_facts.push(proposition);
+            }
+            successor_interface_resources.push(fact);
+        }
+        let mut arm_residuals = Vec::with_capacity(2);
+        for (index, (arm, facts)) in arms.iter().zip(arm_facts).enumerate() {
+            let Some(remaining) = arm
                 .state
                 .resources()
                 .clone()
-                .without_facts(joined_state.resources().facts(), facts.assumptions())
-                .is_none()
-            {
-                return Err("the interface successor resources are not owned by both arms");
-            }
+                .without_facts(&arm_interface_resources[index], facts.assumptions())
+            else {
+                return Err("an interface resource is not owned by one concrete arm");
+            };
+            arm_residuals.push(remaining);
+        }
+        let common_resources = ResourceContext::common_exact_descendant(
+            &arm_residuals[0],
+            &arm_residuals[1],
+            parent.state.resources(),
+        )
+        .ok_or("the interface arm resources do not descend from the branch root")?;
+        let expected_resources = common_resources
+            .try_compose_into_valid_context_delaying_normalization(
+                successor_interface_resources.iter().cloned(),
+                successor_facts.assumptions(),
+            )
+            .map_err(|_| "the interface resources do not form a valid successor context")?
+            .normalized_around_facts(
+                &successor_interface_resources,
+                successor_facts.assumptions(),
+            );
+        if &expected_resources != joined_state.resources() {
+            return Err("the interface successor resource context is not exact");
+        }
+        if successor_interface_resources.iter().any(|fact| {
+            !joined_state
+                .resources()
+                .satisfies_fact(fact, successor_facts.assumptions())
+        }) {
+            return Err("an interface resource is absent from the abstract successor");
         }
 
         let reference_state = parent
@@ -403,11 +998,16 @@ impl CheckedExecutionBranch {
         for fact in &introduced {
             let common_arm_fact = arm_facts
                 .iter()
-                .all(|facts| facts.assumptions().proves(fact));
+                .all(|facts| facts.contains(fact) || facts.assumptions().proves(fact));
             let interface_fact = interface_specs
                 .iter()
                 .any(|spec| interface_spec_lowers_to(spec, joined_state, reference_state, fact));
-            if !common_arm_fact && !interface_fact {
+            let interface_resource_fact = ResourceContext::new()
+                .unchecked_with_facts(successor_interface_resources.clone())
+                .observable_facts_assuming_valid(successor_facts.assumptions())
+                .contains(fact)
+                || successor_interface_resource_facts.contains(fact);
+            if !common_arm_fact && !interface_fact && !interface_resource_fact {
                 return Err("the interface successor contains an unchecked new fact");
             }
         }
@@ -438,7 +1038,12 @@ impl CheckedExecutionBranch {
             if progress.completed.is_some() || progress.remaining != split.continuation {
                 return Err("an interface arm trace does not reach the shared continuation");
             }
-            if progress.state != *arm.state {
+            if !crate::kernel::api::execution_evidence_states_match(
+                function,
+                &progress.state,
+                &arm.state,
+                arm_facts[index].assumptions(),
+            ) {
                 return Err("an interface arm trace does not reach its recorded state");
             }
             checked_arms.push(CheckedExecutionBranchArm {
@@ -449,6 +1054,13 @@ impl CheckedExecutionBranch {
         let [then_arm, else_arm] = checked_arms
             .try_into()
             .map_err(|_| "the checked interface branch does not have exactly two arms")?;
+        let interface_effect_facts = checked_interface_effect_facts(
+            &split.state,
+            joined_state,
+            arms,
+            arm_facts,
+            arm_effect_facts,
+        )?;
         Ok(Self {
             split,
             arms: [then_arm, else_arm],
@@ -458,6 +1070,10 @@ impl CheckedExecutionBranch {
                 .into_iter()
                 .map(ExecutionPureFact::certified)
                 .collect(),
+            interface_effect_facts,
+            interface_resource_definitions: Some(
+                function.composite_resource_definitions().to_vec(),
+            ),
         })
     }
 
@@ -469,7 +1085,7 @@ impl CheckedExecutionBranch {
     ) -> bool {
         &self.split.state == state
             && &self.split.branch_statement == branch_statement
-            && &self.split.continuation == continuation
+            && statement_sequence_is_prefix(&self.split.continuation, continuation)
     }
 
     pub(crate) fn joined_state(&self) -> &CState {
@@ -495,6 +1111,156 @@ impl CheckedExecutionBranch {
     pub(crate) fn interface_execution_facts(&self) -> &[ExecutionPureFact] {
         &self.interface_execution_facts
     }
+
+    pub(crate) fn interface_effect_facts(&self) -> &[ExecutionPureFact] {
+        &self.interface_effect_facts
+    }
+
+    pub(crate) fn matches_interface_resource_definitions(&self, function: &CFunction) -> bool {
+        self.interface_resource_definitions
+            .as_ref()
+            .is_none_or(|definitions| definitions == function.composite_resource_definitions())
+    }
+}
+
+/// Collapses two alternative, kernel-issued arm effect chains into the one
+/// transition published by an interface join. Arm effects are alternatives,
+/// never sequential facts: concatenating them would describe an impossible
+/// execution whenever both start at the split memory.
+fn arm_effect_deltas_are_exact(
+    parent: &ExecutionProofCore,
+    arms: [&ExecutionProofCore; 2],
+    supplied: [&[ExecutionPureFact]; 2],
+) -> bool {
+    arms.iter().zip(supplied).all(|(arm, supplied)| {
+        arm.effect_facts
+            .suffix_since(&parent.effect_facts)
+            .is_some_and(|expected| expected == supplied)
+    })
+}
+
+fn checked_interface_effect_facts(
+    split_state: &CState,
+    joined_state: &CState,
+    arms: [&ExecutionProofCore; 2],
+    arm_facts: [&ProofFacts; 2],
+    arm_effect_facts: [&[ExecutionPureFact]; 2],
+) -> Result<Vec<ExecutionPureFact>, &'static str> {
+    let mut pointers = Vec::new();
+    let mut ranges = Vec::new();
+    for arm_index in 0..2 {
+        let assumptions = arm_facts[arm_index].assumptions();
+        let mut memory = split_state.memory().clone();
+        for fact in arm_effect_facts[arm_index] {
+            match fact.proposition() {
+                Proposition::CMemoryMutatesOnly {
+                    before,
+                    after,
+                    pointers: changed,
+                } => {
+                    if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                        &memory,
+                        before,
+                        assumptions,
+                    ) {
+                        return Err(
+                            "an interface arm effect chain does not start at its current memory",
+                        );
+                    }
+                    memory = after.clone();
+                    for pointer in changed {
+                        if !pointers.contains(pointer) {
+                            pointers.push(pointer.clone());
+                        }
+                    }
+                }
+                Proposition::CMemoryEffectSummary {
+                    before,
+                    after,
+                    mutable_ranges,
+                } => {
+                    if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                        &memory,
+                        before,
+                        assumptions,
+                    ) {
+                        return Err(
+                            "an interface arm effect summary does not start at its current memory",
+                        );
+                    }
+                    memory = after.clone();
+                    for range in mutable_ranges {
+                        if !ranges.contains(range) {
+                            ranges.push(range.clone());
+                        }
+                    }
+                }
+                Proposition::CHeapAllocationFreed { .. } => {
+                    return Err(
+                        "an interface join over conditional heap deallocation is not yet supported",
+                    );
+                }
+                _ if fact.is_certified() => {}
+                _ => return Err("an interface arm contains unchecked effect metadata"),
+            }
+        }
+        if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+            &memory,
+            arms[arm_index].state.memory(),
+            assumptions,
+        ) {
+            return Err("an interface arm effect chain does not reach its recorded memory");
+        }
+    }
+
+    if pointers.is_empty() && ranges.is_empty() {
+        return Ok(common_non_memory_effect_facts(arm_effect_facts));
+    }
+    let proposition = if ranges.is_empty() {
+        Proposition::CMemoryMutatesOnly {
+            before: split_state.memory().clone(),
+            after: joined_state.memory().clone(),
+            pointers,
+        }
+    } else {
+        for pointer in pointers {
+            let range = CMemoryRange::new(
+                pointer,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            );
+            if !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+        Proposition::CMemoryEffectSummary {
+            before: split_state.memory().clone(),
+            after: joined_state.memory().clone(),
+            mutable_ranges: ranges,
+        }
+    };
+    let mut facts = vec![ExecutionPureFact::certified(proposition)];
+    facts.extend(common_non_memory_effect_facts(arm_effect_facts));
+    Ok(facts)
+}
+
+fn common_non_memory_effect_facts(
+    arm_effect_facts: [&[ExecutionPureFact]; 2],
+) -> Vec<ExecutionPureFact> {
+    arm_effect_facts[0]
+        .iter()
+        .filter(|fact| {
+            fact.is_certified()
+                && !matches!(
+                    fact.proposition(),
+                    Proposition::CMemoryMutatesOnly { .. }
+                        | Proposition::CMemoryEffectSummary { .. }
+                        | Proposition::CHeapAllocationFreed { .. }
+                )
+                && arm_effect_facts[1].contains(fact)
+        })
+        .cloned()
+        .collect()
 }
 
 fn interface_spec_paths(
@@ -510,6 +1276,50 @@ fn interface_spec_paths(
         &mut ExecutionBudget::new(),
     )
     .ok()
+}
+
+fn evaluate_interface_resource_spec(
+    spec: &CResourceSpec,
+    state: &CState,
+    facts: &ProofFacts,
+) -> Option<CResourceFact> {
+    match crate::kernel::functions::evaluate_function_resource_spec(
+        state,
+        spec,
+        facts.assumptions(),
+        &mut ExecutionBudget::new(),
+    )
+    .ok()?
+    {
+        Ok(fact) => Some(fact),
+        Err(_) => None,
+    }
+}
+
+fn interface_resource_intrinsic_fact(
+    spec: &CResourceSpec,
+    resource: &CResourceFact,
+    state: &CState,
+) -> Option<Proposition> {
+    let segment = match spec {
+        CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
+        CResourceSpec::Quantified { .. }
+        | CResourceSpec::Composite { .. }
+        | CResourceSpec::Token { .. } => return None,
+    };
+    let range = resource.memory_range()?;
+    let element_width =
+        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+    Some(Proposition::CMemoryLoadable {
+        memory: state.memory().clone(),
+        base: range
+            .base()
+            .offset_by_elements(range.start().clone(), element_width),
+        bytes: crate::kernel::Bitvector32Term::multiply(
+            crate::kernel::Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+            crate::kernel::Bitvector32Term::Constant(element_width),
+        ),
+    })
 }
 
 fn interface_spec_is_established(
@@ -833,6 +1643,33 @@ fn prepend_checked_evidence_statement(
     }
 }
 
+fn statement_sequence_is_prefix(
+    expected_prefix: &Option<CStatement>,
+    actual: &Option<CStatement>,
+) -> bool {
+    fn flatten<'a>(statement: &'a CStatement, output: &mut Vec<&'a CStatement>) {
+        match statement {
+            CStatement::Seq(first, second) => {
+                flatten(first, output);
+                flatten(second, output);
+            }
+            statement => output.push(statement),
+        }
+    }
+
+    let Some(expected_prefix) = expected_prefix else {
+        return true;
+    };
+    let Some(actual) = actual else {
+        return false;
+    };
+    let mut expected_statements = Vec::new();
+    let mut actual_statements = Vec::new();
+    flatten(expected_prefix, &mut expected_statements);
+    flatten(actual, &mut actual_statements);
+    actual_statements.starts_with(&expected_statements)
+}
+
 fn checked_statement_event(
     theorem: &Theorem,
     facts: &ProofFacts,
@@ -940,12 +1777,27 @@ fn check_evidence_events(
         if completed.is_some() {
             return None;
         }
-        if let CheckedExecutionEvent::ProofCase(arm) = event {
-            if !arm.is_valid() {
-                return None;
+        match event {
+            CheckedExecutionEvent::ProofCase(arm) => {
+                if !arm.is_valid() {
+                    return None;
+                }
+                current_facts = arm.facts.clone();
+                continue;
             }
-            current_facts = arm.facts.clone();
-            continue;
+            CheckedExecutionEvent::ResourceObservation(observation) => {
+                current_facts = observation.advance_checked(&state, &current_facts)?;
+                state = observation.after_state.clone();
+                continue;
+            }
+            CheckedExecutionEvent::ResourceRewrite(rewrite) => {
+                current_facts = rewrite.advance_checked(&state, &current_facts)?;
+                state = rewrite.after_state.clone();
+                continue;
+            }
+            CheckedExecutionEvent::Statement(_)
+            | CheckedExecutionEvent::Condition(_)
+            | CheckedExecutionEvent::Branch(_) => {}
         }
         let source = remaining.take()?;
         let (next_statement, tail) = split_checked_evidence_statement(source);
@@ -1001,6 +1853,12 @@ fn check_evidence_events(
                 }
             }
             CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
+            CheckedExecutionEvent::ResourceObservation(_) => {
+                unreachable!("handled before source advance")
+            }
+            CheckedExecutionEvent::ResourceRewrite(_) => {
+                unreachable!("handled before source advance")
+            }
         }
     }
     Some(CheckedEvidenceProgress {
@@ -1027,6 +1885,8 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
                 }
                 continue;
             }
+            CheckedExecutionEvent::ResourceObservation(_)
+            | CheckedExecutionEvent::ResourceRewrite(_) => continue,
         };
         let right_shape = if statement {
             matches!(
@@ -1143,6 +2003,77 @@ impl ExecutionProofCore {
         true
     }
 
+    pub(crate) fn record_resource_observation(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        before_facts: &ProofFacts,
+        observed: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+    ) -> Result<(), &'static str> {
+        let mut observation = CheckedResourceObservation::check(
+            function,
+            &self.state,
+            before_facts,
+            observed,
+            after_state,
+            after_facts,
+            &self.function_entry_derivations,
+        )?;
+        if self.frontier.is_at_function_entry() {
+            observation.before_state = crate::kernel::c_function_entry_state(
+                &observation.before_state,
+                function,
+                arguments,
+            )
+            .ok_or("resource observation could not bind the function entry state")?;
+            observation.after_state = crate::kernel::c_function_entry_state(
+                &observation.after_state,
+                function,
+                arguments,
+            )
+            .ok_or("resource observation could not bind its successor entry state")?;
+        }
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::ResourceObservation(
+                observation.clone(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_resource_rewrite(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        before_facts: &ProofFacts,
+        selected: &CResourceFact,
+        after_state: &CState,
+        after_facts: &ProofFacts,
+    ) -> Result<(), &'static str> {
+        let mut rewrite = CheckedResourceRewrite::check(
+            function,
+            &self.state,
+            before_facts,
+            selected,
+            after_state,
+            after_facts,
+        )?;
+        if self.frontier.is_at_function_entry() {
+            rewrite.before_state =
+                crate::kernel::c_function_entry_state(&rewrite.before_state, function, arguments)
+                    .ok_or("resource rewrite could not bind the function entry state")?;
+            rewrite.after_state =
+                crate::kernel::c_function_entry_state(&rewrite.after_state, function, arguments)
+                    .ok_or("resource rewrite could not bind its successor entry state")?;
+        }
+        for trace in &mut *self.execution_evidence {
+            trace.push(CheckedExecutionEvent::ResourceRewrite(rewrite.clone()));
+        }
+        Ok(())
+    }
+
     /// Records a branch node only after [`CheckedExecutionBranch::check`]
     /// has validated exact source coverage, both persistent arm suffixes,
     /// the common continuation, and the joined state.
@@ -1155,7 +2086,10 @@ impl ExecutionProofCore {
         arm_facts: [&ProofFacts; 2],
         parent: &ExecutionProofCore,
         arms: [&ExecutionProofCore; 2],
-    ) -> Result<(), &'static str> {
+        function: &CFunction,
+        arguments: &[CExpression],
+        arm_effect_facts: [&[ExecutionPureFact]; 2],
+    ) -> Result<Vec<ExecutionPureFact>, &'static str> {
         let parent_trace = match parent.execution_evidence.as_slice() {
             [trace] => trace,
             _ => return Err("the branch parent does not have one execution trace"),
@@ -1167,11 +2101,15 @@ impl ExecutionProofCore {
             arm_facts,
             parent,
             arms,
+            function,
+            arguments,
+            arm_effect_facts,
         )?;
+        let interface_effect_facts = branch.interface_effect_facts().to_vec();
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
-        Ok(())
+        Ok(interface_effect_facts)
     }
 
     /// Records a two-arm `branch ensuring` only after the kernel has checked
@@ -1186,11 +2124,15 @@ impl ExecutionProofCore {
         arm_facts: [&ProofFacts; 2],
         parent: &ExecutionProofCore,
         arms: [&ExecutionProofCore; 2],
+        function: &CFunction,
+        arguments: &[CExpression],
         stable_join_locals: &BTreeMap<String, CValue>,
         interface_specs: &[SpecProposition],
+        interface_resource_specs: &[CResourceSpec],
+        arm_effect_facts: [&[ExecutionPureFact]; 2],
         joined_state: &CState,
         successor_facts: &ProofFacts,
-    ) -> Result<(), &'static str> {
+    ) -> Result<Vec<ExecutionPureFact>, &'static str> {
         let parent_trace = match parent.execution_evidence.as_slice() {
             [trace] => trace,
             _ => return Err("the interface parent does not have one execution trace"),
@@ -1202,15 +2144,20 @@ impl ExecutionProofCore {
             arm_facts,
             parent,
             arms,
+            function,
+            arguments,
             stable_join_locals,
             interface_specs,
+            interface_resource_specs,
+            arm_effect_facts,
             joined_state,
             successor_facts,
         )?;
+        let interface_effect_facts = branch.interface_effect_facts().to_vec();
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
-        Ok(())
+        Ok(interface_effect_facts)
     }
 
     /// Checks that every retained event carries the kernel judgment its tag
@@ -1270,8 +2217,9 @@ impl ExecutionFrontier {
 mod tests {
     use super::*;
     use crate::kernel::{
-        Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition, CMemory, CResourceFact,
-        CType, CValue, Pointer, PointerBlock, PointerOffsetTerm, SpecExpression, c_function, int32,
+        Bitvector32Term, CComparisonOperator, CCompositeResourceDefinition, CMemory,
+        CResourceAccessMode, CResourceFact, CResourceSpec, CType, CValue, Pointer, PointerBlock,
+        PointerOffsetTerm, SpecExpression, c_function, int32,
     };
 
     fn condition_event(
@@ -1344,6 +2292,289 @@ mod tests {
     }
 
     #[test]
+    fn checked_composite_events_reject_forged_resources_facts_memory_and_definitions() {
+        let child_spec = CResourceSpec::Token {
+            access: CResourceAccessMode::Own,
+            name: "child".to_string(),
+            arguments: Vec::new(),
+            parameter_types: Vec::new(),
+        };
+        let definition = CCompositeResourceDefinition::new(
+            "bundle",
+            Vec::new(),
+            None,
+            false,
+            vec![child_spec],
+            Vec::new(),
+        );
+        let function = c_function(
+            CType::Void,
+            "resource_events",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        )
+        .with_composite_resource_definitions(vec![definition.clone()]);
+        let selected = CResourceFact::own_composite("bundle".to_string(), Vec::new());
+        let child = CResourceFact::own_token("child".to_string(), Vec::new());
+        let child_view = CResourceFact::view_token("child".to_string(), Vec::new());
+        let before = CState::new()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(selected.clone()));
+        let facts = ProofFacts::default();
+
+        let observed = before.clone().with_resource_context(
+            before
+                .resources()
+                .clone()
+                .unchecked_with_fact(child_view.clone()),
+        );
+        let observation = CheckedResourceObservation::check(
+            &function,
+            &before,
+            &facts,
+            &selected,
+            &observed,
+            &facts,
+            &PersistentOrderedSet::default(),
+        )
+        .expect("the exact one-layer child view should check");
+
+        let forged_resource = observed.clone().with_resource_context(
+            observed
+                .resources()
+                .clone()
+                .unchecked_with_fact(CResourceFact::view_token("forged".to_string(), Vec::new())),
+        );
+        assert!(
+            CheckedResourceObservation::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &forged_resource,
+                &facts,
+                &PersistentOrderedSet::default(),
+            )
+            .is_err(),
+            "observation must not invent an unrelated child view"
+        );
+        let forged_fact = facts.with_fact(Proposition::ConditionIs(
+            crate::kernel::ConditionTerm::Constant(false),
+            true,
+        ));
+        assert!(
+            CheckedResourceObservation::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &observed,
+                &forged_fact,
+                &PersistentOrderedSet::default(),
+            )
+            .is_err(),
+            "observation must not invent an unrelated pure fact"
+        );
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let changed_memory = observed.clone().with_memory(
+            CMemory::new().store(pointer, CValue::Int32(Bitvector32Term::Constant(1))),
+        );
+        assert!(
+            CheckedResourceObservation::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &changed_memory,
+                &facts,
+                &PersistentOrderedSet::default(),
+            )
+            .is_err(),
+            "observation must not change C memory"
+        );
+
+        let unfolded = before
+            .clone()
+            .with_resource_context(ResourceContext::new().unchecked_with_fact(child.clone()));
+        CheckedResourceRewrite::check(&function, &before, &facts, &selected, &unfolded, &facts)
+            .expect("the exact folded-to-body representation change should check");
+        let forged_unfold = unfolded.clone().with_resource_context(
+            unfolded
+                .resources()
+                .clone()
+                .unchecked_with_fact(CResourceFact::own_token("forged".to_string(), Vec::new())),
+        );
+        assert!(
+            CheckedResourceRewrite::check(
+                &function,
+                &before,
+                &facts,
+                &selected,
+                &forged_unfold,
+                &facts,
+            )
+            .is_err(),
+            "rewrite must not invent an unrelated owned resource"
+        );
+
+        let changed_definition = c_function(
+            CType::Void,
+            "resource_events",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        )
+        .with_composite_resource_definitions(vec![CCompositeResourceDefinition::new(
+            "bundle",
+            Vec::new(),
+            None,
+            false,
+            Vec::new(),
+            Vec::new(),
+        )]);
+        assert!(
+            !observation.advances_sealed(&changed_definition, &before),
+            "a retained observation must remain tied to its checked definition"
+        );
+    }
+
+    #[test]
+    fn interface_abstraction_work_scales_with_unrelated_locals_and_memory() {
+        let mut samples = Vec::new();
+        for size in [64_u32, 128, 256, 512] {
+            let mut memory = CMemory::new();
+            let mut then_state = CState::new().with_local("changed", int32(1));
+            let mut stable_locals = BTreeMap::new();
+            for index in 0..size {
+                let name = format!("stable_{index}");
+                let value = int32(index);
+                then_state = then_state.with_local(name.clone(), value.clone());
+                stable_locals.insert(name, value);
+                memory = memory.store(
+                    Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: PointerOffsetTerm::Constant(i64::from(index * 4)),
+                    },
+                    int32(index),
+                );
+            }
+            then_state = then_state.with_memory(memory);
+            let else_state = then_state.clone().with_local("changed", int32(2));
+            let siblings = [&then_state, &else_state];
+            let ((then_join, else_join), work) =
+                crate::instrumentation::measure_deterministic_work(|| {
+                    (
+                        crate::kernel::abstract_c_state_for_interface_join_across(
+                            &then_state,
+                            &siblings,
+                            &stable_locals,
+                        )
+                        .expect("the then arm should abstract"),
+                        crate::kernel::abstract_c_state_for_interface_join_across(
+                            &else_state,
+                            &siblings,
+                            &stable_locals,
+                        )
+                        .expect("the else arm should abstract"),
+                    )
+                });
+            assert_eq!(then_join, else_join);
+            samples.push((size, work));
+        }
+        assert!(samples[0].1 > 0);
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].1 <= pair[0].1 * 3,
+                "interface abstraction work grew superlinearly: {samples:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn checked_join_effects_require_exact_arm_deltas_and_summarize_alternatives() {
+        let before = CState::new();
+        let left_pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let right_pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let left = before.clone().with_memory(
+            before
+                .memory()
+                .clone()
+                .store(left_pointer.clone(), int32(1)),
+        );
+        let right = before.clone().with_memory(
+            before
+                .memory()
+                .clone()
+                .store(right_pointer.clone(), int32(2)),
+        );
+        let left_effect = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
+            before: before.memory().clone(),
+            after: left.memory().clone(),
+            pointers: vec![left_pointer.clone()],
+        });
+        let right_effect = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
+            before: before.memory().clone(),
+            after: right.memory().clone(),
+            pointers: vec![right_pointer.clone()],
+        });
+        let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
+        let mut left_core = parent.clone();
+        left_core.state = left.clone().into();
+        left_core.effect_facts.push(left_effect.clone());
+        let mut right_core = parent.clone();
+        right_core.state = right.clone().into();
+        right_core.effect_facts.push(right_effect.clone());
+
+        assert!(!arm_effect_deltas_are_exact(
+            &parent,
+            [&left_core, &right_core],
+            [&[], &[]],
+        ));
+        let supplied = [
+            std::slice::from_ref(&left_effect),
+            std::slice::from_ref(&right_effect),
+        ];
+        assert!(arm_effect_deltas_are_exact(
+            &parent,
+            [&left_core, &right_core],
+            supplied,
+        ));
+
+        let joined = crate::kernel::abstract_c_state_for_interface_join_across(
+            &left,
+            &[&left, &right],
+            &BTreeMap::new(),
+        )
+        .expect("alternative memories should have one deterministic abstraction");
+        let facts = ProofFacts::default();
+        let summaries = checked_interface_effect_facts(
+            &before,
+            &joined,
+            [&left_core, &right_core],
+            [&facts, &facts],
+            supplied,
+        )
+        .expect("the two exact alternative stores should summarize");
+        assert!(matches!(
+            summaries.as_slice(),
+            [fact] if matches!(
+                fact.proposition(),
+                Proposition::CMemoryMutatesOnly { before: effect_before, after, pointers }
+                    if effect_before == before.memory()
+                        && after == joined.memory()
+                        && pointers == &vec![left_pointer, right_pointer]
+            )
+        ));
+    }
+
+    #[test]
     fn checked_condition_evidence_preserves_the_tail_for_empty_if_arms() {
         let state = CState::new();
         let condition = CExpression::Variable("x".to_string());
@@ -1392,6 +2623,12 @@ mod tests {
 
     #[test]
     fn checked_branch_join_accepts_empty_arms_only_at_the_artifact_tail() {
+        let function = c_function(
+            CType::Void,
+            "branch",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        );
         let state = CState::new();
         let condition = CExpression::Variable("x".to_string());
         let branch_statement = CStatement::If {
@@ -1447,6 +2684,9 @@ mod tests {
             [&root_facts, &root_facts],
             &parent,
             [&then_arm, &else_arm],
+            &function,
+            &[],
+            [&[], &[]],
         )
         .expect("the exact empty arms should join at the retained continuation");
         assert_eq!(checked.joined_state(), &state);
@@ -1461,6 +2701,9 @@ mod tests {
                 [&root_facts, &root_facts],
                 &parent,
                 [&then_arm, &else_arm],
+                &function,
+                &[],
+                [&[], &[]],
             )
             .is_err(),
             "swapped arm evidence must not certify the source partition"
@@ -1469,6 +2712,12 @@ mod tests {
 
     #[test]
     fn checked_interface_branch_rejects_unproved_facts_and_unowned_resources() {
+        let function = c_function(
+            CType::Void,
+            "interface",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        );
         let state = CState::new()
             .with_local("x", int32(7))
             .with_local("flag", int32(0));
@@ -1541,8 +2790,12 @@ mod tests {
             [&root_facts, &root_facts],
             &parent,
             [&then_arm, &else_arm],
+            &function,
+            &[],
             &stable_join_locals,
             std::slice::from_ref(&spec),
+            &[],
+            [&[], &[]],
             &state,
             &successor_facts,
         )
@@ -1572,8 +2825,12 @@ mod tests {
                 [&root_facts, &root_facts],
                 &parent,
                 [&then_arm, &else_arm],
+                &function,
+                &[],
                 &stable_join_locals,
                 std::slice::from_ref(&spec),
+                &[],
+                [&[], &[]],
                 &state,
                 &successor_facts.with_fact(forged_fact),
             )
@@ -1593,8 +2850,12 @@ mod tests {
                 [&root_facts, &root_facts],
                 &parent,
                 [&then_arm, &else_arm],
+                &function,
+                &[],
                 &stable_join_locals,
                 std::slice::from_ref(&spec),
+                &[],
+                [&[], &[]],
                 &forged_state,
                 &successor_facts,
             )

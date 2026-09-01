@@ -578,6 +578,7 @@ impl<'a> ProofScope<'a> {
                 },
             );
         } else {
+            let before_facts = facts.clone();
             let pre_state = context
                 .old_reference_state(&execution.core.frontier, &execution.core.state)
                 .clone();
@@ -590,12 +591,32 @@ impl<'a> ProofScope<'a> {
                 context.parsed_function.parameters(),
                 context.arguments,
                 &pre_state,
-                execution.core.state.into_value(),
+                (*execution.core.state).clone(),
                 context.predicate_environment,
                 context.click_function_environment,
                 &execution.core.unfolded_predicates,
                 *preserve_exposed_body,
             )?;
+            let selected = lower_resource_clause(
+                resource,
+                context.parsed_function.parameters(),
+                context.arguments,
+                checked.state.memory(),
+            )?;
+            execution
+                .core
+                .record_resource_rewrite(
+                    context.function,
+                    context.arguments,
+                    &before_facts,
+                    &selected,
+                    &checked.state,
+                    &checked.facts,
+                )
+                .map_err(|message| {
+                    self.root
+                        .step_error(format!("kernel rejected checked resource close: {message}"))
+                })?;
             facts = checked.facts;
             execution.core.state = checked.state.into();
         }
@@ -1134,6 +1155,7 @@ impl<'a> ProofScope<'a> {
                         },
                     );
                 } else {
+                    let before_facts = facts.clone();
                     let pre_state = context
                         .old_reference_state(&execution.core.frontier, &execution.core.state)
                         .clone();
@@ -1146,12 +1168,33 @@ impl<'a> ProofScope<'a> {
                         context.parsed_function.parameters(),
                         context.arguments,
                         &pre_state,
-                        execution.core.state.into_value(),
+                        (*execution.core.state).clone(),
                         context.predicate_environment,
                         context.click_function_environment,
                         &execution.core.unfolded_predicates,
                         preserve_exposed_body,
                     )?;
+                    let selected = lower_resource_clause(
+                        &resource,
+                        context.parsed_function.parameters(),
+                        context.arguments,
+                        checked.state.memory(),
+                    )?;
+                    execution
+                        .core
+                        .record_resource_rewrite(
+                            context.function,
+                            context.arguments,
+                            &before_facts,
+                            &selected,
+                            &checked.state,
+                            &checked.facts,
+                        )
+                        .map_err(|message| {
+                            self.root.step_error(format!(
+                                "kernel rejected checked resource close: {message}"
+                            ))
+                        })?;
                     facts = checked.facts;
                     execution.core.state = checked.state.into();
                 }

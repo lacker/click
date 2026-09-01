@@ -9067,14 +9067,20 @@ fn transformed_resource_branch_interface_retains_its_common_descendant() {
         .map(|(name, source)| (name.as_str(), source.as_str()))
         .collect::<Vec<_>>();
 
-    let ((verified, events), checked_interface_joins) =
-        crate::surface::proof::count_checked_execution_interface_joins(|| {
-            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources))
+    let (((verified, events), checked_interface_joins), source_certificate_checks) =
+        crate::surface::proof::count_source_certificate_checks(|| {
+            crate::surface::proof::count_checked_execution_interface_joins(|| {
+                crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources))
+            })
         });
     let verified = verified.expect("the transformed resource branch should stay on Proof");
     assert!(
         checked_interface_joins > 0,
         "the source branch must reach the checked two-arm Proof join"
+    );
+    assert_eq!(
+        source_certificate_checks, 0,
+        "the checked branch and explicit observation must seal without executing the C body again"
     );
     assert!(
         events.iter().all(|event| !matches!(

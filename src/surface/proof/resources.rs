@@ -144,6 +144,7 @@ impl ResourcePureFacts for ProofResourcePureFacts {
 
 pub(super) struct UnfoldedCompositeResource {
     pub(super) state: CState,
+    pub(super) selected: CResourceFact,
     pub(super) body_was_already_exposed: bool,
 }
 
@@ -546,6 +547,7 @@ pub(super) struct CheckedResourceObservation {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,
     pub(super) added_facts: Vec<Proposition>,
+    pub(super) observed_resource: CResourceFact,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -565,7 +567,7 @@ pub(super) fn observe_composite_resource_for_proof(
     tactic_index: usize,
 ) -> Result<CheckedResourceObservation, ClickError> {
     let mut facts = ProofResourcePureFacts::new(facts);
-    let state = observe_composite_resource_with_facts(
+    let (state, observed_resource) = observe_composite_resource_with_facts(
         resource_environment,
         resource,
         parameters,
@@ -584,6 +586,7 @@ pub(super) fn observe_composite_resource_for_proof(
         state,
         facts: facts.facts,
         added_facts: facts.added,
+        observed_resource,
     })
 }
 
@@ -602,26 +605,43 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
     tactic_index: usize,
-) -> Result<CState, ClickError> {
-    let abstract_resource = lower_resource_clause(resource, parameters, arguments, state.memory())?;
+) -> Result<(CState, CResourceFact), ClickError> {
+    let requested_resource =
+        lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = available_pure_facts.assumptions().clone();
-    if !state
+    let viewed_resource = CResourceFact::View(requested_resource.resource().clone());
+    let abstract_resource = state
         .resources()
-        .satisfies_fact(&abstract_resource, &assumptions)
-    {
-        return Err(ClickError::new(format!(
-            "`{claim_label}` tactic {tactic_index}: `observe({})` failed: {}",
-            describe_resource_clause(resource),
-            describe_missing_resource_fact(
-                &abstract_resource,
-                &available_pure_facts.materialize(),
-                state.resources().facts(),
-                parameters,
-                arguments,
-                &[]
-            )
-        )));
-    }
+        .directly_supporting_fact(&requested_resource, &assumptions)
+        .or_else(|| {
+            (!matches!(resource, ResourceClause::Quantified { .. }))
+                .then(|| {
+                    state
+                        .resources()
+                        .directly_supporting_fact(&viewed_resource, &assumptions)
+                })
+                .flatten()
+        })
+        .cloned()
+        .or_else(|| {
+            requested_resource
+                .has_proven_zero_quantity(&assumptions)
+                .then(|| requested_resource.clone())
+        })
+        .ok_or_else(|| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `observe({})` failed: {}",
+                describe_resource_clause(resource),
+                describe_missing_resource_fact(
+                    &requested_resource,
+                    &available_pure_facts.materialize(),
+                    state.resources().facts(),
+                    parameters,
+                    arguments,
+                    &[]
+                )
+            ))
+        })?;
     let (observed_quantity, counted_resource, explicit_quantity) = match resource {
         ResourceClause::Quantified { quantity, resource } => {
             (quantity.clone(), resource.as_ref().clone(), true)
@@ -742,7 +762,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             ..
         }
     ) {
-        return Ok(state);
+        return Ok((state, abstract_resource));
     }
     if explicit_quantity {
         let quantity = abstract_resource
@@ -760,7 +780,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             // The count lower bound remains valid for zero or an undecided
             // nonnegative quantity. The population body, however, grants
             // authority only when the held quantity is proved positive.
-            return Ok(state);
+            return Ok((state, abstract_resource));
         }
     }
     let definition = composite_resource_law_definition(
@@ -824,6 +844,7 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         .facts()
         .iter()
         .filter_map(|fact| fact.core_with_assumptions(available_pure_facts.assumptions()))
+        .filter(|fact| !state.resources().contains_exact_representation(fact))
         .collect::<Vec<_>>();
     // Holding the folded composite certifies its instantiated body. Observation
     // only adds the body's duplicable cores, so it must not revalidate ownership.
@@ -831,7 +852,10 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         .resources()
         .clone()
         .unchecked_with_facts(viewed_contained_resources);
-    Ok(state.with_memory(memory).with_resource_context(resources))
+    Ok((
+        state.with_memory(memory).with_resource_context(resources),
+        abstract_resource,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1307,7 +1331,8 @@ fn apply_composite_observation_law_with_facts<F: ResourcePureFacts>(
         if owned_body_resources.iter().all(|fact| {
             state
                 .resources()
-                .satisfies_fact(fact, available_pure_facts.assumptions())
+                .directly_supporting_fact(fact, available_pure_facts.assumptions())
+                .is_some()
         }) {
             // `open` retains the folded head for contract accounting while
             // exposing the unique owned body. Until that body is closed, do
@@ -1662,6 +1687,7 @@ pub(super) struct CheckedResourceUnfold {
     pub(super) state: CState,
     pub(super) facts: ProofFacts,
     pub(super) added_facts: Vec<Proposition>,
+    pub(super) selected: CResourceFact,
     pub(super) body_was_already_exposed: bool,
 }
 
@@ -1759,6 +1785,7 @@ fn unfold_composite_resource_for_proof_with_access(
         state: unfolded.state,
         facts: facts.facts,
         added_facts: facts.added,
+        selected: unfolded.selected,
         body_was_already_exposed: unfolded.body_was_already_exposed,
     })
 }
@@ -1821,15 +1848,21 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
     let mut abstract_resource =
         lower_resource_clause(resource, parameters, arguments, state.memory())?;
     let assumptions = available_pure_facts.assumptions().clone();
-    if access == ResourceBodyAccess::Open
-        && !state
-            .resources()
-            .satisfies_fact(&abstract_resource, &assumptions)
+    if let Some(authority) = state
+        .resources()
+        .directly_supporting_fact(&abstract_resource, &assumptions)
+        .or_else(|| {
+            (!matches!(resource, ResourceClause::Quantified { .. }))
+                .then(|| {
+                    let viewed = CResourceFact::View(abstract_resource.resource().clone());
+                    state
+                        .resources()
+                        .directly_supporting_fact(&viewed, &assumptions)
+                })
+                .flatten()
+        })
     {
-        let viewed = CResourceFact::View(abstract_resource.resource().clone());
-        if state.resources().satisfies_fact(&viewed, &assumptions) {
-            abstract_resource = viewed;
-        }
+        abstract_resource = authority.clone();
     }
     let opening_view = abstract_resource.is_view();
     let (requested_population_name, requested_population_arguments) =
@@ -2116,6 +2149,7 @@ fn unfold_composite_resource_with_facts<F: ResourcePureFacts>(
 
     Ok(UnfoldedCompositeResource {
         state,
+        selected: abstract_resource,
         body_was_already_exposed,
     })
 }

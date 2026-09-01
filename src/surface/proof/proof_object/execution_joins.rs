@@ -616,26 +616,58 @@ impl<'a> Proof<'a> {
             .frontier
             .execution_start_state(&parent_execution.core.state)
             .clone();
+        let join_continuation = derive_execution_join_continuation(
+            parent_execution,
+            continuation_remaining,
+            continuation_index,
+        );
+        // The interface anchors at its continuation's entry. A `branch
+        // ensuring` that ends its region has no live parent continuation,
+        // but the patched source layout supplies the same statically known
+        // continuation statement the arms recorded at their boundaries.
+        let target = ProgramPointRef {
+            region: CodeRegionRef::Statement(match &join_continuation {
+                Some(join) => join.next_statement_index,
+                None => continuation_index,
+            }),
+            kind: ProgramPointKind::Entry,
+        };
         let interface_specs = assertions
             .iter()
             .filter_map(|assertion| match assertion {
+                // A proof mark denotes a shared historical fact. It is
+                // admitted at the join only when the kernel finds the exact
+                // lowered fact in both arms; it is not a state-parametric
+                // assertion about the abstract successor.
+                ProofAssertion::Fact(fact)
+                    if matches!(
+                        surface_snapshot_selector(fact),
+                        Some(SnapshotSelector::Mark(_))
+                    ) =>
+                {
+                    None
+                }
                 ProofAssertion::Fact(fact) => Some(lower_branch_interface_fact(
                     fact,
                     context.parsed_function,
                     &interface_reference_state,
+                    &target,
                     context.arguments,
                     context.predicate_environment,
                     context.click_function_environment,
                 )),
                 ProofAssertion::Resource(_) => None,
             })
-            .collect::<Result<Vec<_>, _>>()
-            .ok();
-        let join_continuation = derive_execution_join_continuation(
-            parent_execution,
-            continuation_remaining,
-            continuation_index,
-        );
+            .collect::<Result<Vec<_>, _>>()?;
+        let interface_resource_specs = assertions
+            .iter()
+            .filter_map(|assertion| match assertion {
+                ProofAssertion::Fact(_) => None,
+                ProofAssertion::Resource(resource) => {
+                    Some(crate::surface::verification::resource_clause_to_resource_spec(resource))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
             if !arm.execution.core.frontier.is_at_region_boundary() {
                 return Err(self.step_error(format!(
@@ -674,17 +706,6 @@ impl<'a> Proof<'a> {
             .collect::<BTreeMap<_, _>>();
         stable_join_locals
             .retain(|name, value| arms[1].execution.core.state.locals().get(name) == Some(value));
-        // The interface anchors at its continuation's entry. A `branch
-        // ensuring` that ends its region has no live parent continuation,
-        // but the patched source layout supplies the same statically known
-        // continuation statement the arms recorded at their boundaries.
-        let target = ProgramPointRef {
-            region: CodeRegionRef::Statement(match &join_continuation {
-                Some(join) => join.next_statement_index,
-                None => continuation_index,
-            }),
-            kind: ProgramPointKind::Entry,
-        };
         let sibling_join_states: [&CState; 2] =
             [&arms[0].execution.core.state, &arms[1].execution.core.state];
 
@@ -818,37 +839,7 @@ impl<'a> Proof<'a> {
             .core
             .next_kernel_variable
             .max(else_abstract.core.next_kernel_variable);
-        for effect in arms[0]
-            .introduced_effect_facts
-            .iter()
-            .chain(&arms[1].introduced_effect_facts)
-        {
-            append_execution_effect_facts(
-                &mut execution.core.effect_facts,
-                std::slice::from_ref(effect),
-            );
-        }
-        for fact in arms[0]
-            .introduced_prerequisites
-            .iter()
-            .chain(&arms[1].introduced_prerequisites)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in arms[0]
-            .introduced_derivations
-            .iter()
-            .chain(&arms[1].introduced_derivations)
-        {
-            execution
-                .core
-                .function_entry_derivations
-                .insert(theorem.clone());
-        }
-        migrate_arm_loop_proofs(&mut execution, &arms);
+        migrate_arm_metadata(&mut execution, &arms, false);
         execution.presentation.branch_path.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
             unreachable!("execution branch retained a non-execution context")
@@ -915,25 +906,33 @@ impl<'a> Proof<'a> {
             );
         };
         let joined_state = (*execution.core.state).clone();
-        // Artifact retention is an optimization over an already-checked
-        // interface join. Shapes not yet covered by the typed kernel rule
-        // keep the existing independent-certification fallback.
-        if let Some(interface_specs) = interface_specs.as_ref()
-            && !interface_specs.is_empty()
-        {
-            let _ = execution.core.record_interface_branch_join(
+        let joined_effect = execution
+            .core
+            .record_interface_branch_join(
                 checked_condition_split,
                 parent_facts,
                 [then_theorem, else_theorem],
                 [arms[0].facts, arms[1].facts],
                 &parent_execution.core,
                 [&arms[0].execution.core, &arms[1].execution.core],
+                context.function,
+                context.arguments,
                 &stable_join_locals,
-                interface_specs,
+                &interface_specs,
+                &interface_resource_specs,
+                [
+                    &arms[0].introduced_effect_facts,
+                    &arms[1].introduced_effect_facts,
+                ],
                 &joined_state,
                 &facts,
-            );
-        }
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "kernel rejected the checked `branch ensuring` interface: {message}"
+                ))
+            })?;
+        append_execution_effect_facts(&mut execution.core.effect_facts, &joined_effect);
 
         #[cfg(test)]
         CHECKED_EXECUTION_INTERFACE_JOINS.with(|count| count.set(count.get() + 1));
@@ -1149,6 +1148,7 @@ impl<'a> Proof<'a> {
         // doing so avoids duplicating the complete ambient proof context per
         // outcome.
         let mut paths = Vec::new();
+        let mut retained_path_keys = BTreeSet::new();
         let mut execution_evidence = Vec::new();
         let mut outcome_provenance = Vec::new();
         for (arm_index, arm) in arms.iter().enumerate() {
@@ -1173,14 +1173,11 @@ impl<'a> Proof<'a> {
                     }
                 }
                 let obligations = path.obligations().to_vec();
-                if !paths
-                    .iter()
-                    .any(|(existing_outcome, existing_facts, existing_obligations)| {
-                        existing_outcome == path.outcome()
-                            && existing_facts == &path_facts
-                            && existing_obligations == &obligations
-                    })
-                {
+                if retained_path_keys.insert((
+                    path.outcome().clone(),
+                    path_facts.clone(),
+                    obligations.clone(),
+                )) {
                     paths.push((path.outcome().clone(), path_facts, obligations));
                     execution_evidence
                         .push(arm.execution.core.execution_evidence[arm_path_index].clone());
@@ -1241,39 +1238,10 @@ impl<'a> Proof<'a> {
         {
             append_execution_effect_facts(
                 &mut execution.core.effect_facts,
-                std::slice::from_ref(effect),
+                std::slice::from_ref(&effect),
             );
         }
-        for fact in arms[0]
-            .introduced_prerequisites
-            .iter()
-            .chain(&arms[1].introduced_prerequisites)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in arms[0]
-            .introduced_derivations
-            .iter()
-            .chain(&arms[1].introduced_derivations)
-        {
-            execution
-                .core
-                .function_entry_derivations
-                .insert(theorem.clone());
-        }
-        for name in arms[0]
-            .introduced_unfolds
-            .iter()
-            .chain(&arms[1].introduced_unfolds)
-        {
-            if !execution.core.unfolded_predicates.contains(name) {
-                execution.core.unfolded_predicates.push(name.clone());
-            }
-        }
-        migrate_arm_loop_proofs(&mut execution, &arms);
+        migrate_arm_metadata(&mut execution, &arms, true);
         execution.presentation.branch_path = parent_execution.presentation.branch_path.clone();
         execution.presentation.case_assumptions =
             parent_execution.presentation.case_assumptions.clone();
@@ -1405,11 +1373,10 @@ impl<'a> Proof<'a> {
             }
         }
         let mut unfolded_predicates = parent_unfolds.clone();
-        for name in arms[0]
-            .introduced_unfolds
-            .iter()
-            .chain(&arms[1].introduced_unfolds)
-        {
+        for name in &arms[0].introduced_unfolds {
+            if !arms[1].introduced_unfolds.contains(name) {
+                continue;
+            }
             unfolded_predicates.insert(name.clone());
         }
         let step = ProofStep::If {
@@ -1445,6 +1412,9 @@ impl<'a> Proof<'a> {
         require_empty: bool,
         arms: [CheckedExecutionJoinArm<'_>; 2],
     ) -> Result<CheckedExecutionJoinParts, ClickError> {
+        let ProofContext::Execution(context) = self.context.as_ref() else {
+            unreachable!("execution branch retained a non-execution context")
+        };
         for (name, expected, arm) in [("then", true, &arms[0]), ("else", false, &arms[1])] {
             if require_empty && !arm.certificate.steps().is_empty() {
                 return Err(self.step_error(format!(
@@ -1469,7 +1439,7 @@ impl<'a> Proof<'a> {
         else {
             return Err(self.step_error("checked C branch join lost one of its condition theorems"));
         };
-        execution
+        let joined_effect = execution
             .core
             .record_exhaustive_branch_join(
                 checked_condition_split,
@@ -1478,6 +1448,12 @@ impl<'a> Proof<'a> {
                 [arms[0].facts, arms[1].facts],
                 &parent_execution.core,
                 [&arms[0].execution.core, &arms[1].execution.core],
+                context.function,
+                context.arguments,
+                [
+                    &arms[0].introduced_effect_facts,
+                    &arms[1].introduced_effect_facts,
+                ],
             )
             .map_err(|message| {
                 self.step_error(format!("checked C branch join rejected: {message}"))
@@ -1534,47 +1510,8 @@ impl<'a> Proof<'a> {
             .core
             .next_kernel_variable
             .max(arms[1].execution.core.next_kernel_variable);
-        for effect in arms[0]
-            .introduced_effect_facts
-            .iter()
-            .chain(&arms[1].introduced_effect_facts)
-        {
-            append_execution_effect_facts(
-                &mut execution.core.effect_facts,
-                std::slice::from_ref(effect),
-            );
-        }
-        for fact in arms[0]
-            .introduced_prerequisites
-            .iter()
-            .chain(&arms[1].introduced_prerequisites)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(fact.clone());
-        }
-        for theorem in arms[0]
-            .introduced_derivations
-            .iter()
-            .chain(&arms[1].introduced_derivations)
-        {
-            execution
-                .core
-                .function_entry_derivations
-                .insert(theorem.clone());
-        }
-        for name in arms[0]
-            .introduced_unfolds
-            .iter()
-            .chain(&arms[1].introduced_unfolds)
-        {
-            if !execution.core.unfolded_predicates.contains(name) {
-                execution.core.unfolded_predicates.push(name.clone());
-            }
-        }
-        migrate_arm_loop_proofs(&mut execution, &arms);
-        migrate_arm_loop_proofs(&mut execution, &arms);
+        append_execution_effect_facts(&mut execution.core.effect_facts, &joined_effect);
+        migrate_arm_metadata(&mut execution, &arms, true);
         execution.presentation.branch_path.clear();
         execution.presentation.case_assumptions.clear();
         let ProofContext::Execution(context) = self.context.as_ref() else {
@@ -1633,11 +1570,10 @@ impl<'a> Proof<'a> {
             }
         }
         let mut unfolded_predicates = parent_unfolds.clone();
-        for name in arms[0]
-            .introduced_unfolds
-            .iter()
-            .chain(&arms[1].introduced_unfolds)
-        {
+        for name in &arms[0].introduced_unfolds {
+            if !arms[1].introduced_unfolds.contains(name) {
+                continue;
+            }
             unfolded_predicates.insert(name.clone());
         }
         let [then_arm, else_arm] = arms;
@@ -2730,13 +2666,40 @@ fn arm_entry_steps_match(steps: &[ProofStep], expected: &[ProofStep]) -> bool {
             .all(|(actual, expected)| actual == expected)
 }
 
-/// Carries the frontier-local loop proofs both arms established into the
-/// joined check. A loop is keyed by its code region: the same C loop proved
-/// in both arms is one bound clause and one verified rule.
-fn migrate_arm_loop_proofs(
+/// Applies the shared metadata policy for a two-arm join. Entry
+/// prerequisites and derivation theorems are self-contained checked
+/// obligations, so either arm may contribute them. An unfold marker is a
+/// frontier-local planning hint and becomes common only when both arms
+/// introduced it. Loop rules are checked theorems keyed by their code region
+/// and are deduplicated below.
+fn migrate_arm_metadata(
     execution: &mut ExecutionProofState,
     arms: &[CheckedExecutionJoinArm<'_>; 2],
+    retain_common_unfolds: bool,
 ) {
+    for arm in arms {
+        for fact in &arm.introduced_prerequisites {
+            execution
+                .core
+                .function_entry_execution_prerequisites
+                .insert(fact.clone());
+        }
+        for theorem in &arm.introduced_derivations {
+            execution
+                .core
+                .function_entry_derivations
+                .insert(theorem.clone());
+        }
+    }
+    if retain_common_unfolds {
+        for name in &arms[0].introduced_unfolds {
+            if arms[1].introduced_unfolds.contains(name)
+                && !execution.core.unfolded_predicates.contains(name)
+            {
+                execution.core.unfolded_predicates.push(name.clone());
+            }
+        }
+    }
     for arm in arms {
         for (clause, rule) in arm
             .introduced_loop_clauses

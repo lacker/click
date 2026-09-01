@@ -404,6 +404,13 @@ fn abstract_c_state_for_join_across_with_policy(
 ) -> Result<CState, String> {
     let mut existing_variables = BTreeSet::new();
     for sibling in sibling_states {
+        crate::instrumentation::record_deterministic_work(
+            sibling.locals.bindings.len()
+                + sibling.memory.blocks.len()
+                + sibling.memory.cells.len()
+                + sibling.resources().facts().len()
+                + sibling.counted_populations.len(),
+        );
         collect_c_state_bitvector_variables(sibling, &mut existing_variables);
         for block in sibling.memory.blocks.keys() {
             if let Some(index) = block
@@ -415,6 +422,7 @@ fn abstract_c_state_for_join_across_with_policy(
         }
     }
     for value in stable_entry_locals.values() {
+        crate::instrumentation::record_deterministic_work(1);
         collect_c_value_bitvector_variables(value, &mut existing_variables);
     }
     let mut variables = KernelVariableGenerator::fresh_for(1_000_000, existing_variables);
@@ -434,6 +442,7 @@ fn abstract_c_state_for_join_across_with_policy(
     let mut preserved_blocks = BTreeSet::new();
 
     for (name, binding) in state.locals.bindings.iter() {
+        crate::instrumentation::record_deterministic_work(1);
         let CLocalBinding::Object { value, c_type } = binding else {
             continue;
         };
@@ -457,6 +466,9 @@ fn abstract_c_state_for_join_across_with_policy(
     }
 
     let comparable_memory = |state: &CState| {
+        crate::instrumentation::record_deterministic_work(
+            state.memory.blocks.len() + state.memory.cells.len(),
+        );
         let mut memory = state.memory.clone();
         std::sync::Arc::make_mut(&mut memory.blocks)
             .retain(|block, _| !preserved_blocks.contains(block));
@@ -1913,7 +1925,7 @@ fn proof_evidence_premises_are_retained(
     true
 }
 
-fn execution_evidence_states_match(
+pub(crate) fn execution_evidence_states_match(
     function: &CFunction,
     left: &CState,
     right: &CState,
@@ -2023,6 +2035,8 @@ fn proof_evidence_initial_state(
 
     events.iter().find_map(|event| match event {
         CheckedExecutionEvent::ProofCase(_) => None,
+        CheckedExecutionEvent::ResourceObservation(observation) => Some(observation.before_state()),
+        CheckedExecutionEvent::ResourceRewrite(rewrite) => Some(rewrite.before_state()),
         CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
             match proof_evidence_conclusion(theorem) {
                 Proposition::CStatementVerifies { state, .. }
@@ -2075,7 +2089,10 @@ fn proof_case_partitions_match_paths(
                         }
                     }
                 }
-                CheckedExecutionEvent::Statement(_) | CheckedExecutionEvent::Condition(_) => {}
+                CheckedExecutionEvent::Statement(_)
+                | CheckedExecutionEvent::Condition(_)
+                | CheckedExecutionEvent::ResourceObservation(_)
+                | CheckedExecutionEvent::ResourceRewrite(_) => {}
             }
         }
         true
@@ -2194,12 +2211,43 @@ fn seal_proof_evidence_events(
         if completed.is_some() {
             return None;
         }
-        if let CheckedExecutionEvent::ProofCase(arm) = event {
-            if !arm.is_valid() {
-                return None;
+        match event {
+            CheckedExecutionEvent::ProofCase(arm) => {
+                if !arm.is_valid() {
+                    return None;
+                }
+                current_assumptions = arm.facts().assumptions().clone();
+                continue;
             }
-            current_assumptions = arm.facts().assumptions().clone();
-            continue;
+            CheckedExecutionEvent::ResourceObservation(observation) => {
+                if !observation.advances_sealed(function, &state) {
+                    return None;
+                }
+                state = observation.after_state.clone();
+                for fact in observation
+                    .after_facts
+                    .introduced_since(&observation.before_facts)?
+                {
+                    current_assumptions = current_assumptions.assume_proposition(fact);
+                }
+                continue;
+            }
+            CheckedExecutionEvent::ResourceRewrite(rewrite) => {
+                if !rewrite.advances_sealed(function, &state) {
+                    return None;
+                }
+                state = rewrite.after_state.clone();
+                for fact in rewrite
+                    .after_facts
+                    .introduced_since(&rewrite.before_facts)?
+                {
+                    current_assumptions = current_assumptions.assume_proposition(fact);
+                }
+                continue;
+            }
+            CheckedExecutionEvent::Statement(_)
+            | CheckedExecutionEvent::Condition(_)
+            | CheckedExecutionEvent::Branch(_) => {}
         }
         let source = remaining.take()?;
         let (next_statement, tail) = split_proof_evidence_statement(source);
@@ -2319,7 +2367,9 @@ fn seal_proof_evidence_events(
                 state = proved_state.clone();
             }
             CheckedExecutionEvent::Branch(branch) => {
-                if !branch.matches_source(&state, &next_statement, &tail) {
+                if !branch.matches_interface_resource_definitions(function)
+                    || !branch.matches_source(&state, &next_statement, &tail)
+                {
                     return None;
                 }
                 let full_source = prepend_proof_evidence_statement(next_statement, tail.clone());
@@ -2364,6 +2414,12 @@ fn seal_proof_evidence_events(
                 }
             }
             CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
+            CheckedExecutionEvent::ResourceObservation(_) => {
+                unreachable!("handled before source advance")
+            }
+            CheckedExecutionEvent::ResourceRewrite(_) => {
+                unreachable!("handled before source advance")
+            }
         }
     }
     Some(SealedProofEvidenceProgress {
@@ -2405,12 +2461,21 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
     }
     let function = checked_function;
     let checked_entry_state = function_entry.and_then(|entry| {
-        entry.entry_state_for(
-            &candidates.state,
-            &candidates.function,
-            &candidates.arguments,
-            &assumptions,
-        )
+        let trace_entry = entry.trace_entry_state(&candidates.function, &candidates.arguments)?;
+        let every_trace_starts_at_checked_entry = evidence.iter().all(|trace| {
+            let events = trace.to_vec();
+            proof_evidence_initial_state(&events) == Some(trace_entry)
+        });
+        if every_trace_starts_at_checked_entry {
+            Some(trace_entry.clone())
+        } else {
+            entry.entry_state_for(
+                &candidates.state,
+                &candidates.function,
+                &candidates.arguments,
+                &assumptions,
+            )
+        }
     });
     let has_checked_entry = checked_entry_state.is_some();
     let entry_state = match checked_entry_state {
@@ -2797,7 +2862,7 @@ fn checked_execution_at_definitionally_equal_entry_state(
     Some(SymbolicCExecution { paths, limit: None })
 }
 
-fn counted_populations_definitionally_equal(
+pub(crate) fn counted_populations_definitionally_equal(
     left: &CState,
     right: &CState,
     definitions: &[CCompositeResourceDefinition],

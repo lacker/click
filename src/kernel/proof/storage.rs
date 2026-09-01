@@ -102,10 +102,6 @@ impl<T> From<T> for SharedValue<T> {
 }
 
 impl<T: Clone> SharedValue<T> {
-    pub(crate) fn into_value(self) -> T {
-        Arc::try_unwrap(self.0).unwrap_or_else(|shared| shared.as_ref().clone())
-    }
-
     #[cfg(test)]
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)

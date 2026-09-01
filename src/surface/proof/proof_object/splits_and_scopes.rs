@@ -1023,6 +1023,7 @@ impl<'a> Proof<'a> {
         if execution.core.frontier.is_at_function_exit() {
             return Err(self.step_error("`open` must begin before execution reaches function exit"));
         }
+        let before_facts = self.facts().clone();
         let checked = open_composite_resource_for_proof(
             context.resource_environment,
             &resource,
@@ -1036,6 +1037,21 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
+        execution
+            .core
+            .record_resource_rewrite(
+                context.function,
+                context.arguments,
+                &before_facts,
+                &checked.selected,
+                &checked.state,
+                &checked.facts,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "kernel rejected checked resource `open`: {message}"
+                ))
+            })?;
         execution.core.state = checked.state.into();
         let introduced_facts = checked.added_facts.clone();
         let state = self

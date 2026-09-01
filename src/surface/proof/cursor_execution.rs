@@ -186,47 +186,6 @@ pub(super) fn apply_branch_interface_with_proof_facts(
                     }
                 }
             }
-            if let ResourceClause::Declared {
-                kind: ResourceKind::Composite,
-                name,
-                ..
-            } = resource
-            {
-                let definition = resource_environment.get(name).ok_or_else(|| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: unknown resource `{name}`"
-                    ))
-                })?;
-                let CResource::Composite {
-                    arguments: resource_arguments,
-                    ..
-                } = exported_resources
-                    .facts()
-                    .last()
-                    .expect("exported composite resource was just appended")
-                    .resource()
-                else {
-                    unreachable!("composite resource clause lowered to another resource family")
-                };
-                let (memory, _) = apply_composite_observation_law(
-                    definition,
-                    resource_arguments,
-                    parameters,
-                    arguments,
-                    &entry_state,
-                    &abstract_state,
-                    &CValue::Int32(Bitvector32Term::Constant(0)),
-                    &mut exported_pure_facts,
-                    predicate_environment,
-                    click_function_environment,
-                )
-                .map_err(|message| {
-                    ClickError::new(format!(
-                        "`{claim_label}` tactic {tactic_index}: could not project `branch ensuring` resource `{name}`: {message}"
-                    ))
-                })?;
-                abstract_state = abstract_state.with_memory(memory);
-            }
         }
     }
     abstract_state = abstract_state.with_resource_context(exported_resources.clone());

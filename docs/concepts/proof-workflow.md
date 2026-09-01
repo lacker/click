@@ -329,9 +329,19 @@ continuations, and nested loops. Checks inserted by annotation lowering remain
 attached to their source statement and do not become extra tactics.
 
 Ordinary statement steps and frontier-local `branch` use the same certified
-condition and statement transitions. `branch` joins its arm-local frontiers
-behind a checked common interface. `execute()` is the batch form that
-continues from the same frontier to function exit.
+condition and statement transitions. A plain `branch` requires the continuing
+arms to reach the same state. `branch ensuring` checks each listed fact and
+resource independently in both concrete arms, then publishes one checked
+abstract successor. A condition with only one kernel-feasible arm selects that
+concrete path rather than merging it, while a terminal branch retains separate
+return paths. `execute()` is the batch form that continues from the same
+frontier to function exit.
+
+A resource listed by `branch ensuring` remains in the representation named by
+the interface. In particular, exporting a folded composite does not project
+its declared body, containment facts, or child views. Use an explicit
+`observe(composite(...))` after the join when the continuation needs that
+one-layer projection.
 
 At function entry, `views composite(...)` resource requirements are projected
 one step automatically, matching `observe(composite(...))` for immediate

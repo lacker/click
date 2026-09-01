@@ -488,6 +488,22 @@ impl ResourceContext {
             .map(|entry| self.fact(*entry))
     }
 
+    /// Returns one retained fact that directly entails `required` without
+    /// expanding a composite or normalizing unrelated resources.
+    ///
+    /// This is the evidence-preserving counterpart of `satisfies_fact` for
+    /// operations, such as fold/unfold checking, that must subsequently act
+    /// on the exact held representation rather than merely learn that a
+    /// requirement is available.
+    pub(crate) fn directly_supporting_fact(
+        &self,
+        required: &CResourceFact,
+        assumptions: &PureFactContext,
+    ) -> Option<&CResourceFact> {
+        self.direct_match_candidates(required)
+            .find(|available| resource_fact_entails(available, required, assumptions))
+    }
+
     pub(crate) fn proves_owned_resources_separate(
         &self,
         left: &CResource,
@@ -2689,6 +2705,16 @@ impl CResourceFact {
 
     pub fn own_quantity(resource: CResource, quantity: Bitvector32Term) -> Self {
         Self::Own(resource, Box::new(quantity))
+    }
+
+    pub(crate) fn has_proven_zero_quantity(&self, assumptions: &PureFactContext) -> bool {
+        self.owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_is_zero(quantity, assumptions))
+    }
+
+    pub(crate) fn has_proven_positive_quantity(&self, assumptions: &PureFactContext) -> bool {
+        self.owned_quantity_term()
+            .is_some_and(|quantity| resource_quantity_is_positive(quantity, assumptions))
     }
 
     pub fn own_allocation(base: Pointer, bytes: impl Into<Bitvector32Term>) -> Self {

@@ -244,14 +244,16 @@ frontier is never reusable. Any mismatch performs fresh symbolic execution.
 Thus reuse removes duplicate C-body interpretation without trusting smart
 search state or weakening independent contract checking.
 
-Proof-directed folds, unfolds, and observations may give the checked artifact
-a different ghost `ResourceContext` from the independently reconstructed
-contract entry. For non-recursive resource definitions, the kernel may rebase
-the artifact only after checking that locals, memory, and counted populations
-are exact and that its bounded resource-equality relation proves the two ghost
-contexts definitionally equal. Recursive resource representations do not enter
-that relation as a cache probe: until they have stable shallow identities they
-fall back immediately to fresh execution.
+Proof-directed folds, unfolds, and observations are retained as checked
+zero-source execution events. Each event names its exact input state,
+registered composite definition, and output resource/fact delta, so final
+sealing follows the event without interpreting the C body again. At contract
+entry, a non-recursive representation may still be rebased only after checking
+that locals, memory, and counted populations are exact and that the bounded
+resource-equality relation proves the two ghost contexts definitionally equal.
+Recursive resource representations do not enter that relation as a cache
+probe: until they have stable shallow identities they fall back immediately to
+fresh execution.
 
 Likewise, two complete artifacts checked under exactly opposite polarities of
 one entry condition may be composed into one exhaustive frontier. All other

@@ -7069,7 +7069,16 @@ fn execution_resource_observation_is_retained_transactional_and_logarithmic() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
         .expect("test C function should parse");
-    let function = parsed_function.to_kernel_function();
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the marker resource definition should lower"),
+        );
     let function_environment = CExecutionEnvironment::new();
     let arguments = vec![CExpression::Value(int32(7))];
     let empty_state = CState::new();
@@ -7176,7 +7185,16 @@ fn execution_resource_unfold_is_retained_transactional_and_logarithmic() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
         .expect("test C function should parse");
-    let function = parsed_function.to_kernel_function();
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the marker resource definition should lower"),
+        );
     let function_environment = CExecutionEnvironment::new();
     let arguments = vec![CExpression::Value(int32(7))];
     let empty_state = CState::new();
@@ -7281,7 +7299,16 @@ fn execution_resource_fold_is_retained_transactional_and_logarithmic() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let parsed_function = syntax::parse_function("int32 identity(int32 x) { return x; }")
         .expect("test C function should parse");
-    let function = parsed_function.to_kernel_function();
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the marker resource definition should lower"),
+        );
     let function_environment = CExecutionEnvironment::new();
     let arguments = vec![CExpression::Value(int32(7))];
     let empty_state = CState::new();
@@ -7396,7 +7423,16 @@ fn execution_open_scope_owns_entry_body_and_close_transactionally() {
     let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let parsed_function = syntax::parse_function("int32 two_steps(int32 x) { x = x; return x; }")
         .expect("test C function should parse");
-    let function = parsed_function.to_kernel_function();
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the marker resource definition should lower"),
+        );
     let function_environment = CExecutionEnvironment::new();
     let arguments = vec![CExpression::Value(int32(7))];
     let empty_state = CState::new();
@@ -8983,12 +9019,21 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
         "int32 nonnegative(int32 x) { if (x < 0) { x = 1; } else { x = 2; } return x; }",
     )
     .expect("test interface branch should parse");
-    let function = parsed_function.to_kernel_function();
+    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
+    let function = parsed_function
+        .to_kernel_function()
+        .with_composite_resource_definitions(
+            crate::surface::verification::composite_resource_definitions(
+                &resource_environment,
+                &predicate_environment,
+                &click_function_environment,
+            )
+            .expect("the ready resource definition should lower"),
+        );
     let arguments = vec![CExpression::Value(CValue::Int32(
         Bitvector32Term::Variable(Variable(72_000)),
     ))];
     let function_environment = CExecutionEnvironment::new();
-    let resource_environment = ResourceEnvironment::new(click_file.resource_definitions());
     let variable =
         |name: &str| ContractExpression::CFragment(CExpression::Variable(name.to_string()));
     let value = |constant| ContractExpression::CFragment(CExpression::Value(int32(constant)));
@@ -9370,7 +9415,51 @@ fn branch_interface_is_checked_per_arm_and_scales_with_its_delta() {
                 [ProofStep::Step, ProofStep::FoldResource(_)]
             )
         ));
-        joined
+        let ready_fact = CResourceFact::own_composite("ready".to_string(), Vec::new());
+        let permit_view = CResourceFact::view_token("permit".to_string(), Vec::new());
+        let contains = Proposition::CResourceContains {
+            parent: ready_fact.resource().clone(),
+            child: permit_fact.resource().clone(),
+        };
+        let joined_execution = joined
+            .execution()
+            .expect("the transformed interface should retain execution");
+        assert!(
+            joined_execution
+                .core
+                .state
+                .resources()
+                .contains_exact_representation(&ready_fact)
+        );
+        assert!(
+            !joined_execution
+                .core
+                .state
+                .resources()
+                .contains_exact_representation(&permit_view)
+                && !joined.facts().contains(&contains),
+            "exporting a folded composite must not observe its body"
+        );
+        let continuation = if size == 16 {
+            let observed = joined
+                .apply_step(ProofStep::ObserveResource(ready_clause.clone()))
+                .expect("explicit observation should project one interface resource layer");
+            assert!(
+                observed
+                    .execution()
+                    .expect("observation retains execution")
+                    .core
+                    .state
+                    .resources()
+                    .contains_exact_representation(&permit_view)
+                    && observed.facts().contains(&contains),
+                "the explicit observation should add the immediate child view and containment"
+            );
+            observed
+        } else {
+            joined
+        };
+        continuation
             .apply_step(ProofStep::Step)
             .expect("the transformed owned interface should retain its return frontier");
     }

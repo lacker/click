@@ -18,8 +18,7 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Other open issues: 3
+## Other open issues: 2
 
-- [Make branch joins preserve explicit checked interfaces](branch-joins.md)
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)

@@ -34,17 +34,26 @@ executions for a post-execution fold, nested composite-resource scopes, and an
 explicit owned quantity; a negative kernel test rejects changed memory values
 and changed population counts.
 
-Pure and mixed pure/resource `branch ensuring` proofs can now retain one
-checked interface branch event. The artifact validates both exact source-arm
+Pure, resource-only, and mixed pure/resource `branch ensuring` proofs now must
+retain one checked interface branch event. The artifact validates both exact source-arm
 traces, the exhaustive condition split, the deterministic abstract successor,
 every state-parametric exported fact, and whole-context resource availability
 in both arms. Its validated successor-fact delta becomes certified execution
 evidence rather than a caller assumption, so a continuation may read an
 abstracted local and use the interface fact to establish the function outcome.
 Exact common non-scalar memory is preserved; differing memory still receives
-the conservative havoc. Pure-result and owned-quantity regressions now seal
-with zero whole-body executions, and kernel negatives reject an unproved
-successor fact and a resource absent from both arms.
+the conservative havoc. Alternative arm effects are summarized by the kernel
+rather than concatenated as sequential transitions. Pure-result,
+owned-quantity, and transformed-composite regressions seal with zero whole-body
+executions, and kernel negatives reject an unproved successor fact, a resource
+absent from both arms, or an inexact arm-effect delta. Unsupported interface
+shapes fail at the join; there is no interface-specific body-execution fallback.
+
+Composite `observe`, `fold`, `unfold`, and scoped open/close operations retain
+checked zero-source events tied to their exact state, resource definition, and
+resource/fact delta. Exporting a folded composite through a join does not
+observe its definition; an explicit `observe(...)` supplies that one-layer
+projection and seals without rerunning the body.
 
 A quantified resource close after C execution remains on the fallback. That
 operation can change an observed exit population used by an outcome predicate;
@@ -58,17 +67,12 @@ the exit transition and seals directly; the implicit closer currently retains
 only the finished claim proof, not equivalent execution evidence. The
 `resource_count_patterns` mdtest pins this distinction.
 
-Unsupported evidence shapes deliberately retain the old independent check for
-now. Transformed resource interfaces with exports beyond the state-parametric
-fact rule remain on the fallback, as do interface facts that require recorded
-snapshot or proof-mark lowering. Outcome predicate unfolding, quantified
+Unsupported evidence shapes outside branch joins deliberately retain the old
+independent check for now. Outcome predicate unfolding, quantified
 exit-population transitions, and implicit counted-resource closure are the
-other explicit guards in claim finishing. Once these forms are typed evidence,
-the fallback and its cache can be removed rather than weakened piecemeal.
-The branch-interface resource projection and observation boundary is tracked
-in [Make branch joins preserve explicit checked interfaces](branch-joins.md);
-that issue owns the join-semantics cleanup rather than widening this migration
-issue into a general branch redesign.
+remaining explicit guards in claim finishing. Once these forms are typed
+evidence, the fallback and its cache can be removed rather than weakened
+piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim

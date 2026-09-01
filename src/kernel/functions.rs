@@ -2599,16 +2599,16 @@ pub(super) fn expand_composite_resource_fact(
         memory,
         assumptions,
     )
-    .map(|(expanded, _)| expanded)
+    .map(|(expanded, _, _)| expanded)
 }
 
-fn expand_composite_resource_fact_with_children(
+pub(super) fn expand_composite_resource_fact_with_children(
     context: &ResourceContext,
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,
     assumptions: &PureFactContext,
-) -> Option<(ResourceContext, Vec<CResourceFact>)> {
+) -> Option<(ResourceContext, Vec<CResourceFact>, Vec<CResourceFact>)> {
     let CResource::Composite { name, arguments } = composite.resource() else {
         return None;
     };
@@ -2646,7 +2646,7 @@ fn expand_composite_resource_fact_with_children(
     ) else {
         // A guarded folded resource remains opaque until the current path
         // decides its condition.
-        return Some((context.clone(), Vec::new()));
+        return Some((context.clone(), Vec::new(), Vec::new()));
     };
     for contained in if body_active {
         definition.contains()
@@ -2665,6 +2665,14 @@ fn expand_composite_resource_fact_with_children(
         state.resources = state.resources.clone().unchecked_with_fact(child.clone());
         child_facts.push(child);
     }
+    let raw_children = if composite.is_own() {
+        child_facts.clone()
+    } else {
+        child_facts
+            .iter()
+            .map(|fact| CResourceFact::View(fact.resource().clone()))
+            .collect()
+    };
     let children = ResourceContext::new()
         .try_compose_with_facts(child_facts, assumptions)
         .ok()?;
@@ -2689,7 +2697,7 @@ fn expand_composite_resource_fact_with_children(
     expanded = expanded
         .try_compose_certified_group_into_valid_context_delaying_normalization(missing, assumptions)
         .ok()?;
-    Some((expanded, children))
+    Some((expanded, children, raw_children))
 }
 
 fn resource_context_contains_exact_owned_fact(
@@ -2970,7 +2978,7 @@ fn expand_composite_resource_tree(
     if definition.is_recursive() && ancestors.iter().any(|ancestor| ancestor == name) {
         return Some(context.clone());
     }
-    let (mut expanded, children) = expand_composite_resource_fact_with_children(
+    let (mut expanded, children, _) = expand_composite_resource_fact_with_children(
         context,
         composite,
         definitions,
@@ -3290,7 +3298,82 @@ pub(super) fn evaluate_composite_resource_relation_propositions(
     Some(propositions)
 }
 
-fn evaluate_composite_resource_fact_propositions(
+pub(super) fn evaluate_composite_resource_loadable_propositions(
+    composite: &CResourceFact,
+    definitions: &[CCompositeResourceDefinition],
+    memory: &CMemory,
+    assumptions: &PureFactContext,
+) -> Option<Vec<Proposition>> {
+    let CResource::Composite { name, arguments } = composite.resource() else {
+        return None;
+    };
+    let definition = definitions
+        .iter()
+        .find(|definition| definition.name() == name)?;
+    if definition.parameters().len() != arguments.len() {
+        return None;
+    }
+    let mut state = CState::new().with_memory(memory.clone());
+    for (parameter, argument) in definition.parameters().iter().zip(arguments) {
+        if parameter.c_type() != argument.c_type() {
+            return None;
+        }
+        state.locals.set_typed(
+            parameter.name().to_string(),
+            argument.clone(),
+            parameter.c_type(),
+        );
+    }
+    let mut budget = ExecutionBudget::default();
+    let evaluation_assumptions = assumptions
+        .clone()
+        .allow_symbolic_contract_loads()
+        .prefer_symbolic_external_loads();
+    if !evaluate_composite_resource_body_condition(
+        definition,
+        &state,
+        &evaluation_assumptions,
+        &mut budget,
+    )? {
+        return Some(Vec::new());
+    }
+
+    let mut propositions = Vec::new();
+    for resource in definition.contains() {
+        let segment = match resource {
+            CResourceSpec::ViewMemory(segment) | CResourceSpec::OwnMemory(segment) => segment,
+            CResourceSpec::Quantified { .. }
+            | CResourceSpec::Composite { .. }
+            | CResourceSpec::Token { .. } => continue,
+        };
+        let evaluated = match evaluate_function_resource_spec(
+            &state,
+            resource,
+            &evaluation_assumptions,
+            &mut budget,
+        )
+        .ok()?
+        {
+            Ok(resource) => resource,
+            Err(_) => return None,
+        };
+        let range = evaluated.memory_range()?;
+        let element_width = c_expression_pointer_step_width(&state, &segment.base).unwrap_or(4);
+        propositions.push(Proposition::CMemoryLoadable {
+            memory: memory.clone(),
+            base: range
+                .base()
+                .offset_by_elements(range.start().clone(), element_width),
+            bytes: Bitvector32Term::multiply(
+                Bitvector32Term::subtract(range.end().clone(), range.start().clone()),
+                Bitvector32Term::Constant(element_width),
+            ),
+        });
+    }
+    Some(propositions)
+}
+
+pub(super) fn evaluate_composite_resource_fact_propositions(
     composite: &CResourceFact,
     definitions: &[CCompositeResourceDefinition],
     memory: &CMemory,

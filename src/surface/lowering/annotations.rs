@@ -45,6 +45,7 @@ pub(in crate::surface) fn lower_composite_resource_condition(
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
+        branch_join_target: None,
     };
     let all_predicates = predicate_environment
         .definitions
@@ -95,6 +96,7 @@ pub(in crate::surface) fn lower_composite_resource_facts(
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_200_000,
+        branch_join_target: None,
     };
     let all_predicates = predicate_environment
         .definitions
@@ -170,6 +172,7 @@ pub(in crate::surface) fn annotated_function(
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_000_000,
+        branch_join_target: None,
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
     let (resource_requires, resource_ensures) =
@@ -224,6 +227,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
     proposition: &ClickProposition,
     parsed_function: &syntax::C0Function,
     entry_state: &CState,
+    branch_join_target: &ProgramPointRef,
     arguments: &[CExpression],
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
@@ -250,6 +254,7 @@ pub(in crate::surface) fn lower_branch_interface_fact(
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_300_000,
+        branch_join_target: Some(branch_join_target),
     };
     lowerer
         .click_proposition_to_spec_proposition(proposition, &SpecElaborationContext::default())
@@ -286,6 +291,7 @@ pub(in crate::surface) fn function_contract_summary(
         loop_index: 0,
         statement_index: 0,
         next_quantifier_variable: 3_100_000,
+        branch_join_target: None,
     };
     let context = SpecElaborationContext::for_function_contract();
     let all_predicates = predicate_environment
@@ -589,10 +595,12 @@ struct AnnotationLowerer<'a> {
     loop_index: usize,
     statement_index: usize,
     next_quantifier_variable: u64,
+    branch_join_target: Option<&'a ProgramPointRef>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResolvedProgramPoint {
+    Current,
     FunctionEntry,
     LoopEntry(usize),
 }
@@ -743,9 +751,15 @@ impl AnnotationLowerer<'_> {
             ClickProposition::Defined { expression } => Ok(SpecProposition::Defined(
                 self.lower_contract_expression_to_spec(expression, environment)?,
             )),
-            ClickProposition::At { .. } => {
-                Err("`at(...)` propositions are proof-script snapshots".to_string())
-            }
+            ClickProposition::At {
+                selector,
+                proposition,
+            } => match self.resolve_visit_selector(selector)? {
+                ResolvedProgramPoint::Current => {
+                    self.click_proposition_to_spec_proposition(proposition, environment)
+                }
+                _ => Err("`at(...)` propositions are proof-script snapshots".to_string()),
+            },
             ClickProposition::And(left, right) => Ok(SpecProposition::And(
                 Box::new(self.click_proposition_to_spec_proposition(left, environment)?),
                 Box::new(self.click_proposition_to_spec_proposition(right, environment)?),
@@ -1198,6 +1212,9 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecExpression, String> {
         match self.resolve_visit_selector(selector)? {
+            ResolvedProgramPoint::Current => {
+                self.lower_contract_expression_to_spec(expression, environment)
+            }
             ResolvedProgramPoint::FunctionEntry => {
                 let old_environment =
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;
@@ -1221,6 +1238,11 @@ impl AnnotationLowerer<'_> {
         selector: &SnapshotSelector,
     ) -> Result<ResolvedProgramPoint, String> {
         match selector {
+            SnapshotSelector::ProgramPoint(program_point)
+                if self.branch_join_target == Some(program_point) =>
+            {
+                Ok(ResolvedProgramPoint::Current)
+            }
             SnapshotSelector::ProgramPoint(program_point) => {
                 self.resolve_program_point_ref(program_point)
             }
@@ -1550,6 +1572,7 @@ impl AnnotationLowerer<'_> {
         environment: &SpecElaborationContext,
     ) -> Result<SpecArrayRef, String> {
         match self.resolve_visit_selector(selector)? {
+            ResolvedProgramPoint::Current => self.lower_array_ref_to_spec(expression, environment),
             ResolvedProgramPoint::FunctionEntry => {
                 let old_environment =
                     environment.old_state(&self.entry_values, self.entry_state.memory())?;

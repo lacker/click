@@ -541,6 +541,7 @@ impl<'a> Proof<'a> {
                 self.step_error("`observe` must run before execution reaches function exit")
             );
         }
+        let before_facts = self.facts().clone();
         let checked = observe_composite_resource_for_proof(
             context.resource_environment,
             resource,
@@ -556,6 +557,19 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
+        execution
+            .core
+            .record_resource_observation(
+                context.function,
+                context.arguments,
+                &before_facts,
+                &checked.observed_resource,
+                &checked.state,
+                &checked.facts,
+            )
+            .map_err(|message| {
+                self.step_error(format!("kernel rejected checked `observe`: {message}"))
+            })?;
         execution.core.state = checked.state.into();
         let branch = self
             .focused_branch()
@@ -589,6 +603,7 @@ impl<'a> Proof<'a> {
             return Err(self
                 .step_error("resource `unfold` must run before execution reaches function exit"));
         }
+        let before_facts = self.facts().clone();
         let checked = unfold_composite_resource_for_proof(
             context.resource_environment,
             resource,
@@ -602,6 +617,21 @@ impl<'a> Proof<'a> {
             context.claim_label,
             context.tactic_index,
         )?;
+        execution
+            .core
+            .record_resource_rewrite(
+                context.function,
+                context.arguments,
+                &before_facts,
+                &checked.selected,
+                &checked.state,
+                &checked.facts,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "kernel rejected checked resource `unfold`: {message}"
+                ))
+            })?;
         execution.core.state = checked.state.into();
         let branch = self
             .focused_branch()
@@ -636,6 +666,7 @@ impl<'a> Proof<'a> {
                 self.step_error("resource `fold` must run before execution reaches function exit")
             );
         }
+        let before_facts = self.facts().clone();
         let pre_state = context
             .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
@@ -653,6 +684,27 @@ impl<'a> Proof<'a> {
             context.click_function_environment,
             &execution.core.unfolded_predicates,
         )?;
+        let selected = lower_resource_clause(
+            resource,
+            context.parsed_function.parameters(),
+            context.arguments,
+            checked.state.memory(),
+        )?;
+        execution
+            .core
+            .record_resource_rewrite(
+                context.function,
+                context.arguments,
+                &before_facts,
+                &selected,
+                &checked.state,
+                &checked.facts,
+            )
+            .map_err(|message| {
+                self.step_error(format!(
+                    "kernel rejected checked resource `fold`: {message}"
+                ))
+            })?;
         execution.core.state = checked.state.into();
         let branch = self
             .focused_branch()

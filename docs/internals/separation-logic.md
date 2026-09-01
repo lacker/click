@@ -266,9 +266,13 @@ transition with the whole proof context visible to the kernel.
 for a C conditional whose arms need an explicit common resource interface.
 Every continuing arm must prove `Q`. Click then constructs one symbolic
 frontier satisfying `Q`, while retaining exact common facts and resources.
-The continuation therefore cannot depend on an arm-only fact. Stable function
-parameters and the function-entry state used by `old(...)` retain their
-identity across the boundary.
+The continuation therefore cannot depend on an arm-only fact or resource.
+Stable function parameters and the function-entry state used by `old(...)`
+retain their identity across the boundary. Listing a folded composite resource
+exports that exact resource fact; it does not observe the composite definition.
+Declared body facts, containment relations, and immediate child views require
+a later explicit `observe(...)` unless they were independently common facts in
+both arms.
 
 Function entry projects `views composite(...)` resources one step
 automatically: the view remains available, and immediate contained resource
@@ -302,7 +306,8 @@ resource facts are observable from a valid held resource state.
 
 Examples:
 
-- A composite resource exposes its declared pure `fact` clauses while folded.
+- Observing a folded composite resource exposes its declared pure `fact`
+  clauses without consuming or unfolding the composite.
 - A declared `fact loadable(data[0..cap])` exposes a pure memory-loadability fact
   for the segment without exposing the contained resource fact that justified it.
 - A valid state containing two owned memory resources exposes that their ranges
@@ -320,9 +325,10 @@ future summary mechanism, not in default `auto` behavior.
 `ResourceContext::observable_facts(...)` implements the pure-fact side of this
 interface. It validates the concrete resource state, asks each family for its
 observations, and adds separation between owned facts from different families.
-Composite-resource `fact` clauses join the same observable-pure-facts projection
-path. Their lowering lives in the Click proof layer because it depends on
-resource definitions, substitution, and memory materialization.
+Composite-resource `fact` clauses join the same explicit observation path.
+Their lowering lives in the Click proof layer because it depends on resource
+definitions, substitution, and memory materialization. Merely transporting a
+folded composite through a branch interface does not invoke this path.
 
 ## Memory separation
 
