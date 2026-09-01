@@ -7277,6 +7277,7 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
     "#;
     let sources = [("read_cell.c", c_source)];
 
+    let _ = crate::kernel::take_checked_function_body_execution_count();
     let ((((verified, explicit_fallbacks), certificate_checks), context_exports), flat_units) =
         proof::count_flat_proof_units(|| {
             {
@@ -7299,6 +7300,11 @@ fn nested_composite_resource_scopes_stay_on_one_proof() {
     assert_eq!(
         explicit_fallbacks, 0,
         "the nested resource scopes fell back"
+    );
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "closing nested post-execution resource scopes should not rerun the C body"
     );
 
     let tactics = verified[0]

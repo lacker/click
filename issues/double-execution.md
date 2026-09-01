@@ -23,10 +23,39 @@ path against its corresponding case decisions. A mid-execution two-arm proof
 case therefore seals with zero whole-body executions. Terminal C joins retain
 their already-aligned path traces.
 
+Post-execution resource folds and nested opens now seal from the retained
+transition theorems. A kernel-checked function-entry artifact retains the
+exact population materialization and permits a rebased entry only when C
+memory, heap lifetime state, local-object cells, resource meaning, and counted
+populations remain definitionally equal. Composite resource relations are
+derived once from that checked entry and may discharge only explicit resource
+containment and separation premises. Regressions require zero whole-body
+executions for a post-execution fold, nested composite-resource scopes, and an
+explicit owned quantity; a negative kernel test rejects changed memory values
+and changed population counts.
+
+A quantified resource close after C execution remains on the fallback. That
+operation can change an observed exit population used by an outcome predicate;
+the checked entry artifact does not establish this exit transition. The guard
+is now limited to quantified folds and closes rather than treating every
+post-execution resource representation change as unsupported.
+
+Likewise, a counted entry whose output resources are closed only implicitly by
+outcome `simp()` remains on the fallback. An explicit checked `frame()` retains
+the exit transition and seals directly; the implicit closer currently retains
+only the finished claim proof, not equivalent execution evidence. The
+`resource_count_patterns` mdtest pins this distinction.
+
 Unsupported evidence shapes deliberately retain the old independent check for
-now. The remaining slices are post-execution resource folds and opens, and
-counted-population entry normalization. Once those are represented, the
-fallback and its cache can be removed rather than weakened piecemeal.
+now. The next known shape is a two-arm `branch ensuring` interface: its checked
+abstraction currently publishes a theorem for the whole source `if`, but the
+artifact does not retain the per-arm evidence establishing the interface facts
+and abstract successor state. Direct sealing therefore rejects that theorem's
+otherwise-unretained interface premise and performs one independent execution.
+Outcome predicate unfolding, quantified exit-population transitions, and
+implicit counted-resource closure are the other explicit guards in claim
+finishing. Once these forms are typed evidence, the fallback and its cache can
+be removed rather than weakened piecemeal.
 
 There is a second fallback at the opaque-contract boundary. Final contract
 certification normally reuses the checked whole-body artifact created by claim
@@ -38,10 +67,11 @@ independent-execution cache reduces repeated work across claims but does not
 remove this architecture.
 
 This is why failures can report that proof construction succeeded but a later
-execution could not reproduce it. The arena write proof is the current
-end-to-end example: scoped resource operations give the checked proof a valid
-execution representation, while the later whole-function execution rebuilds a
-different representation and fails before the claim can be certified.
+execution could not reproduce it. The arena-shaped nested resource-scope
+failure is now covered by a zero-rerun regression, and the `examples/arena`
+project verifies. The intended `arena_write` contract is not currently present
+in that sidecar, so the issue still requires the explicit end-to-end acceptance
+regression below before completion.
 
 ## Violated invariant
 

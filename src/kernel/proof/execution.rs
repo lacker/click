@@ -6,9 +6,9 @@
 
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
-    CConditionOutcome, CExpression, CFunctionExecutionCandidates, CLoopEffectCheck, CState,
-    CStatement, CStatementOutcome, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact,
-    Proposition, Theorem,
+    CConditionOutcome, CExpression, CFunction, CFunctionExecutionCandidates, CLoopEffectCheck,
+    CState, CStatement, CStatementOutcome, CVerifiedLoopRule, ExecutionLimit, ExecutionPureFact,
+    Proposition, PureFactContext, Theorem,
 };
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
@@ -44,6 +44,88 @@ pub(crate) enum CheckedExecutionEvent {
     Condition(Theorem),
     Branch(CheckedExecutionBranch),
     ProofCase(CheckedProofCaseArm),
+}
+
+/// Kernel-issued evidence for the exact contract-entry state from which a
+/// function proof begins. In particular, this retains population materialization
+/// instead of asking finalization to reconstruct it from Surface bookkeeping.
+#[derive(Clone)]
+pub(crate) struct CheckedFunctionEntry {
+    caller_state: CState,
+    function: CFunction,
+    arguments: Vec<CExpression>,
+    entry_state: CState,
+}
+
+impl CheckedFunctionEntry {
+    fn check(
+        caller_state: &CState,
+        function: &CFunction,
+        arguments: &[CExpression],
+        expected_entry_state: &CState,
+    ) -> Option<Arc<Self>> {
+        let entry_state = crate::kernel::c_function_entry_state(caller_state, function, arguments)?;
+        if &entry_state != expected_entry_state {
+            return None;
+        }
+        Some(Arc::new(Self {
+            caller_state: caller_state.clone(),
+            function: function.clone(),
+            arguments: arguments.to_vec(),
+            entry_state,
+        }))
+    }
+
+    pub(crate) fn entry_state_for(
+        &self,
+        caller_state: &CState,
+        function: &CFunction,
+        arguments: &[CExpression],
+        assumptions: &PureFactContext,
+    ) -> Option<CState> {
+        if &self.function != function || self.arguments != arguments {
+            return None;
+        }
+        if &self.caller_state == caller_state {
+            return Some(self.entry_state.clone());
+        }
+        let rebased_entry =
+            crate::kernel::c_function_entry_state(caller_state, function, arguments)?;
+        crate::kernel::api::function_entry_representation_states_match(
+            function,
+            &self.entry_state,
+            &rebased_entry,
+            assumptions,
+        )
+        .then_some(rebased_entry)
+    }
+
+    pub(crate) fn resource_relation_assumptions(
+        &self,
+        assumptions: &PureFactContext,
+    ) -> Option<PureFactContext> {
+        let Some((_, propositions)) =
+            crate::kernel::functions::expand_all_composite_resource_facts_and_propositions(
+                self.entry_state.resources(),
+                self.function.composite_resource_definitions(),
+                self.entry_state.memory(),
+                assumptions,
+            )
+        else {
+            return None;
+        };
+        Some(
+            propositions
+                .into_iter()
+                .fold(assumptions.clone(), |facts, proposition| {
+                    facts.assume_proposition(proposition)
+                }),
+        )
+    }
+
+    pub(crate) fn caller_state(&self) -> &CState {
+        &self.caller_state
+    }
 }
 
 /// One kernel-issued complementary logical partition over an unchanged C
@@ -224,6 +306,10 @@ impl CheckedExecutionBranch {
 
     pub(crate) fn joined_state(&self) -> &CState {
         &self.joined_state
+    }
+
+    pub(crate) fn start_state(&self) -> &CState {
+        &self.split.state
     }
 
     pub(crate) fn arm_facts(&self, index: usize) -> &ProofFacts {
@@ -436,6 +522,7 @@ pub(crate) struct ExecutionProofCore {
     /// operation with several return outcomes can complete several traces at
     /// once. Forked proofs share every unchanged trace prefix.
     pub(crate) execution_evidence: SharedVec<PersistentSequence<CheckedExecutionEvent>>,
+    pub(crate) function_entry: Option<Arc<CheckedFunctionEntry>>,
     pub(crate) frontier_loop_rules: PersistentSequence<CVerifiedLoopRule>,
     pub(crate) execution_abstraction: bool,
     pub(crate) loop_effect_goal: Option<LoopEffectGoal>,
@@ -744,6 +831,7 @@ impl ExecutionProofCore {
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
+            function_entry: None,
             frontier_loop_rules: Default::default(),
             execution_abstraction: false,
             loop_effect_goal: None,
@@ -758,6 +846,27 @@ impl ExecutionProofCore {
             has_structured_branch_history: false,
             unfolded_predicates: Default::default(),
         }
+    }
+
+    pub(crate) fn record_checked_function_entry(
+        &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        expected_entry_state: &CState,
+    ) -> bool {
+        if !self.frontier.is_at_function_entry()
+            || self.execution_evidence.len() != 1
+            || !self.execution_evidence[0].is_empty()
+        {
+            return false;
+        }
+        let Some(entry) =
+            CheckedFunctionEntry::check(&self.state, function, arguments, expected_entry_state)
+        else {
+            return false;
+        };
+        self.function_entry = Some(entry);
+        true
     }
 
     pub(crate) fn record_statement_transition(&mut self, theorem: Theorem) {
@@ -895,6 +1004,10 @@ impl ExecutionFrontier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::{
+        Bitvector32Term, CCompositeResourceDefinition, CMemory, CType, CValue, Pointer,
+        PointerBlock, PointerOffsetTerm, c_function,
+    };
 
     fn condition_event(
         state: &CState,
@@ -906,6 +1019,63 @@ mod tests {
             condition: condition.clone(),
             outcome: CConditionOutcome::Value(value),
         }))
+    }
+
+    #[test]
+    fn checked_function_entry_rebase_rejects_semantic_memory_and_population_changes() {
+        let function = c_function(
+            CType::Void,
+            "checked_entry",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        )
+        .with_composite_resource_definitions(vec![
+            CCompositeResourceDefinition::counted_population(
+                "item",
+                Vec::new(),
+                None,
+                Vec::new(),
+                Vec::new(),
+            ),
+        ]);
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let caller = CState::new()
+            .with_memory(
+                CMemory::new().store(pointer.clone(), CValue::Int32(Bitvector32Term::Constant(1))),
+            )
+            .with_counted_population("item", Vec::new(), Bitvector32Term::Constant(1));
+        let entry_state = crate::kernel::c_function_entry_state(&caller, &function, &[])
+            .expect("the empty argument list should bind");
+        let checked = CheckedFunctionEntry::check(&caller, &function, &[], &entry_state)
+            .expect("the exact kernel-computed entry should check");
+        let assumptions = PureFactContext::new();
+
+        assert_eq!(
+            checked.entry_state_for(&caller, &function, &[], &assumptions),
+            Some(entry_state)
+        );
+
+        let changed_memory = caller.clone().with_memory(
+            CMemory::new().store(pointer, CValue::Int32(Bitvector32Term::Constant(2))),
+        );
+        assert!(
+            checked
+                .entry_state_for(&changed_memory, &function, &[], &assumptions)
+                .is_none(),
+            "a resource rebase must not authorize a changed C memory value"
+        );
+
+        let changed_population =
+            caller.with_counted_population("item", Vec::new(), Bitvector32Term::Constant(2));
+        assert!(
+            checked
+                .entry_state_for(&changed_population, &function, &[], &assumptions)
+                .is_none(),
+            "a resource rebase must not authorize a changed counted population"
+        );
     }
 
     #[test]

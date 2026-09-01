@@ -438,7 +438,7 @@ fn memory_range_lists_definitionally_equal(
         })
 }
 
-fn c_memories_definitionally_equal(
+pub(in crate::kernel) fn c_memories_definitionally_equal(
     left: &CMemory,
     right: &CMemory,
     assumptions: &PureFactContext,

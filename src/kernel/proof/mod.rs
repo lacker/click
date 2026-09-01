@@ -16,9 +16,10 @@ mod storage;
 
 pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches, SplitId};
 pub(crate) use execution::{
-    CheckedBranchSplit, CheckedBranchSplitError, CheckedExecutionEvent, CheckedProofCasePartition,
-    ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind, FrontierPosition, LoopEffectGoal,
-    ProofExecutionContinuation, ProofExecutionState, old_reference_state,
+    CheckedBranchSplit, CheckedBranchSplitError, CheckedExecutionEvent, CheckedFunctionEntry,
+    CheckedProofCasePartition, ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind,
+    FrontierPosition, LoopEffectGoal, ProofExecutionContinuation, ProofExecutionState,
+    old_reference_state,
 };
 pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,

@@ -1819,6 +1819,7 @@ pub fn prove_checked_c_function_execution_with_environment(
         execution_semantics,
         mode,
         execution,
+        entry_representation_origin: None,
         entry_derivations: Vec::new(),
         entry_prerequisites: Vec::new(),
     }
@@ -1846,6 +1847,8 @@ fn proof_evidence_premises_are_retained(
     theorem: &Theorem,
     assumptions: &PureFactContext,
     candidate: &CFunctionExecutionCandidate,
+    state: &CState,
+    function_entry_resource_facts: Option<&PureFactContext>,
 ) -> bool {
     let execution_facts = candidate.execution_facts();
     let mut proposition = theorem.proposition();
@@ -1858,6 +1861,12 @@ fn proof_evidence_premises_are_retained(
                 .obligations
                 .iter()
                 .any(|obligation| obligation.proposition() == premise.as_ref())
+            && !resources_certify_loadability(state, state.resources(), premise, assumptions)
+            && !(matches!(
+                premise.as_ref(),
+                Proposition::CResourceContains { .. } | Proposition::CResourceSeparate { .. }
+            ) && function_entry_resource_facts
+                .is_some_and(|facts| facts.proves_exact(premise)))
         {
             return false;
         }
@@ -1879,6 +1888,36 @@ fn execution_evidence_states_match(
     left_without_ghost_difference.resources = right.resources.clone();
     left_without_ghost_difference.counted_populations = right.counted_populations.clone();
     left_without_ghost_difference == *right
+        && contract_certification::resource_contexts_definitionally_equal_with_definitions(
+            function.composite_resource_definitions(),
+            left.memory(),
+            left.resources(),
+            right.memory(),
+            right.resources(),
+            assumptions,
+        )
+        && counted_populations_definitionally_equal(
+            left,
+            right,
+            function.composite_resource_definitions(),
+            assumptions,
+        )
+}
+
+/// Checks the representation-only state change permitted before the first C
+/// operation. Resource scopes may materialize otherwise unchanged symbolic
+/// loads, but cannot alter locals, local-object cells, heap lifetime state,
+/// resource meaning, or population counts.
+pub(crate) fn function_entry_representation_states_match(
+    function: &CFunction,
+    left: &CState,
+    right: &CState,
+    assumptions: &PureFactContext,
+) -> bool {
+    left.locals == right.locals
+        && left.memory.heap == right.memory.heap
+        && left.local_cell_values().eq(right.local_cell_values())
+        && c_memories_definitionally_equal(left.memory(), right.memory(), assumptions)
         && contract_certification::resource_contexts_definitionally_equal_with_definitions(
             function.composite_resource_definitions(),
             left.memory(),
@@ -1936,6 +1975,24 @@ struct SealedProofEvidenceProgress {
     state: CState,
     remaining: Option<CStatement>,
     completed: Option<(CStatementOutcome, PureFactContext)>,
+}
+
+fn proof_evidence_initial_state(
+    events: &[crate::kernel::proof::CheckedExecutionEvent],
+) -> Option<&CState> {
+    use crate::kernel::proof::CheckedExecutionEvent;
+
+    events.iter().find_map(|event| match event {
+        CheckedExecutionEvent::ProofCase(_) => None,
+        CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
+            match proof_evidence_conclusion(theorem) {
+                Proposition::CStatementVerifies { state, .. }
+                | Proposition::CConditionEvaluates { state, .. } => Some(state),
+                _ => None,
+            }
+        }
+        CheckedExecutionEvent::Branch(branch) => Some(branch.start_state()),
+    })
 }
 
 fn proof_case_partitions_match_paths(
@@ -2087,6 +2144,7 @@ fn seal_proof_evidence_events(
     mut remaining: Option<CStatement>,
     assumptions: &PureFactContext,
     candidate: &CFunctionExecutionCandidate,
+    function_entry_resource_facts: Option<&PureFactContext>,
 ) -> Option<SealedProofEvidenceProgress> {
     use crate::kernel::proof::CheckedExecutionEvent;
 
@@ -2107,7 +2165,13 @@ fn seal_proof_evidence_events(
         let (next_statement, tail) = split_proof_evidence_statement(source);
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
-                if !proof_evidence_premises_are_retained(theorem, &current_assumptions, candidate) {
+                if !proof_evidence_premises_are_retained(
+                    theorem,
+                    &current_assumptions,
+                    candidate,
+                    &state,
+                    function_entry_resource_facts,
+                ) {
                     return None;
                 }
                 let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
@@ -2146,7 +2210,13 @@ fn seal_proof_evidence_events(
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
-                if !proof_evidence_premises_are_retained(theorem, &current_assumptions, candidate) {
+                if !proof_evidence_premises_are_retained(
+                    theorem,
+                    &current_assumptions,
+                    candidate,
+                    &state,
+                    function_entry_resource_facts,
+                ) {
                     return None;
                 }
                 let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
@@ -2222,6 +2292,7 @@ fn seal_proof_evidence_events(
                         Some(full_source.clone()),
                         arm_assumptions,
                         candidate,
+                        function_entry_resource_facts,
                     )?;
                     if arm.completed.is_some()
                         || arm.remaining != tail
@@ -2261,6 +2332,7 @@ fn seal_proof_evidence_events(
 pub(crate) fn checked_c_function_execution_from_proof_evidence(
     candidates: &CFunctionExecutionCandidates,
     checked_function: &CFunction,
+    function_entry: Option<&crate::kernel::proof::CheckedFunctionEntry>,
     evidence: &[crate::kernel::proof::PersistentSequence<
         crate::kernel::proof::CheckedExecutionEvent,
     >],
@@ -2277,31 +2349,72 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
         return None;
     }
     let function = checked_function;
-    // Counted populations are materialized as contract-entry ghost state.
-    // The transition theorems retain the resulting C states, but the direct
-    // artifact does not yet retain the separate derivation that relates each
-    // population to the multiplicity of the declared resource requirements.
-    // Keep using the independent checker for that proof shape until the
-    // entry-resource preparation is typed evidence as well.
-    if c_function_entry_state(&candidates.state, function, &candidates.arguments)?
-        .counted_populations()
-        .next()
-        .is_some()
-    {
-        return None;
-    }
+    let checked_entry_state = function_entry.and_then(|entry| {
+        entry.entry_state_for(
+            &candidates.state,
+            &candidates.function,
+            &candidates.arguments,
+            &assumptions,
+        )
+    });
+    let has_checked_entry = checked_entry_state.is_some();
+    let entry_state = match checked_entry_state {
+        Some(entry_state) => entry_state,
+        None => {
+            let entry_state =
+                c_function_entry_state(&candidates.state, function, &candidates.arguments)?;
+            // Population materialization is part of the contract-entry
+            // transition. Without the kernel-issued entry artifact, later
+            // transition theorems alone cannot authorize that ghost state.
+            if entry_state.counted_populations().next().is_some() {
+                return None;
+            }
+            entry_state
+        }
+    };
+    let function_entry_resource_facts = if has_checked_entry {
+        let Some(resource_facts) = function_entry?.resource_relation_assumptions(&assumptions)
+        else {
+            return None;
+        };
+        Some(resource_facts)
+    } else {
+        None
+    };
     let mut sealed_paths = Vec::with_capacity(candidates.paths.len());
     for (candidate, trace) in candidates.paths.iter().zip(evidence) {
         let events = trace.to_vec();
-        let progress = seal_proof_evidence_events(
+        let Some(retained_entry_state) = proof_evidence_initial_state(&events) else {
+            return None;
+        };
+        let trace_entry_state = if retained_entry_state == &entry_state {
+            entry_state.clone()
+        } else if has_checked_entry
+            && function_entry_representation_states_match(
+                function,
+                &entry_state,
+                retained_entry_state,
+                &assumptions,
+            )
+        {
+            retained_entry_state.clone()
+        } else {
+            return None;
+        };
+        let Some(progress) = seal_proof_evidence_events(
             function,
             &events,
-            c_function_entry_state(&candidates.state, function, &candidates.arguments)?,
+            trace_entry_state,
             Some(function.body.clone()),
             &assumptions,
             candidate,
-        )?;
-        let (completed, statement_assumptions) = progress.completed?;
+            function_entry_resource_facts.as_ref(),
+        ) else {
+            return None;
+        };
+        let Some((completed, statement_assumptions)) = progress.completed else {
+            return None;
+        };
         let (outcome, obligations) = c_function_outcome_from_statement_outcome(
             &candidates.state,
             function,
@@ -2343,6 +2456,9 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             paths: sealed_paths,
             limit: None,
         },
+        entry_representation_origin: has_checked_entry
+            .then(|| function_entry.map(|entry| entry.caller_state().clone()))
+            .flatten(),
         entry_derivations: Vec::new(),
         entry_prerequisites: Vec::new(),
     })
@@ -2540,7 +2656,8 @@ fn checked_execution_at_definitionally_equal_entry_state(
     let mut checked_without_ghost_difference = checked.state.clone();
     checked_without_ghost_difference.resources = state.resources.clone();
     checked_without_ghost_difference.counted_populations = state.counted_populations.clone();
-    let concrete_matches = checked_without_ghost_difference == *state;
+    let concrete_matches = checked_without_ghost_difference == *state
+        || checked.entry_representation_origin.as_ref() == Some(state);
     let resources_match = crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
             function.composite_resource_definitions(),
             checked.state.memory(),

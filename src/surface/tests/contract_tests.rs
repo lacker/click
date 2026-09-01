@@ -507,6 +507,72 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
 }
 
 #[test]
+fn post_execution_resource_fold_seals_without_a_body_rerun() {
+    let c_source = r#"
+        int32 preserve_cell(int32 p[]) {
+            return p[0];
+        }
+    "#;
+    let click_source = r#"
+        resource cell(p: int32*) {
+            owns p[0..1];
+        }
+
+        verifying "preserve_cell.c";
+
+        int32 preserve_cell(int32 p[]) {
+            owns cell(p);
+            immutable;
+            ensures result == old(p[0]);
+        } by {
+            unfold(cell(p));
+            execute();
+            fold(cell(p));
+            frame();
+            simp();
+        }
+    "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("preserve_cell.c", c_source)])
+        .expect("the post-execution resource fold should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a checked post-execution resource fold should not force a whole-body rerun"
+    );
+}
+
+#[test]
+fn counted_resource_entry_seals_without_a_body_rerun() {
+    let c_source = "int32 preserve(int32 x) { return x; }";
+    let click_source = r#"
+        abstract resource marker(x: int32);
+
+        verifying "preserve.c";
+
+        int32 preserve(int32 x) {
+            owns 2 of marker(x);
+            immutable;
+            ensures result == x;
+        } by {
+            step();
+            frame();
+            simp();
+        }
+    "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("preserve.c", c_source)])
+        .expect("the counted resource entry should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "counted resource entry normalization should not rerun the C body"
+    );
+}
+
+#[test]
 fn grouped_flat_function_proof_stays_on_one_proof_through_claim_acceptance() {
     let c_source = r#"
             int32 identity(int32 x) {

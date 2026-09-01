@@ -334,12 +334,22 @@ pub(in crate::surface) fn prove_claim_by_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ExecutionProofState::at_entry(
+    let mut initial = ExecutionProofState::at_entry(
         state,
         frontier,
         recorded_snapshots,
         surface_propositions,
         PersistentSequence::default(),
+    );
+    assert!(
+        initial.core.record_checked_function_entry(
+            &function,
+            &arguments,
+            constants
+                .function_entry_state
+                .as_ref()
+                .expect("a function proof has a checked entry state"),
+        )
     );
     // The checked drivers are tried in order: the structural driver owns
     // scopes and branches, and the flat driver owns linear proofs. A decline
@@ -504,12 +514,22 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
         0,
         "proof entry",
     )?;
-    let initial = ExecutionProofState::at_entry(
+    let mut initial = ExecutionProofState::at_entry(
         state,
         frontier,
         recorded_snapshots,
         surface_propositions,
         PersistentSequence::default(),
+    );
+    assert!(
+        initial.core.record_checked_function_entry(
+            &function,
+            &arguments,
+            constants
+                .function_entry_state
+                .as_ref()
+                .expect("a function proof has a checked entry state"),
+        )
     );
     // Same order as the single-claim route: structural, then flat.
     let structural = match try_check_structural_function_proof(
@@ -1026,29 +1046,53 @@ fn cached_independent_execution(
     execution
 }
 
-fn post_execution_changes_resource_representation(
+fn post_execution_has_quantified_resource_close(
     tactics: &PersistentSequence<DeferredPostExecutionTactic>,
 ) -> bool {
-    fn deferred_changes_resource_representation(deferred: &DeferredPostExecutionTactic) -> bool {
+    fn deferred_closes_quantity(deferred: &DeferredPostExecutionTactic) -> bool {
         match &deferred.tactic {
-            PostExecutionTactic::Fold(_) | PostExecutionTactic::CloseOpen { .. } => true,
+            PostExecutionTactic::Fold(ResourceClause::Quantified { .. })
+            | PostExecutionTactic::CloseOpen {
+                resource: ResourceClause::Quantified { .. },
+                ..
+            } => true,
             PostExecutionTactic::If {
                 then_tactics,
                 else_tactics,
                 ..
             } => {
-                then_tactics
-                    .iter()
-                    .any(deferred_changes_resource_representation)
-                    || else_tactics
-                        .iter()
-                        .any(deferred_changes_resource_representation)
+                then_tactics.iter().any(deferred_closes_quantity)
+                    || else_tactics.iter().any(deferred_closes_quantity)
             }
             _ => false,
         }
     }
 
-    tactics.iter().any(deferred_changes_resource_representation)
+    tactics.iter().any(deferred_closes_quantity)
+}
+
+fn post_execution_has_explicit_frame(
+    tactics: &PersistentSequence<DeferredPostExecutionTactic>,
+) -> bool {
+    fn deferred_has_frame(deferred: &DeferredPostExecutionTactic) -> bool {
+        match &deferred.tactic {
+            PostExecutionTactic::Frame
+            | PostExecutionTactic::FrameRegion(_)
+            | PostExecutionTactic::FrameUsing { .. }
+            | PostExecutionTactic::CheckedFrameUsing { .. } => true,
+            PostExecutionTactic::If {
+                then_tactics,
+                else_tactics,
+                ..
+            } => {
+                then_tactics.iter().any(deferred_has_frame)
+                    && else_tactics.iter().any(deferred_has_frame)
+            }
+            _ => false,
+        }
+    }
+
+    tactics.iter().any(deferred_has_frame)
 }
 
 fn proof_case_fact_conflicts(
@@ -1295,22 +1339,33 @@ pub(super) fn finish_ordered_proof<'a>(
                     };
                     let execution_start_assumptions =
                         assumptions_from_propositions(&certification_facts);
+                    let entry_has_counted_populations =
+                        crate::kernel::c_function_entry_state(pre_state, function, arguments)
+                            .is_some_and(|state| state.counted_populations().next().is_some());
                     // Outcome predicate unfolding can add checked claim
                     // authority that is not part of the C transition
                     // trace. Until that derivation is typed evidence too,
                     // retain the independent cross-check for this shape.
                     if proof_execution.core.unfolded_predicates.is_empty()
-                        // Outcome resource folds change the state against
-                        // which contract predicates and counts are lowered.
-                        // They need their own typed evidence before direct
-                        // sealing can cover this shape.
-                        && !post_execution_changes_resource_representation(
+                        // Folding an observed resource family after C
+                        // execution also changes the counted population used
+                        // by outcome predicates. Entry population evidence
+                        // does not certify this exit transition.
+                        && !post_execution_has_quantified_resource_close(
                             &proof_execution.presentation.post_execution_tactics,
                         )
+                        // Implicit outcome resource closure does not yet
+                        // retain the checked population/resource transition
+                        // that an explicit frame records.
+                        && !(entry_has_counted_populations
+                            && !post_execution_has_explicit_frame(
+                                &proof_execution.presentation.post_execution_tactics,
+                            ))
                         && let Some(checked) =
                             crate::kernel::checked_c_function_execution_from_proof_evidence(
                                 execution,
                                 function,
+                                proof_execution.core.function_entry.as_deref(),
                                 &proof_execution.core.execution_evidence,
                                 &path_case_facts,
                                 execution_start_assumptions.clone(),
