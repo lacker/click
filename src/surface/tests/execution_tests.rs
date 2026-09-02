@@ -326,6 +326,41 @@ fn malloc_null_check_seals_without_a_body_rerun() {
 }
 
 #[test]
+fn post_execution_case_split_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 clamp_positive(int32 a) {
+                if (a > 0) {
+                    return a;
+                }
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "clamp_positive.c";
+
+            int32 clamp_positive(int32 a) {
+                ensures result >= 0;
+            } by {
+                execute();
+                if a == 5 {
+                    simp();
+                } else {
+                    simp();
+                }
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("clamp_positive.c", c_source)])
+        .expect("a post-execution case split should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "forked outcome paths carry forked traces with their case arms"
+    );
+}
+
+#[test]
 fn verified_loop_summary_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {

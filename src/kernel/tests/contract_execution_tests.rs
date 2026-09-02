@@ -1981,7 +1981,6 @@ fn seal_early_return(
         function,
         None,
         &[trace],
-        &[Vec::new()],
         PureFactContext::new(),
         CExecutionEnvironment::new(),
         CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
@@ -2269,5 +2268,104 @@ fn sealing_passes_over_skip_on_either_side() {
     assert_eq!(
         seal_early_return(&candidates, &function, trace).err(),
         Some(crate::instrumentation::SealRefusal::StateMismatch)
+    );
+}
+
+#[test]
+fn sealing_accepts_a_case_arm_recorded_after_the_return() {
+    // A post-execution case split records its arm after the path's
+    // returning statement. Both arms must be present across the traces.
+    let entry_state = c_function_entry_state(
+        &CState::new(),
+        &c_function(CType::Int32, "early", Vec::new(), CStatement::Skip),
+        &[],
+    )
+    .expect("entry state");
+    let returning = CStatementOutcome::Return {
+        value: int32(0),
+        state: entry_state,
+    };
+    let (candidates, function, trace) = early_return_sealing_inputs(returning);
+    let root = crate::kernel::proof::ProofFacts::default();
+    let then_fact = Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::Variable(Variable(1_000_050)),
+            Bitvector32Term::Constant(5),
+        ),
+        true,
+    );
+    let else_fact = Proposition::Not(Box::new(then_fact.clone()));
+    let partition = crate::kernel::proof::CheckedProofCasePartition::check(
+        &root,
+        then_fact.clone(),
+        else_fact.clone(),
+    )
+    .expect("complementary case facts");
+    let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    core.record_statement_outcomes(
+        trace
+            .to_vec()
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::kernel::proof::CheckedExecutionEvent::Statement(theorem) => Some(theorem),
+                _ => None,
+            })
+            .collect(),
+    );
+    core.fork_outcome_evidence(&[crate::kernel::proof::OutcomeEvidenceFork::Split {
+        partition,
+        arm_facts: [root.with_fact(then_fact), root.with_fact(else_fact)],
+    }])
+    .expect("the single trace forks into both arms");
+    let traces = core.execution_evidence.to_vec();
+    assert_eq!(traces.len(), 2);
+    let candidate = candidates.paths()[0].clone();
+    let copy = || {
+        (
+            candidate.outcome().clone(),
+            candidate.facts().to_vec(),
+            candidate.obligations().to_vec(),
+        )
+    };
+    let forked = c_function_execution_candidates_from_outcomes(
+        candidates.state().clone(),
+        function.clone(),
+        Vec::new(),
+        vec![copy(), copy()],
+    );
+    crate::kernel::api::checked_c_function_execution_from_proof_evidence(
+        &forked,
+        &function,
+        None,
+        &traces,
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+        CFunctionContractExecutionMode::VerifyLoops,
+    )
+    .expect("both forked paths seal with their case arms");
+    // One arm alone is not exhaustive.
+    let one_arm = c_function_execution_candidates_from_outcomes(
+        candidates.state().clone(),
+        function.clone(),
+        Vec::new(),
+        vec![copy()],
+    );
+    assert_eq!(
+        crate::kernel::api::checked_c_function_execution_from_proof_evidence(
+            &one_arm,
+            &function,
+            None,
+            &traces[..1],
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+        )
+        .err(),
+        Some(crate::instrumentation::SealRefusal::CasePartition)
     );
 }

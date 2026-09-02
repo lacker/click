@@ -637,6 +637,17 @@ pub(crate) struct CheckedProofCasePartition {
     case_facts: [Proposition; 2],
 }
 
+/// One entry of an outcome-evidence fork plan
+/// ([`ExecutionProofCore::fork_outcome_evidence`]): keep a path's trace, or
+/// split it into the two arms of a checked partition.
+pub(crate) enum OutcomeEvidenceFork {
+    Keep,
+    Split {
+        partition: Arc<CheckedProofCasePartition>,
+        arm_facts: [ProofFacts; 2],
+    },
+}
+
 /// One arm of a checked logical partition. This event advances no C source;
 /// it changes only the authoritative fact context for later evidence.
 #[derive(Clone)]
@@ -2001,6 +2012,51 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::ProofCase(arm.clone()));
         }
         true
+    }
+
+    /// Forks the per-path evidence traces the way a post-execution case
+    /// split forks the candidate paths: `plan[i]` keeps path `i`'s trace or
+    /// splits it into two traces that each record one arm of a checked
+    /// partition. The traces come out in the candidates' order (a kept
+    /// trace, or the then-arm followed by the else-arm), so they stay
+    /// zipped with the paths. A plan that does not cover every trace, or an
+    /// arm whose facts do not extend the partition's root by exactly that
+    /// arm's case fact, is rejected and changes nothing.
+    pub(crate) fn fork_outcome_evidence(
+        &mut self,
+        plan: &[OutcomeEvidenceFork],
+    ) -> Result<(), &'static str> {
+        if plan.len() != self.execution_evidence.len() {
+            return Err("outcome evidence fork plan does not cover every trace");
+        }
+        let mut traces = Vec::with_capacity(plan.len() * 2);
+        for (trace, fork) in self.execution_evidence.iter().zip(plan) {
+            match fork {
+                OutcomeEvidenceFork::Keep => traces.push(trace.clone()),
+                OutcomeEvidenceFork::Split {
+                    partition,
+                    arm_facts,
+                } => {
+                    for (arm_index, facts) in arm_facts.iter().enumerate() {
+                        let arm = CheckedProofCaseArm {
+                            partition: partition.clone(),
+                            arm_index,
+                            facts: facts.clone(),
+                        };
+                        if !arm.is_valid() {
+                            return Err(
+                                "outcome evidence fork arm does not extend the partition root by its case fact",
+                            );
+                        }
+                        let mut forked = trace.clone();
+                        forked.push(CheckedExecutionEvent::ProofCase(arm));
+                        traces.push(forked);
+                    }
+                }
+            }
+        }
+        self.execution_evidence = traces.into();
+        Ok(())
     }
 
     pub(crate) fn record_resource_observation(

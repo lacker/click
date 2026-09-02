@@ -2,6 +2,7 @@
 //! transport steps.
 
 use super::*;
+use crate::kernel::proof::{CheckedProofCasePartition, OutcomeEvidenceFork};
 
 impl<'a> Proof<'a> {
     pub(super) fn apply_theorem_using(
@@ -839,6 +840,9 @@ impl<'a> Proof<'a> {
             .clone();
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
         let mut outcome_provenance = Vec::with_capacity(checked.paths().len() * 2);
+        // The retained evidence traces fork with the candidates so they
+        // stay zipped for sealing; each forked copy records its arm.
+        let mut evidence_plan = Vec::with_capacity(checked.paths().len());
         for (path_index, path) in checked.paths().iter().enumerate() {
             check_verification_deadline()?;
             let provenance = execution.provenance_for_outcome(path_index);
@@ -856,10 +860,12 @@ impl<'a> Proof<'a> {
                 .any(|decision| &decision.condition == condition)
             {
                 keep(&mut paths, &mut outcome_provenance);
+                evidence_plan.push(OutcomeEvidenceFork::Keep);
                 continue;
             }
             let CFunctionOutcome::Return { value, state } = path.outcome() else {
                 keep(&mut paths, &mut outcome_provenance);
+                evidence_plan.push(OutcomeEvidenceFork::Keep);
                 continue;
             };
             let path_facts = path
@@ -894,10 +900,29 @@ impl<'a> Proof<'a> {
                     assumptions.assume_proposition(fact.clone())
                 });
             let cases: Vec<(bool, Option<Proposition>)> = if assumptions.proves(&positive) {
+                evidence_plan.push(OutcomeEvidenceFork::Keep);
                 vec![(true, None)]
             } else if assumptions.proves(&negative) {
+                evidence_plan.push(OutcomeEvidenceFork::Keep);
                 vec![(false, None)]
             } else {
+                let partition = CheckedProofCasePartition::check(
+                    self.facts(),
+                    positive.clone(),
+                    negative.clone(),
+                )
+                .ok_or_else(|| {
+                    self.step_error(
+                        "post-execution case split did not produce complementary case facts",
+                    )
+                })?;
+                evidence_plan.push(OutcomeEvidenceFork::Split {
+                    partition,
+                    arm_facts: [
+                        self.facts().with_fact(positive.clone()),
+                        self.facts().with_fact(negative.clone()),
+                    ],
+                });
                 vec![(true, Some(positive)), (false, Some(negative))]
             };
             for (value, case_fact) in cases {
@@ -926,6 +951,10 @@ impl<'a> Proof<'a> {
             checked.arguments().to_vec(),
             paths,
         );
+        execution
+            .core
+            .fork_outcome_evidence(&evidence_plan)
+            .map_err(|message| self.step_error(format!("post-execution case split: {message}")))?;
         execution.core.frontier.position = FrontierPosition::FunctionExit {
             execution: candidates,
         };

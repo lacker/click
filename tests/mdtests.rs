@@ -19,8 +19,6 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// executed a function body because the sealer refused or a guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
-    (SealRefusal::PathCount, 3),
-    (SealRefusal::CasePartition, 4),
     (SealRefusal::UnretainedPremise, 10),
     (SealRefusal::ImplicitCountedClose, 20),
     (SealRefusal::OutcomeUnfold, 11),

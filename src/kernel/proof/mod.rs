@@ -18,8 +18,8 @@ pub(crate) use branches::{BranchId, ProofBranch, ProofBranchState, ProofBranches
 pub(crate) use execution::{
     CheckedBranchSplit, CheckedBranchSplitError, CheckedExecutionEvent, CheckedFunctionEntry,
     CheckedProofCasePartition, ExecutionFrontier, ExecutionProofCore, ExecutionRegionKind,
-    FrontierPosition, LoopEffectGoal, ProofExecutionContinuation, ProofExecutionState,
-    old_reference_state,
+    FrontierPosition, LoopEffectGoal, OutcomeEvidenceFork, ProofExecutionContinuation,
+    ProofExecutionState, old_reference_state,
 };
 pub(crate) use fact_keys::{
     QuantifiedEquivalenceKey, SnapshotBlindPropositionKey, quantified_equivalence_index_key,

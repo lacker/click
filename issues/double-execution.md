@@ -213,13 +213,29 @@ function case never appeared: `proof_evidence_function_refines_same_source`
 already admits it and the frontier function's statements are the ones the
 theorems name.
 
-### 5. Partitions and path counts
+### 5. Partitions and path counts (landed 2026-09-01)
 
-Outcome case splits that fork undecided paths and proof `if` cases leave more
-candidates than evidence traces, or a partition the sealer cannot match. The
-fork or split must record its partition in every trace it creates, at the
-operation, so `proof_case_partitions_match_paths` and the path count agree
-by construction. Clears the fourth row.
+`PathCount`: a post-execution case split (`split_outcome_paths_by_case`)
+forked the candidate paths on which its condition was undecided but not
+their evidence traces. The kernel core now forks the traces in the same
+order (`ExecutionProofCore::fork_outcome_evidence`), each copy recording
+its arm of a checked partition whose facts must extend the split's root by
+exactly that arm's case fact; the sealer admits a case arm recorded after
+the path's returning statement. `CasePartition`: the sealer compared the
+traces' arms with a surface restatement of the cases, re-lowered at
+finishing from each path's recorded decisions at the entry state, and that
+restatement was empty or differently spelled for every refusing proof. The
+sealer now consults only the traces: every arm valid, one pass through a
+partition per path, both arms of every partition present
+(`proof_case_partitions_are_exhaustive`); the arm's own facts are what each
+path assumes. The surface-lowered case facts remain only to group paths for
+the independent execution that still exists until slice 7. Kernel tests
+`outcome_evidence_fork_splits_traces_in_candidate_order`,
+`proof_case_family_requires_both_arms_once_per_path`,
+`sealing_accepts_a_case_arm_recorded_after_the_return`; surface regression
+`post_execution_case_split_seals_without_a_body_rerun`. Both counts fell to
+0 over the mdtests (from 3 and 4) and `CasePartition` to 0 over
+the examples (from 12), with no other count rising.
 
 ### 6. The three guards
 

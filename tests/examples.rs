@@ -16,7 +16,6 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// The body-rerun ratchet (`issues/double-execution.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
-    (SealRefusal::CasePartition, 12),
     (SealRefusal::UnretainedPremise, 10),
     (SealRefusal::ImplicitCountedClose, 3),
     (SealRefusal::OutcomeUnfold, 10),

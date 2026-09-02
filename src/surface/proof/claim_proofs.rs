@@ -1381,7 +1381,6 @@ pub(super) fn finish_ordered_proof<'a>(
                                 function,
                                 proof_execution.core.function_entry.as_deref(),
                                 &proof_execution.core.execution_evidence,
-                                &path_case_facts,
                                 execution_start_assumptions.clone(),
                                 function_environment.clone(),
                                 execution_semantics,
