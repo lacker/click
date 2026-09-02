@@ -2129,6 +2129,116 @@ impl CCheckedFunctionExecution {
         self.execution.paths()
     }
 
+    /// Whether two checked executions are the same, naming the first
+    /// difference otherwise. Path theorems are compared premise by premise
+    /// rather than through the derived equality, whose recursion over a long
+    /// implication chain can exhaust a verification thread's stack.
+    pub fn agrees_with(&self, other: &Self) -> Result<(), String> {
+        fn same_proposition(left: &Proposition, right: &Proposition) -> Result<(), String> {
+            let (mut left, mut right) = (left, right);
+            let mut index = 0;
+            loop {
+                match (left, right) {
+                    (
+                        Proposition::Implies(left_premise, left_body),
+                        Proposition::Implies(right_premise, right_body),
+                    ) => {
+                        if left_premise != right_premise {
+                            return Err(format!(
+                                "premise {index} differs: {left_premise:?} versus {right_premise:?}"
+                            ));
+                        }
+                        index += 1;
+                        left = left_body;
+                        right = right_body;
+                    }
+                    (Proposition::Implies(..), _) | (_, Proposition::Implies(..)) => {
+                        return Err(format!(
+                            "the theorems have different premise counts at {index}"
+                        ));
+                    }
+                    (left, right) => {
+                        return (left == right)
+                            .then_some(())
+                            .ok_or_else(|| "the theorem bodies differ".to_string());
+                    }
+                }
+            }
+        }
+        if self.state != other.state {
+            return Err("the caller states differ".to_string());
+        }
+        if self.function != other.function {
+            return Err("the functions differ".to_string());
+        }
+        if self.arguments != other.arguments {
+            return Err("the arguments differ".to_string());
+        }
+        if self.assumptions != other.assumptions {
+            return Err("the assumptions differ".to_string());
+        }
+        if self.environment != other.environment {
+            return Err("the environments differ".to_string());
+        }
+        if self.execution_semantics != other.execution_semantics || self.mode != other.mode {
+            return Err("the execution semantics or modes differ".to_string());
+        }
+        if self.execution.limit != other.execution.limit {
+            return Err("the limits differ".to_string());
+        }
+        if self.entry_representation_origin != other.entry_representation_origin {
+            return Err(format!(
+                "the entry representation origins differ: {} versus {}",
+                self.entry_representation_origin.is_some(),
+                other.entry_representation_origin.is_some()
+            ));
+        }
+        if self.execution.paths.len() != other.execution.paths.len() {
+            return Err(format!(
+                "path counts differ: {} versus {}",
+                self.execution.paths.len(),
+                other.execution.paths.len()
+            ));
+        }
+        for (index, (left, right)) in self
+            .execution
+            .paths
+            .iter()
+            .zip(&other.execution.paths)
+            .enumerate()
+        {
+            if left.assumptions != right.assumptions {
+                return Err(format!("path {index}: the assumptions differ"));
+            }
+            if left.facts != right.facts {
+                let missing = right
+                    .facts
+                    .iter()
+                    .filter(|fact| !left.facts.contains(fact))
+                    .map(|fact| format!("{:?}", fact.proposition()))
+                    .collect::<Vec<_>>();
+                let extra = left
+                    .facts
+                    .iter()
+                    .filter(|fact| !right.facts.contains(fact))
+                    .map(|fact| format!("{:?}", fact.proposition()))
+                    .collect::<Vec<_>>();
+                return Err(format!(
+                    "path {index}: the facts differ; missing {missing:?}, extra {extra:?}"
+                ));
+            }
+            if left.effect_facts != right.effect_facts {
+                return Err(format!("path {index}: the effect facts differ"));
+            }
+            if left.obligations != right.obligations {
+                return Err(format!("path {index}: the obligations differ"));
+            }
+            same_proposition(left.theorem.proposition(), right.theorem.proposition())
+                .map_err(|difference| format!("path {index}: {difference}"))?;
+        }
+        Ok(())
+    }
+
     pub fn limit(&self) -> Option<ExecutionLimit> {
         self.execution.limit()
     }

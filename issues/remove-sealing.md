@@ -8,8 +8,8 @@ check still in place as a backstop, and the last slice deletes that check.
 
 Slice 1 turned out to be unnecessary and was dropped: the frontier already
 holds each trace's running state and remaining source, and traces only
-fork after the forking step's theorems are checked. Slices 2 through 5
-landed on 2026-09-02.
+fork after the forking step's theorems are checked. Slices 2 through 6
+landed on 2026-09-02; only slice 7 remains.
 
 ## Violated invariant
 
@@ -107,13 +107,14 @@ replacing.
    `if` is the parent's next source statement and that the continuation
    begins the parent's tail, which the joined core continues. The driver's
    frontier is consulted only before any evidence is recorded.
-6. **Completion.** Add `ExecutionProofCore::checked_function_execution(...)`
-   deriving the whole-function execution from the finished traces: path
-   count from the traces themselves, the contract's exit rule per trace, the
+6. **Completion.** Done. `ExecutionProofCore::checked_function_execution`
+   composes the whole-function execution from the finished traces without a
+   walk: one path per trace, the contract's exit rule per trace, the
    published path's outcome checked against the trace's (a check of the
-   surface's publication, kept as an ordinary error), case partitions
-   exhaustive. Claim finishing calls it. Compare its output with the
-   sealer's over both harnesses before the next slice.
+   surface's publication, an ordinary error), case partitions exhaustive,
+   the checked function refining the published source. Claim finishing
+   computes it alongside the sealed execution and requires equality; both
+   harnesses agree on every proof.
 7. **Delete the sealer.** Remove `checked_c_function_execution_from_proof_evidence`,
    `seal_proof_evidence_events`, `SealRefusal`, the seal table of the
    ratchet (`SEAL_REFUSAL_BASELINE` in both harnesses,

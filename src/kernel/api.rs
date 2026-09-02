@@ -2011,7 +2011,10 @@ pub(crate) fn function_entry_representation_states_match(
         )
 }
 
-fn proof_evidence_function_refines_same_source(original: &CFunction, checked: &CFunction) -> bool {
+pub(in crate::kernel) fn proof_evidence_function_refines_same_source(
+    original: &CFunction,
+    checked: &CFunction,
+) -> bool {
     original.return_type() == checked.return_type()
         && original.name() == checked.name()
         && original.parameters() == checked.parameters()
@@ -2057,7 +2060,7 @@ struct SealedProofEvidenceProgress {
     interface_execution_facts: Vec<ExecutionPureFact>,
 }
 
-fn proof_evidence_initial_state(
+pub(in crate::kernel) fn proof_evidence_initial_state(
     events: &[crate::kernel::proof::CheckedExecutionEvent],
 ) -> Option<&CState> {
     use crate::kernel::proof::CheckedExecutionEvent;
@@ -2082,7 +2085,7 @@ fn proof_evidence_initial_state(
 /// arms represented among the traces. The arms' own facts are what the
 /// sealer assumes on each path; no restatement of the cases from outside
 /// the traces is consulted.
-fn proof_case_partitions_are_exhaustive(
+pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
     evidence: &[crate::kernel::proof::PersistentSequence<
         crate::kernel::proof::CheckedExecutionEvent,
     >],

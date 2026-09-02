@@ -2059,6 +2059,80 @@ fn check_evidence_events(
     })
 }
 
+/// A completed trace's completing outcome, the context its completing
+/// theorem was proved under (every fact the proof had established on the
+/// path), and the interface facts of the branches it joined. A trace that
+/// does not complete, continues past its completion, or completes in an
+/// error outcome yields nothing.
+fn trace_completion(
+    events: &[CheckedExecutionEvent],
+    assumptions: &PureFactContext,
+) -> Result<(CStatementOutcome, PureFactContext, Vec<ExecutionPureFact>), &'static str> {
+    let mut completed: Option<(CStatementOutcome, PureFactContext)> = None;
+    let mut interface_execution_facts: Vec<ExecutionPureFact> = Vec::new();
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            CheckedExecutionEvent::Statement(theorem) => {
+                if completed.is_some() {
+                    return Err("a trace continues past its completing theorem");
+                }
+                let Proposition::CStatementVerifies { outcome, .. } =
+                    checked_evidence_conclusion(theorem)
+                else {
+                    return Err("retained statement evidence has a non-statement conclusion");
+                };
+                match outcome {
+                    CStatementOutcome::Normal(_) => {}
+                    CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
+                        // The path completes under the context its final
+                        // theorem was proved under, recorded right after it.
+                        let executed_under = match events.get(index + 1) {
+                            Some(CheckedExecutionEvent::Context(context)) => context.clone(),
+                            _ => {
+                                crate::kernel::api::proof_evidence_assumptions(theorem, assumptions)
+                            }
+                        };
+                        completed = Some((outcome.clone(), executed_under));
+                    }
+                    CStatementOutcome::UndefinedBehavior(_)
+                    | CStatementOutcome::RuntimeError(_) => {
+                        return Err("a trace completes in an error outcome");
+                    }
+                }
+            }
+            CheckedExecutionEvent::Branch(branch) => {
+                if completed.is_some() {
+                    return Err("a trace continues past its completing theorem");
+                }
+                if branch.interface_successor_facts().is_some() {
+                    for fact in branch.interface_execution_facts() {
+                        if !interface_execution_facts
+                            .iter()
+                            .any(|retained| retained.proposition() == fact.proposition())
+                        {
+                            interface_execution_facts.push(fact.clone());
+                        }
+                    }
+                }
+            }
+            CheckedExecutionEvent::Condition(_)
+            | CheckedExecutionEvent::ResourceObservation(_)
+            | CheckedExecutionEvent::ResourceRewrite(_) => {
+                if completed.is_some() {
+                    return Err("a trace continues past its completing theorem");
+                }
+            }
+            // A post-execution case split records its arm after the path's
+            // returning statement; it changes only the assumed facts.
+            CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => {}
+        }
+    }
+    let Some((outcome, executed_under)) = completed else {
+        return Err("a trace does not reach a return");
+    };
+    Ok((outcome, executed_under, interface_execution_facts))
+}
+
 fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(), &'static str> {
     for event in events {
         let (theorem, statement) = match event {
@@ -2875,6 +2949,162 @@ impl ExecutionProofCore {
         self.evidence_source = source;
         self.evidence_completed = false;
         Ok(interface_effect_facts)
+    }
+
+    /// The checked whole-function execution a completed proof yields: one
+    /// path per retained trace, each its trace's completing theorem under
+    /// the contract's exit rule, stating everything the proof established
+    /// on the path. Every step of every trace was checked when it was
+    /// recorded, so this composes the traces and walks nothing.
+    /// `candidates` is the driver's publication of the paths, which must
+    /// name the traces' outcomes in order.
+    pub(crate) fn checked_function_execution(
+        &self,
+        candidates: &CFunctionExecutionCandidates,
+        checked_function: &CFunction,
+        assumptions: PureFactContext,
+        environment: crate::kernel::CExecutionEnvironment,
+        execution_semantics: crate::kernel::CExecutionSemantics,
+        mode: crate::kernel::CFunctionContractExecutionMode,
+    ) -> Result<crate::kernel::CCheckedFunctionExecution, &'static str> {
+        if candidates.paths().len() != self.execution_evidence.len() {
+            return Err("the published paths do not match the retained traces one to one");
+        }
+        if !crate::kernel::api::proof_case_partitions_are_exhaustive(&self.execution_evidence) {
+            return Err("a proof-case partition is not exhausted by the retained traces");
+        }
+        if !crate::kernel::api::proof_evidence_function_refines_same_source(
+            candidates.function(),
+            checked_function,
+        ) {
+            return Err("the checked function does not refine the published function's source");
+        }
+        let function = checked_function;
+        // The checked entry vouches for the published function's entry only
+        // when it was checked for that function and those arguments, and
+        // either every trace starts at its entry state or that state
+        // rebases onto the published caller state. A proof that bound loop
+        // clauses into its function publishes a different function and
+        // completes as a proof without a checked entry.
+        let has_checked_entry = self.function_entry.as_ref().is_some_and(|entry| {
+            match entry.trace_entry_state(candidates.function(), candidates.arguments()) {
+                None => false,
+                Some(trace_entry) => {
+                    self.execution_evidence.iter().all(|trace| {
+                        crate::kernel::api::proof_evidence_initial_state(&trace.to_vec())
+                            == Some(trace_entry)
+                    }) || entry
+                        .entry_state_for(
+                            candidates.state(),
+                            candidates.function(),
+                            candidates.arguments(),
+                            &assumptions,
+                        )
+                        .is_some()
+                }
+            }
+        });
+        if !has_checked_entry {
+            // Population materialization is part of the contract-entry
+            // transition. Without the kernel-issued entry artifact, the
+            // transition theorems alone cannot authorize that ghost state.
+            let entry_state = crate::kernel::c_function_entry_state(
+                candidates.state(),
+                function,
+                candidates.arguments(),
+            )
+            .ok_or("the published arguments do not bind at entry")?;
+            if entry_state.counted_populations().next().is_some() {
+                return Err("population materialization at entry needs a checked function entry");
+            }
+        }
+        let mut paths = Vec::with_capacity(candidates.paths().len());
+        for (candidate, trace) in candidates.paths().iter().zip(&self.execution_evidence) {
+            let (completed, statement_assumptions, interface_execution_facts) =
+                trace_completion(&trace.to_vec(), &assumptions)?;
+            let (outcome, obligations) = crate::kernel::c_function_outcome_from_statement_outcome(
+                candidates.state(),
+                function,
+                completed.clone(),
+                candidate.obligations().to_vec(),
+                &statement_assumptions,
+            );
+            if &outcome != candidate.outcome() {
+                return Err("a published path outcome is not its trace's outcome");
+            }
+            // The published outcome is the body's. The path's theorem states
+            // the function's: the body's after the contract's exit rule, the
+            // same resource transfer or population transition an independent
+            // execution applies at return. A contract the body violates at
+            // exit ends the path in that runtime error.
+            let (outcome, obligations) = match crate::kernel::functions::contract_exit_outcome(
+                candidates.state(),
+                function,
+                candidates.arguments(),
+                completed,
+                obligations,
+                &statement_assumptions,
+                &mut ExecutionBudget::default(),
+            ) {
+                Ok(Ok(exit)) => exit,
+                Ok(Err(error)) => (
+                    crate::kernel::CFunctionOutcome::RuntimeError(error),
+                    candidate.obligations().to_vec(),
+                ),
+                Err(_) => return Err("the contract's exit rule hit an execution limit"),
+            };
+            let proposition = Proposition::CFunctionVerifies {
+                state: candidates.state().clone(),
+                function: function.clone(),
+                arguments: candidates.arguments().to_vec(),
+                outcome,
+            };
+            // The path states everything the proof established on it: the
+            // candidate's execution facts, the interface facts of joined
+            // branches, and the facts of the context its final theorem was
+            // proved under (a `have` in one arm that both arms share, say).
+            let mut facts = candidate.facts().to_vec();
+            for fact in interface_execution_facts.into_iter().chain(
+                statement_assumptions
+                    .pure_facts()
+                    .into_iter()
+                    .map(ExecutionPureFact::new),
+            ) {
+                if !facts
+                    .iter()
+                    .any(|retained| retained.proposition() == fact.proposition())
+                {
+                    facts.push(fact);
+                }
+            }
+            let theorem = Theorem::new(crate::kernel::reasoning::wrap_proof_facts(
+                proposition,
+                &assumptions,
+                &facts,
+                candidate.obligations(),
+            ));
+            paths.push(crate::kernel::SymbolicCExecutionPath {
+                assumptions: assumptions.clone(),
+                facts,
+                effect_facts: candidate.effect_facts().to_vec(),
+                obligations,
+                theorem,
+            });
+        }
+        Ok(crate::kernel::CCheckedFunctionExecution {
+            state: candidates.state().clone(),
+            function: checked_function.clone(),
+            arguments: candidates.arguments().to_vec(),
+            assumptions,
+            environment,
+            execution_semantics,
+            mode,
+            execution: crate::kernel::SymbolicCExecution { paths, limit: None },
+            entry_representation_origin: has_checked_entry
+                .then(|| self.function_entry.as_ref())
+                .flatten()
+                .map(|entry| entry.caller_state().clone()),
+        })
     }
 
     /// Checks that every retained event carries the kernel judgment its tag

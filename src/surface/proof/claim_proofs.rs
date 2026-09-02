@@ -1197,6 +1197,31 @@ pub(super) fn finish_ordered_proof<'a>(
                 })
             },
         )?;
+        // The proof object composes the same execution from its checked
+        // traces without a walk. Until the sealer is deleted, both are
+        // computed and must agree path for path.
+        let completed_execution = proof_execution
+            .core
+            .checked_function_execution(
+                execution,
+                function,
+                assumptions_from_propositions(&base_certification_facts),
+                function_environment.clone(),
+                execution_semantics,
+                execution_mode,
+            )
+            .map_err(|reason| {
+                ClickError::new(format!(
+                    "`{proof_label}`: the proof object could not complete its checked function execution: {reason}"
+                ))
+            })?;
+        completed_execution
+            .agrees_with(&sealed_execution)
+            .map_err(|difference| {
+                ClickError::new(format!(
+                    "`{proof_label}`: the proof object's checked function execution differs from the sealed one: {difference}"
+                ))
+            })?;
         let certified_outcomes = sealed_execution
             .paths()
             .iter()

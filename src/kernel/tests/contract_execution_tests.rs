@@ -2883,3 +2883,74 @@ fn recorded_evidence_consumes_the_source_not_the_driver_frontier() {
     .expect("the tail is the source the evidence has yet to consume");
     assert!(core.evidence_source.is_none());
 }
+
+#[test]
+fn a_completed_proof_object_yields_the_sealed_execution() {
+    // Completion composes the checked traces; it agrees with the
+    // end-of-proof walk on the same evidence, and an open trace yields
+    // nothing.
+    let entry_state = c_function_entry_state(
+        &CState::new(),
+        &c_function(CType::Int32, "early", Vec::new(), CStatement::Skip),
+        &[],
+    )
+    .expect("entry state");
+    let returning = CStatementOutcome::Return {
+        value: int32(0),
+        state: entry_state.clone(),
+    };
+    let (candidates, function, trace) = early_return_sealing_inputs(returning);
+    let theorem = match trace.to_vec().into_iter().next() {
+        Some(crate::kernel::proof::CheckedExecutionEvent::Statement(theorem)) => theorem,
+        _ => unreachable!("the trace begins with its returning theorem"),
+    };
+    let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    core.record_statement_transition(&function, &[], theorem, PureFactContext::new(), &[], &[])
+        .expect("the returning branch theorem advances the entry frontier");
+    let completed = core
+        .checked_function_execution(
+            &candidates,
+            &function,
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+        )
+        .expect("a completed proof object yields its checked function execution");
+    let sealed = seal_early_return(&candidates, &function, core.execution_evidence[0].clone())
+        .expect("the same evidence seals");
+    assert_eq!(completed.paths(), sealed.paths());
+
+    let mut open = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    open.record_statement_transition(
+        &function,
+        &[],
+        Theorem::new(Proposition::CStatementVerifies {
+            state: entry_state.clone(),
+            statement: CStatement::Skip,
+            outcome: CStatementOutcome::Normal(entry_state),
+        }),
+        PureFactContext::new(),
+        &[],
+        &[],
+    )
+    .expect("a `Skip` theorem consumes nothing");
+    assert_eq!(
+        open.checked_function_execution(
+            &candidates,
+            &function,
+            PureFactContext::new(),
+            CExecutionEnvironment::new(),
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+            CFunctionContractExecutionMode::VerifyLoops,
+        )
+        .err(),
+        Some("a trace does not reach a return")
+    );
+}
