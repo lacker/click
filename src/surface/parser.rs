@@ -141,6 +141,33 @@ struct ParsedType {
     struct_name: Option<String>,
 }
 
+fn is_c_type_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "void"
+            | "struct"
+            | "int32"
+            | "int"
+            | "int32_t"
+            | "uint8"
+            | "uint8_t"
+            | "unsigned"
+            | "signed"
+            | "char"
+            | "short"
+            | "long"
+            | "size_t"
+            | "int16_t"
+            | "int64_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
+            | "float"
+            | "double"
+            | "volatile"
+    )
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ParsedParameter {
     parameter: FunctionParameter,
@@ -448,7 +475,7 @@ impl Parser {
 
         loop {
             let name = self.expect_ident("Click parameter name")?;
-            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+            if is_c_type_keyword(&name) {
                 return Err(
                     self.error("Click-native binders use `name: type`, for example `value: int32`")
                 );
@@ -957,11 +984,51 @@ impl Parser {
 
         let scalar_type = match spelling.as_str() {
             "void" => C0Type::Void,
-            "int32" => C0Type::Int32,
-            "uint8" => C0Type::UInt8,
+            "int32" | "int" | "int32_t" => C0Type::Int32,
+            "uint8" | "uint8_t" => C0Type::UInt8,
+            "unsigned" => {
+                if self.peek_ident() == Some("char") {
+                    self.position += 1;
+                    C0Type::UInt8
+                } else {
+                    return Err(self.error(
+                        "unsupported integer width `unsigned`; only `unsigned char` is modeled",
+                    ));
+                }
+            }
+            "signed" => {
+                if self.peek_ident() == Some("char") {
+                    self.position += 1;
+                    return Err(self.error(
+                        "unsupported C type `signed char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
+                    ));
+                }
+                return Err(self.error(
+                    "unsupported integer width `signed`: signed integer widths are not modeled",
+                ));
+            }
+            "char" => {
+                return Err(self.error(
+                    "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
+                ));
+            }
+            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint32_t"
+            | "uint64_t" => {
+                return Err(self.error(format!(
+                    "unsupported integer width `{spelling}`: see the integer-types issue"
+                )));
+            }
+            "float" | "double" => {
+                return Err(self.error(format!(
+                    "unsupported C type `{spelling}`: floating-point values are not modeled in C0"
+                )));
+            }
+            "volatile" => {
+                return Err(self.error("the `volatile` qualifier is not supported in C0"));
+            }
             _ => {
                 return Err(self.error(format!(
-                    "expected type `void`, `int32`, or `uint8`, got `{spelling}`"
+                    "unknown C type `{spelling}`; expected a supported standard spelling or `struct`"
                 )));
             }
         };
@@ -1331,7 +1398,7 @@ impl Parser {
             self.position += 1;
             self.expect(Token::LParen)?;
             let name = self.expect_ident("forall variable name")?;
-            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+            if is_c_type_keyword(&name) {
                 return Err(self.error(
                     "Click-native binders use `name: type`, for example `forall (k: int32)`",
                 ));
@@ -1353,7 +1420,7 @@ impl Parser {
             self.position += 1;
             self.expect(Token::LParen)?;
             let name = self.expect_ident("exists variable name")?;
-            if matches!(name.as_str(), "int32" | "uint8" | "struct") {
+            if is_c_type_keyword(&name) {
                 return Err(self.error(
                     "Click-native binders use `name: type`, for example `exists (k: int32)`",
                 ));

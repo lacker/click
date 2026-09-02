@@ -11,6 +11,8 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.void",
     "type.int32",
     "type.uint8",
+    "type.standard-spellings",
+    "type.typedef",
     "type.pointer",
     "type.array-parameter",
     "type.local-array",
@@ -627,6 +629,37 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
     }
 }
 
+fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
+    parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
+}
+
+fn is_builtin_type_start(name: &str) -> bool {
+    matches!(
+        name,
+        "void"
+            | "struct"
+            | "int32"
+            | "int"
+            | "int32_t"
+            | "uint8"
+            | "uint8_t"
+            | "unsigned"
+            | "signed"
+            | "char"
+            | "short"
+            | "long"
+            | "size_t"
+            | "int16_t"
+            | "int64_t"
+            | "uint16_t"
+            | "uint32_t"
+            | "uint64_t"
+            | "float"
+            | "double"
+            | "volatile"
+    )
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Token {
     Ident(String),
@@ -759,6 +792,7 @@ struct Parser {
     positions: Vec<SourcePosition>,
     position: usize,
     structs: BTreeMap<String, C0StructLayout>,
+    typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
     /// The names declared in each open lexical scope, innermost last:
     /// the function's parameters, then one entry per `{ ... }` block and
@@ -778,6 +812,7 @@ impl Parser {
             positions,
             position: 0,
             structs: BTreeMap::new(),
+            typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
             scopes: Vec::new(),
             abi,
@@ -817,6 +852,11 @@ impl Parser {
         Ok(())
     }
 
+    fn is_type_start(&self) -> bool {
+        self.peek_ident()
+            .is_some_and(|name| is_builtin_type_start(name) || self.typedefs.contains_key(name))
+    }
+
     /// The source position of the next unconsumed token, or of the end of
     /// input when every token has been consumed.
     fn here(&self) -> Option<SourcePosition> {
@@ -845,8 +885,12 @@ impl Parser {
     }
 
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
-        self.parse_struct_declarations()?;
-        let return_type = self.parse_type()?.c_type;
+        self.parse_declarations()?;
+        let parsed_return_type = self.parse_type()?;
+        if is_plain_struct_type(&parsed_return_type) {
+            return Err(self.error_here("only pointer-to-struct types are supported"));
+        }
+        let return_type = parsed_return_type.c_type;
         if self.peek() == Some(&Token::LParen) {
             return Err(self.error_here("function-pointer declarations are not supported in C0"));
         }
@@ -875,77 +919,102 @@ impl Parser {
         })
     }
 
-    fn parse_struct_declarations(&mut self) -> Result<(), C0SyntaxError> {
-        while self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace) {
-            self.expect_ident_spelling("struct")?;
-            let _name = self.expect_ident("struct name")?;
-            let name = _name;
-            self.expect(Token::LBrace)?;
-
-            let mut fields = BTreeMap::new();
-            let mut offset_bytes = 0u32;
-            let mut struct_alignment = 1u32;
-            while self.peek() != Some(&Token::RBrace) {
-                if self.peek().is_none() {
-                    return Err(self.error_here("expected struct field or `}`, got end of input"));
-                }
-                let field_type = self.parse_type()?;
-                if !matches!(
-                    field_type.c_type,
-                    C0Type::Int32 | C0Type::Int32Pointer | C0Type::UInt8Pointer
-                ) {
-                    return Err(
-                        self.error_here("struct fields currently support int32 and pointer fields")
-                    );
-                }
-                let field_name = self.expect_ident("struct field name")?;
-                self.expect(Token::Semicolon)?;
-                let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
-                offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
-                    self.error_here(format!("struct `{name}` layout is too large"))
-                })?;
-                if fields
-                    .insert(
-                        field_name.clone(),
-                        C0StructField {
-                            c_type: field_type.c_type,
-                            struct_name: field_type.struct_name,
-                            offset_bytes,
-                        },
-                    )
-                    .is_some()
-                {
-                    return Err(self
-                        .error_here(format!("duplicate field `{field_name}` in struct `{name}`")));
-                }
-                offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
-                    self.error_here(format!("struct `{name}` layout is too large"))
-                })?;
-                struct_alignment = struct_alignment.max(field_alignment);
+    fn parse_declarations(&mut self) -> Result<(), C0SyntaxError> {
+        while self.peek().is_some() {
+            if self.peek_ident() == Some("typedef") {
+                self.parse_typedef_declaration()?;
+            } else if self.peek_ident() == Some("struct") && self.peek_n(2) == Some(&Token::LBrace)
+            {
+                self.parse_struct_declaration()?;
+            } else {
+                break;
             }
+        }
+        Ok(())
+    }
 
-            self.expect(Token::RBrace)?;
+    fn parse_typedef_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        self.expect_ident_spelling("typedef")?;
+        let parsed_type = self.parse_type()?;
+        let alias = self.expect_ident("typedef name")?;
+        self.expect(Token::Semicolon)?;
+        if self.typedefs.insert(alias.clone(), parsed_type).is_some() {
+            return Err(self.error_at_previous(format!("duplicate typedef `{alias}`")));
+        }
+        Ok(())
+    }
+
+    fn parse_struct_declaration(&mut self) -> Result<(), C0SyntaxError> {
+        self.expect_ident_spelling("struct")?;
+        let name = self.expect_ident("struct name")?;
+        self.expect(Token::LBrace)?;
+
+        let mut fields = BTreeMap::new();
+        let mut offset_bytes = 0u32;
+        let mut struct_alignment = 1u32;
+        while self.peek() != Some(&Token::RBrace) {
+            if self.peek().is_none() {
+                return Err(self.error_here("expected struct field or `}`, got end of input"));
+            }
+            let field_type = self.parse_type()?;
+            if is_plain_struct_type(&field_type) {
+                return Err(self.error_here("struct fields cannot contain struct values"));
+            }
+            if !matches!(
+                field_type.c_type,
+                C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::UInt8Pointer
+            ) {
+                return Err(self.error_here(
+                    "struct fields currently support int32, uint8, and pointer fields",
+                ));
+            }
+            let field_name = self.expect_ident("struct field name")?;
             self.expect(Token::Semicolon)?;
-
-            if fields.is_empty() {
-                return Err(self.error_here("struct declarations must contain at least one field"));
-            }
-            let size_bytes = align_up(offset_bytes, struct_alignment)
+            let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
+            offset_bytes = align_up(offset_bytes, field_alignment)
                 .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
-            if self
-                .structs
+            if fields
                 .insert(
-                    name.clone(),
-                    C0StructLayout {
-                        fields,
-                        size_bytes,
-                        alignment_bytes: struct_alignment,
+                    field_name.clone(),
+                    C0StructField {
+                        c_type: field_type.c_type,
+                        struct_name: field_type.struct_name,
+                        offset_bytes,
                     },
                 )
                 .is_some()
             {
-                return Err(self.error_here(format!("duplicate struct declaration `{name}`")));
+                return Err(
+                    self.error_here(format!("duplicate field `{field_name}` in struct `{name}`"))
+                );
             }
+            offset_bytes = offset_bytes
+                .checked_add(field_size)
+                .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
+            struct_alignment = struct_alignment.max(field_alignment);
+        }
+
+        self.expect(Token::RBrace)?;
+        self.expect(Token::Semicolon)?;
+
+        if fields.is_empty() {
+            return Err(self.error_here("struct declarations must contain at least one field"));
+        }
+        let size_bytes = align_up(offset_bytes, struct_alignment)
+            .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
+        if self
+            .structs
+            .insert(
+                name.clone(),
+                C0StructLayout {
+                    fields,
+                    size_bytes,
+                    alignment_bytes: struct_alignment,
+                },
+            )
+            .is_some()
+        {
+            return Err(self.error_here(format!("duplicate struct declaration `{name}`")));
         }
 
         Ok(())
@@ -966,6 +1035,9 @@ impl Parser {
             }
             if parsed_type.c_type == C0Type::Void {
                 return Err(self.error_here("function parameters cannot have type `void`"));
+            }
+            if is_plain_struct_type(&parsed_type) {
+                return Err(self.error_here("only pointer-to-struct types are supported"));
             }
             let name = self.expect_ident("parameter name")?;
             self.declare_name(&name)?;
@@ -1000,61 +1072,110 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> Result<ParsedType, C0SyntaxError> {
-        match self.next() {
-            Some(Token::Ident(name)) if name == "struct" => {
-                let struct_name = self.expect_ident("struct name")?;
-                if self.peek() == Some(&Token::Star) {
-                    self.position += 1;
-                    Ok(ParsedType {
-                        c_type: C0Type::Int32Pointer,
-                        struct_name: Some(struct_name),
-                    })
-                } else {
-                    Err(self.error_here("only pointer-to-struct types are supported"))
-                }
+        let parsed = match self.next() {
+            Some(Token::Ident(name)) if name == "struct" => ParsedType {
+                // C0 has no struct-value representation. Keep the tag on the
+                // parsed type while using the scalar slot as an internal
+                // placeholder so `typedef struct S S_t;` can later become
+                // `struct S*` when the declarator supplies `*`.
+                c_type: C0Type::Int32,
+                struct_name: Some(self.expect_ident("struct name")?),
+            },
+            Some(Token::Ident(name)) => self.parse_named_type(name)?,
+            Some(token) => {
+                return Err(self.error_at_previous(format!(
+                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, or `struct`, got {}",
+                    token.describe()
+                )));
             }
-            Some(Token::Ident(name)) if name == "void" || name == "int32" || name == "uint8" => {
-                let scalar_type = match name.as_str() {
-                    "void" => C0Type::Void,
-                    "int32" => C0Type::Int32,
-                    "uint8" => C0Type::UInt8,
-                    _ => unreachable!(),
-                };
-                if self.peek() == Some(&Token::Star) {
-                    if scalar_type == C0Type::Void {
-                        return Err(self.error_here("`void *` is not supported yet"));
-                    }
-                    self.position += 1;
-                    Ok(ParsedType {
-                        c_type: match scalar_type {
-                            C0Type::Int32 => C0Type::Int32Pointer,
-                            C0Type::UInt8 => C0Type::UInt8Pointer,
-                            _ => unreachable!("scalar type should not be aggregate"),
-                        },
-                        struct_name: None,
-                    })
-                } else {
-                    Ok(ParsedType {
-                        c_type: scalar_type,
-                        struct_name: None,
-                    })
-                }
+            None => {
+                return Err(self.error_here(
+                    "expected type `void`, `int32`/`int`, `uint8`/`unsigned char`, or `struct`, got end of input",
+                ));
             }
-            Some(Token::Ident(name)) if name == "float" || name == "double" => Err(self
-                .error_at_previous(format!(
-                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
-                ))),
-            Some(Token::Ident(name)) if name == "volatile" => {
-                Err(self.error_at_previous("the `volatile` qualifier is not supported in C0"))
-            }
-            Some(token) => Err(self.error_at_previous(format!(
-                "expected type `void`, `int32`, `uint8`, or `struct`, got {}",
-                token.describe()
-            ))),
-            None => Err(self.error_here(
-                "expected type `void`, `int32`, `uint8`, or `struct`, got end of input",
-            )),
+        };
+
+        if self.peek() != Some(&Token::Star) {
+            return Ok(parsed);
         }
+        self.position += 1;
+        let c_type = match parsed.c_type {
+            C0Type::Int32 => C0Type::Int32Pointer,
+            C0Type::UInt8 => C0Type::UInt8Pointer,
+            C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
+            C0Type::Int32Pointer | C0Type::UInt8Pointer => {
+                return Err(self.error_at_previous("pointer-to-pointer types are not supported"));
+            }
+            C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
+                return Err(self.error_at_previous("pointer-to-array types are not supported"));
+            }
+        };
+        Ok(ParsedType {
+            c_type,
+            struct_name: parsed.struct_name,
+        })
+    }
+
+    fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
+        let c_type = match name.as_str() {
+            "void" => C0Type::Void,
+            "int32" | "int" | "int32_t" => C0Type::Int32,
+            "uint8" | "uint8_t" => C0Type::UInt8,
+            "unsigned" => {
+                if self.peek_ident() == Some("char") {
+                    self.position += 1;
+                    C0Type::UInt8
+                } else {
+                    return Err(self.error_at_previous(
+                        "unsupported integer width `unsigned`; only `unsigned char` is modeled",
+                    ));
+                }
+            }
+            "signed" => {
+                if self.peek_ident() == Some("char") {
+                    self.position += 1;
+                    return Err(self.error_at_previous(
+                        "unsupported C type `signed char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
+                    ));
+                }
+                return Err(self.error_at_previous(
+                    "unsupported integer width `signed`: signed integer widths are not modeled",
+                ));
+            }
+            "char" => {
+                return Err(self.error_at_previous(
+                    "unsupported C type `char`: signed char is not modeled; use `unsigned char` or `uint8_t`",
+                ));
+            }
+            "short" | "long" | "size_t" | "int16_t" | "int64_t" | "uint16_t" | "uint32_t"
+            | "uint64_t" => {
+                return Err(self.error_at_previous(format!(
+                    "unsupported integer width `{name}`: see the integer-types issue"
+                )));
+            }
+            "float" | "double" => {
+                return Err(self.error_at_previous(format!(
+                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
+                )));
+            }
+            "volatile" => {
+                return Err(
+                    self.error_at_previous("the `volatile` qualifier is not supported in C0")
+                );
+            }
+            _ => {
+                let Some(typedef) = self.typedefs.get(&name) else {
+                    return Err(self.error_at_previous(format!(
+                        "unknown C type `{name}`; expected a supported standard spelling, typedef, or `struct`"
+                    )));
+                };
+                return Ok(typedef.clone());
+            }
+        };
+        Ok(ParsedType {
+            c_type,
+            struct_name: None,
+        })
     }
 
     fn parse_parameter_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
@@ -1183,15 +1304,11 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
-            Some(Token::Ident(name)) if name == "float" || name == "double" => Err(self
-                .error_here(format!(
-                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
-                ))),
-            Some(Token::Ident(name)) if name == "volatile" => {
-                Err(self.error_here("the `volatile` qualifier is not supported in C0"))
-            }
-            Some(Token::Ident(name)) if name == "int32" || name == "uint8" || name == "struct" => {
+            Some(Token::Ident(_)) if self.is_type_start() => {
                 let parsed_type = self.parse_type()?;
+                if parsed_type.c_type == C0Type::Void {
+                    return Err(self.error_here("void local declarations are not supported"));
+                }
                 if self.peek() == Some(&Token::LParen) {
                     return Err(
                         self.error_here("function-pointer declarations are not supported in C0")
@@ -1201,6 +1318,9 @@ impl Parser {
                 self.declare_name(&name)?;
                 let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
                 if parsed_type.struct_name.is_some() {
+                    if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
+                        return Err(self.error_here("only pointer-to-struct types are supported"));
+                    }
                     if c_type != parsed_type.c_type {
                         return Err(
                             self.error_here("local arrays of struct type are not supported")
@@ -1342,8 +1462,14 @@ impl Parser {
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
-        if matches!(self.peek_ident(), Some("int32" | "uint8")) {
+        if self.is_type_start() {
             let parsed_type = self.parse_type()?;
+            if parsed_type.c_type == C0Type::Void {
+                return Err(self.error_here("void for-loop locals are not supported"));
+            }
+            if is_plain_struct_type(&parsed_type) {
+                return Err(self.error_here("only pointer-to-struct types are supported"));
+            }
             let name = self.expect_ident("for-loop local name")?;
             self.declare_name(&name)?;
             if self.peek() != Some(&Token::Equal) {

@@ -30,7 +30,7 @@ documentation inventory keep the following accepted words synchronized.
 | `predicate`, `function`, `theorem` | Top-level logic declarations; `function` also starts a C contract. |
 | `abstract`, `resource` | Abstract and composite resource declarations. |
 | `counted` | Compatibility-only rejected spelling for the former `counted resource`; use `resource`. |
-| `int32`, `uint8`, `void`, `struct` | Type words. `void` is available only where the detailed type rules allow it. |
+| `int32`, `uint8`, `int`, `int32_t`, `unsigned char`, `uint8_t`, `void`, `struct` | Type words. The standard spellings alias the modeled C0 types; `void` is available only where the detailed type rules allow it. |
 | `let`, `where` | Value abbreviation and existential-binding forms. |
 | `requires`, `ensures`, `decreases` | Contract, theorem, function-totality, and loop-termination clauses. |
 | `owns`, `views`, `consumes`, `produces` | Resource transfer clauses. |

@@ -45,7 +45,6 @@ re-execution stands behind those checks any more:
 C language coverage:
 
 - [Extend the integer model beyond int32 and uint8](integer-types.md)
-- [Accept standard C type spellings and typedefs](c-type-spellings.md)
 - [Widen the struct model](struct-model.md)
 - [Accept multi-function files, prototypes, and includes](multi-function-files-and-headers.md)
 - [Model file-scope objects, statics, and string literals](global-variables.md)
