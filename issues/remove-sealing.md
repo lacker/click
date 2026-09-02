@@ -8,7 +8,7 @@ check still in place as a backstop, and the last slice deletes that check.
 
 Slice 1 turned out to be unnecessary and was dropped: the frontier already
 holds each trace's running state and remaining source, and traces only
-fork after the forking step's theorems are checked. Slices 2, 3, and 4
+fork after the forking step's theorems are checked. Slices 2 through 5
 landed on 2026-09-02.
 
 ## Violated invariant
@@ -97,16 +97,16 @@ replacing.
    chain is validated from the theorems alone; a returning or diverging
    theorem or an outcome fork completes the trace, after which only case
    arms may be recorded. Case arms were already validated when recorded.
-   Still driver-owned: the remaining source (`frontier.position`), which
-   slice 5 moves.
-5. **The reached source and branch joins.** The core holds the source its
-   evidence has yet to consume, advanced by the sealer's rules (statement
-   tail, selected arm or loop body then head, `Skip` handling), and checks
-   the next theorem against it instead of the driver's frontier. The join
-   record calls already walk each arm's trace from the split over the
-   full source and require the common continuation and the joined state;
-   they additionally check that the split's `if` is the parent's next
-   source statement.
+5. **The reached source and branch joins.** Done. The core holds the
+   source its evidence has yet to consume (`evidence_source`), advanced by
+   the sealer's rules (statement tail, selected arm or loop body then head,
+   `Skip` handling), and checks the next theorem against it instead of the
+   driver's frontier. The join record calls already walk each arm's trace
+   from the split over the full source and require the common
+   continuation and the joined state; they now also check that the split's
+   `if` is the parent's next source statement and that the continuation
+   begins the parent's tail, which the joined core continues. The driver's
+   frontier is consulted only before any evidence is recorded.
 6. **Completion.** Add `ExecutionProofCore::checked_function_execution(...)`
    deriving the whole-function execution from the finished traces: path
    count from the traces themselves, the contract's exit rule per trace, the

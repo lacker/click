@@ -2807,3 +2807,79 @@ fn recorded_evidence_reaches_the_theorem_outcome_not_the_driver_state() {
         Err("evidence was recorded after the trace completed")
     );
 }
+
+#[test]
+fn recorded_evidence_consumes_the_source_not_the_driver_frontier() {
+    // Once evidence is recorded, the next theorem is checked against the
+    // source the evidence has yet to consume, whatever the driver's
+    // frontier says.
+    let condition = c_less_than(c_int32_literal(0), c_int32_literal(1));
+    let branch = c_if(
+        condition.clone(),
+        c_return(c_int32_literal(0)),
+        CStatement::Skip,
+    );
+    let tail = c_return(c_int32_literal(1));
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch, tail.clone()),
+    );
+    let entry_state = c_function_entry_state(&CState::new(), &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let returning = |statement: CStatement, value: u32| {
+        Theorem::new(Proposition::CStatementVerifies {
+            state: entry_state.clone(),
+            statement,
+            outcome: CStatementOutcome::Return {
+                value: int32(value),
+                state: entry_state.clone(),
+            },
+        })
+    };
+    let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    // Selecting the empty else arm leaves the tail to consume.
+    core.record_condition_transition(
+        &function,
+        &[],
+        Theorem::new(Proposition::CConditionEvaluates {
+            state: entry_state.clone(),
+            condition,
+            outcome: crate::kernel::CConditionOutcome::Value(false),
+        }),
+        PureFactContext::new(),
+        &[],
+        &[],
+    )
+    .expect("the condition decides the entry `if`");
+    assert_eq!(core.evidence_source.as_deref(), Some(&tail));
+    // The driver's frontier still names the `if`'s then arm.
+    core.frontier.position = crate::kernel::proof::FrontierPosition::StatementEntry {
+        remaining: std::sync::Arc::new(c_return(c_int32_literal(0))),
+    };
+    assert_eq!(
+        core.record_statement_transition(
+            &function,
+            &[],
+            returning(c_return(c_int32_literal(0)), 0),
+            PureFactContext::new(),
+            &[],
+            &[],
+        ),
+        Err("statement evidence does not prove the frontier's next source statement")
+    );
+    core.record_statement_transition(
+        &function,
+        &[],
+        returning(tail, 1),
+        PureFactContext::new(),
+        &[],
+        &[],
+    )
+    .expect("the tail is the source the evidence has yet to consume");
+    assert!(core.evidence_source.is_none());
+}

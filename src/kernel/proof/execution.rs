@@ -1131,6 +1131,14 @@ impl CheckedExecutionBranch {
         &self.joined_state
     }
 
+    pub(crate) fn start_statement(&self) -> &CStatement {
+        &self.split.branch_statement
+    }
+
+    pub(crate) fn continuation(&self) -> &Option<CStatement> {
+        &self.split.continuation
+    }
+
     pub(crate) fn start_state(&self) -> &CState {
         &self.split.state
     }
@@ -1596,6 +1604,13 @@ pub(crate) struct ExecutionProofCore {
     /// The open trace has completed with a returning or diverging theorem
     /// or an outcome fork; only post-execution case arms may follow.
     pub(crate) evidence_completed: bool,
+    /// The source the retained evidence has yet to consume, advanced with
+    /// each recorded theorem or join: a statement's tail, a condition's
+    /// selected arm (or loop body followed by the loop head) before the
+    /// tail. Meaningful once `evidence_state` is set; `None` then means
+    /// the source is exhausted. Checks read this and never the driver's
+    /// frontier once it is set.
+    pub(crate) evidence_source: Option<Arc<CStatement>>,
     pub(crate) frontier: ExecutionFrontier,
     pub(crate) effect_facts: SharedVec<ExecutionPureFact>,
     /// One append-only evidence trace per operational outcome represented by
@@ -1683,6 +1698,34 @@ fn split_checked_evidence_statement(statement: CStatement) -> (CStatement, Optio
     }
 }
 
+/// `split_checked_evidence_statement` without taking the source: the head
+/// is borrowed and the tail shares every statement after it.
+fn split_shared_source(
+    source: &CStatement,
+) -> (std::borrow::Cow<'_, CStatement>, Option<Arc<CStatement>>) {
+    match source {
+        CStatement::Seq(first, second) => {
+            let (head, first_tail) = split_shared_source(first);
+            let tail = match first_tail {
+                Some(first_tail) => Arc::new(CStatement::Seq(first_tail, second.clone())),
+                None => second.clone(),
+            };
+            (head, Some(tail))
+        }
+        statement => (std::borrow::Cow::Borrowed(statement), None),
+    }
+}
+
+fn prepend_shared_source(
+    statement: Arc<CStatement>,
+    tail: Option<Arc<CStatement>>,
+) -> Arc<CStatement> {
+    match tail {
+        Some(tail) => Arc::new(CStatement::Seq(statement, tail)),
+        None => statement,
+    }
+}
+
 fn prepend_checked_evidence_statement(
     statement: CStatement,
     tail: Option<CStatement>,
@@ -1691,6 +1734,99 @@ fn prepend_checked_evidence_statement(
         Some(tail) => CStatement::Seq(Arc::new(statement), Arc::new(tail)),
         None => statement,
     }
+}
+
+/// Whether two statements are the same C source. A proof binds loop
+/// clauses into the `while` statements at its frontier, so the theorem it
+/// records names the annotated statement while the proof object holds the
+/// plain source; the invariant and effect annotations do not change what
+/// the C executes, only what the theorem additionally checks.
+fn statements_have_same_source(left: &CStatement, right: &CStatement) -> bool {
+    fn flatten<'a>(statement: &'a CStatement, output: &mut Vec<&'a CStatement>) {
+        match statement {
+            CStatement::Seq(first, second) => {
+                flatten(first, output);
+                flatten(second, output);
+            }
+            statement => output.push(statement),
+        }
+    }
+    match (left, right) {
+        (CStatement::Seq(..), _) | (_, CStatement::Seq(..)) => {
+            let mut left_statements = Vec::new();
+            flatten(left, &mut left_statements);
+            let mut right_statements = Vec::new();
+            flatten(right, &mut right_statements);
+            left_statements.len() == right_statements.len()
+                && left_statements
+                    .iter()
+                    .zip(&right_statements)
+                    .all(|(left, right)| statements_have_same_source(left, right))
+        }
+        (
+            CStatement::If {
+                condition: left_condition,
+                then_branch: left_then,
+                else_branch: left_else,
+            },
+            CStatement::If {
+                condition: right_condition,
+                then_branch: right_then,
+                else_branch: right_else,
+            },
+        ) => {
+            left_condition == right_condition
+                && statements_have_same_source(left_then, right_then)
+                && statements_have_same_source(left_else, right_else)
+        }
+        (
+            CStatement::While {
+                condition: left_condition,
+                body: left_body,
+                ..
+            },
+            CStatement::While {
+                condition: right_condition,
+                body: right_body,
+                ..
+            },
+        ) => {
+            left_condition == right_condition && statements_have_same_source(left_body, right_body)
+        }
+        (left, right) => left == right,
+    }
+}
+
+/// `statement_sequence_is_prefix` up to loop annotations.
+fn statement_sequence_has_same_source_prefix(
+    expected_prefix: &Option<CStatement>,
+    actual: Option<&CStatement>,
+) -> bool {
+    fn flatten<'a>(statement: &'a CStatement, output: &mut Vec<&'a CStatement>) {
+        match statement {
+            CStatement::Seq(first, second) => {
+                flatten(first, output);
+                flatten(second, output);
+            }
+            statement => output.push(statement),
+        }
+    }
+
+    let Some(expected_prefix) = expected_prefix else {
+        return true;
+    };
+    let Some(actual) = actual else {
+        return false;
+    };
+    let mut expected_statements = Vec::new();
+    flatten(expected_prefix, &mut expected_statements);
+    let mut actual_statements = Vec::new();
+    flatten(actual, &mut actual_statements);
+    expected_statements.len() <= actual_statements.len()
+        && expected_statements
+            .iter()
+            .zip(&actual_statements)
+            .all(|(expected, actual)| statements_have_same_source(expected, actual))
 }
 
 fn statement_sequence_is_prefix(
@@ -1972,6 +2108,7 @@ impl ExecutionProofCore {
             state: state.into(),
             evidence_state: None,
             evidence_completed: false,
+            evidence_source: None,
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
@@ -2030,7 +2167,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
-        let outcome = self.check_statement_evidence(
+        let (outcome, source_after) = self.check_statement_evidence(
             function,
             arguments,
             &theorem,
@@ -2042,6 +2179,10 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
+        self.evidence_source = match &outcome {
+            CStatementOutcome::Normal(_) => source_after,
+            _ => None,
+        };
         match outcome {
             CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
             CStatementOutcome::Return { state, .. } => {
@@ -2074,7 +2215,7 @@ impl ExecutionProofCore {
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         for (theorem, execution_facts, obligations) in outcomes {
-            let outcome = self.check_statement_evidence(
+            let (outcome, _) = self.check_statement_evidence(
                 function,
                 arguments,
                 theorem,
@@ -2098,29 +2239,78 @@ impl ExecutionProofCore {
             .collect::<Vec<_>>()
             .into();
         self.evidence_state = None;
+        self.evidence_source = None;
         self.evidence_completed = true;
         Ok(())
     }
 
-    /// The frontier's next source statement: the head of the remaining
-    /// source with leading `Skip`s passed over, or the function body at
-    /// entry. `None` at function exit or a region boundary.
-    fn next_source_statement(&self, function: &CFunction) -> Option<CStatement> {
-        let remaining = match &self.frontier.position {
-            FrontierPosition::FunctionEntry => function.body().clone(),
-            FrontierPosition::StatementEntry { remaining } => (**remaining).clone(),
-            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => {
-                return None;
-            }
-        };
-        let (mut head, mut tail) = crate::kernel::api::split_proof_evidence_statement(remaining);
-        while matches!(head, CStatement::Skip) {
-            let Some(rest) = tail else {
-                return Some(head);
-            };
-            (head, tail) = crate::kernel::api::split_proof_evidence_statement(rest);
+    /// The source the evidence has yet to consume: the kernel-held source
+    /// once evidence is recorded, and before that the driver's frontier
+    /// (the function body at entry). `None` when the source is exhausted,
+    /// or at the driver's function exit or region boundary before any
+    /// evidence.
+    fn current_source<'a>(&'a self, function: &'a CFunction) -> Option<&'a CStatement> {
+        if self.evidence_state.is_some() {
+            return self.evidence_source.as_deref();
         }
-        Some(head)
+        match &self.frontier.position {
+            FrontierPosition::FunctionEntry => Some(function.body()),
+            FrontierPosition::StatementEntry { remaining } => Some(remaining),
+            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => None,
+        }
+    }
+
+    /// `current_source`, shared, for keeping it as it is.
+    fn current_source_shared(&self, function: &CFunction) -> Option<Arc<CStatement>> {
+        if self.evidence_state.is_some() {
+            return self.evidence_source.clone();
+        }
+        match &self.frontier.position {
+            FrontierPosition::FunctionEntry => Some(Arc::new(function.body().clone())),
+            FrontierPosition::StatementEntry { remaining } => Some(remaining.clone()),
+            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => None,
+        }
+    }
+
+    /// The next source statement, the head of the current source with
+    /// leading `Skip`s passed over, and the shared tail after it. The head
+    /// is borrowed from the source unless a `Skip` was passed over.
+    fn next_source_statement_and_tail<'a>(
+        &'a self,
+        function: &'a CFunction,
+    ) -> Option<(std::borrow::Cow<'a, CStatement>, Option<Arc<CStatement>>)> {
+        use std::borrow::Cow;
+        let source = self.current_source(function)?;
+        let (mut head, mut tail) = split_shared_source(source);
+        while matches!(*head, CStatement::Skip) {
+            let Some(rest) = tail else {
+                return Some((head, None));
+            };
+            let (rest_head, rest_tail) = split_shared_source(&rest);
+            head = Cow::Owned(rest_head.into_owned());
+            tail = rest_tail;
+        }
+        Some((head, tail))
+    }
+
+    /// The source left after a branch join consumes the parent's next `if`:
+    /// the branch must split that `if`, and its shared continuation must
+    /// be a prefix of the parent's tail, which the joined core continues.
+    fn source_after_branch(
+        &self,
+        function: &CFunction,
+        branch: &CheckedExecutionBranch,
+    ) -> Result<Option<Arc<CStatement>>, &'static str> {
+        let Some((statement, tail)) = self.next_source_statement_and_tail(function) else {
+            return Err("a branch join was recorded with no source statement remaining");
+        };
+        if !statements_have_same_source(&statement, branch.start_statement()) {
+            return Err("the branch split is not the parent's next source statement");
+        }
+        if !statement_sequence_has_same_source_prefix(branch.continuation(), tail.as_deref()) {
+            return Err("the branch continuation does not begin the parent's remaining source");
+        }
+        Ok(tail)
     }
 
     /// The state the retained evidence has reached, or the core's state
@@ -2175,7 +2365,7 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<CStatementOutcome, &'static str> {
+    ) -> Result<(CStatementOutcome, Option<Arc<CStatement>>), &'static str> {
         let running_state = self.running_state(function, arguments)?;
         let (proved_state, proved_statement, outcome) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
@@ -2186,16 +2376,33 @@ impl ExecutionProofCore {
                 } => (state, statement, outcome),
                 _ => return Err("retained statement evidence has a non-statement conclusion"),
             };
-        if !matches!(proved_statement, CStatement::Skip) {
-            let Some(next) = self.next_source_statement(function) else {
+        // The source left after the theorem: a `Skip` theorem consumes a
+        // `Skip` at the head of the source when there is one and otherwise
+        // nothing; another theorem consumes its statement after the
+        // `Skip`s before it.
+        let source_after = if matches!(proved_statement, CStatement::Skip) {
+            match self.current_source(function) {
+                Some(source) => {
+                    let (head, tail) = split_shared_source(source);
+                    if matches!(*head, CStatement::Skip) {
+                        tail
+                    } else {
+                        self.current_source_shared(function)
+                    }
+                }
+                None => None,
+            }
+        } else {
+            let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
                 return Err("statement evidence was recorded with no source statement remaining");
             };
-            if &next != proved_statement {
+            if !statements_have_same_source(&next, proved_statement) {
                 return Err(
                     "statement evidence does not prove the frontier's next source statement",
                 );
             }
-        }
+            tail
+        };
         self.check_evidence_state_and_premises(
             function,
             &running_state,
@@ -2205,7 +2412,7 @@ impl ExecutionProofCore {
             execution_facts,
             obligations,
         )?;
-        Ok(outcome.clone())
+        Ok((outcome.clone(), source_after))
     }
 
     /// Checks that a condition theorem decides the frontier's next `if` or
@@ -2221,21 +2428,21 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         path_facts: &[Proposition],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<CState, &'static str> {
+    ) -> Result<(CState, Option<Arc<CStatement>>), &'static str> {
         let running_state = self.running_state(function, arguments)?;
-        let (proved_state, proved_condition) =
+        let (proved_state, proved_condition, value) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
                 Proposition::CConditionEvaluates {
                     state,
                     condition,
-                    outcome: CConditionOutcome::Value(_),
-                } => (state, condition),
+                    outcome: CConditionOutcome::Value(value),
+                } => (state, condition, *value),
                 _ => return Err("retained condition evidence has a non-value conclusion"),
             };
-        let Some(next) = self.next_source_statement(function) else {
+        let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
             return Err("condition evidence was recorded with no source statement remaining");
         };
-        let decided = match &next {
+        let decided = match &*next {
             CStatement::If { condition, .. } | CStatement::While { condition, .. } => condition,
             _ => {
                 return Err(
@@ -2246,6 +2453,47 @@ impl ExecutionProofCore {
         if decided != proved_condition {
             return Err("condition evidence does not decide the frontier's next source condition");
         }
+        // The source left after the decision: the selected arm, or the loop
+        // body followed by the loop head again, before the tail.
+        let source_after = match &*next {
+            CStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let selected: &CStatement = if value { then_branch } else { else_branch };
+                if matches!(selected, CStatement::Skip) {
+                    tail
+                } else {
+                    Some(prepend_shared_source(Arc::new(selected.clone()), tail))
+                }
+            }
+            CStatement::While {
+                condition,
+                invariant,
+                invariant_checks,
+                effect_checks,
+                body,
+            } => {
+                if value {
+                    let loop_head = CStatement::While {
+                        condition: condition.clone(),
+                        invariant: invariant.clone(),
+                        invariant_checks: invariant_checks.clone(),
+                        effect_checks: effect_checks.clone(),
+                        body: body.clone(),
+                    };
+                    let body_then_head = Arc::new(CStatement::Seq(
+                        Arc::new((**body).clone()),
+                        Arc::new(loop_head),
+                    ));
+                    Some(prepend_shared_source(body_then_head, tail))
+                } else {
+                    tail
+                }
+            }
+            _ => tail,
+        };
         let path_facts = path_facts
             .iter()
             .cloned()
@@ -2276,7 +2524,7 @@ impl ExecutionProofCore {
             reached =
                 crate::kernel::resolve_pending_heap_allocations(&reached, &theorem_assumptions);
         }
-        Ok(reached)
+        Ok((reached, source_after))
     }
 
     /// The part of the evidence judgment shared by statement and condition
@@ -2368,7 +2616,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
-        let reached = self.check_condition_evidence(
+        let (reached, source_after) = self.check_condition_evidence(
             function,
             arguments,
             &theorem,
@@ -2381,6 +2629,7 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
         self.evidence_state = Some(reached);
+        self.evidence_source = source_after;
         Ok(())
     }
 
@@ -2565,10 +2814,12 @@ impl ExecutionProofCore {
         )?;
         let interface_effect_facts = branch.interface_effect_facts().to_vec();
         let joined_state = branch.joined_state().clone();
+        let source = parent.source_after_branch(function, &branch)?;
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
         self.evidence_state = Some(joined_state);
+        self.evidence_source = source;
         self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
@@ -2616,10 +2867,12 @@ impl ExecutionProofCore {
         )?;
         let interface_effect_facts = branch.interface_effect_facts().to_vec();
         let joined_state = branch.joined_state().clone();
+        let source = parent.source_after_branch(function, &branch)?;
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
         self.evidence_state = Some(joined_state);
+        self.evidence_source = source;
         self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
