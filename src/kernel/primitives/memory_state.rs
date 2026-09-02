@@ -335,6 +335,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.heap)
             .uninitialized_allocations
             .remove(pointer);
+        std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_allocations
+            .remove(pointer);
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
@@ -371,6 +374,13 @@ impl CMemory {
     pub(in crate::kernel) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .uninitialized_allocations
+            .iter()
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+    }
+
+    pub(in crate::kernel) fn is_zeroed_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .zeroed_allocations
             .iter()
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
@@ -447,11 +457,17 @@ impl CMemory {
         mut self,
         base: Pointer,
         bytes: Bitvector32Term,
+        zeroed: bool,
     ) -> Self {
         let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .insert(base.clone(), bytes.clone());
+        if zeroed {
+            std::sync::Arc::make_mut(&mut self.heap)
+                .zeroed_pending_allocations
+                .insert(base.clone());
+        }
         if let Some(prior) = prior {
             record_c_memory_derivation(
                 &self,
@@ -495,6 +511,9 @@ impl CMemory {
         let bytes = std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .remove(base)?;
+        let zeroed = std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_pending_allocations
+            .remove(base);
         let resolved_base = if succeeds {
             let PointerBlock::Symbolic(Variable(identity)) = base.block else {
                 return None;
@@ -514,9 +533,15 @@ impl CMemory {
             std::sync::Arc::make_mut(&mut self.heap)
                 .live_allocations
                 .insert(resolved_base.clone(), bytes.clone());
-            std::sync::Arc::make_mut(&mut self.heap)
-                .uninitialized_allocations
-                .insert(resolved_base.clone());
+            if zeroed {
+                std::sync::Arc::make_mut(&mut self.heap)
+                    .zeroed_allocations
+                    .insert(resolved_base.clone());
+            } else {
+                std::sync::Arc::make_mut(&mut self.heap)
+                    .uninitialized_allocations
+                    .insert(resolved_base.clone());
+            }
             if let Some(prior) = prior {
                 record_c_memory_derivation(
                     &self,
@@ -623,6 +648,18 @@ impl CMemory {
             uninitialized_allocations.extend(memory.heap.uninitialized_allocations.iter().cloned());
         }
 
+        let mut zeroed_allocations = first.heap.zeroed_allocations.clone();
+        for memory in sibling_memories {
+            zeroed_allocations.extend(memory.heap.zeroed_allocations.iter().cloned());
+        }
+        let zeroed_pending_allocations = first.heap.zeroed_pending_allocations.clone();
+        if sibling_memories
+            .iter()
+            .any(|memory| memory.heap.zeroed_pending_allocations != zeroed_pending_allocations)
+        {
+            return Err("interface arms disagree on zeroed pending heap allocations".to_string());
+        }
+
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
@@ -632,6 +669,8 @@ impl CMemory {
             deallocated_allocations,
             pending_allocations,
             uninitialized_allocations,
+            zeroed_allocations,
+            zeroed_pending_allocations,
         });
         Ok(self)
     }

@@ -95,6 +95,86 @@ fn heap_allocate_has_null_or_fresh_uninitialized_outcomes() {
 }
 
 #[test]
+fn zeroed_heap_allocation_reads_zero_until_a_store() {
+    let state = CState::new().with_local("p", CValue::Pointer(Pointer::null()));
+    let paths = execute_c_statement_paths(
+        &state,
+        &c_heap_allocate_sized_with_zeroed(
+            "p",
+            c_multiply(c_int32_literal(2), c_int32_literal(4)),
+            true,
+        ),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("calloc-shaped allocation should execute");
+    let CStatementOutcome::Normal(pending) = &paths[0].outcome else {
+        panic!("allocation should produce a pending outcome");
+    };
+    let Some(CValue::Pointer(pending_pointer)) = pending.locals().get("p") else {
+        panic!("allocation should assign a pending pointer");
+    };
+    let success = resolve_pending_heap_allocations(
+        pending,
+        &PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::pointer_equal(pending_pointer.clone(), Pointer::null()),
+            false,
+        )),
+    );
+    let Some(CValue::Pointer(pointer)) = success.locals().get("p") else {
+        panic!("successful allocation should assign a heap pointer");
+    };
+    assert!(success.memory().is_zeroed_heap_address(pointer));
+
+    let read = evaluate_c_expression_paths(
+        &success,
+        &c_index(c_variable("p"), c_int32_literal(1)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("zeroed element read should execute");
+    assert!(matches!(
+        read.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Int32(value)),
+            ..
+        }] if *value == Bitvector32Term::Constant(0)
+    ));
+
+    let stored = execute_c_statement_paths(
+        &success,
+        &c_store(
+            c_add(c_variable("p"), c_int32_literal(1)),
+            c_int32_literal(7),
+        ),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("store into zeroed allocation should execute");
+    let CStatementOutcome::Normal(stored) = &stored[0].outcome else {
+        panic!("store should have a normal outcome");
+    };
+    let read_after_store = evaluate_c_expression_paths(
+        stored,
+        &c_index(c_variable("p"), c_int32_literal(1)),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("stored element read should execute");
+    assert!(matches!(
+        read_after_store.as_slice(),
+        [CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Int32(value)),
+            ..
+        }] if *value == Bitvector32Term::Constant(7)
+    ));
+}
+
+#[test]
 fn pending_and_failed_heap_allocation_preserve_existing_memory() {
     if skip_without_memory_dag() {
         return;

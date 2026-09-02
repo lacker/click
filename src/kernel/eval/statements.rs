@@ -225,6 +225,7 @@ fn execute_c_heap_allocate_paths(
     state: &CState,
     target: &str,
     bytes_expression: &CExpression,
+    zeroed: bool,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -319,12 +320,14 @@ fn execute_c_heap_allocate_paths(
         }
         let pointer = Pointer::symbolic(Variable(budget.next_kernel_variable));
         budget.next_kernel_variable += 1;
-        let success_state = state.clone().with_memory(
+        let success_state =
             state
-                .memory
                 .clone()
-                .with_pending_heap_allocation(pointer.clone(), bytes),
-        );
+                .with_memory(state.memory.clone().with_pending_heap_allocation(
+                    pointer.clone(),
+                    bytes,
+                    zeroed,
+                ));
         let assigned = execute_c_lvalue_assignment_paths(
             &success_state,
             &c_variable(target.to_string()),
@@ -795,9 +798,11 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             execution_semantics,
             budget,
         )?,
-        CStatement::HeapAllocate { target, bytes } => {
-            execute_c_heap_allocate_paths(state, target, bytes, assumptions, budget)?
-        }
+        CStatement::HeapAllocate {
+            target,
+            bytes,
+            zeroed,
+        } => execute_c_heap_allocate_paths(state, target, bytes, *zeroed, assumptions, budget)?,
         CStatement::HeapFree { pointer } => {
             execute_c_heap_free_paths(state, pointer, assumptions, budget)?
         }

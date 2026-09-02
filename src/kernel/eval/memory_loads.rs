@@ -392,6 +392,14 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         return paths;
     }
 
+    if memory.is_zeroed_heap_address(&pointer) && value_type == CType::Int32 {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(int32(Bitvector32Term::Constant(0))),
+            facts,
+            obligations,
+        }];
+    }
+
     if memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
         let Some(value) = canonicalized_symbolic_load_value(
             &memory,

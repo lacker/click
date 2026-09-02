@@ -590,7 +590,7 @@ Not implemented yet:
 
 - fractional permissions,
 - general C allocation APIs beyond exact struct allocation, runtime-sized
-  `int32` arrays, and `free`,
+  `int32` arrays, `calloc`, and `free`,
 - custom resource-family algebra,
 - implicit resource unfold/fold search in `auto`,
 - persistent token resources,

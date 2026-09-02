@@ -1442,6 +1442,12 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
     std::sync::Arc::make_mut(&mut stripped.heap)
         .uninitialized_allocations
         .retain(|pointer| !fresh_blocks.contains(&pointer.block));
+    std::sync::Arc::make_mut(&mut stripped.heap)
+        .zeroed_allocations
+        .retain(|pointer| !fresh_blocks.contains(&pointer.block));
+    std::sync::Arc::make_mut(&mut stripped.heap)
+        .zeroed_pending_allocations
+        .retain(|pointer| !fresh_blocks.contains(&pointer.block));
     c_effect_memories_definitionally_equal(before, &stripped, assumptions)
 }
 

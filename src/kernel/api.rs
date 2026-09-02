@@ -697,9 +697,18 @@ pub fn c_heap_allocate(target: impl Into<String>, bytes: u32) -> CStatement {
 }
 
 pub fn c_heap_allocate_sized(target: impl Into<String>, bytes: CExpression) -> CStatement {
+    c_heap_allocate_sized_with_zeroed(target, bytes, false)
+}
+
+pub fn c_heap_allocate_sized_with_zeroed(
+    target: impl Into<String>,
+    bytes: CExpression,
+    zeroed: bool,
+) -> CStatement {
     CStatement::HeapAllocate {
         target: target.into(),
         bytes,
+        zeroed,
     }
 }
 

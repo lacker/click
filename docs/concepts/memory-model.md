@@ -23,12 +23,13 @@ nonzero integers still cannot be used as pointers.
 
 ## Heap blocks and lifetimes
 
-The supported `malloc` forms have a null outcome and a successful outcome.
-Success creates a fresh block identity at offset zero, with either the exact
-LP64 size of `struct T` or a verified runtime `int32`-array extent such as
-`count * 4`. Heap identities are not reused within a proof. Fresh bytes are
-live but uninitialized, so ownership permits stores but does not make an
-unstored cell readable.
+The supported `malloc` and `calloc` forms have a null outcome and a successful
+outcome. Success creates a fresh block identity at offset zero, with either
+the exact LP64 size of `struct T` or a verified runtime `int32`-array extent
+such as `count * 4`. Heap identities are not reused within a proof. Fresh
+`malloc` bytes are uninitialized, so ownership permits stores but does not
+make an unstored cell readable; successful `calloc` cells read as zero until
+overwritten.
 
 Click tracks two different facts on the successful branch:
 

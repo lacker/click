@@ -433,6 +433,7 @@ pub enum CStatement {
     HeapAllocate {
         target: String,
         bytes: CExpression,
+        zeroed: bool,
     },
     /// End the heap allocation named by `pointer`. Null is a no-op.
     HeapFree {
@@ -914,6 +915,13 @@ pub(super) struct CHeapMemory {
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.
     pub(super) uninitialized_allocations: BTreeSet<Pointer>,
+    /// Successful calloc storage reads as zero until individual cells are
+    /// written. The set is separate from `uninitialized_allocations` so the
+    /// same heap-lifetime machinery can represent both APIs.
+    pub(super) zeroed_allocations: BTreeSet<Pointer>,
+    /// Pending calloc results whose null/success outcome has not yet been
+    /// refined.
+    pub(super) zeroed_pending_allocations: BTreeSet<Pointer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1272,7 +1280,9 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
             + memory.heap.live_allocations.len()
             + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()
-            + memory.heap.uninitialized_allocations.len(),
+            + memory.heap.uninitialized_allocations.len()
+            + memory.heap.zeroed_allocations.len()
+            + memory.heap.zeroed_pending_allocations.len(),
     );
 }
 

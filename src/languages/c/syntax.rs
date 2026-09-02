@@ -33,6 +33,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.for",
     "statement.store",
     "statement.malloc",
+    "statement.calloc",
     "statement.free",
     "statement.increment",
     "statement.decrement",
@@ -179,6 +180,7 @@ pub enum C0Statement {
     HeapAllocate {
         target: String,
         bytes: C0Expression,
+        zeroed: bool,
     },
     HeapFree {
         pointer: C0Expression,
@@ -429,9 +431,15 @@ impl C0Statement {
                     .map(C0Expression::to_kernel_expression)
                     .collect(),
             ),
-            Self::HeapAllocate { target, bytes } => {
-                crate::kernel::c_heap_allocate_sized(target.clone(), bytes.to_kernel_expression())
-            }
+            Self::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => crate::kernel::c_heap_allocate_sized_with_zeroed(
+                target.clone(),
+                bytes.to_kernel_expression(),
+                *zeroed,
+            ),
             Self::HeapFree { pointer } => {
                 crate::kernel::c_heap_free(pointer.to_kernel_expression())
             }
@@ -1526,10 +1534,10 @@ impl Parser {
                         })
                     } else if self.peek_next() == Some(&Token::LParen) {
                         let function_name = self.expect_ident("function name")?;
-                        if function_name == "malloc" {
-                            return Err(self.error_here(
-                                "the fixed-size `malloc` result may not be discarded",
-                            ));
+                        if matches!(function_name.as_str(), "malloc" | "calloc") {
+                            return Err(
+                                self.error_here("the allocation result may not be discarded")
+                            );
                         }
                         let arguments = self.parse_call_arguments()?;
                         self.expect(Token::Semicolon)?;
@@ -1726,42 +1734,71 @@ impl Parser {
         function_name: String,
         arguments: Vec<C0Expression>,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if function_name != "malloc" {
+        if !matches!(function_name.as_str(), "malloc" | "calloc") {
             return Ok(C0Statement::CallAssign {
                 target,
                 function_name,
                 arguments,
             });
         }
-        let [bytes] = arguments.as_slice() else {
-            return Err(self.error_here(format!(
-                "`malloc` expects one byte-count argument, got {}",
-                arguments.len()
-            )));
-        };
-        if let Some(target_struct) = self.variable_structs.get(&target) {
-            let Some(name) = (match bytes {
-                C0Expression::SizeOfStruct { name, .. } => Some(name.as_str()),
-                C0Expression::SizeOfType {
-                    c_type: C0Type::Int32,
-                    struct_name: Some(name),
-                    ..
-                } => Some(name.as_str()),
-                _ => None,
-            }) else {
+        let zeroed = function_name == "calloc";
+        let bytes = if zeroed {
+            let [count, element_size] = arguments.as_slice() else {
                 return Err(self.error_here(format!(
-                    "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                    "`calloc` expects two byte-count arguments, got {}",
+                    arguments.len()
                 )));
             };
-            if name != target_struct {
-                return Err(self.error_here(format!(
-                    "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
-                )));
+            if !matches!(
+                element_size,
+                C0Expression::Int32Literal(4)
+                    | C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        ..
+                    }
+            ) {
+                return Err(self
+                    .error_here("`calloc` currently supports only `sizeof(int32)` element sizes"));
             }
-        }
+            if self.variable_structs.contains_key(&target) {
+                return Err(
+                    self.error_here("`calloc` currently supports only int32 element allocations")
+                );
+            }
+            C0Expression::Multiply(Box::new(count.clone()), Box::new(element_size.clone()))
+        } else {
+            let [bytes] = arguments.as_slice() else {
+                return Err(self.error_here(format!(
+                    "`malloc` expects one byte-count argument, got {}",
+                    arguments.len()
+                )));
+            };
+            if let Some(target_struct) = self.variable_structs.get(&target) {
+                let Some(name) = (match bytes {
+                    C0Expression::SizeOfStruct { name, .. } => Some(name.as_str()),
+                    C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        struct_name: Some(name),
+                        ..
+                    } => Some(name.as_str()),
+                    _ => None,
+                }) else {
+                    return Err(self.error_here(format!(
+                        "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                    )));
+                };
+                if name != target_struct {
+                    return Err(self.error_here(format!(
+                        "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+                    )));
+                }
+            }
+            bytes.clone()
+        };
         Ok(C0Statement::HeapAllocate {
             target,
-            bytes: bytes.clone(),
+            bytes,
+            zeroed,
         })
     }
 

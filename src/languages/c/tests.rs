@@ -488,8 +488,13 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
 fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
     fn contains_heap_operations(statement: &syntax::C0Statement) -> (bool, bool) {
         match statement {
-            syntax::C0Statement::HeapAllocate { target, bytes } => {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => {
                 assert_eq!(target, "item");
+                assert!(!zeroed);
                 assert_eq!(
                     *bytes,
                     syntax::C0Expression::SizeOfStruct {
@@ -562,6 +567,55 @@ fn c0_syntax_accepts_runtime_sized_int32_allocation() {
     .expect("runtime-sized scalar allocation should parse");
 
     assert!(matches!(function.body(), syntax::C0Statement::Seq(_, _)));
+}
+
+#[test]
+fn c0_syntax_lowers_calloc_to_zeroed_runtime_allocation() {
+    fn find_allocation(
+        statement: &syntax::C0Statement,
+    ) -> Option<(&str, &syntax::C0Expression, bool)> {
+        match statement {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => Some((target, bytes, *zeroed)),
+            syntax::C0Statement::Seq(first, second) => {
+                find_allocation(first).or_else(|| find_allocation(second))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => find_allocation(then_branch).or_else(|| find_allocation(else_branch)),
+            syntax::C0Statement::While { body, .. } => find_allocation(body),
+            _ => None,
+        }
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        int32* allocate_zeroed(int32 count) {
+            int32* data = calloc(count, sizeof(int32));
+            return data;
+        }
+        "#,
+    )
+    .expect("calloc should parse for int32 allocations");
+    let (target, bytes, zeroed) = find_allocation(function.body()).expect("calloc should lower");
+    assert_eq!(target, "data");
+    assert!(zeroed);
+    assert_eq!(
+        bytes,
+        &syntax::C0Expression::Multiply(
+            Box::new(syntax::C0Expression::Variable("count".to_string())),
+            Box::new(syntax::C0Expression::SizeOfType {
+                c_type: syntax::C0Type::Int32,
+                struct_name: None,
+                bytes: 4,
+            }),
+        )
+    );
 }
 
 #[test]
