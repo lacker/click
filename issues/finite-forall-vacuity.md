@@ -63,6 +63,8 @@ must keep failing.
   rejected; the guard-implies-consequent body still derives.
 - Negative mdtests for both regressions; `scripts/check.sh` passes.
 
-Related: [contract-finite-forall-premises.md](contract-finite-forall-premises.md)
-is a second, independent finite-forall instantiator in contract certification
-with a different defect. Consider merging both onto one sound implementation.
+Note: contract certification has a second, independent finite-forall
+instantiator (`finite_forall_instantiations` in
+`src/kernel/api/contract_certification.rs`), which instantiates only the
+conclusion of an implication chain and checks every premise at each witness.
+Consider merging both onto one sound implementation.

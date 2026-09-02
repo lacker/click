@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 14
+## Soundness issues: 13
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
@@ -39,14 +39,13 @@ Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 Reachable through the kernel API; the untrusted surface currently masks them
 and [double-execution](double-execution.md) removes that mask:
 
-- [Check every premise in contract certification's finite-forall instantiator](contract-finite-forall-premises.md)
 - [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
 - [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)
 - [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
 - [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
-## Functionality gaps: 28
+## Functionality gaps: 29
 
 C language coverage:
 
@@ -84,3 +83,4 @@ Proof language and tooling:
 - [Lift proof-shape restrictions that force restructuring](proof-shape-restrictions.md)
 - [Fix the incremental verification marker and cache key](incremental-verify-marker.md)
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
+- [Split the two expansion census unit tests](split-expansion-census-tests.md)

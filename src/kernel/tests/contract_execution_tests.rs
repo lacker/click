@@ -1242,6 +1242,100 @@ fn verified_function_rule_requires_every_contract_claim_certificate() {
     assert!(c_verified_function_rule(function, &[first, second]).is_some());
 }
 
+fn vacuous_forall_contract(requires_body: SpecProposition) -> CFunction {
+    c_function(
+        CType::Int32,
+        "vac",
+        vec![c_parameter("n", CType::Int32)],
+        c_return(c_variable("n")),
+    )
+    .with_contract(
+        vec![SpecProposition::ForAllInt32 {
+            name: "k".to_string(),
+            variable: Variable(919_777),
+            body: Box::new(requires_body),
+        }],
+        vec![SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("result")),
+            operator: CComparisonOperator::Equal,
+            right: SpecExpression::Value(int32(7)),
+        }],
+        Vec::new(),
+        vec![CFunctionContractClaim::ensure_proposition(0, 0)],
+        true,
+    )
+}
+
+fn constant_bounds(lo: u32, hi: u32) -> SpecProposition {
+    SpecProposition::And(
+        Box::new(SpecProposition::Comparison {
+            left: SpecExpression::Value(int32(lo)),
+            operator: CComparisonOperator::LessEqual,
+            right: SpecExpression::CExpression(c_variable("k")),
+        }),
+        Box::new(SpecProposition::Comparison {
+            left: SpecExpression::CExpression(c_variable("k")),
+            operator: CComparisonOperator::LessThan,
+            right: SpecExpression::Value(int32(hi)),
+        }),
+    )
+}
+
+fn n_is_seven() -> SpecProposition {
+    SpecProposition::Comparison {
+        left: SpecExpression::CExpression(c_variable("n")),
+        operator: CComparisonOperator::Equal,
+        right: SpecExpression::Value(int32(7)),
+    }
+}
+
+fn certify_vacuous_forall_ensure(function: &CFunction) -> Option<CVerifiedFunctionContractClaim> {
+    let execution = prove_c_function_contract_execution_paths_with_environment(
+        CState::new(),
+        function.clone(),
+        vec![CExpression::Value(int32(Bitvector32Term::Variable(
+            Variable(919_778),
+        )))],
+        Vec::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        CFunctionContractExecutionMode::VerifyLoops,
+    );
+    c_verified_function_contract_claim(function, CFunctionContractClaimKey::Ensure(0), &execution)
+}
+
+/// `forall k. (0 <= k < 3) -> ((5 <= k < 10) -> n == 7)` is satisfied by every
+/// `n`: no `k` meets both bounds. Instantiating it must not inject `n == 7`,
+/// so `ensures result == 7` on `return n` must not certify.
+#[test]
+fn finite_forall_instantiation_checks_every_bound_premise() {
+    let function = vacuous_forall_contract(SpecProposition::Implies(
+        Box::new(constant_bounds(0, 3)),
+        Box::new(SpecProposition::Implies(
+            Box::new(constant_bounds(5, 10)),
+            Box::new(n_is_seven()),
+        )),
+    ));
+    assert!(
+        certify_vacuous_forall_ensure(&function).is_none(),
+        "a universal with disjoint bound premises must not certify its conclusion"
+    );
+}
+
+/// The same instantiation still works when the single bound is satisfiable:
+/// `forall k. (0 <= k < 1) -> n == 7` really does give `n == 7`.
+#[test]
+fn finite_forall_instantiation_still_uses_a_satisfiable_bound() {
+    let function = vacuous_forall_contract(SpecProposition::Implies(
+        Box::new(constant_bounds(0, 1)),
+        Box::new(n_is_seven()),
+    ));
+    assert!(
+        certify_vacuous_forall_ensure(&function).is_some(),
+        "a satisfiable bounded universal should still instantiate its conclusion"
+    );
+}
+
 #[test]
 fn contract_certification_reuses_a_matching_kernel_checked_execution() {
     let function = c_function(

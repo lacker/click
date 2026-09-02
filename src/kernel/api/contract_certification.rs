@@ -1693,8 +1693,11 @@ fn constant_premise_value(premise: &Proposition) -> Option<bool> {
 /// Instantiates finitely-bounded universal facts (`forall x. guards -> lo <=
 /// x < hi -> P(x)` with small constant bounds) at every point in the bound,
 /// so the certifier can use per-index conclusions the way an unfolded proof
-/// does. Guard premises (such as overflow side conditions) must evaluate to
-/// constant truth after substitution, or the point is skipped.
+/// does. The bound is read from the first constant-bound premise only to
+/// enumerate candidate points; every premise, bound-shaped or not, must then
+/// evaluate to constant truth after substitution, or the point is skipped. A
+/// second, disjoint bound premise therefore excludes every point rather than
+/// being taken as satisfied.
 fn finite_forall_instantiations(facts: &[Proposition]) -> Vec<Proposition> {
     let mut instantiated = Vec::new();
     for fact in facts {
@@ -1724,10 +1727,9 @@ fn finite_forall_instantiations(facts: &[Proposition]) -> Vec<Proposition> {
         for value in lo..hi {
             let witness = Bitvector32Term::Constant(value);
             let premises_hold = premises.iter().all(|premise| {
-                constant_variable_bounds(*var, premise).is_some()
-                    || constant_premise_value(&substitute_bitvector_variable_in_proposition(
-                        premise, *var, &witness,
-                    )) == Some(true)
+                constant_premise_value(&substitute_bitvector_variable_in_proposition(
+                    premise, *var, &witness,
+                )) == Some(true)
             });
             if premises_hold {
                 instantiated.push(substitute_bitvector_variable_in_proposition(
