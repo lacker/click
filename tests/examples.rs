@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{files_with_extension, read_verifying_sources, source_refs};
-use click::instrumentation;
+use click::instrumentation::{self, ContractFallback, SealRefusal};
 use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
@@ -12,6 +12,24 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// all of them with `CLICK_RUN_QUARANTINED=1`. Each entry names the reason;
 /// remove entries as they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[];
+
+/// The body-rerun ratchet (`issues/double-execution.md`) over every example
+/// project; see `tests/mdtests.rs` for the rule.
+const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
+    (SealRefusal::CasePartition, 12),
+    (SealRefusal::UnretainedPremise, 11),
+    (SealRefusal::StateMismatch, 4),
+    (SealRefusal::ReturnWithTail, 6),
+    (SealRefusal::ImplicitCountedClose, 3),
+    (SealRefusal::OutcomeUnfold, 10),
+    (SealRefusal::QuantifiedResourceClose, 2),
+];
+const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[
+    (ContractFallback::UnauthorizedPredicatePremise, 3),
+    (ContractFallback::UnauthorizedResourcePremise, 11),
+    (ContractFallback::UnauthorizedPremise, 5),
+    (ContractFallback::EntryStateDelta, 15),
+];
 
 #[test]
 fn example_projects() {
@@ -66,11 +84,23 @@ fn example_projects() {
 
     // Keep project verification serial and fail fast. Deterministic tactic
     // work budgets decide correctness; the test runner owns hang containment.
+    let _ = instrumentation::take_body_rerun_census();
     for project in &projects {
         println!("verifying example project `{}`", project.display());
         if let Err(diagnostics) = run_example_in_thread(project) {
             panic!("example project `{}` {diagnostics}", project.display());
         }
+    }
+    let census = instrumentation::take_body_rerun_census();
+    if requested.is_none()
+        && !run_quarantined
+        && let Some(mismatch) = instrumentation::body_rerun_census_mismatch(
+            &census,
+            SEAL_REFUSAL_BASELINE,
+            CONTRACT_FALLBACK_BASELINE,
+        )
+    {
+        panic!("body rerun ratchet (tests/examples.rs baselines):\n{mismatch}");
     }
 }
 

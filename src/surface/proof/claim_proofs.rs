@@ -1,4 +1,5 @@
 use super::*;
+use crate::instrumentation::SealRefusal;
 use crate::kernel::apply_c_function_contract_resource_transition;
 use std::sync::Arc;
 
@@ -1342,27 +1343,40 @@ pub(super) fn finish_ordered_proof<'a>(
                     let entry_has_counted_populations =
                         crate::kernel::c_function_entry_state(pre_state, function, arguments)
                             .is_some_and(|state| state.counted_populations().next().is_some());
-                    // Outcome predicate unfolding can add checked claim
-                    // authority that is not part of the C transition
-                    // trace. Until that derivation is typed evidence too,
-                    // retain the independent cross-check for this shape.
-                    if proof_execution.core.unfolded_predicates.is_empty()
+                    // Three shapes are not sealed yet and go straight to the
+                    // independent execution; every other refusal comes from
+                    // the sealer itself. Each is counted by reason and the
+                    // fixture harnesses pin those counts
+                    // (`issues/double-execution.md`).
+                    let guard = if !proof_execution.core.unfolded_predicates.is_empty() {
+                        // Outcome predicate unfolding can add checked claim
+                        // authority that is not part of the C transition
+                        // trace.
+                        Some(SealRefusal::OutcomeUnfold)
+                    } else if post_execution_has_quantified_resource_close(
+                        &proof_execution.presentation.post_execution_tactics,
+                    ) {
                         // Folding an observed resource family after C
                         // execution also changes the counted population used
                         // by outcome predicates. Entry population evidence
                         // does not certify this exit transition.
-                        && !post_execution_has_quantified_resource_close(
+                        Some(SealRefusal::QuantifiedResourceClose)
+                    } else if entry_has_counted_populations
+                        && !post_execution_has_explicit_frame(
                             &proof_execution.presentation.post_execution_tactics,
                         )
+                    {
                         // Implicit outcome resource closure does not yet
                         // retain the checked population/resource transition
                         // that an explicit frame records.
-                        && !(entry_has_counted_populations
-                            && !post_execution_has_explicit_frame(
-                                &proof_execution.presentation.post_execution_tactics,
-                            ))
-                        && let Some(checked) =
-                            crate::kernel::checked_c_function_execution_from_proof_evidence(
+                        Some(SealRefusal::ImplicitCountedClose)
+                    } else {
+                        None
+                    };
+                    match guard {
+                        Some(refusal) => crate::instrumentation::record_seal_refusal(refusal),
+                        None => {
+                            match crate::kernel::checked_c_function_execution_from_proof_evidence(
                                 execution,
                                 function,
                                 proof_execution.core.function_entry.as_deref(),
@@ -1372,9 +1386,13 @@ pub(super) fn finish_ordered_proof<'a>(
                                 function_environment.clone(),
                                 execution_semantics,
                                 execution_mode,
-                            )
-                    {
-                        return checked;
+                            ) {
+                                Ok(checked) => return checked,
+                                Err(refusal) => {
+                                    crate::instrumentation::record_seal_refusal(refusal)
+                                }
+                            }
+                        }
                     }
                     if proof_execution.core.frontier_loop_rules.is_empty()
                         && let Some((_, _, _, execution)) = certification_cache.iter().find(

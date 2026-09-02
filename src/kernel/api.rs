@@ -1,6 +1,7 @@
 use super::functions::apply_verified_contract_resource_transition;
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
+use crate::instrumentation::{ContractFallback, SealRefusal};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -2201,7 +2202,7 @@ fn seal_proof_evidence_events(
     assumptions: &PureFactContext,
     candidate: &CFunctionExecutionCandidate,
     function_entry_resource_facts: Option<&PureFactContext>,
-) -> Option<SealedProofEvidenceProgress> {
+) -> Result<SealedProofEvidenceProgress, SealRefusal> {
     use crate::kernel::proof::CheckedExecutionEvent;
 
     let mut completed = None;
@@ -2209,24 +2210,25 @@ fn seal_proof_evidence_events(
     let mut interface_execution_facts = Vec::new();
     for event in events {
         if completed.is_some() {
-            return None;
+            return Err(SealRefusal::IncompleteTrace);
         }
         match event {
             CheckedExecutionEvent::ProofCase(arm) => {
                 if !arm.is_valid() {
-                    return None;
+                    return Err(SealRefusal::InvalidEvidence);
                 }
                 current_assumptions = arm.facts().assumptions().clone();
                 continue;
             }
             CheckedExecutionEvent::ResourceObservation(observation) => {
                 if !observation.advances_sealed(function, &state) {
-                    return None;
+                    return Err(SealRefusal::InvalidEvidence);
                 }
                 state = observation.after_state.clone();
                 for fact in observation
                     .after_facts
-                    .introduced_since(&observation.before_facts)?
+                    .introduced_since(&observation.before_facts)
+                    .ok_or(SealRefusal::InvalidEvidence)?
                 {
                     current_assumptions = current_assumptions.assume_proposition(fact);
                 }
@@ -2234,12 +2236,13 @@ fn seal_proof_evidence_events(
             }
             CheckedExecutionEvent::ResourceRewrite(rewrite) => {
                 if !rewrite.advances_sealed(function, &state) {
-                    return None;
+                    return Err(SealRefusal::InvalidEvidence);
                 }
                 state = rewrite.after_state.clone();
                 for fact in rewrite
                     .after_facts
-                    .introduced_since(&rewrite.before_facts)?
+                    .introduced_since(&rewrite.before_facts)
+                    .ok_or(SealRefusal::InvalidEvidence)?
                 {
                     current_assumptions = current_assumptions.assume_proposition(fact);
                 }
@@ -2249,7 +2252,7 @@ fn seal_proof_evidence_events(
             | CheckedExecutionEvent::Condition(_)
             | CheckedExecutionEvent::Branch(_) => {}
         }
-        let source = remaining.take()?;
+        let source = remaining.take().ok_or(SealRefusal::IncompleteTrace)?;
         let (next_statement, tail) = split_proof_evidence_statement(source);
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
@@ -2260,7 +2263,7 @@ fn seal_proof_evidence_events(
                     &state,
                     function_entry_resource_facts,
                 ) {
-                    return None;
+                    return Err(SealRefusal::UnretainedPremise);
                 }
                 let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
                 let (proved_state, proved_statement, outcome) =
@@ -2270,17 +2273,18 @@ fn seal_proof_evidence_events(
                             statement,
                             outcome,
                         } => (state, statement, outcome),
-                        _ => return None,
+                        _ => return Err(SealRefusal::InvalidEvidence),
                     };
-                if proved_statement != &next_statement
-                    || !execution_evidence_states_match(
-                        function,
-                        &state,
-                        proved_state,
-                        &theorem_assumptions,
-                    )
-                {
-                    return None;
+                if proved_statement != &next_statement {
+                    return Err(SealRefusal::StatementMismatch);
+                }
+                if !execution_evidence_states_match(
+                    function,
+                    &state,
+                    proved_state,
+                    &theorem_assumptions,
+                ) {
+                    return Err(SealRefusal::StateMismatch);
                 }
                 match outcome {
                     CStatementOutcome::Normal(next_state) => {
@@ -2289,12 +2293,14 @@ fn seal_proof_evidence_events(
                     }
                     CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
                         if tail.is_some() {
-                            return None;
+                            return Err(SealRefusal::ReturnWithTail);
                         }
                         completed = Some((outcome.clone(), theorem_assumptions));
                     }
                     CStatementOutcome::UndefinedBehavior(_)
-                    | CStatementOutcome::RuntimeError(_) => return None,
+                    | CStatementOutcome::RuntimeError(_) => {
+                        return Err(SealRefusal::InvalidEvidence);
+                    }
                 }
             }
             CheckedExecutionEvent::Condition(theorem) => {
@@ -2305,7 +2311,7 @@ fn seal_proof_evidence_events(
                     &state,
                     function_entry_resource_facts,
                 ) {
-                    return None;
+                    return Err(SealRefusal::UnretainedPremise);
                 }
                 let theorem_assumptions = proof_evidence_assumptions(theorem, &current_assumptions);
                 let (proved_state, proved_condition, value) =
@@ -2315,7 +2321,7 @@ fn seal_proof_evidence_events(
                             condition,
                             outcome: CConditionOutcome::Value(value),
                         } => (state, condition, *value),
-                        _ => return None,
+                        _ => return Err(SealRefusal::InvalidEvidence),
                     };
                 if !execution_evidence_states_match(
                     function,
@@ -2323,7 +2329,7 @@ fn seal_proof_evidence_events(
                     proved_state,
                     &theorem_assumptions,
                 ) {
-                    return None;
+                    return Err(SealRefusal::StateMismatch);
                 }
                 let selected = match next_statement {
                     CStatement::If {
@@ -2357,7 +2363,7 @@ fn seal_proof_evidence_events(
                             CStatement::Skip
                         }
                     }
-                    _ => return None,
+                    _ => return Err(SealRefusal::StatementMismatch),
                 };
                 remaining = if matches!(selected, CStatement::Skip) {
                     tail
@@ -2370,7 +2376,7 @@ fn seal_proof_evidence_events(
                 if !branch.matches_interface_resource_definitions(function)
                     || !branch.matches_source(&state, &next_statement, &tail)
                 {
-                    return None;
+                    return Err(SealRefusal::InvalidEvidence);
                 }
                 let full_source = prepend_proof_evidence_statement(next_statement, tail.clone());
                 for arm_index in 0..2 {
@@ -2384,17 +2390,18 @@ fn seal_proof_evidence_events(
                         candidate,
                         function_entry_resource_facts,
                     )?;
-                    if arm.completed.is_some()
-                        || arm.remaining != tail
-                        || (branch.interface_successor_facts().is_none()
-                            && !execution_evidence_states_match(
-                                function,
-                                &arm.state,
-                                branch.joined_state(),
-                                arm_assumptions,
-                            ))
+                    if arm.completed.is_some() || arm.remaining != tail {
+                        return Err(SealRefusal::InvalidEvidence);
+                    }
+                    if branch.interface_successor_facts().is_none()
+                        && !execution_evidence_states_match(
+                            function,
+                            &arm.state,
+                            branch.joined_state(),
+                            arm_assumptions,
+                        )
                     {
-                        return None;
+                        return Err(SealRefusal::StateMismatch);
                     }
                 }
                 state = branch.joined_state().clone();
@@ -2422,7 +2429,7 @@ fn seal_proof_evidence_events(
             }
         }
     }
-    Some(SealedProofEvidenceProgress {
+    Ok(SealedProofEvidenceProgress {
         state,
         remaining,
         completed,
@@ -2452,12 +2459,15 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
     environment: CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
     mode: CFunctionContractExecutionMode,
-) -> Option<CCheckedFunctionExecution> {
-    if candidates.paths.len() != evidence.len()
-        || !proof_case_partitions_match_paths(evidence, expected_path_case_facts)
-        || !proof_evidence_function_refines_same_source(&candidates.function, checked_function)
-    {
-        return None;
+) -> Result<CCheckedFunctionExecution, SealRefusal> {
+    if candidates.paths.len() != evidence.len() {
+        return Err(SealRefusal::PathCount);
+    }
+    if !proof_case_partitions_match_paths(evidence, expected_path_case_facts) {
+        return Err(SealRefusal::CasePartition);
+    }
+    if !proof_evidence_function_refines_same_source(&candidates.function, checked_function) {
+        return Err(SealRefusal::FunctionSource);
     }
     let function = checked_function;
     let checked_entry_state = function_entry.and_then(|entry| {
@@ -2482,20 +2492,23 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
         Some(entry_state) => entry_state,
         None => {
             let entry_state =
-                c_function_entry_state(&candidates.state, function, &candidates.arguments)?;
+                c_function_entry_state(&candidates.state, function, &candidates.arguments)
+                    .ok_or(SealRefusal::EntryState)?;
             // Population materialization is part of the contract-entry
             // transition. Without the kernel-issued entry artifact, later
             // transition theorems alone cannot authorize that ghost state.
             if entry_state.counted_populations().next().is_some() {
-                return None;
+                return Err(SealRefusal::EntryState);
             }
             entry_state
         }
     };
     let function_entry_resource_facts = if has_checked_entry {
-        let Some(resource_facts) = function_entry?.resource_relation_assumptions(&assumptions)
+        let Some(resource_facts) = function_entry
+            .ok_or(SealRefusal::EntryState)?
+            .resource_relation_assumptions(&assumptions)
         else {
-            return None;
+            return Err(SealRefusal::EntryState);
         };
         Some(resource_facts)
     } else {
@@ -2505,7 +2518,7 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
     for (candidate, trace) in candidates.paths.iter().zip(evidence) {
         let events = trace.to_vec();
         let Some(retained_entry_state) = proof_evidence_initial_state(&events) else {
-            return None;
+            return Err(SealRefusal::EntryState);
         };
         let trace_entry_state = if retained_entry_state == &entry_state {
             entry_state.clone()
@@ -2519,9 +2532,9 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
         {
             retained_entry_state.clone()
         } else {
-            return None;
+            return Err(SealRefusal::EntryState);
         };
-        let Some(progress) = seal_proof_evidence_events(
+        let progress = seal_proof_evidence_events(
             function,
             &events,
             trace_entry_state,
@@ -2529,11 +2542,9 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             &assumptions,
             candidate,
             function_entry_resource_facts.as_ref(),
-        ) else {
-            return None;
-        };
+        )?;
         let Some((completed, statement_assumptions)) = progress.completed else {
-            return None;
+            return Err(SealRefusal::IncompleteTrace);
         };
         let (outcome, obligations) = c_function_outcome_from_statement_outcome(
             &candidates.state,
@@ -2543,7 +2554,7 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             &statement_assumptions,
         );
         if outcome != candidate.outcome {
-            return None;
+            return Err(SealRefusal::OutcomeMismatch);
         }
         let proposition = Proposition::CFunctionVerifies {
             state: candidates.state.clone(),
@@ -2573,7 +2584,7 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             )),
         });
     }
-    Some(CCheckedFunctionExecution {
+    Ok(CCheckedFunctionExecution {
         state: candidates.state.clone(),
         function: checked_function.clone(),
         arguments: candidates.arguments.clone(),
@@ -3427,6 +3438,44 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                     None
                 })
                 .flatten();
+        // Census only: which artifact property blocked reuse when nothing
+        // above applied (`issues/double-execution.md`). Same-state artifacts
+        // report their first unauthorized premise; otherwise the entry state
+        // itself differed.
+        let fallback_cause = (reusable.is_none()
+            && rebased_reuse.is_none()
+            && partition_reuse.is_none())
+        .then(|| {
+            let mut cause = ContractFallback::NoArtifact;
+            for checked in checked_artifacts
+                .iter()
+                .filter(|checked| matches_execution_metadata_except_state(checked))
+            {
+                if checked.state != state {
+                    if cause == ContractFallback::NoArtifact {
+                        cause = ContractFallback::EntryStateDelta;
+                    }
+                    continue;
+                }
+                let unauthorized = checked
+                    .assumptions
+                    .pure_facts()
+                    .into_iter()
+                    .find(|premise| !checked_premise_is_authorized(checked, premise));
+                cause = match unauthorized {
+                    Some(Proposition::Predicate { .. }) => {
+                        ContractFallback::UnauthorizedPredicatePremise
+                    }
+                    Some(
+                        Proposition::CResourceContains { .. }
+                        | Proposition::CResourceSeparate { .. },
+                    ) => ContractFallback::UnauthorizedResourcePremise,
+                    Some(_) | None => ContractFallback::UnauthorizedPremise,
+                };
+                break;
+            }
+            cause
+        });
         let body_operation = if reusable.is_some() {
             "contract checked body reuse"
         } else if rebased_reuse.is_some() {
@@ -3446,6 +3495,9 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 (None, None, Some(execution)) => execution,
                 (None, None, None) => {
                     record_checked_function_body_execution();
+                    crate::instrumentation::record_contract_fallback(
+                        fallback_cause.unwrap_or(ContractFallback::NoArtifact),
+                    );
                     match mode {
                         CFunctionContractExecutionMode::VerifyLoops => {
                             prove_symbolic_c_function_verification_paths_with_environment_and_budget_mode(

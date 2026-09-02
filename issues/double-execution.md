@@ -43,27 +43,30 @@ acceptance case.
 
 ## Where the reruns actually happen
 
-Measured on 2026-09-01 at master `a6652d73` with temporary instrumentation at
-both fallback sites and at every `return None` inside the sealer, over all
-426 mdtests and the 14 example projects.
+Measured on 2026-09-01 over all 426 mdtests and the 14 example projects; the
+numbers are the ratchet baselines pinned in `tests/mdtests.rs` and
+`tests/examples.rs` (slice 1), keyed by `instrumentation::SealRefusal` and
+`instrumentation::ContractFallback`.
 
-Claim finishing reran a body 100 times in 83 mdtest fixtures and 36 times in
+Claim finishing reran a body 100 times in 83 mdtest fixtures and 48 times in
 the examples. The three guards are the minority; most reruns happen because
 the sealer refuses the retained trace:
 
-| Cause of a claim rerun | mdtests | examples |
-| --- | --- | --- |
-| Loop step theorem carries exit hypotheses (invariant at the fresh head variables, e.g. `V1000000 <= n`) that the path's exact facts do not list, so `proof_evidence_premises_are_retained` fails | 28 | 11 |
-| `return` from a nested statement while body tail remains, or a diverging loop; `seal_proof_evidence_events` refuses any `Return`/`VerificationDiverges` outcome with a tail | 22 | 6 |
-| Proved statement or memory snapshot differs from the running sealed state (7 memory identity on heap fixtures, 3 loop-clause-bound function statements) | 10 | 4 |
-| Proof-case partition or path count differs from the evidence traces (proof `if` cases, outcome forks) | 7 | 12 |
-| Guard: counted entry closed implicitly by outcome `simp()` rather than an explicit `frame()` | 22 | 2 |
-| Guard: outcome proof with an unfolded predicate | 11 | 10 |
-| Guard: quantified resource fold or close after C execution | 4 | 2 |
+| Cause of a claim rerun | `SealRefusal` | mdtests | examples |
+| --- | --- | --- | --- |
+| Loop step theorem carries exit hypotheses (invariant at the fresh head variables, e.g. `V1000000 <= n`) that the path's exact facts do not list, so `proof_evidence_premises_are_retained` fails | `UnretainedPremise` | 28 | 11 |
+| `return` from a nested statement while body tail remains, or a diverging loop; `seal_proof_evidence_events` refuses any `Return`/`VerificationDiverges` outcome with a tail | `ReturnWithTail` | 22 | 6 |
+| Proved statement or entry memory differs from the running sealed state: memory snapshot identity on heap fixtures; loop-clause-bound `while` statements | `StateMismatch`, `StatementMismatch` | 7, 3 | 4, 0 |
+| Proof-case partition or path count differs from the evidence traces (proof `if` cases, outcome forks) | `CasePartition`, `PathCount` | 4, 3 | 12, 0 |
+| Guard: counted entry closed implicitly by outcome `simp()` rather than an explicit `frame()` | `ImplicitCountedClose` | 20 | 3 |
+| Guard: outcome proof with an unfolded predicate | `OutcomeUnfold` | 11 | 10 |
+| Guard: quantified resource fold or close after C execution | `QuantifiedResourceClose` | 2 | 2 |
 
 Contract certification reran a body 40 times in 34 mdtest fixtures and 34
 times in the examples. Every one of those had a same-function artifact from
-claim finishing available. Two causes account for all of them:
+claim finishing available. Two causes account for all of them
+(`ContractFallback`: mdtests 19 predicate, 11 resource, 2 other premise, 8
+entry-state delta; examples 3, 11, 5, 15):
 
 - The artifact's assumptions include one premise the reconstructed contract
   context cannot derive: the opaque `Predicate` identity of a `requires`
@@ -141,21 +144,18 @@ alongside the old one.
 
 ## Implementation slices
 
-### 1. Typed refusals and a ratchet
+### 1. Typed refusals and a ratchet (landed 2026-09-01)
 
-Make `checked_c_function_execution_from_proof_evidence` and
+`checked_c_function_execution_from_proof_evidence` and
 `seal_proof_evidence_events` return `Result<_, SealRefusal>` with one variant
-per refusal site (unretained premise, return with tail, statement mismatch,
-state mismatch, partition mismatch, path count, entry state, plus the three
-guards, which move from claim finishing into the same enum). Count refusals
-per variant in a test-only, session-scoped census alongside
-`take_checked_function_body_execution_count`, and count contract-boundary
-fallbacks with their cause (unauthorized premise kind, entry-state delta).
-
-Add one corpus test that runs the mdtests and examples and pins each
-variant's count at the numbers in the table above, failing when a count
-rises. Each later slice lowers a pin to its new value. This is mechanical, is
-not a behavior change, and is the only place fixture lists live.
+per refusal site; the three claim-finishing guards record into the same
+enum; the contract-boundary fallback records a `ContractFallback` cause.
+`instrumentation::take_body_rerun_census` collects both, and the mdtest and
+example harnesses compare the unfiltered corpus census with pinned baselines
+in both directions (`docs/internals/testing.md`, "Body rerun ratchet"). Each
+later slice lowers a pin to its new value. Fixture lists per reason are
+reproduced by adding a temporary `eprintln!` at `record_seal_refusal`; they
+do not live in this file.
 
 ### 2. Return with a remaining tail
 

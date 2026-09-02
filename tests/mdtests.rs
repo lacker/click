@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{MdTestExpectation, read_mdtest, run_parallel};
-use click::instrumentation;
+use click::instrumentation::{self, ContractFallback, SealRefusal};
 use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
@@ -13,6 +13,28 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// `CLICK_RUN_QUARANTINED=1`. Each entry names the reason; remove entries as
 /// they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[];
+
+/// The body-rerun ratchet (`issues/double-execution.md`): how many times, over
+/// the whole unfiltered corpus, claim finishing or contract certification
+/// executed a function body because the sealer refused or a guard declined,
+/// by reason. A count may only fall; lower its pin when it does.
+const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
+    (SealRefusal::PathCount, 3),
+    (SealRefusal::CasePartition, 4),
+    (SealRefusal::UnretainedPremise, 28),
+    (SealRefusal::StatementMismatch, 3),
+    (SealRefusal::StateMismatch, 7),
+    (SealRefusal::ReturnWithTail, 22),
+    (SealRefusal::ImplicitCountedClose, 20),
+    (SealRefusal::OutcomeUnfold, 11),
+    (SealRefusal::QuantifiedResourceClose, 2),
+];
+const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[
+    (ContractFallback::UnauthorizedPredicatePremise, 19),
+    (ContractFallback::UnauthorizedResourcePremise, 11),
+    (ContractFallback::UnauthorizedPremise, 2),
+    (ContractFallback::EntryStateDelta, 8),
+];
 
 #[test]
 fn mdtests() {
@@ -64,8 +86,20 @@ fn mdtests() {
     // Keep file verification serial to bound peak memory. Tactic correctness
     // is enforced by deterministic work budgets, not by how much CPU time
     // happens to be available to this fixture process.
+    let _ = instrumentation::take_body_rerun_census();
     let failures = run_parallel(&paths, 1, |path| run_mdtest_in_thread(path));
+    let census = instrumentation::take_body_rerun_census();
     if failures.is_empty() {
+        if !filtered
+            && std::env::var_os(RUN_QUARANTINED).is_none()
+            && let Some(mismatch) = instrumentation::body_rerun_census_mismatch(
+                &census,
+                SEAL_REFUSAL_BASELINE,
+                CONTRACT_FALLBACK_BASELINE,
+            )
+        {
+            panic!("body rerun ratchet (tests/mdtests.rs baselines):\n{mismatch}");
+        }
         return;
     }
 
