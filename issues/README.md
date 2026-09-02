@@ -18,8 +18,9 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Architecture issues: 1
+## Architecture issues: 2
 
+- [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 ## Soundness issues: 7
