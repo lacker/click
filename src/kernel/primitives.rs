@@ -211,6 +211,8 @@ pub enum CType {
     UInt8,
     Int32Pointer,
     UInt8Pointer,
+    Int32PointerPointer,
+    UInt8PointerPointer,
     Int32Array(u32),
     UInt8Array(u32),
 }

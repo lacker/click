@@ -601,6 +601,10 @@ impl ConditionTerm {
 }
 
 impl CType {
+    pub fn is_pointer(self) -> bool {
+        self.pointee_type().is_some()
+    }
+
     pub(in crate::kernel) fn accepts(self, value: &CValue) -> bool {
         matches!(
             (self, value),
@@ -609,6 +613,8 @@ impl CType {
                 | (Self::UInt8, CValue::UInt8(_))
                 | (Self::Int32Pointer, CValue::Pointer(_))
                 | (Self::UInt8Pointer, CValue::Pointer(_))
+                | (Self::Int32PointerPointer, CValue::Pointer(_))
+                | (Self::UInt8PointerPointer, CValue::Pointer(_))
         )
     }
 
@@ -619,6 +625,8 @@ impl CType {
             Self::UInt8 => 1,
             Self::Int32Pointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
+            Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
         }
@@ -628,6 +636,8 @@ impl CType {
         match self {
             Self::Int32Pointer => Some(Self::Int32),
             Self::UInt8Pointer => Some(Self::UInt8),
+            Self::Int32PointerPointer => Some(Self::Int32Pointer),
+            Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
             _ => None,
         }
     }

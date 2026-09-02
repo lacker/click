@@ -116,6 +116,8 @@ pub enum C0Type {
     UInt8,
     Int32Pointer,
     UInt8Pointer,
+    Int32PointerPointer,
+    UInt8PointerPointer,
     Int32Array(u32),
     UInt8Array(u32),
 }
@@ -133,7 +135,13 @@ impl CAbi {
             (Self::Lp64, C0Type::Void) => (0, 1),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
-            (Self::Lp64, C0Type::Int32Pointer | C0Type::UInt8Pointer) => (8, 8),
+            (
+                Self::Lp64,
+                C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer,
+            ) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
             (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
         }
@@ -341,6 +349,26 @@ impl C0Parameter {
 }
 
 impl C0Type {
+    pub fn is_pointer(self) -> bool {
+        matches!(
+            self,
+            Self::Int32Pointer
+                | Self::UInt8Pointer
+                | Self::Int32PointerPointer
+                | Self::UInt8PointerPointer
+        )
+    }
+
+    pub fn pointee_type(self) -> Option<Self> {
+        match self {
+            Self::Int32Pointer | Self::Int32Array(_) => Some(Self::Int32),
+            Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
+            Self::Int32PointerPointer => Some(Self::Int32Pointer),
+            Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
+            Self::Void | Self::Int32 | Self::UInt8 => None,
+        }
+    }
+
     pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
             Self::Void => crate::kernel::CType::Void,
@@ -348,6 +376,8 @@ impl C0Type {
             Self::UInt8 => crate::kernel::CType::UInt8,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
+            Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
+            Self::UInt8PointerPointer => crate::kernel::CType::UInt8PointerPointer,
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
         }
@@ -962,7 +992,12 @@ impl Parser {
             }
             if !matches!(
                 field_type.c_type,
-                C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::UInt8Pointer
+                C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::Int32Pointer
+                    | C0Type::UInt8Pointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::UInt8PointerPointer
             ) {
                 return Err(self.error_here(
                     "struct fields currently support int32, uint8, and pointer fields",
@@ -1095,21 +1130,30 @@ impl Parser {
             }
         };
 
-        if self.peek() != Some(&Token::Star) {
-            return Ok(parsed);
+        let mut c_type = parsed.c_type;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            c_type = match c_type {
+                C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::UInt8 => C0Type::UInt8Pointer,
+                C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
+                C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
+                    return Err(
+                        self.error_at_previous("pointer depth beyond `**` is not supported")
+                    );
+                }
+                C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
+                    return Err(self.error_at_previous("pointer-to-array types are not supported"));
+                }
+            };
+            if parsed.struct_name.is_some() && c_type != C0Type::Int32Pointer {
+                return Err(
+                    self.error_at_previous("pointer depth beyond `struct S*` is not supported")
+                );
+            }
         }
-        self.position += 1;
-        let c_type = match parsed.c_type {
-            C0Type::Int32 => C0Type::Int32Pointer,
-            C0Type::UInt8 => C0Type::UInt8Pointer,
-            C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
-            C0Type::Int32Pointer | C0Type::UInt8Pointer => {
-                return Err(self.error_at_previous("pointer-to-pointer types are not supported"));
-            }
-            C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
-                return Err(self.error_at_previous("pointer-to-array types are not supported"));
-            }
-        };
         Ok(ParsedType {
             c_type,
             struct_name: parsed.struct_name,
@@ -1185,14 +1229,14 @@ impl Parser {
         let pointer_type = match c_type {
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
+            C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+            C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
             _ => {
-                return Err(self.error_here("only scalar array parameters are supported"));
+                return Err(
+                    self.error_here("only scalar and pointer array parameters are supported")
+                );
             }
         };
-
-        if !matches!(c_type, C0Type::Int32 | C0Type::UInt8) {
-            return Err(self.error_here("only scalar array parameters are supported"));
-        }
 
         self.position += 1;
         if matches!(self.peek(), Some(Token::Number(_))) {

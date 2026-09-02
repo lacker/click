@@ -3372,18 +3372,11 @@ fn requirement_contains_resource(requirement: &Requirement) -> bool {
 }
 
 fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
-    matches!(
-        parameter.c_type(),
-        C0Type::Int32Pointer | C0Type::UInt8Pointer
-    )
+    parameter.c_type().is_pointer()
 }
 
 fn click_array_element_type(c_type: C0Type) -> Option<CType> {
-    match c_type {
-        C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
-        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
-        C0Type::Void | C0Type::Int32 | C0Type::UInt8 => None,
-    }
+    c_type.pointee_type().map(C0Type::to_kernel_type)
 }
 
 impl EnsureClause {

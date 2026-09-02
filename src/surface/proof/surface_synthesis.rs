@@ -752,7 +752,7 @@ fn synthesize_parameter_field_pointer_value(
         };
         for (field_name, field) in layout.fields() {
             let value_type = field.c_type().to_kernel_type();
-            if !matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) {
+            if !value_type.is_pointer() {
                 continue;
             }
             let field_pointer = base.offset_by_bytes(field.offset_bytes());
@@ -760,9 +760,10 @@ fn synthesize_parameter_field_pointer_value(
                 CExpressionOutcome::Value(CValue::Pointer(value)) => value.offset,
                 // Struct pointer fields are represented in contract memory
                 // by their pointer-width scalar offset.
-                CExpressionOutcome::Value(CValue::Int32(value)) => {
-                    PointerOffsetTerm::scale_int32(value, 4)
-                }
+                CExpressionOutcome::Value(CValue::Int32(value)) => PointerOffsetTerm::scale_int32(
+                    value,
+                    i64::from(value_type.pointee_type()?.byte_width()),
+                ),
                 _ => continue,
             };
             if !crate::kernel::offsets_have_same_canonical_form(&loaded_offset, term) {
@@ -946,12 +947,10 @@ fn synthesize_surface_bitvector(
                                 return None;
                             };
                             kernel_pointer.element_index_from_base(base)?;
-                            match parameter.c_type() {
-                                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
-                                C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
-                                C0Type::Int32 | C0Type::UInt8 => None,
-                                C0Type::Void => None,
-                            }
+                            parameter
+                                .c_type()
+                                .pointee_type()
+                                .map(C0Type::to_kernel_type)
                         });
                 let pointer = synthesize_surface_pointer(
                     kernel_pointer,

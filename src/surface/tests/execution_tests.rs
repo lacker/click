@@ -577,6 +577,7 @@ fn verifies_fill3_c0_source_with_sidecar_specification() {
                 base: base.clone(),
                 bytes: 12,
                 element_width: 4,
+                element_type: CType::Int32,
             },
         )]),
     );

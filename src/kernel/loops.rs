@@ -1963,9 +1963,10 @@ pub(super) fn havoc_loop_modified_locals(
             // A pointer local reassigned in the body (`p = p + 1`) must not
             // keep its entry value across the abstract iteration, exactly as
             // the join abstraction treats it; an invariant must relate it.
-            CType::Int32Pointer | CType::UInt8Pointer => {
-                CValue::Pointer(Pointer::symbolic(variables.next()))
-            }
+            CType::Int32Pointer
+            | CType::UInt8Pointer
+            | CType::Int32PointerPointer
+            | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variables.next())),
             // Array objects are never assigned by name (C forbids it), and
             // they bind as array objects rather than scalar objects above.
             CType::Int32Array(_) | CType::UInt8Array(_) => continue,

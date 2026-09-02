@@ -51,7 +51,6 @@ C language coverage:
 - [Parse the everyday C syntax the C0 frontend rejects](c-syntax-conveniences.md)
 - [Allow function calls in expression position](calls-in-expressions.md)
 - [Specify external and libc functions without a body](external-function-contracts.md)
-- [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
 - [Model function pointers](function-pointers.md)

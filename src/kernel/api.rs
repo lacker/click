@@ -483,7 +483,10 @@ fn abstract_c_state_for_join_across_with_policy(
                 CType::Void => continue,
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
-                CType::Int32Pointer | CType::UInt8Pointer => {
+                CType::Int32Pointer
+                | CType::UInt8Pointer
+                | CType::Int32PointerPointer
+                | CType::UInt8PointerPointer => {
                     CValue::Pointer(Pointer::symbolic(variables.next()))
                 }
                 CType::Int32Array(_) | CType::UInt8Array(_) => {

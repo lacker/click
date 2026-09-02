@@ -1184,7 +1184,10 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         CType::Void => unreachable!("void local objects are not supported"),
         CType::Int32 => 4,
         CType::UInt8 => 1,
-        CType::Int32Pointer | CType::UInt8Pointer => C_POINTER_BYTE_WIDTH,
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state

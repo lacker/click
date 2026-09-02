@@ -255,16 +255,14 @@ pub(in crate::surface) fn evaluate_contract_memory_load_with_resources(
         }
         crate::kernel::CExpressionOutcome::Value(CValue::Int32(
             bits @ Bitvector32Term::MemoryLoad(_, _),
-        )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer) => {
+        )) if value_type.is_pointer() => {
             symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
         // A cell materialized with its load variable (canonicalizing at
         // creation) reinterprets as a pointer exactly as its load would.
         crate::kernel::CExpressionOutcome::Value(CValue::Int32(
             bits @ Bitvector32Term::Variable(variable),
-        )) if matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer)
-            && crate::kernel::is_load_variable(&variable) =>
-        {
+        )) if value_type.is_pointer() && crate::kernel::is_load_variable(&variable) => {
             symbolic_pointer_contract_memory_load(pointer, bits, value_type)
         }
         crate::kernel::CExpressionOutcome::Value(_) => Err(format!(
@@ -477,7 +475,10 @@ pub(in crate::surface) fn c_value_matches_kernel_type(value: &CValue, c_type: CT
             | (CValue::UInt8(_), CType::UInt8)
             | (
                 CValue::Pointer(_),
-                CType::Int32Pointer | CType::UInt8Pointer
+                CType::Int32Pointer
+                    | CType::UInt8Pointer
+                    | CType::Int32PointerPointer
+                    | CType::UInt8PointerPointer
             )
     )
 }
@@ -613,7 +614,10 @@ pub(in crate::surface) fn symbolic_contract_memory_load(
             crate::kernel::intern_c_memory(memory.clone()),
             pointer,
         ))),
-        CType::Int32Pointer | CType::UInt8Pointer => {
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer => {
             symbolic_pointer_contract_memory_load(pointer, load, value_type)
         }
         CType::Int32Array(_) | CType::UInt8Array(_) => {
@@ -627,15 +631,10 @@ fn symbolic_pointer_contract_memory_load(
     bits: Bitvector32Term,
     value_type: CType,
 ) -> Result<CValue, String> {
-    let pointee_byte_width = match value_type {
-        CType::Int32Pointer => 4,
-        CType::UInt8Pointer => 1,
-        _ => {
-            return Err(format!(
-                "cannot symbolically load {value_type:?} as pointer"
-            ));
-        }
-    };
+    let pointee_byte_width = value_type
+        .pointee_type()
+        .map(CType::byte_width)
+        .ok_or_else(|| format!("cannot symbolically load {value_type:?} as pointer"))?;
     // A load never enters a pointer offset as a `MemoryLoad` term: the
     // load variable represents it, so contract-lowered ranges write
     // addresses exactly as kernel execution does.
