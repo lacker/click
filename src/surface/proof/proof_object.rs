@@ -964,10 +964,6 @@ impl ExecutionProofState {
 struct ExecutionBranchDecision {
     condition: ClickProposition,
     value: bool,
-    /// A proof-level case split (`if P { ... } else { ... }` in the proof),
-    /// whose fact holds from function entry, as opposed to a C `branch`
-    /// decision, which holds only at its statement.
-    proof_case: bool,
 }
 
 /// Read-only terminal data borrowed from an execution `Proof` by claim
@@ -988,20 +984,6 @@ pub(super) struct ProofExecutionView<'p> {
 impl ProofExecutionView<'_> {
     /// The proof-level case decisions recorded on one outcome path, in
     /// decision order: each is a surface condition and the arm taken.
-    pub(super) fn path_case_decisions(&self, path_index: usize) -> Vec<(ClickProposition, bool)> {
-        self.outcome_provenance
-            .get(path_index)
-            .map(|provenance| {
-                provenance
-                    .branch_decisions
-                    .iter()
-                    .filter(|decision| decision.proof_case)
-                    .map(|decision| (decision.condition.clone(), decision.value))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// Selects the retained surface branch skeleton for one checked outcome.
     /// Decisions are Proof provenance recorded at the typed splits; expansion
     /// reads them without reconstructing semantic facts from the post-state.

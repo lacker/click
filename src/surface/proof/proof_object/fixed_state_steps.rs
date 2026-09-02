@@ -937,7 +937,6 @@ impl<'a> Proof<'a> {
                     .push(ExecutionBranchDecision {
                         condition: condition.clone(),
                         value,
-                        proof_case: true,
                     });
                 case_provenance
                     .surface_propositions

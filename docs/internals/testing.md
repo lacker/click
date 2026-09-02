@@ -183,14 +183,14 @@ search that outlives the CLI limit is a Click tooling bug.
 
 ## Body rerun ratchet
 
-Ordinary verification should seal a completed proof's retained trace into
-the checked function execution without executing the C body again. Where the
-kernel sealer refuses a trace, or one of claim finishing's remaining guards
-declines to try, or opaque-contract certification cannot reuse a checked
-artifact, the body is executed independently and the reason is counted
-(`instrumentation::SealRefusal`, `instrumentation::ContractFallback`). The
-fixture harnesses take that census after an unfiltered run and compare it
-with the pinned baselines at the top of `tests/mdtests.rs` and
+Ordinary verification seals a completed proof's retained trace into the
+checked function execution without executing the C body again. Where the
+kernel sealer refuses a trace the proof fails and the reason is counted
+(`instrumentation::SealRefusal`; every pin is zero). Where opaque-contract
+certification cannot reuse a checked artifact, the body is still executed
+independently and the reason is counted (`instrumentation::ContractFallback`).
+The fixture harnesses take that census after an unfiltered run and compare
+it with the pinned baselines at the top of `tests/mdtests.rs` and
 `tests/examples.rs`.
 
 The comparison is exact in both directions. A count that rose means a proof

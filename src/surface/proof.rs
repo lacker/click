@@ -7,7 +7,6 @@ use super::*;
 
 mod attempt;
 mod claim_proofs;
-pub(in crate::surface) use claim_proofs::clear_independent_execution_cache;
 #[cfg(test)]
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
 mod cursor_execution;

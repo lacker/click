@@ -698,10 +698,6 @@ impl CheckedProofCaseArm {
         &self.facts
     }
 
-    pub(crate) fn case_fact(&self) -> &Proposition {
-        &self.partition.case_facts[self.arm_index]
-    }
-
     pub(crate) fn is_valid(&self) -> bool {
         self.arm_index < 2
             && self

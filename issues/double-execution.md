@@ -285,16 +285,26 @@ and 10 to 14), which the second pass of slice 3 owns. Claim finishing now
 reruns a body 13 times over the mdtests, from 100, and 14 times over the
 examples, from 48.
 
-### 7. Delete the fallback and the alignment
+### 7. Delete the fallback and the alignment (first pass landed 2026-09-02)
 
-When every ratchet count is zero: remove `cached_independent_execution`, the
-`certification_cache`, and the three guards; a sealing refusal becomes the
-proof's diagnostic. Then, because sealed paths are zipped with the proof's
-candidates, replace the outcome pairing with index identity and delete
-`outcomes_match`, `certify_c_function_execution_path_resource_representation`
-and its cache, and `describe_function_outcome_delta`. Keep the execution
-counter as regression instrumentation. This is the slice where a completed
-proof object is, by construction, the execution evidence.
+`cached_independent_execution`, its thread-local cache and clear hook, the
+`certification_cache`, and the per-group independent execution are gone
+from `finish_ordered_proof`; a sealing refusal is the proof's error and is
+still counted (every pin is zero). Because sealed paths are the proof's
+candidates in order, the outcome pairing (`outcomes_match`,
+`path_excluded_by_proof_branch`, and the surface re-lowering of case facts
+into groups) is replaced by index identity: claim finishing seals once and
+finishes every candidate against its own sealed path. Claim finishing never
+executes a body again.
+
+Still to delete: `certify_c_function_execution_path_resource_representation`
+and its cache, and `describe_function_outcome_delta`. They reconcile the
+sealed path's outcome (the body's under the contract's exit rule) with the
+outcome snapshot the proof's outcome goals hold (the body's raw outcome, or
+the framed one). The right order is to derive the outcome goals from the
+sealed outcome so the two are one value, then delete the reconciliation;
+that touches `split_function_outcomes` and the implicit-close handling in
+the drain and is its own slice.
 
 The remaining kernel-API-only audit bugs (claim coverage and injected entry
 facts in [contract-rule-trust-boundary.md](contract-rule-trust-boundary.md),

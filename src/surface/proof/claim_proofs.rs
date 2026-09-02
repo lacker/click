@@ -930,28 +930,6 @@ fn outcome_existence_surface_certificate(
     ])
 }
 
-#[derive(Clone)]
-struct CachedIndependentExecution {
-    pre_state: CState,
-    function: CFunction,
-    arguments: Vec<CExpression>,
-    assumptions: PureFactContext,
-    environment: CExecutionEnvironment,
-    concrete_loop_execution: bool,
-    execution: CCheckedFunctionExecution,
-}
-
-thread_local! {
-    static INDEPENDENT_EXECUTION_CACHE: std::cell::RefCell<Vec<CachedIndependentExecution>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Empties the independent-execution cache at a verification boundary: its
-/// entries embed snapshots of the arena being retired.
-pub(in crate::surface) fn clear_independent_execution_cache() {
-    INDEPENDENT_EXECUTION_CACHE.with(|cache| cache.borrow_mut().clear());
-}
-
 /// Places a path-independent terminal frame on each explicit execution leaf.
 /// The retained Proof provenance records the frame after the joined execution
 /// branch; Surface Click must spell that same checked operation inside each
@@ -998,54 +976,6 @@ fn surface_steps_from_checked_proof(proof: &Proof<'_>) -> Result<Vec<ProofStep>,
         })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn cached_independent_execution(
-    pre_state: &CState,
-    function: &CFunction,
-    arguments: &[CExpression],
-    assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    concrete_loop_execution: bool,
-    compute: impl FnOnce() -> CCheckedFunctionExecution,
-) -> CCheckedFunctionExecution {
-    if let Some(execution) = INDEPENDENT_EXECUTION_CACHE.with(|cache| {
-        cache
-            .borrow()
-            .iter()
-            .rev()
-            .find(|entry| {
-                entry.pre_state == *pre_state
-                    && entry.function == *function
-                    && entry.arguments == arguments
-                    && entry.assumptions == *assumptions
-                    && entry.environment == *environment
-                    && entry.concrete_loop_execution == concrete_loop_execution
-            })
-            .map(|entry| entry.execution.clone())
-    }) {
-        return execution;
-    }
-    let execution = compute();
-    if execution.limit().is_none() && !execution.paths().is_empty() {
-        INDEPENDENT_EXECUTION_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
-            if cache.len() >= 32 {
-                cache.remove(0);
-            }
-            cache.push(CachedIndependentExecution {
-                pre_state: pre_state.clone(),
-                function: function.clone(),
-                arguments: arguments.to_vec(),
-                assumptions: assumptions.clone(),
-                environment: environment.clone(),
-                concrete_loop_execution,
-                execution: execution.clone(),
-            });
-        });
-    }
-    execution
-}
-
 fn proof_case_fact_conflicts(
     fact: &Proposition,
     assumptions: &PureFactContext,
@@ -1073,7 +1003,6 @@ pub(super) fn finish_ordered_proof<'a>(
     function: &CFunction,
     arguments: &[CExpression],
     certificate_tactics: &[ProofTactic],
-    certification_cache: &mut Vec<(Vec<Proposition>, CState, bool, CCheckedFunctionExecution)>,
     claim_surface_builders: &mut Vec<(VerifiedClaim, ProofCertificateBuilder)>,
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let proof_label = if require_explicit_closers {
@@ -1213,53 +1142,6 @@ pub(super) fn finish_ordered_proof<'a>(
                 "kernel certification setup for `{proof_label}` failed: {message}"
             ))
         })?;
-        // A checked unit that joined a terminal proof-level case split keeps
-        // every case's outcome paths. Kernel certification runs once per
-        // group of paths with the same recorded case decisions, with that
-        // group's case facts assumed at function entry, as the compatibility
-        // interpreter certifies each case as its own context.
-        let path_case_facts: Vec<Vec<Proposition>> = (0..execution.paths().len())
-            .map(|path_index| {
-                direct_view
-                    .path_case_decisions(path_index)
-                    .into_iter()
-                    .filter_map(|(condition, value)| {
-                        let lowered = super::fixed_state_proofs::lower_fixed_state_proposition(
-                            &condition,
-                            &certification_facts,
-                            parsed_function.parameters(),
-                            arguments,
-                            pre_state,
-                            pre_state,
-                            None,
-                            &proof_execution.presentation.recorded_snapshots,
-                            predicate_environment,
-                            click_function_environment,
-                        )
-                        .ok()?;
-                        let fact = if value {
-                            lowered
-                        } else {
-                            Proposition::Not(Box::new(lowered))
-                        };
-                        Some(crate::kernel::canonical_condition_fact(&fact))
-                    })
-                    .collect()
-            })
-            .collect();
-        let mut case_groups: Vec<(Vec<Proposition>, Vec<usize>)> = Vec::new();
-        for (path_index, facts) in path_case_facts.iter().enumerate() {
-            match case_groups
-                .iter_mut()
-                .find(|(group_facts, _)| group_facts == facts)
-            {
-                Some((_, members)) => members.push(path_index),
-                None => case_groups.push((facts.clone(), vec![path_index])),
-            }
-        }
-        if case_groups.is_empty() {
-            case_groups.push((Vec::new(), Vec::new()));
-        }
         let base_certification_facts = certification_facts;
         let execution_semantics = if proof_execution.core.concrete_loop_execution
             || !proof_execution.core.frontier_loop_rules.is_empty()
@@ -1275,116 +1157,43 @@ pub(super) fn finish_ordered_proof<'a>(
         };
         // Sealing composes the retained kernel theorems into the checked
         // execution once for the whole proof, under the contract's own
-        // entry assumptions: every path carries its case facts itself, so
-        // the artifact serves every case group and later contract
-        // certification without a case premise. A refusal is counted by
-        // reason and the fixture harnesses pin those counts
-        // (`issues/double-execution.md`); the independent execution below
-        // remains only until every count is zero.
+        // entry assumptions; every path carries its case facts itself. A
+        // refusal means some proof operation did not retain what sealing
+        // needs: it is counted by reason (the fixture harnesses pin every
+        // count at zero) and fails the proof. Nothing executes the body
+        // again to decide whether the proof was valid.
         let sealed_execution = crate::instrumentation::measure_operation(
             function_block.signature().name(),
             &proof_label,
             "proof evidence sealing",
-            || match crate::kernel::checked_c_function_execution_from_proof_evidence(
-                execution,
-                function,
-                proof_execution.core.function_entry.as_deref(),
-                &proof_execution.core.execution_evidence,
-                assumptions_from_propositions(&base_certification_facts),
-                function_environment.clone(),
-                execution_semantics,
-                execution_mode,
-            ) {
-                Ok(checked) => Some(checked),
-                Err(refusal) => {
+            || {
+                crate::kernel::checked_c_function_execution_from_proof_evidence(
+                    execution,
+                    function,
+                    proof_execution.core.function_entry.as_deref(),
+                    &proof_execution.core.execution_evidence,
+                    assumptions_from_propositions(&base_certification_facts),
+                    function_environment.clone(),
+                    execution_semantics,
+                    execution_mode,
+                )
+                .map_err(|refusal| {
                     crate::instrumentation::record_seal_refusal(refusal);
-                    None
-                }
+                    ClickError::new(format!(
+                        "`{proof_label}`: the retained proof evidence could not be sealed into a checked execution ({refusal:?}); a proof operation did not retain what sealing needs"
+                    ))
+                })
             },
+        )?;
+        let sealed_execution = checked_c_function_execution_with_entry_derivations(
+            sealed_execution,
+            proof_execution.core.function_entry_derivations.to_vec(),
+            proof_execution
+                .core
+                .function_entry_execution_prerequisites
+                .to_vec(),
         );
-        let mut certified_executions = Vec::with_capacity(case_groups.len());
-        let mut certified_outcomes_by_group = Vec::with_capacity(case_groups.len());
-        let mut merged_pairing: Vec<Option<(usize, usize)>> = vec![None; execution.paths().len()];
-        for (group_index, (group_facts, group_members)) in case_groups.iter().enumerate() {
-            let mut certification_facts = base_certification_facts.clone();
-            for fact in group_facts {
-                if !certification_facts.contains(fact) {
-                    certification_facts.push(fact.clone());
-                }
-            }
-            let certified_execution = crate::instrumentation::measure_operation(
-                function_block.signature().name(),
-                &proof_label,
-                "kernel execution certification",
-                || {
-                    if let Some(sealed) = &sealed_execution {
-                        return sealed.clone();
-                    }
-                    let execution_start_assumptions =
-                        assumptions_from_propositions(&certification_facts);
-                    if proof_execution.core.frontier_loop_rules.is_empty()
-                        && let Some((_, _, _, execution)) = certification_cache.iter().find(
-                            |(facts, cached_state, concrete_loop_execution, _)| {
-                                facts == &certification_facts
-                                    && cached_state == pre_state
-                                    && *concrete_loop_execution
-                                        == proof_execution.core.concrete_loop_execution
-                            },
-                        )
-                    {
-                        execution.clone()
-                    } else {
-                        let execution = cached_independent_execution(
-                            pre_state,
-                            function,
-                            arguments,
-                            &execution_start_assumptions,
-                            function_environment,
-                            proof_execution.core.concrete_loop_execution,
-                            || {
-                                prove_checked_c_function_execution_with_environment(
-                                    pre_state.clone(),
-                                    function.clone(),
-                                    arguments.to_vec(),
-                                    execution_start_assumptions.clone(),
-                                    function_environment.clone(),
-                                    execution_semantics,
-                                    execution_mode,
-                                )
-                            },
-                        );
-                        if proof_execution.core.frontier_loop_rules.is_empty() {
-                            certification_cache.push((
-                                certification_facts.clone(),
-                                pre_state.clone(),
-                                proof_execution.core.concrete_loop_execution,
-                                execution.clone(),
-                            ));
-                        }
-                        execution
-                    }
-                },
-            );
-            let certified_execution = checked_c_function_execution_with_entry_derivations(
-                certified_execution,
-                proof_execution.core.function_entry_derivations.to_vec(),
-                proof_execution
-                    .core
-                    .function_entry_execution_prerequisites
-                    .to_vec(),
-            );
-            if let Some(limit) = certified_execution.limit() {
-                if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
-                    return Err(ClickError::new(format!(
-                        "verification budget exhausted inside {}",
-                        crate::instrumentation::deadline_context()
-                    )));
-                }
-                return Err(ClickError::new(format!(
-                    "kernel certification hit execution limit {limit:?} for `{proof_label}`"
-                )));
-            }
-            let certified_outcomes = certified_execution
+        let certified_outcomes = sealed_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1400,284 +1209,22 @@ pub(super) fn finish_ordered_proof<'a>(
                     Ok(outcome.clone())
                 }
                 proposition => Err(ClickError::new(format!(
-                    "kernel certification for `{proof_label}` produced an inexact theorem body {proposition:?}"
+                    "sealing for `{proof_label}` produced an inexact theorem body {proposition:?}"
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?;
-            let proof_outcomes = execution
-                .paths()
-                .iter()
-                .map(|path| path.outcome().clone())
-                .collect::<Vec<_>>();
-            let outcomes_match = |proof_candidate: &crate::kernel::CFunctionExecutionCandidate,
-                                  certified_index: usize| {
-                let certified = &certified_outcomes[certified_index];
-                let certified_path = &certified_execution.paths()[certified_index];
-                let certified_facts = certified_path
-                    .execution_facts()
-                    .into_iter()
-                    .map(|fact| fact.proposition().clone())
-                    .collect::<Vec<_>>();
-                let proof_facts = proof_candidate
-                    .execution_facts()
-                    .into_iter()
-                    .map(|fact| fact.proposition().clone())
-                    .collect::<Vec<_>>();
-                // Do not make two different branch paths appear equal by first
-                // assuming their contradictory guards. In an inconsistent
-                // context every outcome is provably equal, which used to pair a
-                // recursive branch with an unrelated base-case certificate.
-                let certified_path_conditions = certified_facts.iter().chain(
-                    certified_path
-                        .obligations()
-                        .iter()
-                        .map(ProofObligation::proposition),
-                );
-                let proof_path_conditions = proof_facts
-                    .iter()
-                    .chain(
-                        proof_candidate
-                            .obligations()
-                            .iter()
-                            .map(ProofObligation::proposition),
-                    )
-                    .collect::<Vec<_>>();
-                if certified_path_conditions.into_iter().any(|certified_fact| {
-                    proof_path_conditions.iter().any(|checked_fact| {
-                        propositions_are_exact_negations(certified_fact, checked_fact)
-                    })
-                }) {
-                    return false;
-                }
-                // A proof-level branch can select an execution path even when a
-                // simple statement certificate deliberately omitted the C branch
-                // guard from its own fact list. Include that selected branch when
-                // pairing the check candidate with an independently certified
-                // path, or a recursive return known to equal zero can be paired
-                // with the unrelated base-case path merely because their final
-                // observable values coincide.
-                if !proof_execution.presentation.case_assumptions.is_empty() {
-                    let CFunctionOutcome::Return {
-                        value: result,
-                        state: post_state,
-                    } = proof_candidate.outcome()
-                    else {
-                        return false;
-                    };
-                    let mut proof_available = pure_facts.clone();
-                    proof_available.extend(
-                        proof_candidate
-                            .facts()
-                            .iter()
-                            .map(|fact| fact.proposition().clone()),
-                    );
-                    for case in &proof_execution.presentation.case_assumptions {
-                        let case_fact = if let Some(fact) = &case.fact {
-                            fact.clone()
-                        } else {
-                            let Ok(condition) = lower_outcome_proposition_with_recorded_snapshots(
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                post_state,
-                                result,
-                                &proof_available,
-                                &case.condition,
-                                predicate_environment,
-                                click_function_environment,
-                                &proof_execution.presentation.recorded_snapshots,
-                            ) else {
-                                return false;
-                            };
-                            if case.value {
-                                condition
-                            } else {
-                                Proposition::Not(Box::new(condition))
-                            }
-                        };
-                        if proof_path_conditions.iter().any(|checked_fact| {
-                            propositions_are_exact_negations(checked_fact, &case_fact)
-                        }) {
-                            // The check execution still contains every C path;
-                            // proof-level branching filters the incompatible ones
-                            // later.  Such a path only needs its ordinary matching
-                            // kernel certificate, not a certificate compatible
-                            // with a proof branch that will discard it.
-                            break;
-                        }
-                        if certified_facts.iter().any(|certified_fact| {
-                            propositions_are_exact_negations(certified_fact, &case_fact)
-                        }) {
-                            return false;
-                        }
-                    }
-                }
-                let mut path_assumptions = certified_path.assumptions().clone();
-                for fact in certification_facts.iter().chain(&certified_facts) {
-                    path_assumptions = path_assumptions.assume_proposition(fact.clone());
-                }
-                for fact in &pure_facts {
-                    path_assumptions = path_assumptions.assume_proposition(fact.clone());
-                }
-                for fact in proof_facts {
-                    path_assumptions = path_assumptions.assume_proposition(fact);
-                }
-                for equation in
-                    crate::kernel::certified_store_equations(&proof_candidate.execution_facts())
-                        .into_iter()
-                        .chain(crate::kernel::certified_store_equations(
-                            &certified_path.execution_facts(),
-                        ))
-                {
-                    path_assumptions = path_assumptions.assume_proposition(equation);
-                }
-                if let CFunctionOutcome::Return { state, .. } = certified
-                    && let Ok(resource_facts) =
-                        state.resources().observable_facts(&path_assumptions)
-                {
-                    for fact in resource_facts {
-                        path_assumptions = path_assumptions.assume_proposition(fact);
-                    }
-                }
-                c_function_outcomes_program_state_definitionally_equal(
-                    proof_candidate.outcome(),
-                    certified,
-                    &path_assumptions,
-                ) || c_function_outcomes_program_state_equal_by_execution_provenance(
-                    proof_candidate.outcome(),
-                    &proof_candidate.execution_facts(),
-                    certified,
-                    &certified_path.execution_facts(),
-                    &path_assumptions,
-                )
-            };
-            // A nested proof branch can carry a self-contradictory case set: its
-            // sibling contexts own every execution path, and this context is
-            // vacuous. Such a path needs no matching kernel certificate — the
-            // exit drain below skips it by the same case reasoning.
-            let path_excluded_by_proof_branch =
-            |proof_candidate: &crate::kernel::CFunctionExecutionCandidate| -> Result<bool, ClickError> {
-                if proof_execution.presentation.case_assumptions.is_empty() {
-                    return Ok(false);
-                }
-                let CFunctionOutcome::Return {
-                    value: result,
-                    state: post_state,
-                } = proof_candidate.outcome()
-                else {
-                    return Ok(false);
-                };
-                let mut available = pure_facts.clone();
-                available.extend(
-                    proof_candidate
-                        .facts()
-                        .iter()
-                        .map(|fact| fact.proposition().clone()),
-                );
-                for case in &proof_execution.presentation.case_assumptions {
-                    let fact = if let Some(fact) = &case.fact {
-                        fact.clone()
-                    } else {
-                        let Ok(condition) = lower_outcome_proposition_with_recorded_snapshots(
-                            parsed_function.parameters(),
-                            arguments,
-                            pre_state,
-                            post_state,
-                            result,
-                            &available,
-                            &case.condition,
-                            predicate_environment,
-                            click_function_environment,
-                            &proof_execution.presentation.recorded_snapshots,
-                        ) else {
-                            return Ok(false);
-                        };
-                        if case.value {
-                            condition
-                        } else {
-                            Proposition::Not(Box::new(condition))
-                        }
-                    };
-                    if available
-                        .iter()
-                        .any(|existing| propositions_are_exact_negations(existing, &fact))
-                    {
-                        return Ok(true);
-                    }
-                    let routed_assumptions = assumptions_from_propositions(&available);
-                    match proof_case_fact_conflicts(&fact, &routed_assumptions) {
-                        Ok(true) => return Ok(true),
-                        Ok(false) => {}
-                        Err(()) => {
-                            return Err(ClickError::new(format!(
-                                "execution pass for `{proof_label}` cannot attribute a path to a sibling proof branch: the routed assumptions are already inconsistent"
-                            )));
-                        }
-                    }
-                    available.push(fact);
-                }
-                Ok(false)
-            };
-            let certified_path_for_proof = crate::instrumentation::measure_operation(
-                function_block.signature().name(),
-                &proof_label,
-                "certified outcome pairing",
-                || -> Result<Option<Vec<Option<usize>>>, ClickError> {
-                    if proof_execution.core.execution_abstraction {
-                        return Ok((!certified_outcomes.is_empty())
-                            .then(|| vec![Some(0); execution.paths().len()]));
-                    }
-                    let mut pairing = Vec::with_capacity(execution.paths().len());
-                    for (path_index, proof_candidate) in execution.paths().iter().enumerate() {
-                        if !group_members.contains(&path_index) {
-                            pairing.push(None);
-                            continue;
-                        }
-                        if outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
-                            substrate.outcome_branch_for_path(path_index).is_none()
-                        }) {
-                            // The Proof-owned N-way outcome derivation rejected
-                            // this candidate under an exact contradictory path
-                            // fact. It owns no semantic goal and needs no whole-
-                            // function pairing; a compatible certified sibling
-                            // remains addressed by its original path index.
-                            pairing.push(None);
-                            continue;
-                        }
-                        if let Some(certified_index) =
-                            (0..certified_outcomes.len()).find(|certified_index| {
-                                outcomes_match(proof_candidate, *certified_index)
-                            })
-                        {
-                            pairing.push(Some(certified_index));
-                        } else if path_excluded_by_proof_branch(proof_candidate)? {
-                            pairing.push(None);
-                        } else {
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(pairing))
-                },
-            )?;
-            let Some(certified_path_for_proof) = certified_path_for_proof else {
-                // Outcome equality is a conservative kernel query: once the
-                // ambient limit fires it returns `false`, which used to turn a
-                // valid check into a ghost-region or memory mismatch. Give the
-                // limit priority over the semantic pairing diagnostic.
-                check_verification_deadline()?;
-                return Err(ClickError::new(format!(
-                    "execution pass for `{proof_label}` contains a path not reproduced by kernel certification\n  check: {proof_outcomes:?}\n  certified: {certified_outcomes:?}"
-                )));
-            };
-            for &member in group_members {
-                if let Some(certified_index) = certified_path_for_proof[member] {
-                    merged_pairing[member] = Some((group_index, certified_index));
-                }
-            }
-            certified_executions.push(certified_execution);
-            certified_outcomes_by_group.push(certified_outcomes);
-        }
-        let certified_path_for_proof = merged_pairing;
+        // The sealed paths are the proof's candidates in order, so each
+        // candidate's certified path is its own index. A candidate the
+        // Proof-owned outcome derivation rejected under an exact
+        // contradictory path fact owns no goal and is not finished.
+        let certified_path_for_proof: Vec<Option<usize>> = (0..execution.paths().len())
+            .map(|path_index| {
+                let rejected = outcome_substrate.as_ref().is_some_and(|(substrate, _)| {
+                    substrate.outcome_branch_for_path(path_index).is_none()
+                });
+                (!rejected).then_some(path_index)
+            })
+            .collect();
         let certification_facts = base_certification_facts;
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
@@ -1703,12 +1250,11 @@ pub(super) fn finish_ordered_proof<'a>(
                         "execution path preparation",
                     );
                     let Some(certified_path_index) = certified_path_for_proof[path_index] else {
-                        // This context's proof-branch case set excludes the path; a
-                        // sibling context certifies it.
+                        // The outcome derivation rejected this candidate under
+                        // an exact contradictory path fact; it owns no goal.
                         continue 'execution_path;
                     };
-                    let certified_path = &certified_executions[certified_path_index.0].paths()
-                        [certified_path_index.1];
+                    let certified_path = &sealed_execution.paths()[certified_path_index];
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
@@ -4023,14 +3569,11 @@ pub(super) fn finish_ordered_proof<'a>(
                         if proof_execution.core.execution_abstraction {
                             (
                                 certified_path.clone(),
-                                certified_outcomes_by_group[certified_path_index.0]
-                                    [certified_path_index.1]
-                                    .clone(),
+                                certified_outcomes[certified_path_index].clone(),
                                 certification_facts.clone(),
                             )
                         } else {
-                            let certified_outcome = &certified_outcomes_by_group
-                                [certified_path_index.0][certified_path_index.1];
+                            let certified_outcome = &certified_outcomes[certified_path_index];
                             let outcome_delta = describe_function_outcome_delta(
                                 &outcome,
                                 certified_outcome,
@@ -4071,8 +3614,7 @@ pub(super) fn finish_ordered_proof<'a>(
             ),
             )
             .ok_or_else(|| {
-                let certified_outcome =
-                    &certified_outcomes_by_group[certified_path_index.0][certified_path_index.1];
+                let certified_outcome = &certified_outcomes[certified_path_index];
                 let outcome_delta = describe_function_outcome_delta(
                     specification.outcome(),
                     certified_outcome,
@@ -4114,7 +3656,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: certified_executions[certified_path_index.0].clone(),
+                            checked_execution: sealed_execution.clone(),
                             checked_proposition,
                         });
                     }

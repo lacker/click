@@ -1977,7 +1977,6 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
     tactics: &[ProofTactic],
 ) -> Result<Vec<VerifiedCTheorem>, ClickError> {
     let mut verified = Vec::new();
-    let mut certification_cache = Vec::new();
     let mut captured_paths = Vec::new();
     let mut context_count = 0;
     let mut claim_surface_builders: Vec<(VerifiedClaim, Vec<ProofCertificateBuilder>)> = Vec::new();
@@ -2020,7 +2019,6 @@ pub(in crate::surface::proof) fn finish_ordered_proof_units<'a>(
                     function,
                     arguments,
                     tactics,
-                    &mut certification_cache,
                     &mut context_surface_builders,
                 )
             },

@@ -553,15 +553,11 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
     // that environment's snapshots and keeps its kernel session; every other
     // verification starts its own, so thread-local kernel state cannot carry
     // over from whatever verified before it on this thread.
-    let session = initial_function_environment
+    // The guard scopes the kernel's thread-local state to this verification
+    // and is held until it finishes.
+    let _session = initial_function_environment
         .is_none()
         .then(crate::kernel::VerificationSession::enter);
-    if session
-        .as_ref()
-        .is_some_and(crate::kernel::VerificationSession::is_fresh)
-    {
-        proof::clear_independent_execution_cache();
-    }
     let (file, parsed_sources, selected_functions) = {
         let _timing = VerificationTimingPhase::new("frontend");
         let c_sources: BTreeMap<&str, &str> = c_sources.iter().copied().collect();

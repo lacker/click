@@ -1416,10 +1416,9 @@ mod tests {
 }
 
 /// Why the kernel sealer could not compose a retained proof trace into the
-/// checked function execution, or which claim-finishing guard declined to
-/// try. Each refusal makes ordinary verification execute the function body
-/// again (`issues/double-execution.md`). The fixture harnesses pin the count
-/// of every reason so that it can only fall.
+/// checked function execution. A refusal fails the proof: some proof
+/// operation did not retain what sealing needs (`issues/double-execution.md`).
+/// The fixture harnesses pin the count of every reason at zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SealRefusal {
     /// The proof published a different number of paths than it retained

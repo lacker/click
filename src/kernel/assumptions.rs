@@ -3133,10 +3133,6 @@ impl SymbolicCExecution {
 }
 
 impl SymbolicCExecutionPath {
-    pub(crate) fn assumptions(&self) -> &PureFactContext {
-        &self.assumptions
-    }
-
     pub fn facts(&self) -> &[ExecutionPureFact] {
         &self.facts
     }

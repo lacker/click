@@ -250,7 +250,6 @@ impl<'a> Proof<'a> {
                 .push(ExecutionBranchDecision {
                     condition: surface_condition.clone(),
                     value: take_then,
-                    proof_case: false,
                 });
             arm_execution.core.has_structured_branch_history = true;
             arm_execution.presentation.branch_path.push(format!(
@@ -1187,7 +1186,6 @@ impl<'a> Proof<'a> {
                         provenance.branch_decisions.push(ExecutionBranchDecision {
                             condition: surface_condition.clone(),
                             value: arm_index == 0,
-                            proof_case: true,
                         });
                     }
                     outcome_provenance.push(provenance);
