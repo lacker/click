@@ -21,7 +21,7 @@ const QUARANTINED: &[(&str, &str)] = &[];
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
     (SealRefusal::PathCount, 3),
     (SealRefusal::CasePartition, 4),
-    (SealRefusal::UnretainedPremise, 28),
+    (SealRefusal::UnretainedPremise, 10),
     (SealRefusal::StatementMismatch, 9),
     (SealRefusal::StateMismatch, 7),
     (SealRefusal::ImplicitCountedClose, 20),

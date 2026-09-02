@@ -2062,3 +2062,112 @@ fn sealing_still_refuses_a_trace_that_stops_before_the_path_ends() {
         Some(crate::instrumentation::SealRefusal::IncompleteTrace)
     );
 }
+
+/// `int32 early() { if (0 < 1) { return 0; } return 1; }` whose one retained
+/// statement theorem has `premises` and whose candidate path retains `facts`.
+fn early_return_sealing_inputs_with_facts(
+    premises: Vec<Proposition>,
+    facts: Vec<Proposition>,
+) -> (
+    CFunctionExecutionCandidates,
+    CFunction,
+    crate::kernel::proof::PersistentSequence<crate::kernel::proof::CheckedExecutionEvent>,
+) {
+    let branch = c_if(
+        c_less_than(c_int32_literal(0), c_int32_literal(1)),
+        c_return(c_int32_literal(0)),
+        CStatement::Skip,
+    );
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch.clone(), c_return(c_int32_literal(1))),
+    );
+    let caller_state = CState::new();
+    let entry_state = c_function_entry_state(&caller_state, &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let outcome = CStatementOutcome::Return {
+        value: int32(0),
+        state: entry_state.clone(),
+    };
+    let (function_outcome, obligations) = c_function_outcome_from_statement_outcome(
+        &caller_state,
+        &function,
+        outcome.clone(),
+        Vec::new(),
+        &PureFactContext::new(),
+    );
+    let candidates = c_function_execution_candidates_from_outcomes(
+        caller_state,
+        function.clone(),
+        Vec::new(),
+        vec![(
+            function_outcome,
+            facts.into_iter().map(ExecutionPureFact::new).collect(),
+            obligations,
+        )],
+    );
+    let conclusion = Proposition::CStatementVerifies {
+        state: entry_state,
+        statement: branch,
+        outcome,
+    };
+    let theorem = Theorem::new(
+        premises
+            .into_iter()
+            .rev()
+            .fold(conclusion, |body, premise| {
+                Proposition::Implies(Box::new(premise), Box::new(body))
+            }),
+    );
+    let mut trace = crate::kernel::proof::PersistentSequence::default();
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Statement(
+        theorem,
+    ));
+    (candidates, function, trace)
+}
+
+#[test]
+fn sealing_finds_a_theorem_premise_inside_a_retained_conjunction() {
+    let counter = Bitvector32Term::Variable(Variable(1_000_000));
+    let bound = Bitvector32Term::Variable(Variable(0));
+    let nonnegative = Proposition::ConditionIs(
+        ConditionTerm::signed_greater_equal(counter.clone(), Bitvector32Term::Constant(0)),
+        true,
+    );
+    let bounded = Proposition::ConditionIs(ConditionTerm::signed_less_equal(counter, bound), true);
+    // A loop step retains the lowered invariant as one conjunction; the
+    // statement theorem lists each conjunct it executed under.
+    let invariant = Proposition::And(Box::new(nonnegative.clone()), Box::new(bounded.clone()));
+    let (candidates, function, trace) = early_return_sealing_inputs_with_facts(
+        vec![nonnegative.clone(), bounded.clone()],
+        vec![invariant.clone()],
+    );
+    seal_early_return(&candidates, &function, trace)
+        .expect("each conjunct of a retained conjunction is a retained premise");
+
+    // A disjunction retains neither side, and a premise mentioning a
+    // different variable is not retained by a conjunction that does not
+    // contain it.
+    let disjunction = Proposition::Or(Box::new(nonnegative.clone()), Box::new(bounded.clone()));
+    let (candidates, function, trace) =
+        early_return_sealing_inputs_with_facts(vec![nonnegative.clone()], vec![disjunction]);
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::UnretainedPremise)
+    );
+    let other = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Variable(Variable(1_000_001)),
+            Bitvector32Term::Constant(3),
+        ),
+        true,
+    );
+    let (candidates, function, trace) =
+        early_return_sealing_inputs_with_facts(vec![other], vec![invariant]);
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::UnretainedPremise)
+    );
+}

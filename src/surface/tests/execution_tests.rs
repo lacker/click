@@ -249,6 +249,45 @@ fn early_return_seals_without_a_body_rerun() {
 }
 
 #[test]
+fn symbolic_loop_bound_invariant_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 count_to_n(int32 n) {
+                int32 i;
+                i = 0;
+                while (i < n) {
+                    i = i + 1;
+                }
+                return i;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_to_n.c";
+
+            int32 count_to_n(int32 n) {
+                requires n >= 0 and n <= 2147483647;
+                ensures result == n;
+            } by {
+                step();
+                step();
+                loop {
+                    invariant i >= 0 and i <= n;
+                }
+                step();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("count_to_n.c", c_source)])
+        .expect("a symbolic loop bound with a conjunctive invariant should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "the invariant conjuncts the loop theorem assumed are retained by the loop step"
+    );
+}
+
+#[test]
 fn verified_loop_summary_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {

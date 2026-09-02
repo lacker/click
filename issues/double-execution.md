@@ -169,17 +169,26 @@ outcome that leaves source unexecuted, still refuses as `IncompleteTrace`
 proofs now seal, and the other 6 and 4 reach `StatementMismatch`, which
 slice 4 owns.
 
-### 3. Loop exit hypotheses
+### 3. Loop exit hypotheses (first pass landed 2026-09-01)
 
-The verified-loop step's theorem is `hypotheses -> CStatementVerifies(...)`
-whose hypotheses are the invariant at the fresh head variables and the negated
-condition. They are justified by the loop rule and are assumptions of the
-exit path, not facts to derive. Retain them at the loop step as the path's
-exact facts (the candidate's `execution_facts`), so the sealer finds them
-through the existing exact lookup. Do not widen
-`proof_evidence_premises_are_retained` to ambient derivation. Negative test:
-a forged exit fact that is not one of the rule's hypotheses is refused.
-Clears the first row.
+Diagnosis: the loop step does retain its exit hypotheses, as one certified
+fact per lowered invariant, `And(i' >= 0, i' <= n)`; the kernel theorem lists
+the context it executed under as atomic condition facts, `i' >= 0` and
+`i' <= n` separately, and the sealer's lookup was exact. The sealer now
+applies conjunction elimination, and nothing else, to retained facts
+(`retained_fact_contains`): `And(a, b)` retained is `a` retained. A
+disjunction or an unrelated conjunction is still refused (kernel test
+`sealing_finds_a_theorem_premise_inside_a_retained_conjunction`; surface
+regression `symbolic_loop_bound_invariant_seals_without_a_body_rerun`).
+`UnretainedPremise` fell from 28 to 10 over the mdtests and from 11 to
+10 over the examples, with no other count rising.
+
+Remaining `UnretainedPremise` refusals are other premise shapes (a
+disjunction, a loadability, and condition facts the sealing context can
+derive but the path did not retain exactly). Diagnose each with the
+`CLICK_DBG`-style print of the premise beside the path's retained facts
+before choosing where to retain it; do not widen the sealer to ambient
+derivation.
 
 ### 4. State and statement identity
 

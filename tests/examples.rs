@@ -17,7 +17,7 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// project; see `tests/mdtests.rs` for the rule.
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[
     (SealRefusal::CasePartition, 12),
-    (SealRefusal::UnretainedPremise, 11),
+    (SealRefusal::UnretainedPremise, 10),
     (SealRefusal::StatementMismatch, 4),
     (SealRefusal::StateMismatch, 4),
     (SealRefusal::ImplicitCountedClose, 3),

@@ -1894,6 +1894,20 @@ fn proof_evidence_assumptions(theorem: &Theorem, base: &PureFactContext) -> Pure
     assumptions
 }
 
+/// Whether `premise` is `fact` or one of its conjuncts. Conjunction
+/// elimination is the one structural rule the sealer applies to retained
+/// facts: a kernel theorem lists the context it executed under as atomic
+/// condition facts, while a loop step retains the lowered invariant it
+/// assumed as one conjunction, so `And(a, b)` retained is `a` retained.
+fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
+    fact == premise
+        || matches!(
+            fact,
+            Proposition::And(left, right)
+                if retained_fact_contains(left, premise) || retained_fact_contains(right, premise)
+        )
+}
+
 fn proof_evidence_premises_are_retained(
     theorem: &Theorem,
     assumptions: &PureFactContext,
@@ -1907,7 +1921,7 @@ fn proof_evidence_premises_are_retained(
         if !assumptions.proves_exact(premise)
             && !execution_facts
                 .iter()
-                .any(|fact| fact.proposition() == premise.as_ref())
+                .any(|fact| retained_fact_contains(fact.proposition(), premise))
             && !candidate
                 .obligations
                 .iter()
