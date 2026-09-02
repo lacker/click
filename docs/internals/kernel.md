@@ -412,6 +412,10 @@ havoc block names in an expanded proof. A dependent address is transported
 only when its pointer and index expressions are themselves stable. An
 overlapping or undecidable footprint stops the transport.
 
+Loop havoc carries the checked mutable ranges of a whole-loop effect summary
+when they are available. Its memory-DAG edge is crossed by the same
+range-disjointness rule; a loop with no evaluated footprint remains a barrier.
+
 Independent whole-path checking can regenerate fresh return variables and
 `call-havoc` marker identities for the same execution path. Certification
 couples those encodings only through matching memory-derivation structure:

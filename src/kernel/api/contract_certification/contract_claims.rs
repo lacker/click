@@ -392,6 +392,33 @@ fn memories_equal_by_matching_derivations(
                 )
         }
         (
+            Some(CMemoryDerivation::LoopHavoc {
+                base: left_base,
+                mutable_ranges: left_ranges,
+                ..
+            }),
+            Some(CMemoryDerivation::LoopHavoc {
+                base: right_base,
+                mutable_ranges: right_ranges,
+                ..
+            }),
+        ) => {
+            let ranges_match = match (left_ranges, right_ranges) {
+                (Some(left_ranges), Some(right_ranges)) => {
+                    memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            ranges_match
+                && memories_equal_by_matching_derivations(
+                    left_base,
+                    right_base,
+                    assumptions,
+                    depth + 1,
+                )
+        }
+        (
             Some(CMemoryDerivation::Store {
                 base: left_base,
                 pointer: left_pointer,

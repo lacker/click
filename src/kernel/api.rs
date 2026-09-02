@@ -527,9 +527,11 @@ fn abstract_c_state_for_join_across_with_policy(
                 &sibling_memories,
             )?;
         } else {
-            abstract_state.memory = abstract_state
-                .memory
-                .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+            abstract_state.memory = abstract_state.memory.with_loop_memory_havoc(
+                variables.next(),
+                &preserved_blocks,
+                None,
+            );
         }
     }
     for (name, value, c_type) in abstract_objects {

@@ -1056,11 +1056,12 @@ impl From<&CMemory> for SharedCMemory {
 /// and why a snapshot interned on another thread (the arena is thread-local)
 /// is merely slower to reason about rather than wrong.
 ///
-/// `LoopHavoc` is deliberately its own edge kind rather than a bulk store:
-/// loop havoc has no write set for a pointer to be disjoint from, so no
-/// load-preservation walk may cross one. Enforcing that at the edge is how
-/// havoc identity survives this arc by construction, upstream of any
-/// snapshot comparison (see conventions.md's soundness trap).
+/// `LoopHavoc` is deliberately its own edge kind rather than a bulk store.
+/// Interface havoc has no checked write set, so no load-preservation walk may
+/// cross that form. Verified whole-loop effects may carry a checked write set;
+/// those edges are crossed only with range-disjointness evidence. Enforcing
+/// that at the edge is how havoc identity survives this arc by construction,
+/// upstream of any snapshot comparison (see conventions.md's soundness trap).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CMemoryDerivation {
     /// `base` with one cell written. `context` is the fact context the
@@ -1126,9 +1127,14 @@ pub enum CMemoryDerivation {
     /// havoc (conventions.md's soundness trap).
     CellsForgotten { base: SharedCMemory },
     /// `base` after a loop body that may write anything it can reach.
+    ///
+    /// `mutable_ranges` is present only when the loop's whole-effect summary
+    /// supplied a checked footprint. `None` remains an unconditional barrier;
+    /// `Some(empty)` is a checked no-write footprint.
     LoopHavoc {
         base: SharedCMemory,
         variable: Variable,
+        mutable_ranges: Option<Vec<CMemoryRange>>,
     },
     /// `base` after a call that may write only within `mutable_ranges`.
     ///

@@ -1,5 +1,27 @@
 use super::*;
 
+fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
+    use std::hash::{Hash, Hasher};
+
+    // Keep this fingerprint form-invariant across proof execution and
+    // independent certification. It separates alpha-colliding havoc shapes
+    // without making marker identity depend on snapshot-local terms.
+    let mut shape = mutable_ranges
+        .iter()
+        .map(|range| {
+            (
+                format!("{:?}", range.base().block),
+                range.start().as_const(),
+                range.end().as_const(),
+            )
+        })
+        .collect::<Vec<_>>();
+    shape.sort();
+    let mut hasher = std::hash::DefaultHasher::new();
+    shape.hash(&mut hasher);
+    (hasher.finish() as u32) | 1
+}
+
 pub(super) fn resource_context_has_symbolic_int32_range_read(
     resources: &ResourceContext,
     base: &Pointer,
@@ -560,21 +582,30 @@ impl CMemory {
         mut self,
         variable: Variable,
         preserved_blocks: &BTreeSet<PointerBlock>,
+        mutable_ranges: Option<&[CMemoryRange]>,
     ) -> Self {
         // A loop body that may write memory can clobber, through some
         // pointer, any cell it can reach. Drop concrete cells outside the
         // preserved (scalar stack local) blocks so loop-head and post-loop
-        // reads do not observe stale pre-loop values; anything that must
-        // survive the loop has to be restated as a loop invariant. The
-        // marker block additionally defeats symbolic cross-loop load
-        // equality for the remaining symbolic memory.
+        // reads do not observe stale pre-loop values. A checked footprint is
+        // retained on the derivation edge for disjoint-load transport; the
+        // marker block still distinguishes this havoc from ordinary memory.
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
-        std::sync::Arc::make_mut(&mut self.blocks)
-            .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        std::sync::Arc::make_mut(&mut self.blocks).insert(
+            format!("havoc:{}", variable.0).into(),
+            CBlock::new(mutable_ranges.map_or(0, memory_havoc_write_set_fingerprint)),
+        );
         if let Some(base) = base {
-            record_c_memory_derivation(&self, CMemoryDerivation::LoopHavoc { base, variable });
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::LoopHavoc {
+                    base,
+                    variable,
+                    mutable_ranges: mutable_ranges.map(|ranges| ranges.to_vec()),
+                },
+            );
         }
         self
     }
@@ -686,41 +717,10 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        // The marker size fingerprints the write set. Marker names restart
-        // per claim verification, so two claims' snapshots can be
-        // alpha-identical while their same-named havocs wrote different
-        // ranges; content-addressed interning would then merge them and
-        // first-wins derivation recording would let one world's edges answer
-        // the other's load queries. Folding the ranges into the marker's
-        // otherwise-unused size keeps such snapshots content-distinct, while
-        // havocs with equal parents and equal write sets — genuinely
-        // indistinguishable — still share a node. Deterministic: the hasher
-        // is fixed-key and the ranges are check-stable.
-        let write_set_fingerprint = {
-            use std::hash::{Hash, Hasher};
-            // The fingerprint must identify the write set across the check
-            // and the independent certification, which write one call's
-            // ranges over different snapshot variants — so it hashes only
-            // form-invariant structure: the range count, each base
-            // block, and constant endpoints. That is enough to separate
-            // alpha-colliding call sequences whose havocs wrote different
-            // shapes; the full claim-scoped salt design is recorded in the
-            // issue for the residual same-shape collisions.
-            let mut shape = mutable_ranges
-                .iter()
-                .map(|range| {
-                    (
-                        format!("{:?}", range.base().block),
-                        range.start().as_const(),
-                        range.end().as_const(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            shape.sort();
-            let mut hasher = std::hash::DefaultHasher::new();
-            shape.hash(&mut hasher);
-            (hasher.finish() as u32) | 1
-        };
+        // Marker identity includes the form-invariant shape of the write set
+        // so equal-parent havocs with different footprints cannot share one
+        // first-wins derivation.
+        let write_set_fingerprint = memory_havoc_write_set_fingerprint(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
             CBlock::new(write_set_fingerprint),

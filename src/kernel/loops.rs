@@ -1330,15 +1330,15 @@ pub(super) struct EvaluatedMemorySegment {
     pub(super) element_width: u32,
 }
 
-pub(super) fn collect_whole_loop_effect_summaries(
+fn evaluate_whole_loop_effect_ranges(
     before_state: &CState,
-    after_state: &CState,
     effect_checks: &[CLoopEffectCheck],
     include_mutable_summaries: bool,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<Proposition>> {
-    let mut summaries = Vec::new();
+) -> ExecutionResult<(Vec<Vec<CMemoryRange>>, bool)> {
+    let mut ranges_by_summary = Vec::new();
+    let mut all_ranges_evaluable = true;
     for check in effect_checks {
         if check.span() != CLoopEffectSpan::Whole {
             continue;
@@ -1374,19 +1374,30 @@ pub(super) fn collect_whole_loop_effect_summaries(
                     }
                 }
                 if failed {
+                    all_ranges_evaluable = false;
                     continue;
                 }
                 ranges
             }
         };
+        ranges_by_summary.push(ranges);
+    }
+    Ok((ranges_by_summary, all_ranges_evaluable))
+}
 
-        summaries.push(Proposition::CMemoryEffectSummary {
+pub(super) fn collect_whole_loop_effect_summaries(
+    before_state: &CState,
+    after_state: &CState,
+    ranges_by_summary: &[Vec<CMemoryRange>],
+) -> Vec<Proposition> {
+    ranges_by_summary
+        .iter()
+        .map(|ranges| Proposition::CMemoryEffectSummary {
             before: before_state.memory().clone(),
             after: after_state.memory().clone(),
-            mutable_ranges: ranges,
-        });
-    }
-    Ok(summaries)
+            mutable_ranges: ranges.clone(),
+        })
+        .collect()
 }
 
 pub(super) fn prepare_loop_top_state(
@@ -1397,16 +1408,25 @@ pub(super) fn prepare_loop_top_state(
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<(CState, Vec<Proposition>)> {
-    let mut top_state = havoc_loop_modified_locals(entry_state, body, variables);
     let include_mutable_summaries = statement_may_write_memory(body);
-    let mut summaries = collect_whole_loop_effect_summaries(
+    let (effect_ranges, all_ranges_evaluable) = evaluate_whole_loop_effect_ranges(
         entry_state,
-        &top_state,
         effect_checks,
         include_mutable_summaries,
         assumptions,
         budget,
     )?;
+    // A verified footprint is an edge fact, not merely a copy-back hint. If
+    // any whole mutable segment could not be evaluated, keep the old barrier
+    // semantics for the entire loop; the failed effect check still produces
+    // its own false proof obligation. Preserve Some(empty) for a checked
+    // immutable/no-write summary, distinct from no footprint at all.
+    let loop_havoc_ranges = (all_ranges_evaluable && !effect_ranges.is_empty())
+        .then(|| effect_ranges.iter().flatten().cloned().collect::<Vec<_>>());
+    let mut top_state =
+        havoc_loop_modified_locals(entry_state, body, variables, loop_havoc_ranges.as_deref());
+    let mut summaries =
+        collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
 
     // Whole-loop effects are part of the induction hypothesis at the abstract
     // head and are checked independently at every back edge.
@@ -1438,14 +1458,7 @@ pub(super) fn prepare_loop_top_state(
 
     if framed_memory != *top_state.memory() {
         top_state = top_state.with_memory(framed_memory);
-        summaries = collect_whole_loop_effect_summaries(
-            entry_state,
-            &top_state,
-            effect_checks,
-            include_mutable_summaries,
-            assumptions,
-            budget,
-        )?;
+        summaries = collect_whole_loop_effect_summaries(entry_state, &top_state, &effect_ranges);
     }
     Ok((top_state, summaries))
 }
@@ -1937,6 +1950,7 @@ pub(super) fn havoc_loop_modified_locals(
     state: &CState,
     body: &CStatement,
     variables: &mut KernelVariableGenerator,
+    mutable_ranges: Option<&[CMemoryRange]>,
 ) -> CState {
     let mut state = state.clone();
     let mut names = BTreeSet::new();
@@ -1987,9 +2001,11 @@ pub(super) fn havoc_loop_modified_locals(
             .filter(|name| state.locals.get(name).is_some())
             .filter_map(|name| state.locals.slot(name).map(|slot| slot.block.clone()))
             .collect();
-        state.memory = state
-            .memory
-            .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+        state.memory = state.memory.with_loop_memory_havoc(
+            variables.next(),
+            &preserved_blocks,
+            mutable_ranges,
+        );
     }
     state
 }
