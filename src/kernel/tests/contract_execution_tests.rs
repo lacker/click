@@ -2454,3 +2454,66 @@ fn sealing_takes_a_premise_from_the_retained_context() {
         Some(crate::instrumentation::SealRefusal::UnretainedPremise)
     );
 }
+
+#[test]
+fn sealing_covers_a_loadability_premise_from_the_retained_context() {
+    // A callee's `loadable(p[i..i + 1])` at the caller's current memory is
+    // covered by the caller's `loadable(p[0..n])` under `0 <= i < n`.
+    let p = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(100_000))),
+            byte_width: 4,
+        },
+    };
+    let i = Bitvector32Term::Variable(Variable(1));
+    let n = Bitvector32Term::Variable(Variable(2));
+    let current = CMemory::new().with_block("local:value", 4);
+    let requirement = Proposition::CMemoryLoadable {
+        memory: current,
+        base: p.offset_by_int32_elements(i.clone()),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let caller = Proposition::CMemoryLoadable {
+        memory: CMemory::new(),
+        base: p.clone(),
+        bytes: Bitvector32Term::Multiply(
+            Box::new(n.clone()),
+            Box::new(Bitvector32Term::Constant(4)),
+        ),
+    };
+    let context = PureFactContext::new()
+        .assume_proposition(caller)
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(i.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(i, n.clone()), true)
+        .assume_condition(
+            ConditionTerm::signed_less_equal(n, Bitvector32Term::Constant(2_147_483_647)),
+            true,
+        );
+    let (candidates, function, mut trace) =
+        early_return_sealing_inputs_with_facts(vec![requirement.clone()], Vec::new());
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Context(
+        context.clone(),
+    ));
+    seal_early_return(&candidates, &function, trace)
+        .expect("the caller's wider loadable range covers the callee's requirement");
+
+    // A requirement outside the covered range is refused.
+    let outside = Proposition::CMemoryLoadable {
+        memory: CMemory::new().with_block("local:value", 4),
+        base: p.offset_by_int32_elements(Bitvector32Term::Variable(Variable(2))),
+        bytes: Bitvector32Term::Constant(4),
+    };
+    let (candidates, function, mut trace) =
+        early_return_sealing_inputs_with_facts(vec![outside], Vec::new());
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Context(
+        context,
+    ));
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::UnretainedPremise)
+    );
+}

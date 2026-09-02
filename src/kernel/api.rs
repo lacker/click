@@ -1911,7 +1911,11 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
 /// Whether every premise of a retained transition theorem is retained: an
 /// exact fact of the sealed context, of the context the theorem was proved
 /// under (`CheckedExecutionEvent::Context`), of the candidate path, an
-/// obligation, or a resource-certified loadability. Nothing is derived.
+/// obligation, or a resource-certified loadability. A loadability premise
+/// may also be covered by a loadability fact of the retained context over a
+/// wider range of the same block (a callee's requirement inside the caller's
+/// `loadable(p[0..n])`), which is the one range rule the executor
+/// discharged it with. Nothing else is derived.
 fn proof_evidence_premises_are_retained(
     theorem: &Theorem,
     assumptions: &PureFactContext,
@@ -1933,6 +1937,8 @@ fn proof_evidence_premises_are_retained(
                 .iter()
                 .any(|obligation| obligation.proposition() == premise.as_ref())
             && !resources_certify_loadability(state, state.resources(), premise, assumptions)
+            && !(matches!(premise.as_ref(), Proposition::CMemoryLoadable { .. })
+                && executed_under.is_some_and(|context| loadable_covered_by_fact(context, premise)))
             && !(matches!(
                 premise.as_ref(),
                 Proposition::CResourceContains { .. } | Proposition::CResourceSeparate { .. }

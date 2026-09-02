@@ -197,6 +197,17 @@ surface regressions `have_after_loop_seals_without_a_body_rerun` and
 fell to 1 over the mdtests (from 13) and to 0 over the examples
 (from 14).
 
+Third pass (landed 2026-09-02). The last refusal was a callee's
+`loadable(p[i..i + 1])` requirement at the caller's current memory, which
+the step discharged by range coverage from the caller's retained
+`loadable(p[0..n])` under `0 <= i < n`. The sealer applies that one
+coverage rule (`loadable_covered_by_fact`) against the retained context for
+a loadability premise; kernel test
+`sealing_covers_a_loadability_premise_from_the_retained_context`, surface
+regression `callee_subrange_requirement_seals_without_a_body_rerun`. Every
+`SealRefusal` count is now 0 over both corpora: claim finishing never
+executes a body again.
+
 ### 4. State and statement identity (landed 2026-09-01)
 
 Both diagnoses differed from the guesses above. `StateMismatch`: after a

@@ -639,6 +639,58 @@ fn quantified_fold_after_execution_seals_without_a_body_rerun() {
 }
 
 #[test]
+fn callee_subrange_requirement_seals_without_a_body_rerun() {
+    let write_at = r#"
+        int32 write_at(int32 p[], int32 i) {
+            p[i] = 1;
+            return p[i];
+        }
+    "#;
+    let caller = r#"
+        int32 write_at_symbolic(int32 p[], int32 i, int32 n) {
+            int32 value;
+            value = write_at(p, i);
+            return value;
+        }
+    "#;
+    let click_source = r#"
+        verifying "write_at.c";
+        verifying "write_at_symbolic.c";
+
+        int32 write_at(int32 p[], int32 i) {
+            requires i >= 0;
+            requires i < 2147483647;
+            requires loadable(p[i..i + 1]);
+            consumes p[i..i + 1];
+
+            produces p[i..i + 1] by auto;
+        }
+
+        int32 write_at_symbolic(int32 p[], int32 i, int32 n) {
+            requires i >= 0;
+            requires i < n;
+            requires n <= 2147483647;
+            requires loadable(p[0..n]);
+            consumes p[0..n];
+
+            produces p[0..n] by auto;
+        }
+    "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(
+        click_source,
+        &[("write_at.c", write_at), ("write_at_symbolic.c", caller)],
+    )
+    .expect("a callee requirement inside the caller's loadable range should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "the callee's loadability premise is covered by the caller's retained loadable range"
+    );
+}
+
+#[test]
 fn counted_resource_entry_seals_without_a_body_rerun() {
     let c_source = "int32 preserve(int32 x) { return x; }";
     let click_source = r#"
