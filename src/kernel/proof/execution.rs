@@ -45,6 +45,14 @@ pub(crate) struct LoopEffectGoal {
 pub(crate) enum CheckedExecutionEvent {
     Statement(Theorem),
     Condition(Theorem),
+    /// The kernel fact context the preceding `Statement` or `Condition`
+    /// theorem was proved under. A transition's theorem lists that context
+    /// as its premises; retaining the context is what lets sealing check
+    /// those premises exactly, including facts a `have`, `apply`, or
+    /// `unfold` established mid-execution, instead of rebuilding the
+    /// context from function entry. The context is persistent, so this
+    /// shares structure with the proof rather than copying it.
+    Context(PureFactContext),
     Branch(CheckedExecutionBranch),
     ProofCase(CheckedProofCaseArm),
     ResourceObservation(CheckedResourceObservation),
@@ -1806,6 +1814,9 @@ fn check_evidence_events(
                 state = rewrite.after_state.clone();
                 continue;
             }
+            // The retained context of the preceding theorem; the arm check
+            // above already holds the arm's own facts.
+            CheckedExecutionEvent::Context(_) => continue,
             CheckedExecutionEvent::Statement(_)
             | CheckedExecutionEvent::Condition(_)
             | CheckedExecutionEvent::Branch(_) => {}
@@ -1863,7 +1874,9 @@ fn check_evidence_events(
                     current_facts = successor_facts.clone();
                 }
             }
-            CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
+            CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => {
+                unreachable!("handled before source advance")
+            }
             CheckedExecutionEvent::ResourceObservation(_) => {
                 unreachable!("handled before source advance")
             }
@@ -1890,6 +1903,7 @@ fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(),
                 }
                 continue;
             }
+            CheckedExecutionEvent::Context(_) => continue,
             CheckedExecutionEvent::ProofCase(arm) => {
                 if !arm.is_valid() {
                     return Err("retained proof-case evidence has an invalid checked arm");
@@ -1966,14 +1980,27 @@ impl ExecutionProofCore {
         true
     }
 
-    pub(crate) fn record_statement_transition(&mut self, theorem: Theorem) {
+    /// Records one statement theorem and the fact context it was proved
+    /// under on the single open trace.
+    pub(crate) fn record_statement_transition(
+        &mut self,
+        theorem: Theorem,
+        context: PureFactContext,
+    ) {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
+            trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
     }
 
-    pub(crate) fn record_statement_outcomes(&mut self, theorems: Vec<Theorem>) {
+    /// Forks the single open trace into one trace per outcome theorem, each
+    /// recording its theorem and the shared context they were proved under.
+    pub(crate) fn record_statement_outcomes(
+        &mut self,
+        theorems: Vec<Theorem>,
+        context: PureFactContext,
+    ) {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
         self.execution_evidence = theorems
@@ -1981,16 +2008,22 @@ impl ExecutionProofCore {
             .map(|theorem| {
                 let mut trace = prefix.clone();
                 trace.push(CheckedExecutionEvent::Statement(theorem));
+                trace.push(CheckedExecutionEvent::Context(context.clone()));
                 trace
             })
             .collect::<Vec<_>>()
             .into();
     }
 
-    pub(crate) fn record_condition_transition(&mut self, theorem: Theorem) {
+    pub(crate) fn record_condition_transition(
+        &mut self,
+        theorem: Theorem,
+        context: PureFactContext,
+    ) {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Condition(theorem.clone()));
+            trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
     }
 
@@ -2725,11 +2758,11 @@ mod tests {
         };
         let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
         let mut then_arm = parent.clone();
-        then_arm.record_condition_transition(then_theorem.clone());
+        then_arm.record_condition_transition(then_theorem.clone(), PureFactContext::new());
         then_arm.frontier.region = ExecutionRegionKind::BranchArm;
         then_arm.frontier.position = FrontierPosition::RegionBoundary;
         let mut else_arm = parent.clone();
-        else_arm.record_condition_transition(else_theorem.clone());
+        else_arm.record_condition_transition(else_theorem.clone(), PureFactContext::new());
         else_arm.frontier.region = ExecutionRegionKind::BranchArm;
         else_arm.frontier.position = FrontierPosition::RegionBoundary;
 
@@ -2746,8 +2779,10 @@ mod tests {
         )
         .expect("the exact empty arms should join at the retained continuation");
         assert_eq!(checked.joined_state(), &state);
-        assert_eq!(checked.arm_events(0).len(), 1);
-        assert_eq!(checked.arm_events(1).len(), 1);
+        // Each empty arm records its condition theorem and the context it
+        // was proved under.
+        assert_eq!(checked.arm_events(0).len(), 2);
+        assert_eq!(checked.arm_events(1).len(), 2);
 
         assert!(
             CheckedExecutionBranch::check(
@@ -2816,11 +2851,11 @@ mod tests {
         };
         let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
         let mut then_arm = parent.clone();
-        then_arm.record_condition_transition(then_theorem.clone());
+        then_arm.record_condition_transition(then_theorem.clone(), PureFactContext::new());
         then_arm.frontier.region = ExecutionRegionKind::BranchArm;
         then_arm.frontier.position = FrontierPosition::RegionBoundary;
         let mut else_arm = parent.clone();
-        else_arm.record_condition_transition(else_theorem.clone());
+        else_arm.record_condition_transition(else_theorem.clone(), PureFactContext::new());
         else_arm.frontier.region = ExecutionRegionKind::BranchArm;
         else_arm.frontier.position = FrontierPosition::RegionBoundary;
         let stable_join_locals = state

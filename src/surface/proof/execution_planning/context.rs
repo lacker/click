@@ -393,6 +393,8 @@ pub(in crate::surface::proof) fn certificate_leaf_for_case_path(
 #[derive(Clone)]
 pub(in crate::surface::proof) struct CertifiedConditionTransition {
     pub(in crate::surface::proof) is_true: bool,
+    /// The kernel fact context the theorem was proved under.
+    pub(in crate::surface::proof) context: PureFactContext,
     pub(in crate::surface::proof) pure_facts: Vec<Proposition>,
     pub(in crate::surface::proof) path_facts: Vec<Proposition>,
     pub(in crate::surface::proof) theorem: Theorem,

@@ -2314,6 +2314,7 @@ fn sealing_accepts_a_case_arm_recorded_after_the_return() {
                 _ => None,
             })
             .collect(),
+        PureFactContext::new(),
     );
     core.fork_outcome_evidence(&[crate::kernel::proof::OutcomeEvidenceFork::Split {
         partition,
@@ -2403,4 +2404,53 @@ fn contract_exit_rule_is_the_plain_outcome_without_resources() {
     .expect("no execution limit")
     .expect("no runtime error");
     assert_eq!(sealed, plain);
+}
+
+#[test]
+fn sealing_takes_a_premise_from_the_retained_context() {
+    // A `have` mid-execution puts `x < 5` in the context a later statement
+    // executes under. The statement theorem lists it as a premise; it is
+    // neither an entry assumption nor a path fact, so only the retained
+    // context can vouch for it.
+    let bound = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Variable(Variable(1_000_070)),
+            Bitvector32Term::Constant(5),
+        ),
+        true,
+    );
+    let (candidates, function, mut trace) =
+        early_return_sealing_inputs_with_facts(vec![bound.clone()], Vec::new());
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace.clone()).err(),
+        Some(crate::instrumentation::SealRefusal::UnretainedPremise)
+    );
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Context(
+        PureFactContext::new().assume_proposition(bound),
+    ));
+    seal_early_return(&candidates, &function, trace)
+        .expect("the retained context vouches for the theorem's premise");
+    // A context that does not hold the premise vouches for nothing.
+    let other = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(
+            Bitvector32Term::Variable(Variable(1_000_071)),
+            Bitvector32Term::Constant(5),
+        ),
+        true,
+    );
+    let (candidates, function, mut trace) =
+        early_return_sealing_inputs_with_facts(vec![other], Vec::new());
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Context(
+        PureFactContext::new().assume_proposition(Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(
+                Bitvector32Term::Variable(Variable(1_000_072)),
+                Bitvector32Term::Constant(5),
+            ),
+            true,
+        )),
+    ));
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::UnretainedPremise)
+    );
 }

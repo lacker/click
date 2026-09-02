@@ -361,6 +361,94 @@ fn post_execution_case_split_seals_without_a_body_rerun() {
 }
 
 #[test]
+fn have_after_loop_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 count_then_add() {
+                int32 i;
+                int32 j;
+                i = 0;
+                while (i < 1) {
+                    i = i + 1;
+                }
+                j = 0;
+                while (j < 1) {
+                    j = j + 1;
+                }
+                return i + j;
+            }
+        "#;
+    let click_source = r#"
+            verifying "count_then_add.c";
+
+            int32 count_then_add() {
+                ensures result == 2;
+            } by {
+                step();
+                step();
+                step();
+                loop {
+                    invariant i >= 0 and i <= 1;
+                }
+                step();
+                loop {
+                    invariant j >= 0 and j <= 1;
+                }
+                have i == 1 by simp;
+                have j == 1 by simp;
+                step();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("count_then_add.c", c_source)])
+        .expect("facts established by `have` after the loops should verify the return");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "the return statement's theorem lists the `have` facts; the retained context vouches for them"
+    );
+}
+
+#[test]
+fn applied_user_theorem_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 increment(int32 x) {
+                return x + 1;
+            }
+        "#;
+    let click_source = r#"
+            verifying "increment.c";
+
+            theorem increment_is_defined(x: int32) {
+                requires x < 2147483647;
+
+                ensures defined(x + 1) by {
+                    simp();
+                }
+            }
+
+            int32 increment(int32 x) {
+                requires x < 2147483647;
+                ensures result == x + 1;
+            } by {
+                apply(increment_is_defined(x));
+                step();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("increment.c", c_source)])
+        .expect("an applied user theorem should discharge the step's definedness");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "the applied theorem's fact is in the context the step was proved under"
+    );
+}
+
+#[test]
 fn verified_loop_summary_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {

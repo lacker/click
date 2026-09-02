@@ -18,7 +18,7 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// the whole unfiltered corpus, claim finishing or contract certification
 /// executed a function body because the sealer refused or a guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
-const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[(SealRefusal::UnretainedPremise, 13)];
+const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[(SealRefusal::UnretainedPremise, 1)];
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[
     (ContractFallback::UnauthorizedPredicatePremise, 19),
     (ContractFallback::UnauthorizedResourcePremise, 13),

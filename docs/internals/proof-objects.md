@@ -170,6 +170,23 @@ source or generated proof tree is checked that way. The earlier interpreter
 that advanced this context as a parallel engine is gone; the snapshot owns the
 C store and the goal owns the facts.
 
+`ExecutionProofCore` also retains one evidence trace per candidate path:
+a persistent sequence of `CheckedExecutionEvent`s. A statement or condition
+step records the kernel theorem for its transition followed by the fact
+context that theorem was proved under; a proof-level case split records its
+arm on every trace it creates and forks the traces with the candidates when
+it forks paths after execution; an exhaustive C branch records one nested
+node with both arm deltas; a composite `observe`, `fold`, `unfold`, or
+scoped open records the checked resource rewrite. At function exit the
+kernel sealer (`checked_c_function_execution_from_proof_evidence`) follows
+each trace through the exact C source, checks every theorem's premises
+against the retained facts and context, applies the contract's exit rule,
+and issues the checked function execution that claim and contract
+certification consume. It evaluates no C and derives no fact. Where a trace
+cannot be sealed, the refusal is typed (`instrumentation::SealRefusal`) and
+counted; the fixture harnesses pin those counts
+(`docs/internals/testing.md`, "Body rerun ratchet").
+
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A
 recorded `CState` is logically complete, but its memory, facts, and resources

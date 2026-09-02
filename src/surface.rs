@@ -1771,6 +1771,9 @@ pub enum SourceProof {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertifiedStatementTransition {
     pub(crate) theorem: Theorem,
+    /// The kernel fact context the theorem was proved under; retained with
+    /// the theorem so sealing checks its premises against exactly that.
+    pub(crate) context: PureFactContext,
     pub(crate) outcome: CStatementOutcome,
     pub(crate) execution_facts: Vec<ExecutionPureFact>,
     pub(crate) path_facts: Vec<Proposition>,

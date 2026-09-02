@@ -231,6 +231,7 @@ pub(in crate::surface::proof) fn certified_condition_transitions(
                     ..
                 } => Ok(CertifiedConditionTransition {
                     is_true: *is_true,
+                    context: assumptions.clone(),
                     pure_facts: successor_facts,
                     path_facts: path
                         .facts()
@@ -292,6 +293,7 @@ pub(in crate::surface) fn certified_statement_transitions(
     let mut budget = ExecutionBudget::default()
         .with_next_opaque_call(*next_opaque_call)
         .with_next_kernel_variable(*next_kernel_variable);
+    let executed_under = assumptions.clone();
     let execute = || {
         prove_symbolic_c_statement_verification_paths_with_environment_and_loop_rule_using_budget(
             state.clone(),
@@ -360,6 +362,7 @@ pub(in crate::surface) fn certified_statement_transitions(
         fact_transport_policy,
         statement_contains_call(statement),
         context,
+        &executed_under,
     )?;
     for transition in &mut transitions {
         transition.planning_premises = planning_premises.clone();
@@ -433,6 +436,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
     next_kernel_variable: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     let assumptions = assumptions_from_propositions(pure_facts);
+    let executed_under = assumptions.clone();
     let mut budget = ExecutionBudget::default()
         .with_next_opaque_call(*next_opaque_call)
         .with_next_kernel_variable(*next_kernel_variable);
@@ -456,6 +460,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
         StatementFactTransportPolicy::Automatic,
         statement_contains_call(statement),
         None,
+        &executed_under,
     )
 }
 
@@ -523,6 +528,7 @@ fn certified_transitions_from_execution(
     fact_transport_policy: StatementFactTransportPolicy,
     normalize_statement_facts_to_exit: bool,
     context: Option<&PureFactContext>,
+    executed_under: &PureFactContext,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
     if let Some(limit) = execution.limit() {
         if matches!(limit, crate::kernel::ExecutionLimit::Deadline) {
@@ -1067,6 +1073,7 @@ fn certified_transitions_from_execution(
                 }
                 return Ok(CertifiedStatementTransition {
                     theorem: path.theorem().clone(),
+                    context: executed_under.clone(),
                     outcome: outcome.clone(),
                     execution_facts,
                     path_facts,
@@ -1080,6 +1087,7 @@ fn certified_transitions_from_execution(
             }
             Ok(CertifiedStatementTransition {
                 theorem: path.theorem().clone(),
+                context: executed_under.clone(),
                 outcome: outcome.clone(),
                 execution_facts,
                 path_facts: path

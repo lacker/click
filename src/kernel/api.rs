@@ -1908,9 +1908,14 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
         )
 }
 
+/// Whether every premise of a retained transition theorem is retained: an
+/// exact fact of the sealed context, of the context the theorem was proved
+/// under (`CheckedExecutionEvent::Context`), of the candidate path, an
+/// obligation, or a resource-certified loadability. Nothing is derived.
 fn proof_evidence_premises_are_retained(
     theorem: &Theorem,
     assumptions: &PureFactContext,
+    executed_under: Option<&PureFactContext>,
     candidate: &CFunctionExecutionCandidate,
     state: &CState,
     function_entry_resource_facts: Option<&PureFactContext>,
@@ -1919,6 +1924,7 @@ fn proof_evidence_premises_are_retained(
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
         if !assumptions.proves_exact(premise)
+            && !executed_under.is_some_and(|context| context.proves_exact(premise))
             && !execution_facts
                 .iter()
                 .any(|fact| retained_fact_contains(fact.proposition(), premise))
@@ -2049,7 +2055,7 @@ fn proof_evidence_initial_state(
     use crate::kernel::proof::CheckedExecutionEvent;
 
     events.iter().find_map(|event| match event {
-        CheckedExecutionEvent::ProofCase(_) => None,
+        CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => None,
         CheckedExecutionEvent::ResourceObservation(observation) => Some(observation.before_state()),
         CheckedExecutionEvent::ResourceRewrite(rewrite) => Some(rewrite.before_state()),
         CheckedExecutionEvent::Statement(theorem) | CheckedExecutionEvent::Condition(theorem) => {
@@ -2105,6 +2111,7 @@ fn proof_case_partitions_are_exhaustive(
                 }
                 CheckedExecutionEvent::Statement(_)
                 | CheckedExecutionEvent::Condition(_)
+                | CheckedExecutionEvent::Context(_)
                 | CheckedExecutionEvent::ResourceObservation(_)
                 | CheckedExecutionEvent::ResourceRewrite(_) => {}
             }
@@ -2183,16 +2190,19 @@ mod proof_case_evidence_tests {
         let (partition, then_fact, else_fact) = case_partition(&root);
         let mut core = ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
         // Two candidate paths with one trace each; the second is forked.
-        core.record_statement_outcomes(vec![
-            Theorem::new(Proposition::ConditionIs(
-                ConditionTerm::Constant(true),
-                true,
-            )),
-            Theorem::new(Proposition::ConditionIs(
-                ConditionTerm::Constant(false),
-                false,
-            )),
-        ]);
+        core.record_statement_outcomes(
+            vec![
+                Theorem::new(Proposition::ConditionIs(
+                    ConditionTerm::Constant(true),
+                    true,
+                )),
+                Theorem::new(Proposition::ConditionIs(
+                    ConditionTerm::Constant(false),
+                    false,
+                )),
+            ],
+            PureFactContext::new(),
+        );
         assert_eq!(core.execution_evidence.len(), 2);
 
         // A plan must cover every trace.
@@ -2223,9 +2233,9 @@ mod proof_case_evidence_tests {
         ])
         .expect("a well-formed plan forks the second trace");
         assert_eq!(core.execution_evidence.len(), 3);
-        assert_eq!(core.execution_evidence[0].len(), 1);
-        assert_eq!(core.execution_evidence[1].len(), 2);
-        assert_eq!(core.execution_evidence[2].len(), 2);
+        assert_eq!(core.execution_evidence[0].len(), 2);
+        assert_eq!(core.execution_evidence[1].len(), 3);
+        assert_eq!(core.execution_evidence[2].len(), 3);
         assert!(proof_case_partitions_are_exhaustive(
             &core.execution_evidence.to_vec()
         ));
@@ -2255,18 +2265,28 @@ fn seal_proof_evidence_events(
     let mut completed = None;
     let mut current_assumptions = assumptions.clone();
     let mut interface_execution_facts = Vec::new();
-    for event in events {
+    for (index, event) in events.iter().enumerate() {
+        // The context the theorem at `index` was proved under, recorded
+        // right after it.
+        let executed_under = match events.get(index + 1) {
+            Some(CheckedExecutionEvent::Context(context)) => Some(context),
+            _ => None,
+        };
         if completed.is_some() {
             // A post-execution case split records its arm after the path's
-            // returning statement; it changes only the assumed facts.
-            if let CheckedExecutionEvent::ProofCase(arm) = event {
-                if !arm.is_valid() {
-                    return Err(SealRefusal::InvalidEvidence);
+            // returning statement; it changes only the assumed facts. The
+            // returning theorem's own context follows it as well.
+            match event {
+                CheckedExecutionEvent::ProofCase(arm) => {
+                    if !arm.is_valid() {
+                        return Err(SealRefusal::InvalidEvidence);
+                    }
+                    current_assumptions = arm.facts().assumptions().clone();
+                    continue;
                 }
-                current_assumptions = arm.facts().assumptions().clone();
-                continue;
+                CheckedExecutionEvent::Context(_) => continue,
+                _ => return Err(SealRefusal::IncompleteTrace),
             }
-            return Err(SealRefusal::IncompleteTrace);
         }
         match event {
             CheckedExecutionEvent::ProofCase(arm) => {
@@ -2276,6 +2296,7 @@ fn seal_proof_evidence_events(
                 current_assumptions = arm.facts().assumptions().clone();
                 continue;
             }
+            CheckedExecutionEvent::Context(_) => continue,
             CheckedExecutionEvent::ResourceObservation(observation) => {
                 if !observation.advances_sealed(function, &state) {
                     return Err(SealRefusal::InvalidEvidence);
@@ -2345,6 +2366,7 @@ fn seal_proof_evidence_events(
                 if !proof_evidence_premises_are_retained(
                     theorem,
                     &current_assumptions,
+                    executed_under,
                     candidate,
                     &state,
                     function_entry_resource_facts,
@@ -2382,9 +2404,15 @@ fn seal_proof_evidence_events(
                         // returning or diverging statement is unreachable on
                         // it, so the tail is dropped rather than refused; a
                         // later event would then be a trace continuing past
-                        // its completion.
+                        // its completion. The path completes under the
+                        // context its final theorem was proved under: every
+                        // fact the proof had established on it, not only the
+                        // ones the sealer could rebuild from entry.
                         remaining = None;
-                        completed = Some((outcome.clone(), theorem_assumptions));
+                        completed = Some((
+                            outcome.clone(),
+                            executed_under.cloned().unwrap_or(theorem_assumptions),
+                        ));
                     }
                     CStatementOutcome::UndefinedBehavior(_)
                     | CStatementOutcome::RuntimeError(_) => {
@@ -2396,6 +2424,7 @@ fn seal_proof_evidence_events(
                 if !proof_evidence_premises_are_retained(
                     theorem,
                     &current_assumptions,
+                    executed_under,
                     candidate,
                     &state,
                     function_entry_resource_facts,
@@ -2520,7 +2549,9 @@ fn seal_proof_evidence_events(
                     }
                 }
             }
-            CheckedExecutionEvent::ProofCase(_) => unreachable!("handled before source advance"),
+            CheckedExecutionEvent::ProofCase(_) | CheckedExecutionEvent::Context(_) => {
+                unreachable!("handled before source advance")
+            }
             CheckedExecutionEvent::ResourceObservation(_) => {
                 unreachable!("handled before source advance")
             }
@@ -2682,8 +2713,20 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
             arguments: candidates.arguments.clone(),
             outcome,
         };
+        // The sealed path states everything the proof established on it:
+        // the candidate's execution facts, the interface facts of joined
+        // branches, and the facts of the context its final theorem was
+        // proved under (a `have` in one arm that both arms share, say).
+        // Claim and contract certification read a path's facts as what the
+        // path knows; without these the sealed path would know less than
+        // the proof that produced it.
         let mut sealed_facts = candidate.facts.clone();
-        for fact in progress.interface_execution_facts {
+        for fact in progress.interface_execution_facts.into_iter().chain(
+            statement_assumptions
+                .pure_facts()
+                .into_iter()
+                .map(ExecutionPureFact::new),
+        ) {
             if !sealed_facts
                 .iter()
                 .any(|retained| retained.proposition() == fact.proposition())

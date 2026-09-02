@@ -597,9 +597,10 @@ pub(super) fn execute_branch_step_from_frontier_position(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
-    execution
-        .core
-        .record_condition_transition(condition_transition.theorem.clone());
+    execution.core.record_condition_transition(
+        condition_transition.theorem.clone(),
+        condition_transition.context.clone(),
+    );
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
@@ -796,9 +797,10 @@ fn execute_concrete_loop_head_step(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
-    execution
-        .core
-        .record_condition_transition(condition_transition.theorem.clone());
+    execution.core.record_condition_transition(
+        condition_transition.theorem.clone(),
+        condition_transition.context.clone(),
+    );
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     execution.core.frontier.execution_start_state = Some(execution_start_state);
@@ -1651,6 +1653,7 @@ fn execute_step_from_frontier_position_selecting_path(
                 .iter()
                 .map(|transition| transition.theorem.clone())
                 .collect(),
+            transitions[0].context.clone(),
         );
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
@@ -1884,7 +1887,7 @@ fn execute_step_from_frontier_position_selecting_path(
     }
     execution
         .core
-        .record_statement_transition(transition.theorem.clone());
+        .record_statement_transition(transition.theorem.clone(), transition.context.clone());
     let state: &mut CState = &mut execution.core.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a

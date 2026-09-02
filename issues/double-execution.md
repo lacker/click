@@ -183,12 +183,19 @@ regression `symbolic_loop_bound_invariant_seals_without_a_body_rerun`).
 `UnretainedPremise` fell from 28 to 10 over the mdtests and from 11 to
 10 over the examples, with no other count rising.
 
-Remaining `UnretainedPremise` refusals are other premise shapes (a
-disjunction, a loadability, and condition facts the sealing context can
-derive but the path did not retain exactly). Diagnose each with the
-`CLICK_DBG`-style print of the premise beside the path's retained facts
-before choosing where to retain it; do not widen the sealer to ambient
-derivation.
+Second pass (landed 2026-09-01). The remaining refusals were facts the
+proof established with `have`, `apply`, or `unfold`, at entry through a
+user theorem or mid-execution, which a later statement's theorem lists as
+premises: the sealer rebuilt the context from function entry and never saw
+them. Each `Statement` and `Condition` theorem is now followed on its trace
+by a `CheckedExecutionEvent::Context` holding the kernel fact context the
+theorem was proved under (persistent, so it shares structure with the
+proof), and the sealer checks premises exactly against that context as
+well. Kernel test `sealing_takes_a_premise_from_the_retained_context`;
+surface regressions `have_after_loop_seals_without_a_body_rerun` and
+`applied_user_theorem_seals_without_a_body_rerun`. `UnretainedPremise`
+fell to 1 over the mdtests (from 13) and to 0 over the examples
+(from 14).
 
 ### 4. State and statement identity (landed 2026-09-01)
 
