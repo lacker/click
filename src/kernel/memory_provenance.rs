@@ -42,6 +42,11 @@ pub(crate) fn c_resources_directly_match(
                 || (crate::instrumentation::measure_operation(
                     "kernel",
                     "resource context equality",
+                    "resource memory match: width",
+                    || left.element_width() == right.element_width(),
+                ) && crate::instrumentation::measure_operation(
+                    "kernel",
+                    "resource context equality",
                     "resource memory match: start",
                     || {
                         bitvectors_match_for_resource_check(

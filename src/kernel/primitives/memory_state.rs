@@ -9,6 +9,9 @@ pub(super) fn resource_context_has_symbolic_int32_range_read(
         let Some(range) = fact.memory_range() else {
             return false;
         };
+        if range.element_width() != 4 {
+            return false;
+        }
         let range_base = range.base().offset_by_int32_elements(range.start().clone());
         let range_bytes = Bitvector32Term::multiply(
             Bitvector32Term::subtract(range.end().clone(), range.start().clone()),

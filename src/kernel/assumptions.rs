@@ -225,15 +225,18 @@ pub(super) fn resources_equal_ignoring_memories(left: &CResource, right: &CResou
     };
     match (left, right) {
         (CResource::Memory(left), CResource::Memory(right)) => {
-            terms_equal_with_load_atoms(
-                left.start(),
-                right.start(),
-                &load_atoms_equal_ignoring_memories,
-            ) && terms_equal_with_load_atoms(
-                left.end(),
-                right.end(),
-                &load_atoms_equal_ignoring_memories,
-            ) && pointers_equal_ignoring_memories(left.base(), right.base())
+            left.element_width() == right.element_width()
+                && terms_equal_with_load_atoms(
+                    left.start(),
+                    right.start(),
+                    &load_atoms_equal_ignoring_memories,
+                )
+                && terms_equal_with_load_atoms(
+                    left.end(),
+                    right.end(),
+                    &load_atoms_equal_ignoring_memories,
+                )
+                && pointers_equal_ignoring_memories(left.base(), right.base())
         }
         (
             CResource::Composite {
@@ -1418,7 +1421,7 @@ impl PureFactContext {
             block: range.base().block.clone(),
             offset: self.canonical_pointer_offset(&range.base().offset),
         };
-        CMemoryRange::new(
+        range.with_bounds(
             base,
             self.canonical_bitvector(range.start()),
             self.canonical_bitvector(range.end()),
@@ -2423,6 +2426,9 @@ pub(in crate::kernel) fn memory_range_shallowly_contained(
     range: &CMemoryRange,
     parent: &CMemoryRange,
 ) -> bool {
+    if range.element_width() != parent.element_width() {
+        return false;
+    }
     let Some(base_index) = range.base().element_index_from_base(parent.base()) else {
         return false;
     };

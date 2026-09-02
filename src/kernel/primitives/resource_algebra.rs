@@ -2464,6 +2464,9 @@ pub(in crate::kernel) fn memory_range_covers(
     required: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
+    if available.element_width() != required.element_width() {
+        return false;
+    }
     if available == required {
         return true;
     }
@@ -2546,6 +2549,9 @@ fn memory_range_structurally_covers(
     available: &CMemoryRange,
     required: &CMemoryRange,
 ) -> Option<bool> {
+    if available.element_width() != required.element_width() {
+        return None;
+    }
     let base_delta = if required.base() == available.base() {
         Bitvector32Term::Constant(0)
     } else {
@@ -2562,6 +2568,9 @@ fn memory_range_structurally_covers(
 fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange) -> bool {
     if left.base().blocks_proven_distinct(right.base()) {
         return true;
+    }
+    if left.element_width() != right.element_width() {
+        return false;
     }
     let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
         return false;
@@ -2586,6 +2595,9 @@ fn split_memory_range(
     required: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> Option<Vec<CMemoryRange>> {
+    if available.element_width() != required.element_width() {
+        return None;
+    }
     // Prefer the held range's own start form when the required base is
     // provably that address. A merely structural delta can contain an
     // equivalent load from a later memory snapshot; retaining it would create
@@ -2619,7 +2631,7 @@ fn split_memory_range(
     if !bitvector_terms_proven_equal(available.start(), &required_start, assumptions)
         && !range_endpoint_terms_equal(available.start(), &required_start, assumptions)
     {
-        residues.push(CMemoryRange::new(
+        residues.push(available.with_bounds(
             available.base().clone(),
             available.start().clone(),
             required_start.clone(),
@@ -2628,7 +2640,7 @@ fn split_memory_range(
     if !bitvector_terms_proven_equal(&required_end, available.end(), assumptions)
         && !range_endpoint_terms_equal(&required_end, available.end(), assumptions)
     {
-        residues.push(CMemoryRange::new(
+        residues.push(available.with_bounds(
             available.base().clone(),
             required_end,
             available.end().clone(),
@@ -2643,6 +2655,9 @@ fn memory_ranges_proven_overlapping(
     assumptions: &PureFactContext,
 ) -> bool {
     if left.base().blocks_proven_distinct(right.base()) {
+        return false;
+    }
+    if left.element_width() != right.element_width() {
         return false;
     }
     if assumptions
@@ -2896,25 +2911,27 @@ fn merge_memory_ranges(
     right: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> Option<CMemoryRange> {
-    if left.base() != right.base() {
+    if left.base() != right.base() || left.element_width() != right.element_width() {
         return None;
     }
     if left.end() == right.start()
         || bitvector_terms_proven_equal(left.end(), right.start(), assumptions)
     {
-        return Some(CMemoryRange::new(
+        return Some(CMemoryRange::new_with_element_width(
             left.base().clone(),
             left.start().clone(),
             right.end().clone(),
+            left.element_width(),
         ));
     }
     if right.end() == left.start()
         || bitvector_terms_proven_equal(right.end(), left.start(), assumptions)
     {
-        return Some(CMemoryRange::new(
+        return Some(CMemoryRange::new_with_element_width(
             left.base().clone(),
             right.start().clone(),
             left.end().clone(),
+            left.element_width(),
         ));
     }
     None

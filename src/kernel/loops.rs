@@ -1068,11 +1068,19 @@ pub(super) fn collect_whole_loop_effect_summaries(
                 let mut ranges = Vec::new();
                 let mut failed = false;
                 for segment in segments {
+                    let element_width = crate::kernel::eval::c_expression_pointer_step_width(
+                        before_state,
+                        &segment.base,
+                    )
+                    .unwrap_or(4);
                     match evaluate_loop_effect_segment(before_state, segment, assumptions, budget)?
                     {
-                        Ok(segment) => {
-                            ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end))
-                        }
+                        Ok(segment) => ranges.push(CMemoryRange::new_with_element_width(
+                            segment.base,
+                            segment.start,
+                            segment.end,
+                            element_width,
+                        )),
                         Err(_) => {
                             failed = true;
                             break;

@@ -1519,6 +1519,7 @@ fn evaluated_segment_covers_resource_fact_read(
         base,
         start,
         end,
+        element_width: 4,
     };
     let read_pointer = offset_pointer_by_elements(read_base, index, 4);
     segment_contains_pointer(&segment, &read_pointer, assumptions)

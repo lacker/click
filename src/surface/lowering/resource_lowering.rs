@@ -449,7 +449,7 @@ pub(in crate::surface) fn lower_resource_clause(
     let values =
         parameter_values(parameters, arguments).map_err(|error| ClickError::new(error.message))?;
     let state = CState::new().with_memory(memory.clone());
-    lower_resource_clause_with_values(resource, &values, &state, None)
+    lower_resource_clause_with_values(resource, parameters, &values, &state, None)
 }
 
 pub(in crate::surface) fn lower_resource_clause_at_state(
@@ -466,7 +466,7 @@ pub(in crate::surface) fn lower_resource_clause_at_state(
             .object_values()
             .map(|(name, value)| (name.to_string(), value.clone())),
     );
-    lower_resource_clause_with_values(resource, &values, state, None)
+    lower_resource_clause_with_values(resource, parameters, &values, state, None)
 }
 
 pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
@@ -484,11 +484,12 @@ pub(in crate::surface) fn lower_resource_clause_at_state_with_result(
             .object_values()
             .map(|(name, value)| (name.to_string(), value.clone())),
     );
-    lower_resource_clause_with_values(resource, &values, state, Some(result))
+    lower_resource_clause_with_values(resource, parameters, &values, state, Some(result))
 }
 
 fn lower_resource_clause_with_values(
     resource: &ResourceClause,
+    parameters: &[syntax::C0Parameter],
     values: &BTreeMap<String, CValue>,
     state: &CState,
     result: Option<&CValue>,
@@ -509,7 +510,8 @@ fn lower_resource_clause_with_values(
                     "declared resource quantity must evaluate to int32",
                 ));
             };
-            let lowered = lower_resource_clause_with_values(resource, values, state, result)?;
+            let lowered =
+                lower_resource_clause_with_values(resource, parameters, values, state, result)?;
             let CResourceFact::Own(resource, _) = lowered else {
                 return Err(ClickError::new(
                     "declared resource quantity requires owned authority",
@@ -518,12 +520,25 @@ fn lower_resource_clause_with_values(
             Ok(CResourceFact::own_quantity(resource, quantity))
         }
         ResourceClause::ViewMemory(segment) => {
-            let range = lower_resource_segment_with_values("read", segment, values, state, result)?;
+            let range = lower_resource_segment_with_values(
+                "read",
+                segment,
+                values,
+                state,
+                result,
+                contract_segment_element_width(parameters, segment),
+            )?;
             Ok(CResourceFact::view_memory(range))
         }
         ResourceClause::OwnMemory(segment) => {
-            let range =
-                lower_resource_segment_with_values("write", segment, values, state, result)?;
+            let range = lower_resource_segment_with_values(
+                "write",
+                segment,
+                values,
+                state,
+                result,
+                contract_segment_element_width(parameters, segment),
+            )?;
             Ok(CResourceFact::own_memory(range))
         }
         ResourceClause::Declared {
@@ -650,6 +665,7 @@ fn lower_resource_segment_with_values(
     values: &BTreeMap<String, CValue>,
     state: &CState,
     result: Option<&CValue>,
+    element_width: u32,
 ) -> Result<CMemoryRange, ClickError> {
     if segment.state != ContractSegmentState::Current {
         return Err(ClickError::new(format!(
@@ -702,7 +718,12 @@ fn lower_resource_segment_with_values(
             "`{resource_name}` segment has an end before its start: {start}..{end}"
         )));
     }
-    Ok(CMemoryRange::new(base, start, end))
+    Ok(CMemoryRange::new_with_element_width(
+        base,
+        start,
+        end,
+        element_width,
+    ))
 }
 
 pub(in crate::surface) fn loadable_requirement_prop(
@@ -725,37 +746,31 @@ pub(in crate::surface) fn resource_clause_loadable_prop(
     arguments: &[CExpression],
     memory: &CMemory,
 ) -> Result<Option<Proposition>, ClickError> {
-    let (segment, range) = match resource {
-        ResourceClause::ViewMemory(segment) => {
+    let range = match resource {
+        ResourceClause::ViewMemory(_) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_view_range()
                 .expect("viewed memory clause should lower to viewed memory");
-            (segment, range.clone())
+            range.clone()
         }
-        ResourceClause::OwnMemory(segment) => {
+        ResourceClause::OwnMemory(_) => {
             let lowered = lower_resource_clause(resource, parameters, arguments, memory)?;
             let range = lowered
                 .memory_own_range()
                 .expect("owned memory clause should lower to owned memory");
-            (segment, range.clone())
+            range.clone()
         }
         ResourceClause::Declared { .. } | ResourceClause::Quantified { .. } => return Ok(None),
     };
-    let element_width = contract_segment_element_width(parameters, segment);
-    Ok(Some(memory_range_loadable_prop(
-        memory,
-        &range,
-        element_width,
-    )))
+    Ok(Some(memory_range_loadable_prop(memory, &range)))
 }
 
 pub(in crate::surface) fn memory_range_loadable_prop(
     memory: &CMemory,
     range: &CMemoryRange,
-    element_width: u32,
 ) -> Proposition {
-    let (base, bytes) = range.byte_footprint_for_element_width(element_width);
+    let (base, bytes) = range.byte_footprint();
     Proposition::CMemoryLoadable {
         memory: memory.clone(),
         base,
@@ -878,7 +893,6 @@ pub(in crate::surface) fn loadable_base_and_bytes(
 pub(in crate::surface) fn loadable_segment_prop(
     memory: &CMemory,
     segment: EvaluatedContractSegment,
-    element_width: u32,
 ) -> Result<Proposition, ClickError> {
     if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
         (&segment.start, &segment.end)
@@ -889,10 +903,13 @@ pub(in crate::surface) fn loadable_segment_prop(
         )));
     }
     let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
-    let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
+    let bytes = bitvector32_multiply(
+        element_count,
+        Bitvector32Term::Constant(segment.element_width),
+    );
     Ok(Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        base: offset_pointer_by_elements(segment.base, segment.start, element_width),
+        base: offset_pointer_by_elements(segment.base, segment.start, segment.element_width),
         bytes,
     })
 }

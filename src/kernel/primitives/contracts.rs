@@ -348,7 +348,27 @@ impl CMemorySegment {
 
 impl CMemoryRange {
     pub fn new(base: Pointer, start: Bitvector32Term, end: Bitvector32Term) -> Self {
-        Self { base, start, end }
+        Self::new_with_element_width(base, start, end, 4)
+    }
+
+    /// Constructs a range with an explicit logical element width.
+    ///
+    /// `new` remains the compatibility constructor for the historical
+    /// int32-only kernel callers. New ranges produced from typed C input
+    /// should use this constructor instead.
+    pub(crate) fn new_with_element_width(
+        base: Pointer,
+        start: Bitvector32Term,
+        end: Bitvector32Term,
+        element_width: u32,
+    ) -> Self {
+        assert!(element_width > 0, "memory element width must be positive");
+        Self {
+            base,
+            start,
+            end,
+            element_width,
+        }
     }
 
     /// Returns this element-indexed range as a physical byte footprint.
@@ -359,17 +379,28 @@ impl CMemoryRange {
     /// use this bounded, derived view without introducing a second resource
     /// representation. The returned pointer is the first byte of the range;
     /// the second value is its byte length.
-    pub(crate) fn byte_footprint_for_element_width(
-        &self,
-        element_width: u32,
-    ) -> (Pointer, Bitvector32Term) {
-        assert!(element_width > 0, "memory element width must be positive");
+    pub(crate) fn byte_footprint(&self) -> (Pointer, Bitvector32Term) {
         let element_count = Bitvector32Term::subtract(self.end.clone(), self.start.clone());
         (
             self.base
-                .offset_by_elements(self.start.clone(), element_width),
-            Bitvector32Term::multiply(element_count, Bitvector32Term::Constant(element_width)),
+                .offset_by_elements(self.start.clone(), self.element_width),
+            Bitvector32Term::multiply(element_count, Bitvector32Term::Constant(self.element_width)),
         )
+    }
+
+    pub fn element_width(&self) -> u32 {
+        self.element_width
+    }
+
+    /// Rebuilds a range with different bounds while preserving its element
+    /// coordinate system.
+    pub(crate) fn with_bounds(
+        &self,
+        base: Pointer,
+        start: Bitvector32Term,
+        end: Bitvector32Term,
+    ) -> Self {
+        Self::new_with_element_width(base, start, end, self.element_width)
     }
 
     pub fn base(&self) -> &Pointer {

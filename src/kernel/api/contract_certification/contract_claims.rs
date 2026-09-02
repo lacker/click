@@ -425,7 +425,12 @@ fn memory_range_lists_definitionally_equal(
 ) -> bool {
     left.len() == right.len()
         && left.iter().zip(right).all(|(left, right)| {
-            pointers_proven_equal_for_memory_resolution(left.base(), right.base(), assumptions)
+            left.element_width() == right.element_width()
+                && pointers_proven_equal_for_memory_resolution(
+                    left.base(),
+                    right.base(),
+                    assumptions,
+                )
                 && bitvector_terms_proven_equal_for_memory_resolution(
                     left.start(),
                     right.start(),
@@ -1163,6 +1168,11 @@ fn function_claim_holds_on_prepared_path(
         CFunctionContractClaimTarget::Effect => {
             let mut mutable_ranges = Vec::new();
             for segment in function.contract_mutable() {
+                let element_width = crate::kernel::eval::c_expression_pointer_step_width(
+                    entry_state,
+                    &segment.base,
+                )
+                .unwrap_or(4);
                 if segment.guard().is_some_and(|guard| {
                     evaluate_guarded_contract_condition(
                         guard,
@@ -1178,7 +1188,12 @@ fn function_claim_holds_on_prepared_path(
                 else {
                     return false;
                 };
-                mutable_ranges.push(CMemoryRange::new(segment.base, segment.start, segment.end));
+                mutable_ranges.push(CMemoryRange::new_with_element_width(
+                    segment.base,
+                    segment.start,
+                    segment.end,
+                    element_width,
+                ));
             }
             let mut effect_memory = caller_state.memory().clone();
             let mut seen_transitions = Vec::<(CMemory, CMemory)>::new();

@@ -439,11 +439,7 @@ pub(in crate::surface) fn lower_predicate_body_proposition_with_environment(
                 recorded_snapshots,
                 active_functions,
             )?;
-            let element_width =
-                contract_segment_element_width_from_array_refs(array_refs, &segment.source)
-                    .unwrap_or(4);
-            loadable_segment_prop(state.memory(), segment, element_width)
-                .map_err(|error| error.message)
+            loadable_segment_prop(state.memory(), segment).map_err(|error| error.message)
         }
         ClickProposition::Defined { expression } => {
             let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
@@ -898,6 +894,8 @@ fn evaluate_predicate_contract_segment(
         base,
         start,
         end,
+        element_width: contract_segment_element_width_from_array_refs(array_refs, segment)
+            .unwrap_or(4),
     })
 }
 
@@ -926,10 +924,11 @@ fn evaluate_predicate_resource_subject(
                 recorded_snapshots,
                 active_functions,
             )?;
-            Ok(CResource::Memory(CMemoryRange::new(
+            Ok(CResource::Memory(CMemoryRange::new_with_element_width(
                 segment.base,
                 segment.start,
                 segment.end,
+                segment.element_width,
             )))
         }
         ResourceSubject::Declared {

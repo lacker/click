@@ -941,6 +941,12 @@ impl PureFactContext {
         right: &CMemoryRange,
         depth: usize,
     ) -> bool {
+        if left.base().blocks_proven_distinct(right.base()) {
+            return true;
+        }
+        if left.element_width() != right.element_width() {
+            return false;
+        }
         if self
             .resource_compositions
             .iter()
@@ -1471,7 +1477,8 @@ impl PureFactContext {
     fn memory_ranges_proven_equal(&self, left: &CMemoryRange, right: &CMemoryRange) -> bool {
         let left_length = memory_range_length_term(left);
         let right_length = memory_range_length_term(right);
-        self.pointers_proven_equal_for_fact_transport(left.base(), right.base())
+        left.element_width() == right.element_width()
+            && self.pointers_proven_equal_for_fact_transport(left.base(), right.base())
             && self.bitvector_terms_equal_for_fact_transport(left.start(), right.start())
             && self.bitvector_terms_equal_for_fact_transport(&left_length, &right_length)
     }

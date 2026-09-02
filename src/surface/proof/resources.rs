@@ -1484,13 +1484,12 @@ fn append_resource_clause_loadable_fact_with_store<F: ResourcePureFacts>(
 
 pub(super) fn append_lowered_resource_clause_loadable_fact(
     resource: &ResourceClause,
-    parameters: &[syntax::C0Parameter],
+    _parameters: &[syntax::C0Parameter],
     lowered: &CResourceFact,
     state: &CState,
     propositions: &mut Vec<Proposition>,
 ) {
-    let (ResourceClause::ViewMemory(segment) | ResourceClause::OwnMemory(segment)) = resource
-    else {
+    let (ResourceClause::ViewMemory(_) | ResourceClause::OwnMemory(_)) = resource else {
         return;
     };
     let Some(range) = lowered
@@ -1499,11 +1498,7 @@ pub(super) fn append_lowered_resource_clause_loadable_fact(
     else {
         return;
     };
-    let proposition = memory_range_loadable_prop(
-        state.memory(),
-        range,
-        contract_segment_element_width(parameters, segment),
-    );
+    let proposition = memory_range_loadable_prop(state.memory(), range);
     if !propositions.contains(&proposition) {
         propositions.push(proposition);
     }

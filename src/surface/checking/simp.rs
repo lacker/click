@@ -400,7 +400,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
             right: &PointerOffsetTerm,
         ) -> CResource {
             match resource {
-                CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
+                CResource::Memory(range) => CResource::Memory(range.with_bounds(
                     Pointer {
                         block: range.base().block.clone(),
                         offset: rewrite_offset(&range.base().offset, left, right),
@@ -783,7 +783,7 @@ fn rewrite_atomic_proposition_by_exact_equality(
     }
 
     let rewrite_resource_term = |resource: &CResource| match resource {
-        CResource::Memory(range) => CResource::Memory(CMemoryRange::new(
+        CResource::Memory(range) => CResource::Memory(range.with_bounds(
             Pointer {
                 block: range.base().block.clone(),
                 offset: rewrite_offset_term(&range.base().offset, left, right),

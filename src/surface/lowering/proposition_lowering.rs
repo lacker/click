@@ -77,12 +77,7 @@ impl KernelPropositionLowerer {
             }
             ClickProposition::Loadable { segment } => {
                 let segment = self.lower_requirement_segment(segment)?;
-                let element_width = contract_segment_element_width_from_array_refs(
-                    &self.array_refs,
-                    &segment.source,
-                )
-                .unwrap_or(4);
-                loadable_segment_prop(&self.memory, segment, element_width)
+                loadable_segment_prop(&self.memory, segment)
             }
             ClickProposition::Defined { expression } => {
                 let expression = contract_expression_to_c_fragment(expression).ok_or_else(|| {
@@ -368,6 +363,11 @@ impl KernelPropositionLowerer {
             base,
             start,
             end,
+            element_width: contract_segment_element_width_from_array_refs(
+                &self.array_refs,
+                segment,
+            )
+            .unwrap_or(4),
         })
     }
 
@@ -378,10 +378,11 @@ impl KernelPropositionLowerer {
         match resource {
             ResourceSubject::Memory(segment) => {
                 let range = self.lower_requirement_segment(segment)?;
-                Ok(CResource::Memory(CMemoryRange::new(
+                Ok(CResource::Memory(CMemoryRange::new_with_element_width(
                     range.base,
                     range.start,
                     range.end,
+                    range.element_width,
                 )))
             }
             ResourceSubject::Declared {

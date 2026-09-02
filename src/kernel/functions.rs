@@ -748,6 +748,8 @@ fn execute_verified_function_rule(
             "verified call mutable footprint lowering",
         );
         for segment in function.contract_mutable() {
+            let element_width =
+                c_expression_pointer_step_width(&footprint_state, &segment.base).unwrap_or(4);
             if segment.guard().is_some_and(|guard| {
                 evaluate_guarded_contract_condition(
                     guard,
@@ -780,7 +782,12 @@ fn execute_verified_function_rule(
                     // canonicalize-at-creation design in
                     // issues/indexed-resource-algebra-avoids-pairwise-context-work.md.
                     mutable_ranges.push(canonical_memory_range(
-                        CMemoryRange::new(segment.base, segment.start, segment.end),
+                        CMemoryRange::new_with_element_width(
+                            segment.base,
+                            segment.start,
+                            segment.end,
+                            element_width,
+                        ),
                         &effective_assumptions,
                     ))
                 }
@@ -1385,13 +1392,21 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
             parameter.c_type(),
         );
         if let CValue::Pointer(pointer) = &value {
+            let element_width = parameter
+                .c_type()
+                .pointee_type()
+                .map(CType::byte_width)
+                .unwrap_or(4);
             state.resources = state
                 .resources
-                .unchecked_with_fact(CResourceFact::view_memory(CMemoryRange::new(
-                    pointer.clone(),
-                    Bitvector32Term::Constant(0),
-                    Bitvector32Term::Constant(i32::MAX as u32),
-                )));
+                .unchecked_with_fact(CResourceFact::view_memory(
+                    CMemoryRange::new_with_element_width(
+                        pointer.clone(),
+                        Bitvector32Term::Constant(0),
+                        Bitvector32Term::Constant(i32::MAX as u32),
+                        element_width,
+                    ),
+                ));
         }
     }
     state
@@ -3848,6 +3863,7 @@ pub(super) fn evaluate_function_resource_spec(
             Ok(Ok(CResourceFact::own_quantity(inner, quantity)))
         }
         CResourceSpec::ViewMemory(segment) => {
+            let element_width = c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
@@ -3856,13 +3872,17 @@ pub(super) fn evaluate_function_resource_spec(
                     )));
                 }
             };
-            Ok(Ok(CResourceFact::view_memory(CMemoryRange::new(
-                segment.base,
-                segment.start,
-                segment.end,
-            ))))
+            Ok(Ok(CResourceFact::view_memory(
+                CMemoryRange::new_with_element_width(
+                    segment.base,
+                    segment.start,
+                    segment.end,
+                    element_width,
+                ),
+            )))
         }
         CResourceSpec::OwnMemory(segment) => {
+            let element_width = c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
             let segment = match evaluate_loop_effect_segment(state, segment, assumptions, budget)? {
                 Ok(segment) => segment,
                 Err(_) => {
@@ -3871,11 +3891,14 @@ pub(super) fn evaluate_function_resource_spec(
                     )));
                 }
             };
-            Ok(Ok(CResourceFact::own_memory(CMemoryRange::new(
-                segment.base,
-                segment.start,
-                segment.end,
-            ))))
+            Ok(Ok(CResourceFact::own_memory(
+                CMemoryRange::new_with_element_width(
+                    segment.base,
+                    segment.start,
+                    segment.end,
+                    element_width,
+                ),
+            )))
         }
         CResourceSpec::Composite {
             access,

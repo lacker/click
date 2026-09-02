@@ -1530,11 +1530,11 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_memory_range(
     from: Variable,
     to: &Bitvector32Term,
 ) -> CMemoryRange {
-    CMemoryRange {
-        base: substitute_bitvector_variable_in_pointer(&range.base, from, to),
-        start: substitute_bitvector_variable(&range.start, from, to),
-        end: substitute_bitvector_variable(&range.end, from, to),
-    }
+    range.with_bounds(
+        substitute_bitvector_variable_in_pointer(&range.base, from, to),
+        substitute_bitvector_variable(&range.start, from, to),
+        substitute_bitvector_variable(&range.end, from, to),
+    )
 }
 
 pub(in crate::kernel) fn substitute_bitvector_variable_in_condition(

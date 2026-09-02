@@ -507,6 +507,12 @@ pub struct CMemoryRange {
     pub(super) base: Pointer,
     pub(super) start: Bitvector32Term,
     pub(super) end: Bitvector32Term,
+    /// The size in bytes of one logical element in `start..end`.
+    ///
+    /// Resource ranges remain expressed in logical element coordinates, but
+    /// retaining this width lets kernel consumers derive their physical byte
+    /// footprint without recovering the source C type.
+    pub(super) element_width: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

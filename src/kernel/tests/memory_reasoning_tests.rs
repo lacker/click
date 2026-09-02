@@ -6,25 +6,71 @@ fn memory_range_can_be_framed_as_a_byte_footprint() {
         block: "byte-buffer".into(),
         offset: PointerOffsetTerm::Constant(0),
     };
-    let range = CMemoryRange::new(
+    let range = CMemoryRange::new_with_element_width(
         base.clone(),
         Bitvector32Term::Constant(2),
         Bitvector32Term::Constant(5),
+        1,
     );
+    assert_eq!(range.element_width(), 1);
 
-    let (byte_base, byte_length) = range.byte_footprint_for_element_width(1);
+    let (byte_base, byte_length) = range.byte_footprint();
     assert_eq!(
         byte_base,
         base.offset_by_elements(Bitvector32Term::Constant(2), 1)
     );
     assert_eq!(byte_length, Bitvector32Term::Constant(3));
 
-    let (int32_base, int32_length) = range.byte_footprint_for_element_width(4);
+    let int32_range = CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(5),
+    );
+    assert_eq!(int32_range.element_width(), 4);
+    let (int32_base, int32_length) = int32_range.byte_footprint();
     assert_eq!(
         int32_base,
         base.offset_by_elements(Bitvector32Term::Constant(2), 4)
     );
     assert_eq!(int32_length, Bitvector32Term::Constant(12));
+    assert_ne!(range, int32_range);
+
+    let rebased = range.with_bounds(
+        base,
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(3),
+    );
+    assert_eq!(rebased.element_width(), 1);
+}
+
+#[test]
+fn memory_resource_coverage_requires_a_shared_element_width() {
+    let base = Pointer {
+        block: "typed-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let available = ResourceContext::new().unchecked_with_fact(CResourceFact::own_memory(
+        CMemoryRange::new_with_element_width(
+            base.clone(),
+            Bitvector32Term::Constant(0),
+            Bitvector32Term::Constant(4),
+            1,
+        ),
+    ));
+    let int32_requirement = CResourceFact::own_memory(CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(0),
+        Bitvector32Term::Constant(1),
+    ));
+    assert!(!available.satisfies_fact(&int32_requirement, &PureFactContext::new()));
+
+    let byte_requirement = CResourceFact::own_memory(CMemoryRange::new_with_element_width(
+        base,
+        Bitvector32Term::Constant(1),
+        Bitvector32Term::Constant(3),
+        1,
+    ));
+    assert!(available.satisfies_fact(&byte_requirement, &PureFactContext::new()));
 }
 
 #[test]

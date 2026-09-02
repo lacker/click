@@ -770,6 +770,7 @@ pub(in crate::surface) struct EvaluatedContractSegment {
     pub(in crate::surface) base: Pointer,
     pub(in crate::surface) start: Bitvector32Term,
     pub(in crate::surface) end: Bitvector32Term,
+    pub(in crate::surface) element_width: u32,
 }
 
 pub(in crate::surface) fn evaluate_effect_segment(
@@ -824,6 +825,7 @@ pub(in crate::surface) fn evaluate_effect_segment(
             base,
             start,
             end,
+            element_width: contract_segment_element_width(parameters, segment),
         })
     };
 
@@ -901,6 +903,7 @@ pub(in crate::surface) fn evaluate_requirement_segment(
         base,
         start,
         end,
+        element_width: contract_segment_element_width(parameters, segment),
     })
 }
 
