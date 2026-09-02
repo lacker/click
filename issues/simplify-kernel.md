@@ -9,10 +9,17 @@ exception: excluded middle in the certification prover stays until slice
 2, because one surface unit test (`smart_fixed_state_have_if_retains_checked_arm_proofs_directly`)
 closes an `or`-shaped ensure with `assumption()` and claim certification
 does not match that completion, so the arm is what certifies it today.
-Slice 2 is under way: completions are matched in one canonical form and
-across rebased artifacts, which took the second-proof route from 320 claim
-paths to 73 over the harnesses; the rest are closers that record no
-completion and completions in predicate form.
+Slice 2 is under way: completions are matched in one canonical form,
+across rebased artifacts, and as a registered predicate's identity, and
+the implicit closer records a completion, which took the second-proof
+route from 320 claim paths to 28 over the harnesses. What remains is
+structural: the proof lowers a claim goal through the surface's fixed-state
+lowering, which resolves values through facts and names parameters with
+its own symbols, while certification lowers the contract ensure through
+the kernel, so some completions read `true` or name a surface symbol where
+the kernel's lowering keeps the term. Closing the route needs one lowering
+for both: the proof's claim goal as the kernel's lowering of the contract
+ensure at the outcome state.
 
 ## Violated invariant
 

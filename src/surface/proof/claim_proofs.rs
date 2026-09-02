@@ -927,6 +927,50 @@ fn begin_outcome_existence_proof<'a>(
     Ok((claim_index, surface_goal, proof))
 }
 
+/// Closes one proposition claim from the outcome Proof by the direct logical
+/// closure: the implicit closer of a claim with no `by` block. Rewrites and
+/// active unfolds are applied as an explicit claim body would apply them. A
+/// goal the fixed-state lowering cannot express, or that the closure does not
+/// reach, is a miss; only a deadline is an error.
+fn close_claim_directly_from_outcome<'a>(
+    outcome_root: &Proof<'a>,
+    outcome: &CFunctionOutcome,
+    path_requirements: &[Proposition],
+    surface_goal: &ClickProposition,
+    rewrite_equalities: &[ClickProposition],
+    unfolded_predicates: &[String],
+) -> Result<Option<Proof<'a>>, ClickError> {
+    let root = outcome_root
+        .with_outcome_snapshot(outcome)?
+        .with_checked_outcome_facts(path_requirements)?;
+    let mut proof = match root.focus_fixed_state_surface_goal(surface_goal) {
+        Ok(proof) => proof,
+        Err(_) => {
+            check_verification_deadline()?;
+            return Ok(None);
+        }
+    };
+    for equality in rewrite_equalities {
+        proof = match proof.apply_step(ProofStep::Rewrite(equality.clone())) {
+            Ok(next) => next,
+            Err(_) => {
+                check_verification_deadline()?;
+                return Ok(None);
+            }
+        };
+    }
+    for name in unfolded_predicates {
+        match proof.apply_step(ProofStep::UnfoldPredicate(name.clone())) {
+            Ok(next) => proof = next,
+            Err(_) => check_verification_deadline()?,
+        }
+    }
+    match proof.try_direct_logical_closure()? {
+        Some(completed) if completed.is_complete() => Ok(Some(completed)),
+        _ => Ok(None),
+    }
+}
+
 /// Serializes a completed existential claim Proof in the established
 /// independently-checkable surface form. This is extraction only: the body
 /// has already discharged the claim, and this certificate is never applied
@@ -3512,7 +3556,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                 // retained in the path surface stream. The
                                 // ordinary implicit closer contributes no
                                 // additional syntax.
-                                closures[claim_index] = ClaimClosure::by_exact_check();
+                                closures[claim_index] = ClaimClosure::by_exact_check_completing(
+                                    completed.completed_proposition().ok(),
+                                );
                             }
                             _ => closures[claim_index].record_failure(
                                 "the retained existential Proof did not close by the implicit exact check"
@@ -3524,6 +3570,28 @@ pub(super) fn finish_ordered_proof<'a>(
                     if !require_explicit_closers {
                         for (claim_index, claim) in claims.iter().enumerate() {
                             if closures[claim_index].is_closed() {
+                                continue;
+                            }
+                            // The implicit closer is the direct logical closure
+                            // of the claim from the outcome Proof: it records
+                            // the completion claim certification matches. The
+                            // exact surface checker below remains for claims
+                            // that closure does not reach.
+                            if let (Some(root), FunctionClaimRef::Ensure(_, ensure_clause)) =
+                                (outcome_proof.as_ref(), claim)
+                                && let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
+                                && let Some(completed) = close_claim_directly_from_outcome(
+                                    root,
+                                    &outcome,
+                                    &path_requirements,
+                                    surface_goal,
+                                    &rewrite_claim_equalities[claim_index],
+                                    &unfolded_predicates,
+                                )?
+                            {
+                                closures[claim_index] = ClaimClosure::by_exact_check_completing(
+                                    completed.completed_proposition().ok(),
+                                );
                                 continue;
                             }
                             let claim_label =

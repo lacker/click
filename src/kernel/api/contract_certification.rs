@@ -1173,6 +1173,7 @@ pub(super) fn instantiate_contract_predicate_unfolding(
     let (predicate, predicate_obligations, body, body_obligations) =
         instantiate_contract_predicate_unfolding_with_obligations(
             entry_state,
+            None,
             unfolding,
             assumptions,
             budget,
@@ -1184,8 +1185,12 @@ pub(super) fn instantiate_contract_predicate_unfolding(
         .then_some((predicate, body))
 }
 
+/// Lowers a registered predicate and its body at `state`; `entry_state` is
+/// the function entry an `old(...)` argument refers to when the predicate is
+/// instantiated at a post-state.
 pub(super) fn instantiate_contract_predicate_unfolding_with_obligations(
     state: &CState,
+    entry_state: Option<&CState>,
     unfolding: &CPredicateUnfolding,
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
@@ -1198,7 +1203,7 @@ pub(super) fn instantiate_contract_predicate_unfolding_with_obligations(
         let paths = lower_spec_proposition_at_state_with_loop_entry(
             state,
             spec,
-            None,
+            entry_state,
             &lowering_assumptions,
             budget,
         )
