@@ -4347,7 +4347,7 @@ fn function_outcome_from_body_with_resource_transfer(
 }
 
 /// The function-exit rule the verification execution applies to a body
-/// outcome, so that a sealed proof path ends in the same contract-level
+/// outcome, so that a completed proof path ends in the same contract-level
 /// state an independent execution would: the contract's resource transfer
 /// when a composite needs one at the outcome, the declared-population
 /// transition when the contract changes counted quantities, and otherwise
@@ -4377,7 +4377,7 @@ pub(super) fn contract_exit_outcome(
     // A proof may hold the body's exit resources in a split representation
     // (one owned token twice rather than a quantity of two). Execution
     // composes its resources as it goes; compose the retained ones the same
-    // way so the sealed outcome is the canonical one certification compares.
+    // way so the completed outcome is the canonical one certification compares.
     let outcome = match outcome {
         CStatementOutcome::Return { value, mut state } => {
             state.resources = match ResourceContext::new()

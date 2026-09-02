@@ -47,7 +47,7 @@ pub(crate) enum CheckedExecutionEvent {
     Condition(Theorem),
     /// The kernel fact context the preceding `Statement` or `Condition`
     /// theorem was proved under. A transition's theorem lists that context
-    /// as its premises; retaining the context is what lets sealing check
+    /// as its premises; retaining the context is what lets the record call check
     /// those premises exactly, including facts a `have`, `apply`, or
     /// `unfold` established mid-execution, instead of rebuilding the
     /// context from function entry. The context is persistent, so this

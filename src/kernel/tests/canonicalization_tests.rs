@@ -387,7 +387,7 @@ fn load_variables_are_congruent_through_ground_index_equalities() {
 
 #[test]
 fn substitution_reaches_through_a_load_variable_with_a_bound_index() {
-    // A universal's body contains `p[k]` with the bound `k` sealed inside
+    // A universal's body contains `p[k]` with the bound `k` inside
     // the load variable's address. Instantiating `k := 0` must reach through
     // the load variable and produce the load variable used by a direct read
     // of `p[0]`.

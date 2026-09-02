@@ -814,7 +814,7 @@ impl<'a> Proof<'a> {
         let mut paths = Vec::with_capacity(checked.paths().len() * 2);
         let mut outcome_provenance = Vec::with_capacity(checked.paths().len() * 2);
         // The retained evidence traces fork with the candidates so they
-        // stay zipped for sealing; each forked copy records its arm.
+        // stay zipped for completion; each forked copy records its arm.
         let mut evidence_plan = Vec::with_capacity(checked.paths().len());
         for (path_index, path) in checked.paths().iter().enumerate() {
             check_verification_deadline()?;

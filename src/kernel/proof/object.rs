@@ -1084,7 +1084,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         ))
     }
 
-    /// Retires a sealed structural loop-effect frontier only after a checked
+    /// Retires a closed structural loop-effect frontier only after a checked
     /// frame operation has marked its kernel-owned goal closed.
     pub(crate) fn discharge_closed_loop_effect(&self) -> Result<Self, ExecutionUpdateError> {
         let branch = self

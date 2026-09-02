@@ -1655,7 +1655,7 @@ impl<'a> Proof<'a> {
 
     /// Extracts the exact semantic root discharged by this completed proof.
     /// Unlike the surface certificate, this authority is constructed and
-    /// sealed by the kernel proof object.
+    /// checked by the kernel proof object.
     pub(super) fn completed_proposition(
         &self,
     ) -> Result<crate::kernel::proof::CheckedProposition, ClickError> {

@@ -29,7 +29,7 @@ impl<'a> Proof<'a> {
 
     /// Applies one step while optionally retaining a closed structural-effect
     /// frontier long enough for enclosing resource scopes to close. That
-    /// retained frontier is sealed: only `ProofScope::join_inner` may consume
+    /// retained frontier is closed: only `ProofScope::join_inner` may consume
     /// it, and the outermost resource join retires the goal.
     pub(super) fn apply_step_with_origin_mode(
         &self,

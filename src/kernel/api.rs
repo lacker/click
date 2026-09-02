@@ -1822,7 +1822,7 @@ pub fn prove_symbolic_c_function_contract_verification_paths_with_environment(
     )
 }
 
-/// Executes one whole-function judgment and seals its exact authority inputs
+/// Executes one whole-function judgment and retains its exact authority inputs
 /// together with the resulting frontier for later contract certification.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_checked_c_function_execution_with_environment(
@@ -1896,7 +1896,7 @@ pub(in crate::kernel) fn proof_evidence_assumptions(
 }
 
 /// Whether `premise` is `fact` or one of its conjuncts. Conjunction
-/// elimination is the one structural rule the sealer applies to retained
+/// elimination is the one structural rule the proof object applies to retained
 /// facts: a kernel theorem lists the context it executed under as atomic
 /// condition facts, while a loop step retains the lowered invariant it
 /// assumed as one conjunction, so `And(a, b)` retained is `a` retained.
@@ -1910,7 +1910,7 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
 }
 
 /// Whether every premise of a retained transition theorem is retained: an
-/// exact fact of the sealed context, of the context the theorem was proved
+/// exact fact of the entry context, of the context the theorem was proved
 /// under (`CheckedExecutionEvent::Context`), of the candidate path, an
 /// obligation, or a resource-certified loadability. A loadability premise
 /// may also be covered by a loadability fact of the retained context over a
@@ -2053,7 +2053,7 @@ pub(in crate::kernel) fn proof_evidence_initial_state(
 /// Every proof-case arm in the traces must be valid, a path may pass
 /// through one partition once, and every partition must have both of its
 /// arms represented among the traces. The arms' own facts are what the
-/// sealer assumes on each path; no restatement of the cases from outside
+/// proof object assumes on each path; no restatement of the cases from outside
 /// the traces is consulted.
 pub(in crate::kernel) fn proof_case_partitions_are_exhaustive(
     evidence: &[crate::kernel::proof::PersistentSequence<
@@ -2254,7 +2254,7 @@ pub fn pure_fact_context_is_inconsistent(assumptions: &PureFactContext) -> bool 
 }
 
 /// Certifies the exact count lower bound witnessed by owned declared-resource
-/// authority in a concrete ghost state. The returned theorem is sealed to the
+/// authority in a concrete ghost state. The returned theorem is bound to the
 /// proposition reconstructed here; callers cannot use resource possession to
 /// bless an unrelated arithmetic fact.
 pub fn prove_owned_resource_count_lower_bound(
@@ -2357,8 +2357,8 @@ fn checked_execution_at_definitionally_equal_entry_state(
     function: &CFunction,
     assumptions: &PureFactContext,
 ) -> Option<SymbolicCExecution> {
-    // An artifact sealed through a kernel-issued `CheckedFunctionEntry`
-    // records the contract caller state it was tied to, and the sealer
+    // An artifact completed through a kernel-issued `CheckedFunctionEntry`
+    // records the contract caller state it was tied to, and the proof object
     // already checked that its entry representation is definitionally equal
     // to the entry derived from that state. No second equivalence search is
     // needed for it.
@@ -2543,7 +2543,7 @@ pub fn prove_c_function_contract_execution_paths_with_environment(
 }
 
 /// Certifies an opaque contract while reusing a kernel-checked whole-function
-/// frontier when its sealed authority is implied by the exact contract entry.
+/// frontier when its retained authority is implied by the exact contract entry.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_c_function_contract_execution_paths_with_checked_artifacts(
     state: CState,
@@ -4191,7 +4191,7 @@ pub fn prove_int32_move_one_from_right_to_left_preserves_sum(
     ))
 }
 
-/// Sealed universally quantified authority for the unit-transfer sum rule.
+/// Kernel-issued universally quantified authority for the unit-transfer sum rule.
 pub fn certify_int32_move_one_from_right_to_left_preserves_sum() -> CVerifiedPureTheorem {
     let total = Variable(0);
     let left = Variable(1);
@@ -4304,7 +4304,7 @@ pub fn prove_int32_above_one_predecessor_is_at_least_one(value: Bitvector32Term)
     ))
 }
 
-/// Sealed authority for the fixed predecessor bound used by independent
+/// Kernel-issued authority for the fixed predecessor bound used by independent
 /// contract certification. Unlike a bare [`Theorem`], callers cannot build
 /// this evidence from an untrusted proposition.
 pub fn certify_int32_above_one_predecessor_is_at_least_one() -> CVerifiedPureTheorem {

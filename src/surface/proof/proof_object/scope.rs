@@ -66,7 +66,7 @@ impl<'a> ProofScope<'a> {
                 .step_error("nested proof scope is not rooted at the current scope body"));
         }
         // A nested resource may contain the terminal structural-effect frame.
-        // Close its representation without retiring that sealed frontier;
+        // Close its representation without retiring that closed frontier;
         // only the outermost resource join owns final discharge.
         let body = nested.join_inner(false)?;
         let Some(parent) = body.node.parent.as_ref() else {
@@ -643,7 +643,7 @@ impl<'a> ProofScope<'a> {
         })
     }
 
-    /// Retires one sealed effect arm only after its resource representation
+    /// Retires one closed effect arm only after its resource representation
     /// has closed. The marker carries no surface step: closure and discharge
     /// are the audited exit semantics of the enclosing `open` and `if`.
     pub(super) fn discharge_closed_loop_effect_branch(
@@ -968,7 +968,7 @@ impl<'a> ProofScope<'a> {
         Ok(())
     }
 
-    /// Joins one scope, optionally retiring a sealed structural-effect goal.
+    /// Joins one scope, optionally retiring a closed structural-effect goal.
     /// Nested resource joins pass `false` so all enclosing resource
     /// representations close before the outermost join discharges the goal.
     pub(super) fn join_inner(

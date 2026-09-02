@@ -115,7 +115,7 @@ fn leading_fixed_state_have_supported(have: &ProofHave) -> bool {
 /// `have`, checked transport, predicate unfold, theorem application,
 /// proposition rewrite, or checked proposition closer. The returned indices
 /// identify haves whose bodies become authoritative as part of this route;
-/// the final flag records whether such a frame sealed a transport segment.
+/// the final flag records whether such a frame closed a transport segment.
 ///
 /// This is one linear source pass. In particular, admitting several haves does
 /// not rescan their shared prefix or make explicit checking quadratic.
@@ -1125,7 +1125,7 @@ pub(super) fn finish_ordered_proof<'a>(
             .clone();
         // Facts the proof derived at function entry stay where the proof
         // object retained them: in the fact context of every later checked
-        // step, which the sealer reads per path. They are not entry
+        // step, which completion reads per path. They are not entry
         // assumptions of the whole function; inside a proof-level `if` arm
         // they hold only under that arm's case.
         certification_facts.extend(
@@ -1214,7 +1214,7 @@ pub(super) fn finish_ordered_proof<'a>(
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        // The sealed paths are the proof's candidates in order, so each
+        // The completed paths are the proof's candidates in order, so each
         // candidate's certified path is its own index. A candidate the
         // Proof-owned outcome derivation rejected under an exact
         // contradictory path fact owns no goal and is not finished.
@@ -3571,18 +3571,18 @@ pub(super) fn finish_ordered_proof<'a>(
                         )));
                     }
 
-                    // The specification's requirements are the sealed path's
-                    // own entry premises: exactly what the sealer checked the
+                    // The specification's requirements are the certified path's
+                    // own entry premises: exactly what the proof object checked the
                     // path under and what contract certification authorizes
                     // from the contract context before reusing the path, so a
                     // claim completed on the path is bound to premises
                     // certification already holds.
-                    // The specification states the sealed path's outcome: the
+                    // The specification states the certified path's outcome: the
                     // body's under the contract's exit rule, which claim and
                     // contract certification consume. The proof's own outcome
                     // snapshot differs from it only in ghost resource
                     // representation; a claim completed at that snapshot is
-                    // bound to the sealed path by result, memory, and locals.
+                    // bound to the certified path by result, memory, and locals.
                     let specification_outcome = certified_outcomes[certified_path_index].clone();
                     let specification_requirements = certified_path.assumptions().pure_facts();
                     let specification = c_function_specification(

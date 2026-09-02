@@ -712,7 +712,7 @@ pub struct CVerifiedFunctionContractClaim {
     pub(super) key: CFunctionContractClaimKey,
 }
 
-/// Kernel-sealed evidence that a checked proof discharged one proposition at
+/// Kernel-checked evidence that a checked proof discharged one proposition at
 /// one exact function outcome. Contract finalization matches this evidence to
 /// the corresponding independently reconstructed path and contract claim;
 /// the language layer cannot retarget it by changing surface metadata.

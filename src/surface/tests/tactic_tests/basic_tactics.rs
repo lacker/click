@@ -157,7 +157,7 @@ fn grouped_function_certificates_share_finalized_specification() {
 }
 
 #[test]
-fn grouped_auto_seals_the_proof_execution_without_a_body_rerun() {
+fn grouped_auto_completes_the_proof_execution_without_a_body_rerun() {
     let c_source = r#"
             int32 set(int32 p[], int32 value) {
                 p[0] = value;
@@ -196,12 +196,12 @@ fn grouped_auto_seals_the_proof_execution_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "claim certification and final contract certification should seal the retained statement evidence"
+        "claim certification and final contract certification should complete the retained statement evidence"
     );
 }
 
 #[test]
-fn grouped_resource_predicate_proof_seals_without_a_body_rerun() {
+fn grouped_resource_predicate_proof_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 return_zero(int32 p[]) {
                 return 0;
@@ -238,7 +238,7 @@ fn grouped_resource_predicate_proof_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "named resource facts and their unfolded authority should permit direct proof-evidence sealing"
+        "named resource facts and their unfolded authority should permit direct completion of the proof evidence"
     );
 }
 

@@ -231,15 +231,15 @@ derivations.
 Ordered finalization and opaque-contract certification may share
 function-body work only through `CCheckedFunctionExecution`, a
 kernel-created artifact. The
-artifact seals the exact entry state, annotated function, arguments,
+artifact retains the exact entry state, annotated function, arguments,
 environment, execution semantics, loop judgment, assumptions, and complete
 checked frontier. Its fields are private to the kernel; a proof planner can
 retain and present the artifact but cannot manufacture its authority.
 
 At the opaque-contract boundary, the kernel reconstructs contract assumptions
 and resource-guard cases independently. It reuses an artifact only when all
-sealed structural inputs and reasoning-policy flags match and every sealed
-premise is proved by that reconstructed contract context. A limited or empty
+retained structural inputs and reasoning-policy flags match and every
+retained premise is proved by that reconstructed contract context. A limited or empty
 frontier is never reusable. Any mismatch performs fresh symbolic execution.
 Thus reuse removes duplicate C-body interpretation without trusting smart
 search state or weakening independent contract checking.
@@ -247,7 +247,7 @@ search state or weakening independent contract checking.
 Proof-directed folds, unfolds, and observations are retained as checked
 zero-source execution events. Each event names its exact input state,
 registered composite definition, and output resource/fact delta, so final
-sealing follows the event without interpreting the C body again. At contract
+completion follows the event without interpreting the C body again. At contract
 entry, a non-recursive representation may still be rebased only after checking
 that locals, memory, and counted populations are exact and that the bounded
 resource-equality relation proves the two ghost contexts definitionally equal.
@@ -257,8 +257,8 @@ fresh execution.
 
 Likewise, two complete artifacts checked under exactly opposite polarities of
 one entry condition may be composed into one exhaustive frontier. All other
-premises must follow from the reconstructed contract context and every sealed
-execution input must match. One side alone, two unrelated conditions, or any
+premises must follow from the reconstructed contract context and every
+retained execution input must match. One side alone, two unrelated conditions, or any
 additional unproved premise forces fresh execution.
 
 Grouped claims retain the same artifact, so adding claims does not multiply

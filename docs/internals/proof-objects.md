@@ -177,17 +177,18 @@ context that theorem was proved under; a proof-level case split records its
 arm on every trace it creates and forks the traces with the candidates when
 it forks paths after execution; an exhaustive C branch records one nested
 node with both arm deltas; a composite `observe`, `fold`, `unfold`, or
-scoped open records the checked resource rewrite. At function exit the
-kernel sealer (`checked_c_function_execution_from_proof_evidence`) follows
-each trace through the exact C source, checks every theorem's premises
-against the retained facts and context, applies the contract's exit rule,
-and issues the checked function execution that claim and contract
-certification consume. It evaluates no C and derives no fact. Where a trace
-cannot be sealed, the refusal is typed (`instrumentation::SealRefusal`) and
-counted; the fixture harnesses pin those counts
-(`docs/internals/testing.md`, "Body rerun ratchet").
+scoped open records the checked resource rewrite. Each record call checks
+what it records: a statement or condition theorem must prove the source
+statement the evidence has yet to consume, from the state the evidence has
+reached, under premises the retained facts and context vouch for, and the
+core advances that state and source from the theorem itself; a record call
+the proof object refuses fails the tactic that made it. At function exit
+the proof object composes the checked function execution that claim and
+contract certification consume (`ExecutionProofCore::checked_function_execution`):
+one path per trace, its completing theorem under the contract's exit rule.
+It evaluates no C, derives no fact, and walks nothing again.
 
-Opaque-contract certification then reuses that sealed execution at the
+Opaque-contract certification then reuses that checked execution at the
 contract entry. It authorizes each artifact premise from the reconstructed
 contract context, from the registered predicate unfoldings (an identity whose
 instantiated body the context proves), and from containment and separation
@@ -201,9 +202,10 @@ as the contract failure. Those non-reuse outcomes are counted under
 `instrumentation::ContractFallback` and pinned by the same ratchet.
 
 Claims are certified by matching, not by proving again. Every claim closer
-records the kernel-completed proposition it discharged, the sealed path's
-specification carries that path's own entry premises, and certification
-lowers each ensure at the sealed post-state (under the binders of a
+records the kernel-completed proposition it discharged, the certified
+path's specification carries that path's own entry premises, and
+certification lowers each ensure at the certified post-state (under the
+binders of a
 recorded completion when the ensure is quantified, since the loads minted
 under a binder carry its identity) and accepts the claim when the lowering
 equals a recorded completion whose premises the contract context holds. Only

@@ -42,11 +42,11 @@ pub(crate) fn c_checked_function_proposition(
             _ => return None,
         },
     };
-    // The sealed outcome is the proof's outcome under the contract's exit
+    // The certified path's outcome is the proof's outcome under the contract's exit
     // rule: the same result, memory, and locals, with resources and
     // populations in the contract's representation. A proposition the proof
     // completed about the result and memory holds at either; a proposition
-    // that embeds the raw state cannot match a lowering at the sealed one
+    // that embeds the raw state cannot match a lowering at the certified one
     // and is simply never consulted.
     if result != value
         || outcome_state.memory() != state.memory()
@@ -961,7 +961,7 @@ fn function_claim_holds_on_prepared_path(
             // Lowering records the ensure's load obligations instead of
             // searching the whole path context for each one as it goes; they
             // are discharged below, resources and exact facts first. The
-            // general prover is the last resort because on a sealed path,
+            // general prover is the last resort because on a certified path,
             // whose facts include every loadability the proof established at
             // intermediate memories, its quantified and disjunctive search is
             // the dominant certification cost.

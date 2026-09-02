@@ -16,7 +16,7 @@ const QUARANTINED: &[(&str, &str)] = &[];
 
 /// The body-rerun ratchet (`docs/internals/testing.md`): how many times, over
 /// the whole unfiltered corpus, claim finishing or contract certification
-/// executed a function body because the sealer refused or a guard declined,
+/// executed a function body because a contract guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 

@@ -213,12 +213,12 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "a concrete loop trace should seal without rerunning the function body"
+        "a concrete loop trace should complete without rerunning the function body"
     );
 }
 
 #[test]
-fn early_return_seals_without_a_body_rerun() {
+fn early_return_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 clamp(int32 x) {
                 if (x < 0) {
@@ -244,12 +244,12 @@ fn early_return_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "a path that returns before the end of the body should seal without rerunning it"
+        "a path that returns before the end of the body should complete without rerunning it"
     );
 }
 
 #[test]
-fn symbolic_loop_bound_invariant_seals_without_a_body_rerun() {
+fn symbolic_loop_bound_invariant_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_n(int32 n) {
                 int32 i;
@@ -288,7 +288,7 @@ fn symbolic_loop_bound_invariant_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn malloc_null_check_seals_without_a_body_rerun() {
+fn malloc_null_check_completes_without_a_body_rerun() {
     let c_source = r#"
             struct item {
                 int32 value;
@@ -321,12 +321,12 @@ fn malloc_null_check_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "the null check resolves the pending allocation in the sealed state as it does in execution"
+        "the null check resolves the pending allocation in the reached state as it does in execution"
     );
 }
 
 #[test]
-fn post_execution_case_split_seals_without_a_body_rerun() {
+fn post_execution_case_split_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 clamp_positive(int32 a) {
                 if (a > 0) {
@@ -361,7 +361,7 @@ fn post_execution_case_split_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn have_after_loop_seals_without_a_body_rerun() {
+fn have_after_loop_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 count_then_add() {
                 int32 i;
@@ -411,7 +411,7 @@ fn have_after_loop_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn applied_user_theorem_seals_without_a_body_rerun() {
+fn applied_user_theorem_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 increment(int32 x) {
                 return x + 1;
@@ -449,7 +449,7 @@ fn applied_user_theorem_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn verified_loop_summary_seals_without_a_body_rerun() {
+fn verified_loop_summary_completes_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {
                 int32 i;
@@ -486,7 +486,7 @@ fn verified_loop_summary_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "a verified loop summary should seal without rerunning the function body"
+        "a verified loop summary should complete without rerunning the function body"
     );
 }
 

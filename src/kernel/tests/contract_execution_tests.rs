@@ -1943,7 +1943,7 @@ fn assumptions_clones_share_facts_and_cache_keys_are_content_stable() {
 
 /// `int32 early() { if (0 < 1) { return 0; } return 1; }` with one retained
 /// trace: a single statement theorem for the `if` whose outcome is
-/// `outcome`. The condition is never evaluated by the sealer, so the
+/// `outcome`. The condition is never evaluated by the proof object, so the
 /// theorem's shape is what these tests exercise.
 fn early_return_inputs(
     outcome: CStatementOutcome,
@@ -2444,7 +2444,7 @@ fn contract_exit_rule_is_the_plain_outcome_without_resources() {
         Vec::new(),
         &PureFactContext::new(),
     );
-    let (sealed, _) = crate::kernel::functions::contract_exit_outcome(
+    let (exit_outcome, _) = crate::kernel::functions::contract_exit_outcome(
         &caller_state,
         &function,
         &[],
@@ -2455,7 +2455,7 @@ fn contract_exit_rule_is_the_plain_outcome_without_resources() {
     )
     .expect("no execution limit")
     .expect("no runtime error");
-    assert_eq!(sealed, plain);
+    assert_eq!(exit_outcome, plain);
 }
 
 #[test]

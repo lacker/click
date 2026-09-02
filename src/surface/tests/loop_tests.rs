@@ -1863,7 +1863,7 @@ fn loop_effect_open_scope_stays_on_proof() {
         error
             .message()
             .contains("the goal was already proved by the previous step"),
-        "the sealed effect frontier produced an unexpected error: {}",
+        "the closed effect frontier produced an unexpected error: {}",
         error.message()
     );
 }

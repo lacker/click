@@ -491,7 +491,7 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "an exhaustive proof-level case split should seal its retained execution paths"
+        "an exhaustive proof-level case split should complete its retained execution paths"
     );
 
     let expanded = expand_c0_claim_source(
@@ -507,7 +507,7 @@ fn proof_if_splits_one_frontier_after_execution_has_started() {
 }
 
 #[test]
-fn post_execution_resource_fold_seals_without_a_body_rerun() {
+fn post_execution_resource_fold_completes_without_a_body_rerun() {
     let c_source = r#"
         int32 preserve_cell(int32 p[]) {
             return p[0];
@@ -544,7 +544,7 @@ fn post_execution_resource_fold_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn implicitly_closed_counted_entry_seals_without_a_body_rerun() {
+fn implicitly_closed_counted_entry_completes_without_a_body_rerun() {
     let c_source = r#"
         int32 inspect_counts(int32 pool, int32 first, int32 second) {
             return 0;
@@ -578,12 +578,12 @@ fn implicitly_closed_counted_entry_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "the sealed path applies the contract exit rule, so no explicit frame is needed to seal"
+        "the completed path applies the contract exit rule, so no explicit frame is needed"
     );
 }
 
 #[test]
-fn quantified_fold_after_execution_seals_without_a_body_rerun() {
+fn quantified_fold_after_execution_completes_without_a_body_rerun() {
     let c_source = r#"
         struct owner {
             int32 capacity;
@@ -634,12 +634,12 @@ fn quantified_fold_after_execution_seals_without_a_body_rerun() {
     assert_eq!(
         crate::kernel::take_checked_function_body_execution_count(),
         0,
-        "the produced population is the contract exit rule's, so the sealed path carries it"
+        "the produced population is the contract exit rule's, so the completed path carries it"
     );
 }
 
 #[test]
-fn callee_subrange_requirement_seals_without_a_body_rerun() {
+fn callee_subrange_requirement_completes_without_a_body_rerun() {
     let write_at = r#"
         int32 write_at(int32 p[], int32 i) {
             p[i] = 1;
@@ -691,7 +691,7 @@ fn callee_subrange_requirement_seals_without_a_body_rerun() {
 }
 
 #[test]
-fn counted_resource_entry_seals_without_a_body_rerun() {
+fn counted_resource_entry_completes_without_a_body_rerun() {
     let c_source = "int32 preserve(int32 x) { return x; }";
     let click_source = r#"
         abstract resource marker(x: int32);
