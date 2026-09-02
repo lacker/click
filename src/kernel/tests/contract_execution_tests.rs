@@ -1920,3 +1920,145 @@ fn assumptions_clones_share_facts_and_cache_keys_are_content_stable() {
     assert_eq!(first.memo_fingerprint(), rebuilt.memo_fingerprint());
     assert_ne!(first.memo_fingerprint(), changed.memo_fingerprint());
 }
+
+/// `int32 early() { if (0 < 1) { return 0; } return 1; }` with one retained
+/// trace: a single statement theorem for the `if` whose outcome is
+/// `outcome`. The condition is never evaluated by the sealer, so the
+/// theorem's shape is what these tests exercise.
+fn early_return_sealing_inputs(
+    outcome: CStatementOutcome,
+) -> (
+    CFunctionExecutionCandidates,
+    CFunction,
+    crate::kernel::proof::PersistentSequence<crate::kernel::proof::CheckedExecutionEvent>,
+) {
+    let branch = c_if(
+        c_less_than(c_int32_literal(0), c_int32_literal(1)),
+        c_return(c_int32_literal(0)),
+        CStatement::Skip,
+    );
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch.clone(), c_return(c_int32_literal(1))),
+    );
+    let caller_state = CState::new();
+    let entry_state = c_function_entry_state(&caller_state, &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let (function_outcome, obligations) = c_function_outcome_from_statement_outcome(
+        &caller_state,
+        &function,
+        outcome.clone(),
+        Vec::new(),
+        &PureFactContext::new(),
+    );
+    let candidates = c_function_execution_candidates_from_outcomes(
+        caller_state,
+        function.clone(),
+        Vec::new(),
+        vec![(function_outcome, Vec::new(), obligations)],
+    );
+    let theorem = Theorem::new(Proposition::CStatementVerifies {
+        state: entry_state,
+        statement: branch,
+        outcome,
+    });
+    let mut trace = crate::kernel::proof::PersistentSequence::default();
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Statement(
+        theorem,
+    ));
+    (candidates, function, trace)
+}
+
+fn seal_early_return(
+    candidates: &CFunctionExecutionCandidates,
+    function: &CFunction,
+    trace: crate::kernel::proof::PersistentSequence<crate::kernel::proof::CheckedExecutionEvent>,
+) -> Result<CCheckedFunctionExecution, crate::instrumentation::SealRefusal> {
+    crate::kernel::api::checked_c_function_execution_from_proof_evidence(
+        candidates,
+        function,
+        None,
+        &[trace],
+        &[Vec::new()],
+        PureFactContext::new(),
+        CExecutionEnvironment::new(),
+        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS,
+        CFunctionContractExecutionMode::VerifyLoops,
+    )
+}
+
+#[test]
+fn sealing_accepts_a_return_that_leaves_source_behind_it() {
+    let entry_state = c_function_entry_state(
+        &CState::new(),
+        &c_function(CType::Int32, "early", Vec::new(), CStatement::Skip),
+        &[],
+    )
+    .expect("entry state");
+    let returning = CStatementOutcome::Return {
+        value: int32(0),
+        state: entry_state,
+    };
+    let (candidates, function, trace) = early_return_sealing_inputs(returning);
+    let _ = crate::kernel::api::take_checked_function_body_execution_count();
+    let sealed = seal_early_return(&candidates, &function, trace)
+        .expect("a returning `if` seals although `return 1` follows it in the source");
+    assert_eq!(sealed.execution.paths().len(), 1);
+    let mut conclusion = sealed.execution.paths()[0].theorem().proposition();
+    while let Proposition::Implies(_, body) = conclusion {
+        conclusion = body;
+    }
+    assert!(
+        matches!(
+            conclusion,
+            Proposition::CFunctionVerifies { outcome, .. } if outcome == candidates.paths()[0].outcome()
+        ),
+        "the sealed theorem concludes the candidate's outcome: {conclusion:?}"
+    );
+    assert_eq!(
+        crate::kernel::api::take_checked_function_body_execution_count(),
+        0,
+        "sealing composes retained theorems; it never executes the body"
+    );
+}
+
+#[test]
+fn sealing_still_refuses_a_trace_that_stops_before_the_path_ends() {
+    let entry_state = c_function_entry_state(
+        &CState::new(),
+        &c_function(CType::Int32, "early", Vec::new(), CStatement::Skip),
+        &[],
+    )
+    .expect("entry state");
+    // A `Normal` outcome for the `if` leaves `return 1` unexecuted: no
+    // retained theorem covers it, so the path has no completed outcome.
+    let (candidates, function, trace) =
+        early_return_sealing_inputs(CStatementOutcome::Normal(entry_state.clone()));
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::IncompleteTrace)
+    );
+
+    // A trace that continues past its returning statement is refused too.
+    let returning = CStatementOutcome::Return {
+        value: int32(0),
+        state: entry_state.clone(),
+    };
+    let (candidates, function, mut trace) = early_return_sealing_inputs(returning);
+    trace.push(crate::kernel::proof::CheckedExecutionEvent::Statement(
+        Theorem::new(Proposition::CStatementVerifies {
+            state: entry_state.clone(),
+            statement: c_return(c_int32_literal(1)),
+            outcome: CStatementOutcome::Return {
+                value: int32(1),
+                state: entry_state,
+            },
+        }),
+    ));
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::IncompleteTrace)
+    );
+}

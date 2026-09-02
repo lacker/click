@@ -218,6 +218,37 @@ fn step_and_execute_step_advance_one_concrete_loop_transition() {
 }
 
 #[test]
+fn early_return_seals_without_a_body_rerun() {
+    let c_source = r#"
+            int32 clamp(int32 x) {
+                if (x < 0) {
+                    return 0;
+                }
+                return x;
+            }
+        "#;
+    let click_source = r#"
+            verifying "clamp.c";
+
+            int32 clamp(int32 x) {
+                ensures result >= 0;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("clamp.c", c_source)])
+        .expect("an early return should verify from its retained statement theorems");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "a path that returns before the end of the body should seal without rerunning it"
+    );
+}
+
+#[test]
 fn verified_loop_summary_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {

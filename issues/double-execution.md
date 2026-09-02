@@ -157,12 +157,17 @@ later slice lowers a pin to its new value. Fixture lists per reason are
 reproduced by adding a temporary `eprintln!` at `record_seal_refusal`; they
 do not live in this file.
 
-### 2. Return with a remaining tail
+### 2. Return with a remaining tail (landed 2026-09-01)
 
-On a `Return` or `VerificationDiverges` statement outcome the sealer must
-drop the unconsumed tail rather than refuse: the path has ended and the tail
-is unreachable on it. Negative test: a `Normal` outcome with a remaining tail
-that is not consumed by later events still refuses. Clears the second row.
+On a `Return` or `VerificationDiverges` statement outcome the sealer drops
+the unconsumed tail instead of refusing: the path has ended and the tail is
+unreachable on it. A trace that continues past that outcome, or a `Normal`
+outcome that leaves source unexecuted, still refuses as `IncompleteTrace`
+(kernel tests in `contract_execution_tests.rs`; surface regression
+`early_return_seals_without_a_body_rerun`). `ReturnWithTail` fell from 22 to
+0 over the mdtests and from 6 to 0 over the examples; 16 and 2 of those
+proofs now seal, and the other 6 and 4 reach `StatementMismatch`, which
+slice 4 owns.
 
 ### 3. Loop exit hypotheses
 

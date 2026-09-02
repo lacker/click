@@ -1440,7 +1440,9 @@ pub enum SealRefusal {
     StatementMismatch,
     /// The proved entry state does not match the sealed running state.
     StateMismatch,
-    /// A `return` or diverging outcome left unconsumed source behind it.
+    /// Retired by slice 2 of `issues/double-execution.md`: a `return` or
+    /// diverging outcome now ends the path and drops the unreachable tail.
+    /// The variant stays so older pins still name it, at zero.
     ReturnWithTail,
     /// The trace ran past its source or its completed outcome, or ended
     /// without one.

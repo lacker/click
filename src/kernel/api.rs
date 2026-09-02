@@ -2292,9 +2292,12 @@ fn seal_proof_evidence_events(
                         remaining = tail;
                     }
                     CStatementOutcome::Return { .. } | CStatementOutcome::VerificationDiverges => {
-                        if tail.is_some() {
-                            return Err(SealRefusal::ReturnWithTail);
-                        }
+                        // The path ends here. Whatever source follows the
+                        // returning or diverging statement is unreachable on
+                        // it, so the tail is dropped rather than refused; a
+                        // later event would then be a trace continuing past
+                        // its completion.
+                        remaining = None;
                         completed = Some((outcome.clone(), theorem_assumptions));
                     }
                     CStatementOutcome::UndefinedBehavior(_)
