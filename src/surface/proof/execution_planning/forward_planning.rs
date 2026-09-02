@@ -119,7 +119,9 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             let mut initialization_path_certificates = Vec::new();
             let mut preservation_path_certificates = Vec::new();
             let mut effect_path_certificates = BTreeMap::<usize, Vec<PathCertificate>>::new();
+            let mut final_exit_candidates_by_context = Vec::with_capacity(contexts.len());
             for context in &contexts {
+                let mut final_exit_candidates = Vec::new();
                 let assumptions = assumptions_from_propositions(&context.pure_facts);
                 if let Some((clause, proof)) = initialization_proof {
                     let certificate = verify_loop_initialization_pure_proof(
@@ -203,6 +205,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             body,
                             environment,
                         )?;
+                        final_exit_candidates.extend(result.final_exit_candidates);
                         preservation_path_certificates.push(PathCertificate {
                             case_path: context.case_path.clone(),
                             certificate: result.certificate,
@@ -227,6 +230,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                         next_kernel_variable: context.next_kernel_variable,
                     });
                 }
+                final_exit_candidates_by_context.push(final_exit_candidates);
             }
             if initialization_proof.is_some() {
                 let legacy_site = ProofSite::LoopPhase {
@@ -404,6 +408,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                     LoopPreservationSource::Automatic
                 },
                 initialization_proof.is_some(),
+                Some(&final_exit_candidates_by_context),
             )
         }
         CStatement::Return(_) => {
@@ -439,6 +444,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                 verified_loop_rules,
                 LoopPreservationSource::Automatic,
                 false,
+                None,
             )
         }
     }
@@ -762,9 +768,10 @@ fn advance_execution_proof_statement(
     verified_loop_rules: &mut Vec<CVerifiedLoopRule>,
     loop_preservation_source: LoopPreservationSource,
     initialization_proven: bool,
+    loop_final_exit_candidates: Option<&[Vec<CLoopFinalExitCandidate>]>,
 ) -> Result<Vec<PlanningExecutionContext>, ClickError> {
     let mut advanced = Vec::new();
-    for mut context in contexts {
+    for (context_index, mut context) in contexts.into_iter().enumerate() {
         record_code_region_program_snapshot_state(
             &mut context.recorded_snapshots,
             environment.function_block,
@@ -777,6 +784,10 @@ fn advance_execution_proof_statement(
             loop_preservation_source,
             LoopPreservationSource::ExecutionProof
         );
+        let final_exit_candidates = loop_final_exit_candidates
+            .and_then(|candidates| candidates.get(context_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let (transitions, loop_rule) = match (initialization_proven, preservation_proven) {
             (false, false) => certified_statement_transitions(
                 &context.state,
@@ -799,6 +810,7 @@ fn advance_execution_proof_statement(
                 &label,
                 initialization_proven,
                 preservation_proven,
+                final_exit_candidates,
                 &mut context.next_opaque_call,
                 &mut context.next_kernel_variable,
             )?,

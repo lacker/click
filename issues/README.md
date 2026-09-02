@@ -23,11 +23,10 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 7
+## Soundness issues: 6
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
-- [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
 

@@ -12,7 +12,7 @@ int32 loop_token_lifetime_join(int32* p) {
     int32 status;
     i = 0;
     status = 0;
-    while (i < 1) {
+    while (i < 2) {
         status = take_token(p);
         i = i + 1;
     }

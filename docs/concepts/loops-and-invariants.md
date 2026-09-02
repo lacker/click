@@ -150,13 +150,14 @@ memory the loop may write.
 Loop frames do not erase semantic lifetime state. A body that frees or
 allocates heap storage, or calls a function whose contract consumes or
 produces a resource, must leave the heap lifetime and resource context
-unchanged at the loop-state join. Click checks this in the kernel alongside
+unchanged on a continuing loop path. Click checks this in the kernel alongside
 the ordinary invariant and effect obligations; a state change is rejected
 rather than silently restored from the loop head. This prevents a later
-operation from using a block or ownership permission that a previous
-iteration removed. The current loop frontier has one abstract exit state, so
-path-sensitive changes that occur only on a final iteration are rejected too;
-conditional lifetime joins need a richer exit-state representation.
+iteration from using a block or ownership permission that a previous
+iteration removed. When the post-body condition is provably false, the checked
+post-body state is retained as a separate final exit instead. Thus a loop may
+release heap storage on its last iteration without making that release appear
+at an earlier loop head.
 
 ## Loop proof tactics
 

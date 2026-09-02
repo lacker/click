@@ -432,6 +432,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
     context_label: &str,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: &[CLoopFinalExitCandidate],
     next_opaque_call: &mut u64,
     next_kernel_variable: &mut u64,
 ) -> Result<(Vec<CertifiedStatementTransition>, Option<CVerifiedLoopRule>), ClickError> {
@@ -447,6 +448,7 @@ pub(in crate::surface::proof) fn certified_loop_exit_transitions_with_proven_pha
         function_environment.clone(),
         initialization_proven,
         preservation_proven,
+        final_exit_candidates.to_vec(),
         &mut budget,
     );
     *next_opaque_call = budget.next_opaque_call();

@@ -432,6 +432,7 @@ pub(super) fn execute_c_while_verification_paths(
         body,
         assumptions,
         Some(environment),
+        &[],
         execution_semantics,
         false,
         budget,
@@ -456,6 +457,92 @@ pub(crate) fn c_loop_state_components_match_at_back_edge(
         composite_resource_definitions,
         assumptions,
     )
+}
+
+/// Whether a post-body loop condition still has a feasible true path.
+///
+/// This is deliberately conservative for non-value condition outcomes: an
+/// unresolved condition is treated as potentially continuing, so callers do
+/// not export a state-changing body path as a final exit accidentally.
+pub(crate) fn c_loop_condition_may_continue(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &PureFactContext,
+) -> Result<bool, String> {
+    c_loop_condition_feasibility(state, condition, assumptions)
+        .map(|(may_continue, _)| may_continue)
+        .map_err(|limit| format!("could not classify the loop condition: {limit:?}"))
+}
+
+fn c_loop_condition_feasibility(
+    state: &CState,
+    condition: &CExpression,
+    assumptions: &PureFactContext,
+) -> ExecutionResult<(bool, bool)> {
+    let mut budget = ExecutionBudget::for_c_expression(condition);
+    let expression_paths = evaluate_c_expression_paths(state, condition, assumptions, &mut budget)?;
+    let mut may_continue = false;
+    let mut may_exit = false;
+    for path in expression_paths {
+        match path.outcome {
+            CExpressionOutcome::Value(value) => {
+                if condition_path_is_ruled_out(&path.facts, assumptions) {
+                    continue;
+                }
+                for path in c_truthiness_paths(value, path.facts, path.obligations, assumptions) {
+                    if path.is_true {
+                        may_continue = true;
+                    } else {
+                        may_exit = true;
+                    }
+                }
+            }
+            CExpressionOutcome::UndefinedBehavior(_) | CExpressionOutcome::RuntimeError(_) => {
+                may_continue = true;
+                may_exit = true;
+            }
+        }
+    }
+    Ok((may_continue, may_exit))
+}
+
+fn condition_path_is_ruled_out(facts: &[ExecutionPureFact], assumptions: &PureFactContext) -> bool {
+    facts.iter().any(|fact| {
+        let Proposition::ConditionIs(condition, value) = fact.proposition() else {
+            return false;
+        };
+        condition_value_is_proven(assumptions, condition, !value)
+    })
+}
+
+fn condition_value_is_proven(
+    assumptions: &PureFactContext,
+    condition: &ConditionTerm,
+    value: bool,
+) -> bool {
+    assumptions.proves(&Proposition::ConditionIs(condition.clone(), value))
+        || (!value
+            && condition_complement(condition).is_some_and(|complement| {
+                assumptions.proves(&Proposition::ConditionIs(complement, true))
+            }))
+}
+
+fn condition_complement(condition: &ConditionTerm) -> Option<ConditionTerm> {
+    match condition {
+        ConditionTerm::Bitvector32SignedLessThan(left, right) => Some(
+            ConditionTerm::signed_greater_equal(left.as_ref().clone(), right.as_ref().clone()),
+        ),
+        ConditionTerm::Bitvector32SignedLessEqual(left, right) => Some(
+            ConditionTerm::signed_greater_than(left.as_ref().clone(), right.as_ref().clone()),
+        ),
+        ConditionTerm::Bitvector32SignedGreaterThan(left, right) => Some(
+            ConditionTerm::signed_less_equal(left.as_ref().clone(), right.as_ref().clone()),
+        ),
+        ConditionTerm::Bitvector32SignedGreaterEqual(left, right) => Some(
+            ConditionTerm::signed_less_than(left.as_ref().clone(), right.as_ref().clone()),
+        ),
+        _ => None,
+    }
 }
 
 fn c_loop_state_components_match_at_back_edge_inner(
@@ -508,6 +595,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: &[CLoopFinalExitCandidate],
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -520,6 +608,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         body,
         assumptions,
         (!preservation_proven).then_some(environment),
+        final_exit_candidates,
         execution_semantics,
         initialization_proven,
         budget,
@@ -537,6 +626,7 @@ fn execute_c_while_exit_paths(
     body: &CStatement,
     assumptions: &PureFactContext,
     preservation_environment: Option<&CExecutionEnvironment>,
+    final_exit_candidates: &[CLoopFinalExitCandidate],
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
     budget: &mut ExecutionBudget,
@@ -563,25 +653,26 @@ fn execute_c_while_exit_paths(
     };
     let (top_state, whole_loop_effect_summaries) =
         prepare_loop_top_state(state, effect_checks, body, assumptions, budget, variables)?;
-    let preservation_obligations = if let Some(environment) = preservation_environment {
-        collect_loop_preservation_summary(
-            state,
-            &top_state,
-            condition,
-            invariant_checks,
-            effect_checks,
-            &whole_loop_effect_summaries,
-            body,
-            assumptions,
-            environment,
-            execution_semantics,
-            budget,
-            variables,
-        )?
-        .obligations
-    } else {
-        Vec::new()
-    };
+    let (preservation_obligations, mut final_exit_paths) =
+        if let Some(environment) = preservation_environment {
+            let summary = collect_loop_preservation_summary(
+                state,
+                &top_state,
+                condition,
+                invariant_checks,
+                effect_checks,
+                &whole_loop_effect_summaries,
+                body,
+                assumptions,
+                environment,
+                execution_semantics,
+                budget,
+                variables,
+            )?;
+            (summary.obligations, summary.final_exit_paths)
+        } else {
+            (Vec::new(), Vec::new())
+        };
     let mut loop_check_obligations = Vec::new();
     append_required_proof_obligations(&mut loop_check_obligations, assumptions, &entry_obligations);
     append_required_proof_obligations(
@@ -589,13 +680,62 @@ fn execute_c_while_exit_paths(
         assumptions,
         &preservation_obligations,
     );
+    for path in &mut final_exit_paths {
+        append_required_proof_obligations(
+            &mut path.obligations,
+            assumptions,
+            &loop_check_obligations,
+        );
+    }
     let whole_loop_effect_facts = whole_loop_effect_summaries
         .iter()
         .cloned()
         .map(ExecutionPureFact::new)
         .collect::<Vec<_>>();
 
+    let (initial_may_continue, initial_may_exit) = if final_exit_candidates.is_empty() {
+        (true, true)
+    } else {
+        c_loop_condition_feasibility(state, condition, assumptions)?
+    };
     let mut paths = Vec::new();
+    paths.append(&mut final_exit_paths);
+    if initial_may_continue {
+        for candidate in final_exit_candidates {
+            let candidate_assumptions =
+                assumptions_with_propositions(assumptions, candidate.pure_facts());
+            for (facts, obligations) in assume_condition_truthiness(
+                candidate.state(),
+                condition,
+                &candidate_assumptions,
+                &[],
+                &[],
+                false,
+                budget,
+            )? {
+                let candidate_facts = candidate
+                    .pure_facts()
+                    .iter()
+                    .cloned()
+                    .map(ExecutionPureFact::certified)
+                    .collect::<Vec<_>>();
+                let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                    &candidate_facts,
+                    &[],
+                    &facts,
+                    &obligations,
+                    assumptions,
+                ) else {
+                    continue;
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::Normal(candidate.state().clone()),
+                    facts,
+                    obligations,
+                });
+            }
+        }
+    }
     let invariant_contexts = assume_invariant_checks(
         &top_state,
         state,
@@ -622,27 +762,29 @@ fn execute_c_while_exit_paths(
             break;
         }
     }
-    for (invariant_facts, invariant_obligations) in invariant_contexts {
-        let condition_contexts = assume_condition_truthiness(
-            &top_state,
-            condition,
-            assumptions,
-            &invariant_facts,
-            &invariant_obligations,
-            false,
-            budget,
-        )?;
-        for (facts, mut obligations) in condition_contexts {
-            append_required_proof_obligations(
-                &mut obligations,
+    if initial_may_exit {
+        for (invariant_facts, invariant_obligations) in invariant_contexts {
+            let condition_contexts = assume_condition_truthiness(
+                &top_state,
+                condition,
                 assumptions,
-                &loop_check_obligations,
-            );
-            paths.push(CStatementExecutionPath {
-                outcome: CStatementOutcome::Normal(top_state.clone()),
-                facts,
-                obligations,
-            });
+                &invariant_facts,
+                &invariant_obligations,
+                false,
+                budget,
+            )?;
+            for (facts, mut obligations) in condition_contexts {
+                append_required_proof_obligations(
+                    &mut obligations,
+                    assumptions,
+                    &loop_check_obligations,
+                );
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::Normal(top_state.clone()),
+                    facts,
+                    obligations,
+                });
+            }
         }
     }
     if paths.is_empty() {
@@ -978,6 +1120,7 @@ fn collect_invariant_check_obligations_with_mode(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoopPreservationSummary {
     pub(super) obligations: Vec<ProofObligation>,
+    pub(super) final_exit_paths: Vec<CStatementExecutionPath>,
 }
 
 pub(super) fn collect_loop_preservation_summary(
@@ -995,6 +1138,7 @@ pub(super) fn collect_loop_preservation_summary(
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
+    let mut final_exit_paths = Vec::new();
     let composite_resource_definitions = environment
         .functions
         .values()
@@ -1041,61 +1185,117 @@ pub(super) fn collect_loop_preservation_summary(
             )? {
                 match body_path.outcome {
                     CStatementOutcome::Normal(next_state) => {
-                        let effect_obligations = collect_loop_effect_check_obligations(
-                            top_state,
-                            &next_state,
-                            effect_checks,
-                            &body_path.facts,
-                            &body_path.obligations,
-                            assumptions,
-                            budget,
-                        )?;
-                        let path_assumptions = assumptions_with_path_context(
-                            assumptions,
-                            &body_path.facts,
-                            &body_path.obligations,
-                        );
-                        let path_obligations = collect_invariant_check_obligations(
-                            &next_state,
-                            loop_entry_state,
-                            invariant_checks,
-                            InvariantPhase::Preservation,
-                            &path_assumptions,
-                            budget,
-                        )?;
-                        let mut state_obligations = body_path.obligations.clone();
-                        if let Err(message) = c_loop_state_components_match_at_back_edge_inner(
-                            top_state,
-                            &next_state,
-                            &composite_resource_definitions,
-                            &path_assumptions,
-                        ) {
-                            state_obligations.push(
-                                ProofObligation::verification_condition(
-                                    false_equals_true_proposition(),
-                                )
-                                .with_context(message),
-                            );
+                        for (may_continue, condition_contexts) in [
+                            (
+                                true,
+                                assume_condition_truthiness(
+                                    &next_state,
+                                    condition,
+                                    assumptions,
+                                    &body_path.facts,
+                                    &body_path.obligations,
+                                    true,
+                                    budget,
+                                )?,
+                            ),
+                            (
+                                false,
+                                assume_condition_truthiness(
+                                    &next_state,
+                                    condition,
+                                    assumptions,
+                                    &body_path.facts,
+                                    &body_path.obligations,
+                                    false,
+                                    budget,
+                                )?,
+                            ),
+                        ] {
+                            for (condition_facts, condition_obligations) in condition_contexts {
+                                let path_assumptions = assumptions_with_path_context(
+                                    assumptions,
+                                    &condition_facts,
+                                    &condition_obligations,
+                                );
+                                let effect_obligations = collect_loop_effect_check_obligations(
+                                    top_state,
+                                    &next_state,
+                                    effect_checks,
+                                    &condition_facts,
+                                    &condition_obligations,
+                                    assumptions,
+                                    budget,
+                                )?;
+                                let path_obligations = collect_invariant_check_obligations(
+                                    &next_state,
+                                    loop_entry_state,
+                                    invariant_checks,
+                                    InvariantPhase::Preservation,
+                                    &path_assumptions,
+                                    budget,
+                                )?;
+                                let mut state_obligations = condition_obligations.clone();
+                                if may_continue
+                                    && let Err(message) =
+                                        c_loop_state_components_match_at_back_edge_inner(
+                                            top_state,
+                                            &next_state,
+                                            &composite_resource_definitions,
+                                            &path_assumptions,
+                                        )
+                                {
+                                    state_obligations.push(
+                                        ProofObligation::verification_condition(
+                                            false_equals_true_proposition(),
+                                        )
+                                        .with_context(message),
+                                    );
+                                }
+                                append_required_proof_obligations(
+                                    &mut obligations,
+                                    assumptions,
+                                    &state_obligations,
+                                );
+                                append_required_proof_obligations_under_path_context(
+                                    &mut obligations,
+                                    assumptions,
+                                    &effect_obligations,
+                                    &condition_facts,
+                                    &condition_obligations,
+                                );
+                                append_required_proof_obligations_under_path_context(
+                                    &mut obligations,
+                                    assumptions,
+                                    &path_obligations,
+                                    &condition_facts,
+                                    &condition_obligations,
+                                );
+                                if !may_continue {
+                                    let final_path_facts = condition_facts.clone();
+                                    let final_path_obligations = condition_obligations.clone();
+                                    let mut final_obligations = condition_obligations;
+                                    append_required_proof_obligations_under_path_context(
+                                        &mut final_obligations,
+                                        assumptions,
+                                        &effect_obligations,
+                                        &final_path_facts,
+                                        &final_path_obligations,
+                                    );
+                                    append_required_proof_obligations_under_path_context(
+                                        &mut final_obligations,
+                                        assumptions,
+                                        &path_obligations,
+                                        &final_path_facts,
+                                        &final_path_obligations,
+                                    );
+                                    final_exit_paths.push(CStatementExecutionPath {
+                                        outcome: CStatementOutcome::Normal(next_state.clone()),
+                                        facts: final_path_facts,
+                                        obligations: final_obligations,
+                                    });
+                                }
+                            }
                         }
-                        append_required_proof_obligations(
-                            &mut obligations,
-                            assumptions,
-                            &state_obligations,
-                        );
-                        append_required_proof_obligations_under_path_context(
-                            &mut obligations,
-                            assumptions,
-                            &effect_obligations,
-                            &body_path.facts,
-                            &body_path.obligations,
-                        );
-                        append_required_proof_obligations_under_path_context(
-                            &mut obligations,
-                            assumptions,
-                            &path_obligations,
-                            &body_path.facts,
-                            &body_path.obligations,
-                        );
                     }
                     CStatementOutcome::Return { .. }
                     | CStatementOutcome::VerificationDiverges
@@ -1116,7 +1316,10 @@ pub(super) fn collect_loop_preservation_summary(
             }
         }
     }
-    Ok(LoopPreservationSummary { obligations })
+    Ok(LoopPreservationSummary {
+        obligations,
+        final_exit_paths,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1704,6 +1907,11 @@ pub(super) fn assume_condition_truthiness(
     for condition_path in
         evaluate_c_expression_paths(state, condition, &effective_assumptions, budget)?
     {
+        if matches!(condition_path.outcome, CExpressionOutcome::Value(_))
+            && condition_path_is_ruled_out(&condition_path.facts, &effective_assumptions)
+        {
+            continue;
+        }
         let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
             prefix_facts,
             prefix_obligations,

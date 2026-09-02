@@ -118,6 +118,30 @@ pub struct CLoopPreservationContext {
     pure_facts: Vec<Proposition>,
 }
 
+/// A body state produced by a checked preservation proof that may be the
+/// final loop iteration. The proof layer supplies the facts retained at that
+/// body frontier; the kernel independently checks the post-body condition
+/// before exporting the state as a loop exit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CLoopFinalExitCandidate {
+    state: CState,
+    pure_facts: Vec<Proposition>,
+}
+
+impl CLoopFinalExitCandidate {
+    pub(crate) fn new(state: CState, pure_facts: Vec<Proposition>) -> Self {
+        Self { state, pure_facts }
+    }
+
+    pub(crate) fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub(crate) fn pure_facts(&self) -> &[Proposition] {
+        &self.pure_facts
+    }
+}
+
 impl CLoopPreservationContext {
     pub fn state(&self) -> &CState {
         &self.state
@@ -1460,6 +1484,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: Vec<CLoopFinalExitCandidate>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
@@ -1469,6 +1494,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
         environment,
         initialization_proven,
         preservation_proven,
+        final_exit_candidates,
         &mut budget,
     )
 }
@@ -1480,6 +1506,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: Vec<CLoopFinalExitCandidate>,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let CStatement::While {
@@ -1517,6 +1544,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         initialization_proven,
         preservation_proven,
+        &final_exit_candidates,
         budget,
         &mut variables,
     );
