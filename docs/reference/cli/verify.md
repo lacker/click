@@ -43,7 +43,13 @@ sidecar and project count.
 
 `--explain` without `--changed-since` is an error. A missing or invalid
 baseline marker forces a full rebuild rather than trusting an unattested
-result.
+result. A marker records the verifier binary, the commit, the sidecar, and
+every `CLICK_*` environment variable that was set, so a baseline attested
+with a switch such as `CLICK_DISABLE_TACTIC_BUDGETS` is not reused by a run
+without it. A full rebuild attests `HEAD`, and also the requested baseline
+when that baseline's sidecar and C sources are identical to the current
+ones, so the next `--changed-since` run against the same baseline can select
+instead of rebuilding again.
 
 ## Output and exit behavior
 

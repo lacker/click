@@ -43,7 +43,7 @@ pointers into different blocks likewise.
 - Loop invariants can state `p <= end` and `p == start + i`.
 - `scripts/check.sh` passes.
 
-Related: [pointer-offset-wrap.md](pointer-offset-wrap.md) fixes the
+Related: `rebuilt_offset_is_exact` (the wrapped-index equality fix, landed 2026-09-01) fixes the
 offset-equality decision these forms will rely on;
-[loop-havoc-pointer-locals.md](loop-havoc-pointer-locals.md) must land for
+`havoc_loop_modified_locals` (pointer locals are havoced since 2026-09-01) must land for
 the cursor idiom to be sound.

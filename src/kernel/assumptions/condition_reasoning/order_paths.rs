@@ -49,19 +49,32 @@ impl PureFactContext {
                 match (left.as_ref().as_const(), right.as_ref().as_const()) {
                     (Some(left), Some(right)) => Some(left == right),
                     _ => {
+                        // Addends both offsets share cancel exactly over the
+                        // integers, so only the remainders are compared; a
+                        // shared symbolic base offset then no longer blocks
+                        // an exact decision about the indices.
+                        let (left, right) = cancel_common_offset_addends(left, right);
+                        if let (Some(left), Some(right)) = (left.as_const(), right.as_const()) {
+                            return Some(left == right);
+                        }
+                        let (left, right) = (&left, &right);
                         let left_index = int32_element_index_from_offset(left);
                         let right_index = int32_element_index_from_offset(right);
                         match (left_index, right_index) {
-                            (Some(left), Some(right)) => {
-                                self.decide(&ConditionTerm::equal(left, right))
-                            }
+                            (Some(left_index), Some(right_index)) => exact_or_unequal(
+                                self.decide(&ConditionTerm::equal(left_index, right_index)),
+                                self.rebuilt_offset_is_exact(left, false)
+                                    && self.rebuilt_offset_is_exact(right, false),
+                            ),
                             _ => {
                                 let left_bytes = byte_offset_from_pointer_offset(left);
                                 let right_bytes = byte_offset_from_pointer_offset(right);
                                 match (left_bytes, right_bytes) {
-                                    (Some(left), Some(right)) => {
-                                        self.decide(&ConditionTerm::equal(left, right))
-                                    }
+                                    (Some(left_bytes), Some(right_bytes)) => exact_or_unequal(
+                                        self.decide(&ConditionTerm::equal(left_bytes, right_bytes)),
+                                        self.rebuilt_offset_is_exact(left, true)
+                                            && self.rebuilt_offset_is_exact(right, true),
+                                    ),
                                     _ => None,
                                 }
                             }
@@ -757,5 +770,123 @@ impl PureFactContext {
             let right = self.simplify_bitvector_under_assumptions(&right);
             self.has_order_path_for_memory_resolution(&left, &right, strict)
         })
+    }
+}
+
+/// Splits both offsets into their addends and removes every addend they
+/// share (one occurrence per match). Offsets are exact i64 sums of their
+/// addends, so `C + L == C + R` holds exactly if and only if `L == R`.
+fn cancel_common_offset_addends(
+    left: &crate::kernel::PointerOffsetTerm,
+    right: &crate::kernel::PointerOffsetTerm,
+) -> (
+    crate::kernel::PointerOffsetTerm,
+    crate::kernel::PointerOffsetTerm,
+) {
+    use crate::kernel::PointerOffsetTerm;
+    fn addends(offset: &PointerOffsetTerm, out: &mut Vec<PointerOffsetTerm>) {
+        match offset {
+            PointerOffsetTerm::Add(left, right) => {
+                addends(left, out);
+                addends(right, out);
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    fn rebuild(addends: Vec<PointerOffsetTerm>) -> PointerOffsetTerm {
+        addends
+            .into_iter()
+            .reduce(|sum, addend| PointerOffsetTerm::Add(Box::new(sum), Box::new(addend)))
+            .unwrap_or(PointerOffsetTerm::Constant(0))
+    }
+    let mut left_addends = Vec::new();
+    addends(left, &mut left_addends);
+    let mut right_addends = Vec::new();
+    addends(right, &mut right_addends);
+    let mut index = 0;
+    while index < left_addends.len() {
+        if let Some(shared) = right_addends
+            .iter()
+            .position(|addend| addend == &left_addends[index])
+        {
+            left_addends.remove(index);
+            right_addends.remove(shared);
+        } else {
+            index += 1;
+        }
+    }
+    (rebuild(left_addends), rebuild(right_addends))
+}
+
+/// A wrapped comparison of rebuilt terms can refute offset equality (equal
+/// offsets have equal residues) but can affirm it only when both rebuilt
+/// terms are exact; otherwise the equality stays undecided.
+fn exact_or_unequal(decided: Option<bool>, exact: bool) -> Option<bool> {
+    match decided {
+        Some(true) if !exact => None,
+        other => other,
+    }
+}
+
+impl PureFactContext {
+    /// Whether the index or byte term the offset rebuilders produce for
+    /// `offset` denotes the exact offset rather than a wrapped 32-bit value.
+    /// `PointerOffsetTerm` semantics are exact i64, so equal rebuilt terms
+    /// imply equal offsets only when every rebuilt addition (and, on the byte
+    /// path, every scaling by a width) is proved not to overflow under the
+    /// current facts. Constants and single index terms are always exact.
+    fn rebuilt_offset_is_exact(
+        &self,
+        offset: &crate::kernel::PointerOffsetTerm,
+        byte_path: bool,
+    ) -> bool {
+        use crate::kernel::PointerOffsetTerm;
+        let rebuild = |offset: &PointerOffsetTerm| {
+            if byte_path {
+                byte_offset_from_pointer_offset(offset)
+            } else {
+                int32_element_index_from_offset(offset)
+            }
+        };
+        match offset {
+            PointerOffsetTerm::Constant(_) => true,
+            PointerOffsetTerm::Int32Scaled { value, byte_width } => {
+                if !byte_path || *byte_width <= 1 {
+                    return true;
+                }
+                let Ok(width) = u32::try_from(*byte_width) else {
+                    return false;
+                };
+                self.decide(&ConditionTerm::signed_multiply_overflows(
+                    value.as_ref().clone(),
+                    Bitvector32Term::Constant(width),
+                )) == Some(false)
+            }
+            PointerOffsetTerm::Add(left, right)
+                if left.as_ref() == &PointerOffsetTerm::Constant(0) =>
+            {
+                self.rebuilt_offset_is_exact(right, byte_path)
+            }
+            PointerOffsetTerm::Add(left, right)
+                if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
+            {
+                self.rebuilt_offset_is_exact(left, byte_path)
+            }
+            PointerOffsetTerm::Add(left, right) => {
+                if !(self.rebuilt_offset_is_exact(left, byte_path)
+                    && self.rebuilt_offset_is_exact(right, byte_path))
+                {
+                    return false;
+                }
+                match (rebuild(left), rebuild(right)) {
+                    (Some(left), Some(right)) => {
+                        self.decide(&ConditionTerm::signed_add_overflows(left, right))
+                            == Some(false)
+                    }
+                    _ => false,
+                }
+            }
+            PointerOffsetTerm::Variable(_) => false,
+        }
     }
 }

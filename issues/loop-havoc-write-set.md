@@ -62,4 +62,4 @@ must keep passing.
   disagree with it.
 - The tests above pass; `scripts/check.sh` passes.
 
-Related: [loop-havoc-pointer-locals.md](loop-havoc-pointer-locals.md).
+Related: `havoc_loop_modified_locals` (pointer locals are havoced since 2026-09-01).

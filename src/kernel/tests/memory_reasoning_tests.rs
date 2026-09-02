@@ -3318,3 +3318,74 @@ fn load_variable_registry_fails_loudly_at_capacity_instead_of_clearing() {
         load_variable_for_cell_with_origin(&memory, &pointer("local:c"), &memory);
     });
 }
+
+/// `(data + i) + j` with `i == INT_MAX`, `j == 1` and `data + k` with
+/// `k == INT_MIN` have equal wrapped index sums but exact byte offsets of
+/// +2^33 and -2^33, so the equality must not be decided true.
+#[test]
+fn wrapped_index_sum_does_not_decide_pointer_offsets_equal() {
+    let i = Bitvector32Term::Variable(Variable(93_401));
+    let j = Bitvector32Term::Variable(Variable(93_402));
+    let k = Bitvector32Term::Variable(Variable(93_403));
+    let scaled = |value: &Bitvector32Term| PointerOffsetTerm::Int32Scaled {
+        value: Box::new(value.clone()),
+        byte_width: 4,
+    };
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::equal(i.clone(), Bitvector32Term::Constant(i32::MAX as u32)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(j.clone(), Bitvector32Term::Constant(1)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(i32::MIN as u32)),
+            true,
+        );
+    let sum = PointerOffsetTerm::Add(Box::new(scaled(&i)), Box::new(scaled(&j)));
+    assert_ne!(
+        assumptions.decide(&ConditionTerm::pointer_offset_equal(sum, scaled(&k))),
+        Some(true),
+        "a wrapped index sum must not affirm pointer-offset equality"
+    );
+
+    // A shared symbolic base offset cancels exactly, so `base + k` against
+    // `base + 2` is decided by `k` alone even though `base + k` may overflow.
+    let base = Bitvector32Term::Variable(Variable(93_405));
+    let with_base = |offset: PointerOffsetTerm| {
+        PointerOffsetTerm::Add(Box::new(scaled(&base)), Box::new(offset))
+    };
+    let k_is_two = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(2)),
+        true,
+    );
+    assert_eq!(
+        k_is_two.decide(&ConditionTerm::pointer_offset_equal(
+            with_base(scaled(&k)),
+            with_base(PointerOffsetTerm::Constant(8)),
+        )),
+        Some(true)
+    );
+    let k_is_three = PureFactContext::new().assume_condition(
+        ConditionTerm::equal(k.clone(), Bitvector32Term::Constant(3)),
+        true,
+    );
+    assert_eq!(
+        k_is_three.decide(&ConditionTerm::pointer_offset_equal(
+            with_base(scaled(&k)),
+            with_base(PointerOffsetTerm::Constant(8)),
+        )),
+        Some(false)
+    );
+
+    // Single scaled terms are exact, so equal indices still give equal offsets.
+    let m = Bitvector32Term::Variable(Variable(93_404));
+    let same =
+        PureFactContext::new().assume_condition(ConditionTerm::equal(i.clone(), m.clone()), true);
+    assert_eq!(
+        same.decide(&ConditionTerm::pointer_offset_equal(scaled(&i), scaled(&m))),
+        Some(true)
+    );
+}

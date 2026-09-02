@@ -108,5 +108,5 @@ back edge naming the changed allocation or resource.
   verified with an invariant that states the conditional ownership.
 - `scripts/check.sh` passes.
 
-Related: [loop-havoc-pointer-locals.md](loop-havoc-pointer-locals.md) fixes
+Related: `havoc_loop_modified_locals` (pointer locals are havoced since 2026-09-01) fixes
 the third stale component in the same function.

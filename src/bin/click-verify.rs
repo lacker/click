@@ -240,8 +240,27 @@ fn verify_changed(
                 )
             })
         })?;
-        if full_rebuild && let Err(message) = record_full_verification(&sidecar) {
-            eprintln!("click-verify: warning: could not record incremental baseline: {message}");
+        if full_rebuild {
+            // The rebuild verified the current sources; attest the requested
+            // baseline too only when its sidecar and sources are identical,
+            // so the next `--changed-since {revision}` run can select instead
+            // of rebuilding again.
+            let also_attest = match load_baseline_sidecar(&repo, revision, &sidecar)? {
+                Some(baseline)
+                    if baseline_matches_current(
+                        &baseline,
+                        &(click_source.clone(), sources.clone()),
+                    ) =>
+                {
+                    vec![baseline_commit.clone()]
+                }
+                _ => Vec::new(),
+            };
+            if let Err(message) = record_full_verification(&sidecar, &also_attest) {
+                eprintln!(
+                    "click-verify: warning: could not record incremental baseline: {message}"
+                );
+            }
         }
         verified += 1;
         println!("  result: verified");
@@ -398,15 +417,39 @@ fn verifier_fingerprint() -> Result<&'static str, String> {
         .map_err(Clone::clone)
 }
 
-fn marker_contents(commit: &str, relative: &Path, fingerprint: &str) -> String {
+/// The verifier switches that change a verdict: every `CLICK_*` environment
+/// variable, sorted, so a baseline attested with budgets or the memory DAG
+/// disabled is never reused by a run with them enabled.
+fn environment_switches() -> String {
+    environment_switches_from(env::vars())
+}
+
+fn environment_switches_from(variables: impl IntoIterator<Item = (String, String)>) -> String {
+    let mut switches = variables
+        .into_iter()
+        .filter(|(name, _)| name.starts_with("CLICK_"))
+        .map(|(name, value)| format!("env={name}={value}\n"))
+        .collect::<Vec<_>>();
+    switches.sort();
+    switches.concat()
+}
+
+fn marker_contents(commit: &str, relative: &Path, fingerprint: &str, switches: &str) -> String {
     format!(
-        "{INCREMENTAL_CACHE_SCHEMA}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n",
+        "{INCREMENTAL_CACHE_SCHEMA}\nverifier={fingerprint}\ncommit={commit}\nsidecar={}\n{switches}",
         relative.display()
     )
 }
 
 fn valid_marker(contents: &str, commit: &str, relative: &Path, fingerprint: &str) -> bool {
-    contents == marker_contents(commit, relative, fingerprint)
+    contents == marker_contents(commit, relative, fingerprint, &environment_switches())
+}
+
+/// A full rebuild verifies the current sources, so it may attest the
+/// requested baseline only when the baseline's sidecar and C sources are
+/// byte-identical to the current ones.
+fn baseline_matches_current(baseline: &LoadedSidecar, current: &LoadedSidecar) -> bool {
+    baseline == current
 }
 
 fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Result<bool, String> {
@@ -426,7 +469,10 @@ fn has_full_verification_marker(repo: &Path, commit: &str, sidecar: &Path) -> Re
     }
 }
 
-fn record_full_verification(sidecar: &Path) -> Result<(), String> {
+/// Records that `sidecar` was fully verified at `HEAD`, and at each commit in
+/// `also_attest` (a `--changed-since` baseline whose sources match the
+/// current ones), unless tracked sources are dirty.
+fn record_full_verification(sidecar: &Path, also_attest: &[String]) -> Result<(), String> {
     let sidecar = fs::canonicalize(sidecar)
         .map_err(|error| format!("failed to resolve `{}`: {error}", sidecar.display()))?;
     let repo = git_repo_root(&sidecar)?;
@@ -480,20 +526,27 @@ fn record_full_verification(sidecar: &Path) -> Result<(), String> {
             return Ok(());
         }
     }
-    let marker = verification_marker_path(&repo, &commit, &sidecar)?;
-    let parent = marker
-        .parent()
-        .ok_or_else(|| "incremental marker has no parent directory".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("failed to create `{}`: {error}", parent.display()))?;
-    let temporary = parent.join(format!(".tmp-{}", std::process::id()));
-    fs::write(
-        &temporary,
-        marker_contents(&commit, relative, verifier_fingerprint()?),
-    )
-    .map_err(|error| format!("failed to write `{}`: {error}", temporary.display()))?;
-    fs::rename(&temporary, &marker)
-        .map_err(|error| format!("failed to install `{}`: {error}", marker.display()))?;
+    for attested in std::iter::once(&commit).chain(also_attest) {
+        let marker = verification_marker_path(&repo, attested, &sidecar)?;
+        let parent = marker
+            .parent()
+            .ok_or_else(|| "incremental marker has no parent directory".to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create `{}`: {error}", parent.display()))?;
+        let temporary = parent.join(format!(".tmp-{}", std::process::id()));
+        fs::write(
+            &temporary,
+            marker_contents(
+                attested,
+                relative,
+                verifier_fingerprint()?,
+                &environment_switches(),
+            ),
+        )
+        .map_err(|error| format!("failed to write `{}`: {error}", temporary.display()))?;
+        fs::rename(&temporary, &marker)
+            .map_err(|error| format!("failed to install `{}`: {error}", marker.display()))?;
+    }
     Ok(())
 }
 
@@ -571,7 +624,7 @@ fn verify_file(click_path: &Path, time_limit: Duration) -> Result<(), String> {
             )
         })
     })?;
-    if let Err(message) = record_full_verification(click_path) {
+    if let Err(message) = record_full_verification(click_path, &[]) {
         eprintln!("click-verify: warning: could not record incremental baseline: {message}");
     }
     Ok(())
@@ -659,6 +712,46 @@ mod tests {
     }
 
     #[test]
+    fn marker_contents_include_environment_switches() {
+        let relative = Path::new("examples/tiny/tiny.click");
+        let plain = marker_contents("abc", relative, "fp", "");
+        let switches = environment_switches_from([(
+            "CLICK_DISABLE_TACTIC_BUDGETS".to_string(),
+            "1".to_string(),
+        )]);
+        let budgets_off = marker_contents("abc", relative, "fp", &switches);
+        assert_ne!(plain, budgets_off);
+        assert!(budgets_off.ends_with("env=CLICK_DISABLE_TACTIC_BUDGETS=1\n"));
+    }
+
+    #[test]
+    fn environment_switches_are_sorted_and_limited_to_click_variables() {
+        let switches = environment_switches_from([
+            ("PATH".to_string(), "x".to_string()),
+            ("CLICK_DISABLE_MEMORY_DAG".to_string(), "1".to_string()),
+            ("CLICK_DISABLE_CERT_ARMS".to_string(), "1".to_string()),
+        ]);
+        assert_eq!(
+            switches,
+            "env=CLICK_DISABLE_CERT_ARMS=1\nenv=CLICK_DISABLE_MEMORY_DAG=1\n"
+        );
+    }
+
+    #[test]
+    fn a_baseline_is_attested_only_when_its_sources_match_the_current_ones() {
+        let current: LoadedSidecar = (
+            "verifying \"a.c\";".to_string(),
+            vec![("a.c".to_string(), "int32 f() { return 0; }".to_string())],
+        );
+        assert!(baseline_matches_current(&current, &current));
+        let edited: LoadedSidecar = (
+            current.0.clone(),
+            vec![("a.c".to_string(), "int32 f() { return 1; }".to_string())],
+        );
+        assert!(!baseline_matches_current(&edited, &current));
+    }
+
+    #[test]
     fn discovered_sidecars_display_under_the_named_directory() {
         let root = fs::canonicalize("examples").expect("the examples directory should exist");
         let sidecar = root.join("input-cursor").join("input_cursor.click");
@@ -681,7 +774,7 @@ mod tests {
     #[test]
     fn corrupted_or_mismatched_incremental_markers_are_cache_misses() {
         let path = Path::new("examples/sample.click");
-        let valid = marker_contents("abc123", path, "verifier-a");
+        let valid = marker_contents("abc123", path, "verifier-a", &environment_switches());
         assert!(valid_marker(&valid, "abc123", path, "verifier-a"));
         assert!(!valid_marker("truncated", "abc123", path, "verifier-a"));
         assert!(!valid_marker(&valid, "different", path, "verifier-a"));
@@ -690,6 +783,19 @@ mod tests {
             &valid,
             "abc123",
             Path::new("examples/other.click"),
+            "verifier-a"
+        ));
+        // A marker written under a verifier switch this process does not have
+        // set is a cache miss as well.
+        let other_switches = format!(
+            "{}env=CLICK_DISABLE_TACTIC_BUDGETS=1\n",
+            environment_switches()
+        );
+        let attested_elsewhere = marker_contents("abc123", path, "verifier-a", &other_switches);
+        assert!(!valid_marker(
+            &attested_elsewhere,
+            "abc123",
+            path,
             "verifier-a"
         ));
     }

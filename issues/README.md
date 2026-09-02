@@ -23,17 +23,15 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 13
+## Soundness issues: 11
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
-- [Havoc pointer- and array-typed locals at the loop head](loop-havoc-pointer-locals.md)
 - [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
 - [Require vacuity outside the range in the FiniteForAll derivation rule](finite-forall-vacuity.md)
 - [Make `intro` bind a variable fresh with respect to the available facts](have-binder-capture.md)
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
-- [Decide pointer-offset equality in the offset model, not modulo 2^32](pointer-offset-wrap.md)
 - [Check the witnessing load's snapshot before certifying loadability](loadability-witness-snapshot.md)
 
 Reachable through the kernel API; the untrusted surface currently masks them
@@ -45,7 +43,7 @@ and [double-execution](double-execution.md) removes that mask:
 - [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
-## Functionality gaps: 29
+## Functionality gaps: 30
 
 C language coverage:
 
@@ -69,6 +67,8 @@ Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
 - [Reason about byte-width element indices](byte-element-index-reasoning.md)
+- [Model out-of-object pointer formation as undefined behavior](pointer-arithmetic-overflow.md)
+- [Prove a loop invariant that relates a havoced pointer local to the index](pointer-local-loop-invariants.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
 - [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
 - [Allow memory reads in `requires` propositions](memory-reads-in-requires.md)
@@ -81,6 +81,5 @@ Semantics and reasoning:
 Proof language and tooling:
 
 - [Lift proof-shape restrictions that force restructuring](proof-shape-restrictions.md)
-- [Fix the incremental verification marker and cache key](incremental-verify-marker.md)
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
 - [Split the two expansion census unit tests](split-expansion-census-tests.md)
