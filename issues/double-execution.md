@@ -1,223 +1,167 @@
 # Eliminate double execution
 
-## Status
+## Current state
 
-The first migration slice is complete. The proof object now retains the kernel
-theorem for each checked statement and condition transition, and the kernel can
-seal a complete trace, including nested shared-continuation branch evidence,
-into the checked function execution consumed by claim and opaque-contract
-certification without executing the C body again.
-Deterministic regressions require zero whole-body executions for ordinary
-grouped proofs, including a proof that carries an abstract resource predicate,
-for explicit C branches whose arms return directly from the function, for a
-bounded concretely stepped loop, and for a loop discharged by a verified loop
-summary. Shared-continuation C joins now retain one kernel-checked nested event:
-the split owns the exact source `if` and tail, both arm deltas descend from the
-same persistent trace, and final sealing checks the two arms before resuming
-the continuation once. Successive joins therefore do not multiply paths.
+Click normally executes C statements once, through checked proof-object
+operations, and retains the resulting kernel-issued transition evidence. At
+function exit the kernel can seal that retained trace into the checked function
+execution used by claim and contract certification. Existing zero-rerun
+regressions cover straight-line proofs, explicit C branches, proof-level case
+partitions, shared continuations, verified and concretely executed loops,
+post-execution resource folds, nested resource scopes, counted resources, and
+`branch ensuring` interfaces.
 
-Proof-level `if` cases now retain a kernel-issued complementary partition at
-the unchanged C frontier. Direct sealing requires both arms to be represented,
-rejects duplicate decisions on one retained path, and checks each retained
-path against its corresponding case decisions. A mid-execution two-arm proof
-case therefore seals with zero whole-body executions. Terminal C joins retain
-their already-aligned path traces.
+Two fallback mechanisms still execute a function body independently after its
+proof-directed execution:
 
-Post-execution resource folds and nested opens now seal from the retained
-transition theorems. A kernel-checked function-entry artifact retains the
-exact population materialization and permits a rebased entry only when C
-memory, heap lifetime state, local-object cells, resource meaning, and counted
-populations remain definitionally equal. Composite resource relations are
-derived once from that checked entry and may discharge only explicit resource
-containment and separation premises. Regressions require zero whole-body
-executions for a post-execution fold, nested composite-resource scopes, and an
-explicit owned quantity; a negative kernel test rejects changed memory values
-and changed population counts.
+1. In `finish_ordered_proof`, claim finishing uses retained proof evidence for
+   supported shapes but selects `cached_independent_execution` for three
+   explicit shapes:
+   - an outcome proof with an unfolded predicate;
+   - a quantified resource fold or close after C execution; and
+   - a counted entry whose output resources are closed implicitly rather than
+     by an explicit checked `frame()`.
+2. At the opaque-contract boundary, final certification reuses an exact,
+   resource-rebased, or exhaustive entry-partition checked artifact when it
+   can. If none matches, it silently falls back to fresh symbolic execution of
+   the function body.
 
-Pure, resource-only, and mixed pure/resource `branch ensuring` proofs now must
-retain one checked interface branch event. The artifact validates both exact source-arm
-traces, the exhaustive condition split, the deterministic abstract successor,
-every state-parametric exported fact, and whole-context resource availability
-in both arms. Its validated successor-fact delta becomes certified execution
-evidence rather than a caller assumption, so a continuation may read an
-abstracted local and use the interface fact to establish the function outcome.
-Exact common non-scalar memory is preserved; differing memory still receives
-the conservative havoc. Alternative arm effects are summarized by the kernel
-rather than concatenated as sequential transitions. Pure-result,
-owned-quantity, and transformed-composite regressions seal with zero whole-body
-executions, and kernel negatives reject an unproved successor fact, a resource
-absent from both arms, or an inexact arm-effect delta. Unsupported interface
-shapes fail at the join; there is no interface-specific body-execution fallback.
+Consequently, one proof can still perform its proof-directed statement
+execution, an independent claim execution, and another contract-finalization
+execution. The independent-execution cache reduces repeated work but preserves
+the wrong architecture. It can also produce the characteristic failure in
+which proof construction succeeds but a later execution cannot reproduce it.
 
-Composite `observe`, `fold`, `unfold`, and scoped open/close operations retain
-checked zero-source events tied to their exact state, resource definition, and
-resource/fact delta. Exporting a folded composite through a join does not
-observe its definition; an explicit `observe(...)` supplies that one-layer
-projection and seals without rerunning the body.
+The proof object already retains statement theorems, checked branch structure,
+proof-case partitions, resource representation transitions, and function-entry
+resource materialization. Do not redesign those completed parts merely to
+remove the remaining fallbacks.
 
-A quantified resource close after C execution remains on the fallback. That
-operation can change an observed exit population used by an outcome predicate;
-the checked entry artifact does not establish this exit transition. The guard
-is now limited to quantified folds and closes rather than treating every
-post-execution resource representation change as unsupported.
-
-Likewise, a counted entry whose output resources are closed only implicitly by
-outcome `simp()` remains on the fallback. An explicit checked `frame()` retains
-the exit transition and seals directly; the implicit closer currently retains
-only the finished claim proof, not equivalent execution evidence. The
-`resource_count_patterns` mdtest pins this distinction.
-
-Unsupported evidence shapes outside branch joins deliberately retain the old
-independent check for now. Outcome predicate unfolding, quantified
-exit-population transitions, and implicit counted-resource closure are the
-remaining explicit guards in claim finishing. Once these forms are typed
-evidence, the fallback and its cache can be removed rather than weakened
-piecemeal.
-
-There is a second fallback at the opaque-contract boundary. Final contract
-certification normally reuses the checked whole-body artifact created by claim
-finishing, but it silently executes the body again when exact reuse,
-resource-rebased reuse, or entry-partition reuse fails. Thus one proof can
-perform its proof-directed statement execution, one independent claim
-execution, and in a mismatch case another fresh contract execution. The
-independent-execution cache reduces repeated work across claims but does not
-remove this architecture.
-
-This is why failures can report that proof construction succeeded but a later
-execution could not reproduce it. The arena-shaped nested resource-scope
-failure is now covered by a zero-rerun regression, and the `examples/arena`
-project verifies. The intended `arena_write` contract is not currently present
-in that sidecar, so the issue still requires the explicit end-to-end acceptance
-regression below before completion.
+The arena example verifies through nested `arena_region` and `arena_metadata`
+scopes, but its sidecar does not yet contain the intended explicit
+`arena_write` contract. That contract remains the end-to-end resource-shaped
+acceptance case.
 
 ## Violated invariant
 
-A completed checked proof object must be the execution evidence for the
-function it proved. Ordinary verification must not secretly execute the same C
-body again to decide whether that proof object was valid. A mismatch in typed
-evidence must be rejected at the operation that creates or composes that
-evidence, not hidden by a fresh whole-body fallback.
+A completed checked proof object is the execution evidence for the function it
+proved. Ordinary verification must not secretly execute the same C body again
+to decide whether that proof was valid.
 
-Removing the later execution is a soundness-boundary change, not deletion of a
-redundant call. Today `publish_checked_frontier_transition` explicitly leaves
-semantic validity to its Surface caller, and the proof object throws away the
-statement theorem that justified the transition. The replacement must retain
-kernel-issued typed evidence through:
+Every proof-object operation must check its explicit premises and return a new
+valid proof object. At function exit, sealing composes those already-checked
+operations. It may validate lineage, source order, exhaustive branch coverage,
+and exact state compatibility; it must not reconstruct the proof by executing C
+again or by re-proving accumulated facts from an ambient context.
 
-- sequential statement and condition transitions;
-- explicit C branches and proof-level case partitions;
-- verified and concretely executed loops;
-- scoped resource opens, folds, unfolds, and equivalent ghost-resource
-  representations;
-- joins and complete function outcomes; and
-- pure prerequisites used by an execution transition.
+If a checked operation lacks information required by later composition, retain
+the smallest output-sized identity or state delta when that operation succeeds.
+Reject a mismatched transition at the operation or join that creates it. Do not
+hide the mismatch behind independent execution.
 
-At function exit the kernel must seal that evidence directly into the checked
-function execution consumed by claim and opaque-contract certification.
-Contract certification may still check requirements, effects, postconditions,
-path coverage, and opaque-rule eligibility; it must not rediscover the C
-execution that established them.
+## Kernel and tactic boundary
 
-## Related two-pass paths
+The proof object itself is the checked authority. Do not introduce a parallel
+fact-derivation or certification representation that must later be aligned with
+the proof object. In particular, removing double execution does not call for a
+`CheckedFactDerivation`-style database of facts to be proved a second time.
 
-The audit found two hidden whole-body rerun sites in ordinary verification,
-both in scope for this issue:
+Smart tactics may search or plan and then emit explicit simple proof steps.
+Simple steps and final sealing must remain deterministic and fast. Their kernel
+checks may use narrow decision procedures appropriate to the explicit rule,
+but they must not recover a missing premise through general ambient
+disjunction splitting, unrelated theorem search, or recursive reconstruction
+of the proof context.
 
-1. `finish_ordered_proof` independently executes the function to replace its
-   theorem-free execution candidates.
-2. Final opaque-contract certification falls back to fresh body execution when
-   a supplied checked artifact cannot be reused.
+Per-path state should have one canonical checked representation. Avoid parallel
+vectors of facts, conditions, snapshots, and evidence whose correctness
+depends on positional alignment. Persistent sharing and output-sized deltas are
+appropriate; cloning or rescanning accumulated path history per operation is
+not.
 
-The following are intentionally separate operations and are not double
-execution in this sense:
+## Remaining implementation slices
+
+Work from current `master` and remove one fallback shape at a time. Each slice
+must be independently green and must delete the guard or fallback it replaces.
+Do not accumulate a second implementation alongside the old one.
+
+### 1. Pin each remaining claim fallback
+
+Add or identify a focused regression for each of the three guarded shapes in
+`finish_ordered_proof`. Reset the checked whole-function execution counter,
+verify the proof, and assert that claim finishing performs zero whole-body
+executions. Before changing representations, confirm the exact checked
+transition or state delta that the existing proof object lacks.
+
+### 2. Remove the claim fallbacks individually
+
+For each guarded shape:
+
+1. Make the proof-object operation that already checks the unfold, resource
+   transition, or implicit closure retain the minimum information needed to
+   seal its successor.
+2. Have sealing consume that checked successor directly.
+3. Delete that shape's fallback guard immediately.
+4. Add a negative test showing that forged, stale, or mismatched state is
+   rejected without executing the body.
+5. Run the focused regression and the existing zero-rerun suite before moving
+   to the next shape.
+
+An implicit counted-resource close should use the same kernel-checked state
+transition as its explicit equivalent; it should not be justified by rerunning
+the function. Outcome predicate unfolding similarly needs a checked
+proof-object successor, not an ambient fact derivation reconstructed during
+sealing.
+
+### 3. Remove opaque-contract fallback execution
+
+Once claim finishing always supplies a checked execution artifact, classify
+the remaining reasons exact, resource-rebased, or entry-partition reuse can
+fail. Repair composition at the operation that loses the necessary identity.
+If a supplied artifact is incompatible, final certification must report that
+incompatibility rather than execute the body.
+
+Delete the `(None, None, None)` body-execution fallback and then remove the
+independent-execution cache. Retain the execution counter as regression
+instrumentation if it remains useful for proving that ordinary verification
+performs no hidden body execution.
+
+### 4. Add the arena acceptance contract
+
+Add the intended `arena_write` contract to `examples/arena/arena.click`, keeping
+the existing C unchanged and its mutable footprint narrow. Its nested resource
+scopes must verify with zero independent whole-body executions.
+
+## Not in scope
+
+The following are intentional independent checks, not double execution in this
+sense:
 
 - `click expand` verifies the rewritten source artifact it emits;
-- `click audit` cold-verifies original and rewritten artifacts for comparison;
+- `click audit` cold-verifies original and rewritten artifacts;
 - expansion regressions independently verify serialized proof text; and
-- an opaque function call uses its installed rule without executing the
+- an opaque function call applies its installed rule without executing the
   callee body.
 
-Smart-tactic search may try more than one checked successor before selecting
-one, but ordinary verification does not currently run a mandatory second
-per-tactic certification pass for the selected successor. Keep that property.
-
-## Shared-continuation partition design
-
-A nonterminal branch must not remain as a flat family of every path through
-the rest of the function. Sequential two-way branches would otherwise grow
-that family exponentially even when every branch immediately rejoins the same
-state.
-
-Instead, branch entry should retain one kernel-issued condition-partition
-artifact tied to the exact checked fact context that created it. The artifact
-records the complete feasible condition outcomes; Surface code cannot assemble
-one from unrelated arm theorems. At the join, the kernel checks that:
-
-- the artifact belongs to the unchanged branch-root fact context;
-- every feasible outcome is represented exactly once by the matching arm;
-- each arm's evidence is an append-only delta from the same parent trace;
-- both deltas execute the selected source arm and reach the checked common
-  successor; and
-- no condition premise, arm path, or successor state is supplied only by
-  Surface bookkeeping.
-
-The result is one nested checked branch event appended to the parent trace,
-not two live continuation paths. Later statements append once after that node.
-Checking and storage are proportional to the evidence actually written in the
-two arms, and sequential joined branches remain linear in the proof rather
-than forming a Cartesian product.
-
-The shared-continuation composition is implemented. Branch entry retains every
-kernel condition path, including infeasible and error outcomes, and joins reject
-a different state, condition, fact root, unmet path prerequisite, arm polarity,
-theorem, or incomplete coverage. Both checked arm deltas are retained inside one
-nested execution-evidence node, and final sealing consumes that node at the
-common continuation without executing the C body.
-
-Proof-level case partitions use the same exhaustiveness boundary. The kernel
-issues one partition only for complementary facts rooted in the same checked
-fact context and records each arm as a zero-source-advance execution event.
-The sealer accepts a multi-case family only when every partition has both arms
-and the artifact's case decisions correspond, modulo kernel-checked condition
-polarity equivalence, to the candidate path decisions. It cannot accept an
-arbitrary subset of candidate indexes merely because each selected path checks
-independently.
-
-## Intended regression
-
-Add deterministic tests that reset the checked whole-function execution
-counter, verify explicit proofs, and require claim and contract finalization to
-perform zero whole-body executions after the proof object's statement
-transitions. Cover at least:
-
-- a straight-line function proved by explicit `step()` operations;
-- a C `if` with both checked branches;
-- a verified loop and a bounded concrete loop path;
-- a scoped composite-resource mutation; and
-- `examples/arena/arena_write.c` through nested `arena_region` and
-  `arena_metadata` scopes.
-
-Add negative kernel tests showing that an incomplete path, a mismatched
-statement theorem, an unproved entry premise, a non-exhaustive branch family,
-or an inequivalent ghost-resource transition is rejected without executing the
-function as a fallback.
+This issue does not require new surface syntax, changed C semantics, rewritten
+C, a general proof-object redesign, or removal of search from smart tactics.
 
 ## Acceptance criteria
 
-- The proof object retains typed kernel execution evidence instead of reducing
-  completed paths to theorem-free `CFunctionExecutionCandidates`.
-- A completed proof seals that evidence directly into the checked function
-  execution used for its claims.
-- Ordinary claim finishing contains no independent whole-function execution
-  or independent-execution cache.
-- Opaque-contract certification never silently executes a supplied proof's C
-  body when its evidence is missing or mismatched; it reports the evidence
-  error instead.
-- Adding claims does not add executions, and explicit proof checking remains
-  approximately linear in selected C, Click, and evidence size.
-- The arena write contract keeps its narrow mutable footprint and verifies
-  without new surface syntax or weakened resource semantics.
-- Documentation no longer describes independent body execution as the normal
-  certification model. It continues to describe `click expand` and
-  `click audit` as independent artifact checks.
+- `finish_ordered_proof` contains no independent whole-function execution or
+  independent-execution cache.
+- Opaque-contract certification never executes a supplied proof's function
+  body when artifact reuse fails; it reports a local evidence error.
+- A completed proof seals its existing checked proof-object state directly;
+  finalization does not re-prove accumulated facts.
+- Simple checks added or used by this migration, and final sealing, perform no
+  ambient case search and remain approximately linear, up to logarithmic
+  indexes and output-sized deltas, in selected C, Click, proof state, and
+  certificate size.
+- Focused zero-rerun and negative tests cover every removed fallback shape.
+- The explicit `arena_write` contract verifies without changing its C source,
+  weakening resource semantics, or adding proof-only C structure.
+- Documentation describes proof-directed execution as the sole ordinary
+  verification model while preserving the intentional independent checks
+  listed above.
 - `scripts/check.sh` passes.
