@@ -237,48 +237,6 @@ pub(in crate::kernel) fn consume_memory_resolution_fuel() -> bool {
     })
 }
 
-/// Node budget for one top-level resource containment/separation query.
-/// `proves_resource_separate` scans separation facts, each check running a
-/// containment search that rescans the fact set per visited resource, with
-/// order-graph decisions at the leaves — quartic-shaped work that needs a
-/// hard per-query bound. Armed at the resource-prover entry points.
-pub(in crate::kernel) const RESOURCE_PROVER_NODE_BUDGET: usize = 5_000;
-
-thread_local! {
-    static RESOURCE_PROVER_FUEL: std::cell::Cell<Option<usize>> =
-        const { std::cell::Cell::new(None) };
-}
-
-pub(in crate::kernel) fn with_resource_prover_fuel<T>(body: impl FnOnce() -> T) -> T {
-    RESOURCE_PROVER_FUEL.with(|fuel| {
-        if fuel.get().is_some() {
-            return body();
-        }
-        fuel.set(Some(RESOURCE_PROVER_NODE_BUDGET));
-        let result = body();
-        fuel.set(None);
-        result
-    })
-}
-
-pub(in crate::kernel) fn consume_resource_prover_fuel() -> bool {
-    if crate::instrumentation::deadline_exceeded() {
-        crate::kernel::assumptions::note_search_truncation();
-        return false;
-    }
-    RESOURCE_PROVER_FUEL.with(|fuel| match fuel.get() {
-        None => true,
-        Some(0) => {
-            crate::kernel::assumptions::note_search_truncation();
-            false
-        }
-        Some(remaining) => {
-            fuel.set(Some(remaining - 1));
-            true
-        }
-    })
-}
-
 /// Test-only: the sole caller is the fenced `prove_c_while_invariant_rule`.
 /// The production loop path forks the condition through
 /// `assume_condition_truthiness`, which threads facts and obligations rather

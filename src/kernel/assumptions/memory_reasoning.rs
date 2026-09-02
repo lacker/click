@@ -1284,9 +1284,7 @@ impl PureFactContext {
         parent: &CResource,
         child: &CResource,
     ) -> bool {
-        crate::kernel::reasoning::with_resource_prover_fuel(|| {
-            self.proves_resource_contains_inner(parent, child)
-        })
+        self.proves_resource_contains_inner(parent, child)
     }
 
     fn proves_resource_contains_inner(&self, parent: &CResource, child: &CResource) -> bool {
@@ -1299,9 +1297,6 @@ impl PureFactContext {
         while let Some(current) = stack.pop() {
             if !seen.insert(current.clone()) {
                 continue;
-            }
-            if !crate::kernel::reasoning::consume_resource_prover_fuel() {
-                return false;
             }
             if self.resource_contains_builtin(&current, child) {
                 return true;
@@ -1327,9 +1322,7 @@ impl PureFactContext {
         left: &CResource,
         right: &CResource,
     ) -> bool {
-        crate::kernel::reasoning::with_resource_prover_fuel(|| {
-            self.proves_resource_separate_inner(left, right)
-        })
+        self.proves_resource_separate_inner(left, right)
     }
 
     fn proves_resource_separate_inner(&self, left: &CResource, right: &CResource) -> bool {
@@ -1353,11 +1346,10 @@ impl PureFactContext {
         }
 
         let separation_fact_entails = |fact_left: &CResource, fact_right: &CResource| {
-            crate::kernel::reasoning::consume_resource_prover_fuel()
-                && (self.proves_resource_contains_inner(fact_left, left)
-                    && self.proves_resource_contains_inner(fact_right, right)
-                    || self.proves_resource_contains_inner(fact_left, right)
-                        && self.proves_resource_contains_inner(fact_right, left))
+            self.proves_resource_contains_inner(fact_left, left)
+                && self.proves_resource_contains_inner(fact_right, right)
+                || self.proves_resource_contains_inner(fact_left, right)
+                    && self.proves_resource_contains_inner(fact_right, left)
         };
         // For a memory-memory query, memory-memory separation facts live in
         // the block-pair index and are consulted by the indexed pass below;
@@ -1452,9 +1444,6 @@ impl PureFactContext {
     fn resource_contains_builtin(&self, parent: &CResource, child: &CResource) -> bool {
         if parent == child {
             return true;
-        }
-        if !crate::kernel::reasoning::consume_resource_prover_fuel() {
-            return false;
         }
         let (CResource::Memory(parent), CResource::Memory(child)) = (parent, child) else {
             return false;
@@ -2227,31 +2216,10 @@ impl PureFactContext {
             Bitvector32Term::Constant(0),
             Bitvector32Term::Constant(1),
         );
-        if self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
+        self.memory_ranges_proven_disjoint_by_explicit_separation_for_memory_resolution(
             range,
             &pointer_range,
-        ) {
-            return true;
-        }
-
-        self.prop_facts.iter().any(|proposition| {
-            let Proposition::CMemoryDisjoint {
-                left_base,
-                left_start,
-                left_end,
-                right_base,
-                right_start,
-                right_end,
-            } = proposition
-            else {
-                return false;
-            };
-
-            self.range_covered_by_fact_range(range, left_base, left_start, left_end)
-                && self.pointer_in_range(pointer, right_base, right_start, right_end)
-                || self.range_covered_by_fact_range(range, right_base, right_start, right_end)
-                    && self.pointer_in_range(pointer, left_base, left_start, left_end)
-        })
+        )
     }
 
     pub(in crate::kernel) fn range_covered_by_fact_range(

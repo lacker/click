@@ -3,8 +3,12 @@
 ## Status
 
 Filed 2026-09-02 from a census of the kernel's reasoning routes over both
-fixture harnesses (method below). Nothing here is started. The slices are
-listed in landing order; each lands green on its own.
+fixture harnesses (method below). The slices are listed in landing order;
+each lands green on its own. Slice 1 landed on 2026-09-02 with one
+exception: excluded middle in the certification prover stays until slice
+2, because one surface unit test (`smart_fixed_state_have_if_retains_checked_arm_proofs_directly`)
+closes an `or`-shaped ensure with `assumption()` and claim certification
+does not match that completion, so the arm is what certifies it today.
 
 ## Violated invariant
 
@@ -141,9 +145,10 @@ Each slice is one worktree, one green `scripts/check.sh`, one fast-forward.
 Take a fresh census with temporary counters at the start of any slice that
 depends on a count.
 
-1. **Delete the nine dead routes** listed above, with the tests that exist
+1. **Delete the dead routes** listed above, with the tests that exist
    only to exercise them. Where a route is the only caller of a helper,
-   delete the helper.
+   delete the helper. Done for eight of the nine; excluded middle waits
+   for slice 2 (see Status).
 2. **Every closer records a completion.** Extend `ClaimClosure::by_exact_check_completing`
    to `simp`, `frame`, and the default closers, so claim certification
    matches every claim. Drive the "proved by prover 2" count to zero with a

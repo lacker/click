@@ -2277,16 +2277,6 @@ pub(super) fn certification_proves_proposition(
         // quantified proof search.
         return true;
     }
-    if let Proposition::ConditionIs(condition, value) = proposition
-        && let Some(canonical) = condition_with_canonicalized_loads(condition)
-        && &canonical != condition
-        && certification_proves_proposition(
-            assumptions,
-            &Proposition::ConditionIs(canonical, *value),
-        )
-    {
-        return true;
-    }
     let directly_proven = match proposition {
         // Order conditions use the deterministic bounded order prover; the
         // fuel-dependent simp decision procedure stays out of certification.
@@ -2360,6 +2350,9 @@ pub(super) fn certification_proves_proposition(
                 || certification_proves_proposition(assumptions, right)
                 // Excluded middle over decidable conditions: `L or R` holds
                 // when assuming `not L` certifies `R` (and symmetrically).
+                // Kept until claim certification matches an `or`-shaped
+                // ensure closed by `assumption()` (issues/simplify-kernel.md,
+                // slice 2); no corpus proof needs it.
                 || match left.as_ref() {
                     Proposition::ConditionIs(condition, value) => {
                         let negated = assumptions.clone().assume_proposition(
@@ -2469,13 +2462,8 @@ pub(super) fn certification_proves_proposition(
             assumptions.proves_order_condition_for_memory_resolution(condition, *value)
                 || assumptions.has_matching_condition_fact_for_memory_resolution(condition, *value)
         }
-        Proposition::Predicate { .. } => {
-            assumptions.proves(proposition)
-                || certification_proves_predicate_from_quantified_implication(
-                    assumptions,
-                    proposition,
-                )
-        }
+        // A predicate is certified only as an exact assumed fact (above).
+        Proposition::Predicate { .. } => false,
         _ => assumptions.proves(proposition),
     };
     if directly_proven {
@@ -2519,15 +2507,7 @@ pub(super) fn certification_proves_proposition(
         return true;
     }
 
-    // Disjunction elimination is a bounded structural fallback, not a
-    // fuel-dependent simp heuristic. Try the proposition's direct rules
-    // first so unrelated ambient branches do not multiply their work.
-    crate::instrumentation::measure_operation(
-        "kernel",
-        "certification proposition",
-        "certification proof: ambient disjunction cases",
-        || assumptions.proves_by_disjunction_cases(proposition),
-    )
+    false
 }
 
 /// Two load variables for one address are equal when the cell is framed
@@ -2766,89 +2746,6 @@ fn quantified_predicate_implication_fact(fact: &Proposition) -> bool {
         body = rest.as_ref();
     }
     matches!(body, Proposition::Predicate { .. })
-}
-
-/// Certifies an opaque predicate goal by instantiating an assumed
-/// universally-quantified implication (typically a verified theorem): the
-/// fact's predicate conclusion pins each bound variable against the goal's
-/// arguments, and every premise must then certify under that instantiation.
-fn certification_proves_predicate_from_quantified_implication(
-    assumptions: &PureFactContext,
-    goal: &Proposition,
-) -> bool {
-    let Proposition::Predicate { name, arguments } = goal else {
-        return false;
-    };
-    assumptions.prop_facts.iter().any(|fact| {
-        let mut binders = Vec::new();
-        let mut body = fact;
-        while let Proposition::ForAll {
-            var, body: inner, ..
-        } = body
-        {
-            binders.push(*var);
-            body = inner.as_ref();
-        }
-        if binders.is_empty() {
-            return false;
-        }
-        let mut premises = Vec::new();
-        let mut conclusion = body;
-        while let Proposition::Implies(premise, rest) = conclusion {
-            premises.push(premise.as_ref().clone());
-            conclusion = rest.as_ref();
-        }
-        let Proposition::Predicate {
-            name: fact_name,
-            arguments: fact_arguments,
-        } = conclusion
-        else {
-            return false;
-        };
-        if fact_name != name || fact_arguments.len() != arguments.len() {
-            return false;
-        }
-        let mut substitution: Vec<(Variable, Bitvector32Term)> = Vec::new();
-        for (fact_argument, goal_argument) in fact_arguments.iter().zip(arguments) {
-            let bound_variable = match fact_argument {
-                Term::CValue(
-                    CValue::Int32(Bitvector32Term::Variable(var))
-                    | CValue::UInt8(Bitvector32Term::Variable(var)),
-                ) if binders.contains(var) => Some(*var),
-                _ => None,
-            };
-            let Some(var) = bound_variable else {
-                if fact_argument != goal_argument {
-                    return false;
-                }
-                continue;
-            };
-            let goal_term = match goal_argument {
-                Term::CValue(CValue::Int32(term) | CValue::UInt8(term)) => term.clone(),
-                Term::Bitvector32(term) => term.clone(),
-                _ => return false,
-            };
-            match substitution.iter().find(|(existing, _)| *existing == var) {
-                None => substitution.push((var, goal_term)),
-                Some((_, existing)) if *existing == goal_term => {}
-                Some(_) => return false,
-            }
-        }
-        if binders
-            .iter()
-            .any(|var| !substitution.iter().any(|(bound, _)| bound == var))
-        {
-            return false;
-        }
-        premises.into_iter().all(|premise| {
-            let mut instantiated = premise;
-            for (var, witness) in &substitution {
-                instantiated =
-                    substitute_bitvector_variable_in_proposition(&instantiated, *var, witness);
-            }
-            certification_proves_proposition(assumptions, &instantiated)
-        })
-    })
 }
 
 /// Proves a guarded quantified conclusion from already-certified guarded

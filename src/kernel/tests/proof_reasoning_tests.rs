@@ -1242,9 +1242,6 @@ fn proposition_derivation_honors_active_deadline() {
         assert!(!crate::kernel::reasoning::with_memory_resolution_fuel(
             || { crate::kernel::reasoning::consume_memory_resolution_fuel() }
         ));
-        assert!(!crate::kernel::reasoning::with_resource_prover_fuel(|| {
-            crate::kernel::reasoning::consume_resource_prover_fuel()
-        }));
     });
 }
 
@@ -3407,8 +3404,10 @@ fn assumptions_prove_by_bounded_disjunction_cases() {
         Box::new(x_is_one.clone()),
     ));
 
+    // The general prover does not eliminate disjunctions; the explicit
+    // derivation still does.
     let proposition = Proposition::Or(Box::new(x_is_one), Box::new(x_is_zero));
-    assert!(assumptions.proves(&proposition));
+    assert!(!assumptions.proves(&proposition));
     assert_checkable_derivation(&assumptions, &proposition);
 }
 
@@ -3430,7 +3429,7 @@ fn assumptions_eliminate_disjunction_to_prove_atomic_consequence() {
         true,
     );
 
-    assert!(assumptions.proves(&nonnegative));
+    assert!(!assumptions.proves(&nonnegative));
     assert_checkable_derivation(&assumptions, &nonnegative);
 }
 

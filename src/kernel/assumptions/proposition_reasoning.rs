@@ -284,12 +284,6 @@ impl PureFactContext {
                 "general proposition proof",
                 "proposition proof: finite context split",
                 || self.proves_by_finite_context_split(proposition),
-            )
-            || crate::instrumentation::measure_operation(
-                "kernel",
-                "general proposition proof",
-                "proposition proof: disjunction cases",
-                || self.proves_by_disjunction_cases(proposition),
             );
         if proved {
             record_implicit_reasoning_provenance(self, proposition);
@@ -2817,27 +2811,6 @@ impl PureFactContext {
             });
         }
         None
-    }
-
-    pub(in crate::kernel) fn proves_by_disjunction_cases(&self, proposition: &Proposition) -> bool {
-        for disjunction in self.disjunction_facts.iter() {
-            let mut cases = Vec::new();
-            collect_or_cases(disjunction, &mut cases);
-            if cases.len() < 2 || cases.len() > DISJUNCTION_CASE_LIMIT {
-                continue;
-            }
-
-            let mut base = self.clone();
-            base.remove_proposition_fact(disjunction);
-            if cases.iter().all(|case| {
-                base.clone()
-                    .assume_proposition(case.clone())
-                    .proves(proposition)
-            }) {
-                return true;
-            }
-        }
-        false
     }
 
     pub(in crate::kernel) fn proves_finite_forall(&self, proposition: &Proposition) -> bool {

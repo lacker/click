@@ -138,12 +138,9 @@ fn bitvectors_match_for_resource_check(
             })
         })
     };
-    if transported_matches(left, right) || transported_matches(right, left) {
-        return true;
-    }
-    // Resource endpoints normally differ only by a framed load. Keep the
-    // broader recursive solver as the fallback after targeted transport.
-    bitvector_terms_proven_equal_for_memory_resolution(left, right, assumptions)
+    // Resource endpoints differ only by a framed load; targeted transport
+    // is the whole rule.
+    transported_matches(left, right) || transported_matches(right, left)
 }
 
 fn pointer_offsets_match_from_memory_derivations(
