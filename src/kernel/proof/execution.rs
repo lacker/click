@@ -2150,6 +2150,85 @@ impl ExecutionProofCore {
                 );
             }
         }
+        self.check_evidence_state_and_premises(
+            function,
+            &running_state,
+            theorem,
+            context,
+            proved_state,
+            execution_facts,
+            obligations,
+        )
+    }
+
+    /// Checks that a condition theorem decides the frontier's next `if` or
+    /// `while` (a loop head re-entered from its body is the frontier's next
+    /// statement again) from the running state, under retained premises:
+    /// the statement judgment for the theorem that selects an arm or a
+    /// loop iteration.
+    fn check_condition_evidence(
+        &self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        theorem: &Theorem,
+        context: &PureFactContext,
+        path_facts: &[Proposition],
+        obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), &'static str> {
+        let running_state = self.running_state(function, arguments)?;
+        let (proved_state, proved_condition) =
+            match crate::kernel::api::proof_evidence_conclusion(theorem) {
+                Proposition::CConditionEvaluates {
+                    state,
+                    condition,
+                    outcome: CConditionOutcome::Value(_),
+                } => (state, condition),
+                _ => return Err("retained condition evidence has a non-value conclusion"),
+            };
+        let Some(next) = self.next_source_statement(function) else {
+            return Err("condition evidence was recorded with no source statement remaining");
+        };
+        let decided = match &next {
+            CStatement::If { condition, .. } | CStatement::While { condition, .. } => condition,
+            _ => {
+                return Err(
+                    "condition evidence does not decide the frontier's next `if` or `while`",
+                );
+            }
+        };
+        if decided != proved_condition {
+            return Err("condition evidence does not decide the frontier's next source condition");
+        }
+        let path_facts = path_facts
+            .iter()
+            .cloned()
+            .map(ExecutionPureFact::new)
+            .collect::<Vec<_>>();
+        self.check_evidence_state_and_premises(
+            function,
+            &running_state,
+            theorem,
+            context,
+            proved_state,
+            &path_facts,
+            obligations,
+        )
+    }
+
+    /// The part of the evidence judgment shared by statement and condition
+    /// theorems: the theorem starts from the running state, and every
+    /// premise it assumes is retained.
+    #[allow(clippy::too_many_arguments)]
+    fn check_evidence_state_and_premises(
+        &self,
+        function: &CFunction,
+        running_state: &CState,
+        theorem: &Theorem,
+        context: &PureFactContext,
+        proved_state: &CState,
+        execution_facts: &[ExecutionPureFact],
+        obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), &'static str> {
         let no_assumptions = PureFactContext::new();
         let entry_assumptions = self
             .function_entry
@@ -2168,7 +2247,7 @@ impl ExecutionProofCore {
             || if at_checked_entry {
                 crate::kernel::api::function_entry_representation_states_match(
                     function,
-                    &running_state,
+                    running_state,
                     proved_state,
                     entry_assumptions,
                 )
@@ -2177,13 +2256,13 @@ impl ExecutionProofCore {
                     crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
                 crate::kernel::api::execution_evidence_states_match(
                     function,
-                    &running_state,
+                    running_state,
                     proved_state,
                     &theorem_assumptions,
                 )
             };
         if !states_match {
-            return Err("statement evidence does not start from the running state");
+            return Err("evidence does not start from the running state");
         }
         let mut retained_execution_facts = execution_facts.to_vec();
         for fact in self.effect_facts.iter() {
@@ -2201,24 +2280,43 @@ impl ExecutionProofCore {
             Some(context),
             &retained_execution_facts,
             obligations,
-            &running_state,
+            running_state,
             entry_relation_facts,
         ) {
-            return Err("statement evidence assumes a premise the proof did not retain");
+            return Err("evidence assumes a premise the proof did not retain");
         }
         Ok(())
     }
 
+    /// Records one condition theorem and the fact context it was proved
+    /// under on the single open trace, once the theorem is checked to
+    /// decide the frontier's next `if` or `while`
+    /// (`check_condition_evidence`). `path_facts` are the kernel-issued
+    /// facts of the path the decision selects; the theorem may assume
+    /// them.
     pub(crate) fn record_condition_transition(
         &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
         theorem: Theorem,
         context: PureFactContext,
-    ) {
+        path_facts: &[Proposition],
+        obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
+        self.check_condition_evidence(
+            function,
+            arguments,
+            &theorem,
+            &context,
+            path_facts,
+            obligations,
+        )?;
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Condition(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
+        Ok(())
     }
 
     pub(crate) fn record_proof_case_arm(
@@ -2957,12 +3055,38 @@ mod tests {
             ],
         };
         let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        let at_branch = FrontierPosition::StatementEntry {
+            remaining: Arc::new(crate::kernel::c_seq(
+                split.branch_statement.clone(),
+                split.continuation.clone().expect("a continuation"),
+            )),
+        };
         let mut then_arm = parent.clone();
-        then_arm.record_condition_transition(then_theorem.clone(), PureFactContext::new());
+        then_arm.frontier.position = at_branch.clone();
+        then_arm
+            .record_condition_transition(
+                &function,
+                &[],
+                then_theorem.clone(),
+                PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .expect("the then condition decides the frontier's `if`");
         then_arm.frontier.region = ExecutionRegionKind::BranchArm;
         then_arm.frontier.position = FrontierPosition::RegionBoundary;
         let mut else_arm = parent.clone();
-        else_arm.record_condition_transition(else_theorem.clone(), PureFactContext::new());
+        else_arm.frontier.position = at_branch;
+        else_arm
+            .record_condition_transition(
+                &function,
+                &[],
+                else_theorem.clone(),
+                PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .expect("the else condition decides the frontier's `if`");
         else_arm.frontier.region = ExecutionRegionKind::BranchArm;
         else_arm.frontier.position = FrontierPosition::RegionBoundary;
 
@@ -3050,12 +3174,38 @@ mod tests {
             ],
         };
         let parent = ExecutionProofCore::at_entry(state.clone(), ExecutionFrontier::default());
+        let at_branch = FrontierPosition::StatementEntry {
+            remaining: Arc::new(crate::kernel::c_seq(
+                split.branch_statement.clone(),
+                split.continuation.clone().expect("a continuation"),
+            )),
+        };
         let mut then_arm = parent.clone();
-        then_arm.record_condition_transition(then_theorem.clone(), PureFactContext::new());
+        then_arm.frontier.position = at_branch.clone();
+        then_arm
+            .record_condition_transition(
+                &function,
+                &[],
+                then_theorem.clone(),
+                PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .expect("the then condition decides the frontier's `if`");
         then_arm.frontier.region = ExecutionRegionKind::BranchArm;
         then_arm.frontier.position = FrontierPosition::RegionBoundary;
         let mut else_arm = parent.clone();
-        else_arm.record_condition_transition(else_theorem.clone(), PureFactContext::new());
+        else_arm.frontier.position = at_branch;
+        else_arm
+            .record_condition_transition(
+                &function,
+                &[],
+                else_theorem.clone(),
+                PureFactContext::new(),
+                &[],
+                &[],
+            )
+            .expect("the else condition decides the frontier's `if`");
         else_arm.frontier.region = ExecutionRegionKind::BranchArm;
         else_arm.frontier.position = FrontierPosition::RegionBoundary;
         let stable_join_locals = state

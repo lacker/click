@@ -597,10 +597,21 @@ pub(super) fn execute_branch_step_from_frontier_position(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
-    execution.core.record_condition_transition(
-        condition_transition.theorem.clone(),
-        condition_transition.context.clone(),
-    );
+    execution
+        .core
+        .record_condition_transition(
+            function,
+            arguments,
+            condition_transition.theorem.clone(),
+            condition_transition.context.clone(),
+            &condition_transition.path_facts,
+            &[],
+        )
+        .map_err(|reason| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {reason}"
+            ))
+        })?;
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     current_state = crate::kernel::resolve_pending_heap_allocations(
@@ -710,6 +721,7 @@ fn execute_concrete_loop_head_step(
     mut construction: Option<Construction<'_>>,
 ) -> Result<(), ClickError> {
     let function_block = proof_context.function_block;
+    let function = proof_context.function;
     let parameters = proof_context.parsed_function.parameters();
     let arguments = proof_context.arguments;
     let claim_label = proof_context.claim_label;
@@ -797,10 +809,21 @@ fn execute_concrete_loop_head_step(
         );
         restore_construction_snapshot_view(&mut execution.presentation.recorded_snapshots, restore);
     }
-    execution.core.record_condition_transition(
-        condition_transition.theorem.clone(),
-        condition_transition.context.clone(),
-    );
+    execution
+        .core
+        .record_condition_transition(
+            function,
+            arguments,
+            condition_transition.theorem.clone(),
+            condition_transition.context.clone(),
+            &condition_transition.path_facts,
+            &[],
+        )
+        .map_err(|reason| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {reason}"
+            ))
+        })?;
     let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
     execution.core.frontier.execution_start_state = Some(execution_start_state);

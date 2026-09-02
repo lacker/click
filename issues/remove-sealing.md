@@ -8,8 +8,8 @@ check still in place as a backstop, and the last slice deletes that check.
 
 Slice 1 turned out to be unnecessary and was dropped: the frontier already
 holds each trace's running state and remaining source, and traces only
-fork after the forking step's theorems are checked. Slice 2 landed on
-2026-09-02.
+fork after the forking step's theorems are checked. Slices 2 and 3 landed
+on 2026-09-02.
 
 ## Violated invariant
 
@@ -81,9 +81,14 @@ replacing.
    comparison exhaust the tactic's work budget). The driver still advances
    the frontier itself; the sealer's helpers stay in `src/kernel/api.rs`
    and are shared with the proof module until slice 7 moves them.
-3. **Condition steps.** The same for `record_condition_transition`: `if`
-   and `while` selection, loop-head re-entry, pending heap allocation
-   resolution.
+3. **Condition steps.** Done. `record_condition_transition` checks that
+   the theorem decides the condition of the frontier's next `if` or
+   `while` (a re-entered loop head is the next statement again) from the
+   running state, under retained premises; the decision's kernel-issued
+   path facts count as retained, as they did through the candidate path's
+   facts at the end. A `branch` arm records its condition while it still
+   stands at the parent's `if`. Pending heap allocation resolution stays
+   with the driver until the frontier moves into the kernel.
 4. **Resource observations, rewrites, and case arms.** Advance the
    progress state on an observation or rewrite (already kernel-checked) and
    the progress assumptions on a case arm, including an arm recorded after

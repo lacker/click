@@ -2589,7 +2589,7 @@ fn recording_statement_evidence_checks_it_advances_the_frontier() {
             Theorem::new(verifies(elsewhere, branch.clone())),
             PureFactContext::new(),
         ),
-        Err("statement evidence does not start from the running state")
+        Err("evidence does not start from the running state")
     );
     let premise = Proposition::ConditionIs(
         ConditionTerm::signed_less_equal(
@@ -2604,11 +2604,122 @@ fn recording_statement_evidence_checks_it_advances_the_frontier() {
     ));
     assert_eq!(
         record(conditional.clone(), PureFactContext::new()),
-        Err("statement evidence assumes a premise the proof did not retain")
+        Err("evidence assumes a premise the proof did not retain")
     );
     record(
         conditional,
         PureFactContext::new().assume_proposition(premise),
     )
     .expect("a premise the recorded context retains is accepted");
+}
+
+#[test]
+fn recording_condition_evidence_checks_it_decides_the_frontier() {
+    // The condition record call applies the same judgment for the theorem
+    // that selects an `if` arm or a loop iteration: it decides the
+    // frontier's next `if` or `while` condition, from the running state,
+    // under premises the proof retains.
+    let condition = c_less_than(c_int32_literal(0), c_int32_literal(1));
+    let branch = c_if(
+        condition.clone(),
+        c_return(c_int32_literal(0)),
+        CStatement::Skip,
+    );
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch, c_return(c_int32_literal(1))),
+    );
+    let entry_state = c_function_entry_state(&CState::new(), &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let evaluates =
+        |state: CState, condition: crate::kernel::CExpression| Proposition::CConditionEvaluates {
+            state,
+            condition,
+            outcome: crate::kernel::CConditionOutcome::Value(true),
+        };
+    let record = |theorem: Theorem, context: PureFactContext, path_facts: &[Proposition]| {
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            CState::new(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        core.record_condition_transition(&function, &[], theorem, context, path_facts, &[])
+    };
+    record(
+        Theorem::new(evaluates(entry_state.clone(), condition.clone())),
+        PureFactContext::new(),
+        &[],
+    )
+    .expect("the body's `if` condition from the entry state decides the entry frontier");
+    assert_eq!(
+        record(
+            Theorem::new(evaluates(
+                entry_state.clone(),
+                c_less_than(c_int32_literal(1), c_int32_literal(0)),
+            )),
+            PureFactContext::new(),
+            &[],
+        ),
+        Err("condition evidence does not decide the frontier's next source condition")
+    );
+    let elsewhere = entry_state.clone().with_local("x", int32(1));
+    assert_eq!(
+        record(
+            Theorem::new(evaluates(elsewhere, condition.clone())),
+            PureFactContext::new(),
+            &[],
+        ),
+        Err("evidence does not start from the running state")
+    );
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Variable(Variable(1_000_001)),
+            Bitvector32Term::Constant(3),
+        ),
+        true,
+    );
+    let conditional = Theorem::new(Proposition::Implies(
+        Box::new(premise.clone()),
+        Box::new(evaluates(entry_state, condition)),
+    ));
+    assert_eq!(
+        record(conditional.clone(), PureFactContext::new(), &[]),
+        Err("evidence assumes a premise the proof did not retain")
+    );
+    record(
+        conditional.clone(),
+        PureFactContext::new().assume_proposition(premise.clone()),
+        &[],
+    )
+    .expect("a premise the recorded context retains is accepted");
+    // The decision's own path fact is a premise the selected path assumes.
+    record(conditional, PureFactContext::new(), &[premise])
+        .expect("a premise that is the path's own fact is accepted");
+    // A statement that is not an `if` or `while` cannot be decided.
+    let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    let returning = c_function(
+        CType::Int32,
+        "returning",
+        Vec::new(),
+        c_return(c_int32_literal(0)),
+    );
+    assert_eq!(
+        core.record_condition_transition(
+            &returning,
+            &[],
+            Theorem::new(Proposition::CConditionEvaluates {
+                state: c_function_entry_state(&CState::new(), &returning, &[]).expect("entry"),
+                condition: c_less_than(c_int32_literal(0), c_int32_literal(1)),
+                outcome: crate::kernel::CConditionOutcome::Value(true),
+            }),
+            PureFactContext::new(),
+            &[],
+            &[],
+        ),
+        Err("condition evidence does not decide the frontier's next `if` or `while`")
+    );
 }

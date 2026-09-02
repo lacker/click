@@ -158,6 +158,24 @@ impl<'a> Proof<'a> {
                 else_branch.as_ref()
             };
             let mut arm_execution = execution.clone();
+            // The arm's condition theorem is recorded while the arm still
+            // stands at the parent's `if`, where the proof object checks
+            // it; the arm frontier then moves into the selected branch.
+            arm_execution
+                .core
+                .record_condition_transition(
+                    context.function,
+                    context.arguments,
+                    transition.theorem.clone(),
+                    transition.pure_facts.assumptions().clone(),
+                    &transition.path_facts,
+                    &[],
+                )
+                .map_err(|reason| {
+                    self.step_error(format!(
+                        "`branch` recorded condition evidence the proof object rejected: {reason}"
+                    ))
+                })?;
             record_statement_program_snapshot_state(
                 &mut arm_execution.presentation.recorded_snapshots,
                 context.function_block,
@@ -256,10 +274,6 @@ impl<'a> Proof<'a> {
                 "{} arm of C `if` at statement({statement_index})",
                 if take_then { "then" } else { "else" }
             ));
-            arm_execution.core.record_condition_transition(
-                transition.theorem.clone(),
-                transition.pure_facts.assumptions().clone(),
-            );
             arms[usize::from(!take_then)] = Some(PreparedExecutionArm {
                 facts: transition.pure_facts,
                 execution: arm_execution,
