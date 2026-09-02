@@ -81,11 +81,16 @@ mdtest and example-project harnesses are aggregate tests covering many directly
 verified fixtures, so their outer test-process allowance is not a per-project
 verification budget.
 
-Plain `cargo test` does not apply nextest's outer Rust-test deadline. The
-fixture harnesses deliberately have no wall-clock proof limit: deterministic
-tactic-work budgets decide their verdicts. Under nextest, the aggregate mdtest
-and example test processes retain a 20-minute outer timeout as crash/hang
-containment. A nextest timeout is therefore a tooling failure, visibly distinct
+Plain `cargo test` does not apply nextest's outer Rust-test deadline, which
+is why `scripts/check.sh` refuses to run without nextest rather than falling
+back to it. The fixture harnesses deliberately have no wall-clock proof
+limit: deterministic tactic-work budgets decide their verdicts. Under
+nextest, the aggregate mdtest and example test processes retain a 20-minute
+outer timeout as crash/hang containment. The gate runs the two harnesses
+with their output uncaptured, and each fixture prints a line when it starts
+and when it finishes with its elapsed time, so a stall is visible as a
+started fixture that never finishes, with its name, and a slow fixture is
+visible while it runs rather than only in the total afterwards. A nextest timeout is therefore a tooling failure, visibly distinct
 from the verifier's deterministic-budget diagnostic, and is not evidence that
 a particular proof is invalid or too expensive. On 2026-08-20 the complete
 mdtest and example harnesses took 58.2 and 17.6 seconds respectively, so the

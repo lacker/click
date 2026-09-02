@@ -72,10 +72,19 @@ fn example_projects() {
     // work budgets decide correctness; the test runner owns hang containment.
     let _ = instrumentation::take_body_rerun_census();
     for project in &projects {
-        println!("verifying example project `{}`", project.display());
+        // One line as each project starts and one as it finishes, on stderr
+        // so the gate can stream them: a stall shows as a started project
+        // that never finishes, and a slow project is visible while it runs.
+        eprintln!("example project `{}` started", project.display());
+        let started = std::time::Instant::now();
         if let Err(diagnostics) = run_example_in_thread(project) {
             panic!("example project `{}` {diagnostics}", project.display());
         }
+        eprintln!(
+            "example project `{}` verified in {:.2}s",
+            project.display(),
+            started.elapsed().as_secs_f64()
+        );
     }
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()
@@ -123,7 +132,7 @@ fn run_example_project(project: &Path) -> Result<(), String> {
                 error.message()
             )
         })?;
-        println!("verified {}", click_path.display());
+        eprintln!("verified {}", click_path.display());
     }
     Ok(())
 }

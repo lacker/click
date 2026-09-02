@@ -20,19 +20,23 @@ cargo test --test documentation
 scripts/mdbook-build.sh
 scripts/docs-lint.sh
 
-if command -v cargo-nextest >/dev/null 2>&1; then
-    # Applies the per-test time budgets in `.config/nextest.toml`: prover
-    # regressions usually manifest as hangs, which must fail fast.
-    #
-    # Unit tests may use every core.
-    cargo nextest run --lib --bins "$@"
-    # The fixture harnesses verify serially to bound peak memory. Their proof
-    # verdicts come from deterministic tactic-work budgets; nextest's outer
-    # timeout is process-level hang containment, not a proof budget.
-    cargo nextest run --test mdtests --test examples --test-threads 1 "$@"
-else
-    echo "cargo-nextest not found; falling back to cargo test without the" >&2
-    echo "per-test time budget. Install it with:" >&2
+# The gate needs nextest: `.config/nextest.toml` holds the per-test time
+# budgets, and prover regressions usually manifest as hangs, which must be
+# killed and named rather than waited on. Plain `cargo test` has no such
+# containment, so the gate refuses to run without nextest instead of
+# silently running unbounded.
+if ! command -v cargo-nextest >/dev/null 2>&1; then
+    echo "error: cargo-nextest not found; the gate needs its per-test time budgets" >&2
+    echo "Install it once with:" >&2
     echo "    cargo install cargo-nextest --locked" >&2
-    cargo test "$@"
+    exit 1
 fi
+
+# Unit tests may use every core.
+cargo nextest run --lib --bins "$@"
+# The fixture harnesses verify serially to bound peak memory. Their proof
+# verdicts come from deterministic tactic-work budgets; nextest's outer
+# timeout is process-level hang containment, not a proof budget. Their
+# output is not captured: each fixture prints a line when it starts and when
+# it finishes, so a stall is visible as it happens and named.
+cargo nextest run --test mdtests --test examples --test-threads 1 --no-capture "$@"

@@ -97,13 +97,26 @@ fn run_mdtest_in_thread(path: &Path) -> Result<(), String> {
         || "click-mdtest".to_string(),
         |name| format!("mdtest-{name}"),
     );
-    std::thread::Builder::new()
+    // One line as each fixture starts and one as it finishes, on stderr so
+    // the gate can stream them: a stall shows as a started fixture that
+    // never finishes, and a slow fixture is visible while it runs, not only
+    // in the total afterwards.
+    let name = path.display().to_string();
+    eprintln!("mdtest `{name}` started");
+    let started = std::time::Instant::now();
+    let result = std::thread::Builder::new()
         .name(thread_name)
         .stack_size(64 * 1024 * 1024)
         .spawn(move || run_mdtest_attempt(&path))
         .map_err(|error| format!("failed to start mdtest verifier: {error}"))?
         .join()
-        .map_err(|_| "mdtest verifier panicked".to_string())?
+        .map_err(|_| "mdtest verifier panicked".to_string())?;
+    eprintln!(
+        "mdtest `{name}` {} in {:.2}s",
+        if result.is_ok() { "passed" } else { "failed" },
+        started.elapsed().as_secs_f64()
+    );
+    result
 }
 
 fn run_mdtest_attempt(path: &Path) -> Result<(), String> {
