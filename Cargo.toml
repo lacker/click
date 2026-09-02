@@ -6,3 +6,12 @@ license = "Apache-2.0"
 
 [dependencies]
 libc = "0.2"
+
+# An optimized build that keeps symbols and debug info, for sampling
+# profilers (`scripts/profile-samply.sh`). Verification timing is judged in
+# `click profile`; this profile is for finding where the wall-clock time goes
+# inside the verifier.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

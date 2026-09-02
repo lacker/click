@@ -398,6 +398,31 @@ timing, set `CLICK_TIMINGS=1`; add `CLICK_TIMING_STARTS=1` when an externally
 interrupted run should identify its active statement. Raw tactic events include
 `class simple`, `class smart`, or `class control`.
 
+`NESTED VERIFIER OPERATIONS` lists the kernel operations measured inside
+tactics and certification (resource context equality, relation facts,
+proof completion, and so on) with their wall time and their deterministic
+work units, aggregated by time and again by work. Work is what a tactic's
+budget is enforced in and what a wall-clock profiler cannot see: an
+operation that exhausts a budget in a few milliseconds ranks first by work
+and nowhere by time. Read that table before adding ad hoc instrumentation.
+
+### Profiling the verifier itself
+
+`click profile` attributes time to proof steps and kernel operations. When the
+question is where the verifier's own wall-clock time goes, which functions
+rather than which tactics, record a sampling profile with samply:
+
+```sh
+scripts/profile-samply.sh examples/binary-tree
+```
+
+This builds the `profiling` cargo profile (optimized, with symbols) and opens
+the recording in the Firefox Profiler; `--save-only` writes
+`target/profiling/click.samply.json` instead. Install samply once with
+`cargo install samply --locked`. A sampling profile answers "which function is
+hot", never "which step exceeded its budget": those are different questions,
+and the budget one belongs to `click profile`.
+
 ### Dependency-aware incremental verification
 
 After a clean full verification, Click records a small atomic success marker

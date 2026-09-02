@@ -917,3 +917,46 @@ fn structured_events_do_not_require_text_parsing() {
     assert_eq!(profile.slow_steps.len(), 1);
     assert!(profile.unknown_timing.is_empty());
 }
+
+#[test]
+fn operations_are_ranked_by_deterministic_work_as_well_as_time() {
+    // A kernel operation can exhaust a tactic's budget in milliseconds. The
+    // report ranks operations by work units as well as by time, so such an
+    // operation is visible even when its wall time is negligible.
+    let operation =
+        |name: &str, elapsed: Duration, work: usize| VerificationEvent::OperationFinished {
+            function: "f".to_string(),
+            claim: "f.contract".to_string(),
+            name: name.to_string(),
+            elapsed,
+            work,
+        };
+    let events = vec![
+        VerificationEvent::Source(PathBuf::from("example.click")),
+        operation("slow but cheap", Duration::from_secs(2), 40),
+        operation("fast but costly", Duration::from_millis(3), 500_000),
+    ];
+    let profile = profile_from_events("example", &events, Thresholds::default(), false)
+        .expect("structured events should profile");
+    assert_eq!(profile.operations.len(), 2);
+    assert_eq!(profile.operations[1].work, 500_000);
+
+    let report = render_profiles(&[profile], Thresholds::default(), DEFAULT_TIME_LIMIT);
+    let by_time = report
+        .find("AGGREGATES BY TIME")
+        .expect("operations are aggregated by time");
+    let by_work = report
+        .find("AGGREGATES BY DETERMINISTIC WORK")
+        .expect("operations are aggregated by work");
+    let time_section = &report[by_time..by_work];
+    let work_section = &report[by_work..];
+    assert!(
+        time_section.find("slow but cheap") < time_section.find("fast but costly"),
+        "{report}"
+    );
+    assert!(
+        work_section.find("fast but costly") < work_section.find("slow but cheap"),
+        "{report}"
+    );
+    assert!(work_section.contains("500000 units"), "{report}");
+}

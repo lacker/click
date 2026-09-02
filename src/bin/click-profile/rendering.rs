@@ -432,37 +432,71 @@ fn render_operations(output: &mut String, profiles: &[ProjectProfile], top_rows:
         "\nNESTED VERIFIER OPERATIONS (overlap parent buckets)"
     )
     .expect("writing a String cannot fail");
+    #[derive(Default)]
+    struct Aggregate {
+        total: Duration,
+        count: usize,
+        max: Duration,
+        work: usize,
+        max_work: usize,
+    }
     let mut aggregates = std::collections::BTreeMap::new();
     for (project, operation) in &operations {
-        let entry = aggregates
+        let entry: &mut Aggregate = aggregates
             .entry((*project, operation.name.clone()))
-            .or_insert((Duration::ZERO, 0usize, Duration::ZERO));
-        entry.0 += operation.elapsed;
-        entry.1 += 1;
-        entry.2 = entry.2.max(operation.elapsed);
+            .or_default();
+        entry.total += operation.elapsed;
+        entry.count += 1;
+        entry.max = entry.max.max(operation.elapsed);
+        entry.work += operation.work;
+        entry.max_work = entry.max_work.max(operation.work);
     }
     let mut aggregates = aggregates.into_iter().collect::<Vec<_>>();
-    aggregates.sort_by(|(_, left), (_, right)| right.0.cmp(&left.0));
-    writeln!(output, "  AGGREGATES").expect("writing a String cannot fail");
-    for ((project, name), (total, count, max)) in aggregates.into_iter().take(top_rows) {
+    aggregates.sort_by(|(_, left), (_, right)| right.total.cmp(&left.total));
+    writeln!(output, "  AGGREGATES BY TIME").expect("writing a String cannot fail");
+    for ((project, name), aggregate) in aggregates.iter().take(top_rows) {
         writeln!(
             output,
-            "  {:>9}  {:>4} calls  avg {:>9}  max {:>9}  {}  {}",
-            format_fractional_duration(total),
-            count,
-            format_fractional_duration(total / count as u32),
-            format_fractional_duration(max),
+            "  {:>9}  {:>4} calls  avg {:>9}  max {:>9}  {:>14}  {}  {}",
+            format_fractional_duration(aggregate.total),
+            aggregate.count,
+            format_fractional_duration(aggregate.total / aggregate.count as u32),
+            format_fractional_duration(aggregate.max),
+            format_work_units(aggregate.work),
             name,
             project,
         )
         .expect("writing a String cannot fail");
     }
+    // Deterministic work is what a tactic's budget is enforced in and what
+    // a wall-clock profiler cannot see: an operation can exhaust a budget
+    // in milliseconds. Rank the same aggregates by it so such an operation
+    // is visible even when its time is small.
+    if aggregates.iter().any(|(_, aggregate)| aggregate.work > 0) {
+        aggregates.sort_by(|(_, left), (_, right)| right.work.cmp(&left.work));
+        writeln!(output, "  AGGREGATES BY DETERMINISTIC WORK")
+            .expect("writing a String cannot fail");
+        for ((project, name), aggregate) in aggregates.iter().take(top_rows) {
+            writeln!(
+                output,
+                "  {:>14}  {:>4} calls  max {:>14}  {:>9}  {}  {}",
+                format_work_units(aggregate.work),
+                aggregate.count,
+                format_work_units(aggregate.max_work),
+                format_fractional_duration(aggregate.total),
+                name,
+                project,
+            )
+            .expect("writing a String cannot fail");
+        }
+    }
     writeln!(output, "  SLOWEST INDIVIDUAL CALLS").expect("writing a String cannot fail");
     for (project, operation) in operations.into_iter().take(top_rows) {
         writeln!(
             output,
-            "  {:>9}  {}  {}  {}  {}",
+            "  {:>9}  {:>14}  {}  {}  {}  {}",
             format_fractional_duration(operation.elapsed),
+            format_work_units(operation.work),
             operation.name,
             project,
             operation.function,

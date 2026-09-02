@@ -173,6 +173,9 @@ struct ProfileOperation {
     claim: String,
     name: String,
     elapsed: Duration,
+    /// Deterministic work units the operation charged: the quantity tactic
+    /// budgets are enforced in, and the one a sampling profiler cannot see.
+    work: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -871,12 +874,13 @@ fn profile_from_events(
                 claim,
                 name,
                 elapsed,
-                work: _,
+                work,
             } => TimingEvent::Operation(ProfileOperation {
                 function: function.clone(),
                 claim: claim.clone(),
                 name: name.clone(),
                 elapsed: *elapsed,
+                work: *work,
             }),
             VerificationEvent::DeadlineExceeded(active) => TimingEvent::Interrupted(match active {
                 ActiveVerificationWork::Tactic(tactic) => {
