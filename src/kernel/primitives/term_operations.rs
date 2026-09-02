@@ -755,6 +755,14 @@ impl Pointer {
     }
 
     pub(crate) fn element_index_from_base(&self, base: &Self) -> Option<Bitvector32Term> {
+        self.element_index_from_base_with_width(base, 4)
+    }
+
+    pub(crate) fn element_index_from_base_with_width(
+        &self,
+        base: &Self,
+        byte_width: u32,
+    ) -> Option<Bitvector32Term> {
         if self.block != base.block {
             return None;
         }
@@ -764,20 +772,20 @@ impl Pointer {
         }
 
         if base.offset == PointerOffsetTerm::Constant(0) {
-            return int32_element_index_from_offset(&self.offset);
+            return crate::kernel::reasoning::element_index_from_offset(&self.offset, byte_width);
         }
 
         match &self.offset {
             PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
-                int32_element_index_from_offset(right)
+                crate::kernel::reasoning::element_index_from_offset(right, byte_width)
             }
             PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
-                int32_element_index_from_offset(left)
+                crate::kernel::reasoning::element_index_from_offset(left, byte_width)
             }
             _ => {
                 if let (Some(pointer_index), Some(base_index)) = (
-                    int32_element_index_from_offset(&self.offset),
-                    int32_element_index_from_offset(&base.offset),
+                    crate::kernel::reasoning::element_index_from_offset(&self.offset, byte_width),
+                    crate::kernel::reasoning::element_index_from_offset(&base.offset, byte_width),
                 ) {
                     Some(Bitvector32Term::subtract(pointer_index, base_index))
                 } else {

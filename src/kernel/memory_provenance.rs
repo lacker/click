@@ -1391,9 +1391,9 @@ fn forward_range_offset_from_pointer(
         return None;
     };
     if pointer.offset == **left {
-        int32_element_index_from_offset(right)
+        element_index_from_offset(right, range.element_width())
     } else if pointer.offset == **right {
-        int32_element_index_from_offset(left)
+        element_index_from_offset(left, range.element_width())
     } else {
         None
     }

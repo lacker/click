@@ -1147,10 +1147,16 @@ fn substitute_bitvector_variable_in_spec_resource(
     to: &Bitvector32Term,
 ) -> SpecResource {
     match resource {
-        SpecResource::Memory { base, start, end } => SpecResource::Memory {
+        SpecResource::Memory {
+            base,
+            start,
+            end,
+            element_width,
+        } => SpecResource::Memory {
             base: substitute_bitvector_variable_in_spec_expression(base, from, to),
             start: substitute_bitvector_variable_in_spec_expression(start, from, to),
             end: substitute_bitvector_variable_in_spec_expression(end, from, to),
+            element_width: *element_width,
         },
         SpecResource::Composite { name, arguments } => SpecResource::Composite {
             name: name.clone(),

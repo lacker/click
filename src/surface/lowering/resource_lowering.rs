@@ -930,8 +930,8 @@ pub(in crate::surface) fn contract_expression_element_width(
             .iter()
             .find(|parameter| parameter.name() == name)
             .and_then(|parameter| match parameter.c_type() {
-                C0Type::Int32Pointer => Some(4),
-                C0Type::UInt8Pointer => Some(1),
+                C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(4),
+                C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(1),
                 _ => None,
             }),
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
@@ -939,7 +939,8 @@ pub(in crate::surface) fn contract_expression_element_width(
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
         CExpression::TypedLoad { value_type, .. } => match value_type {
             CType::Int32Pointer => Some(4),
-            CType::UInt8Pointer => Some(1),
+            CType::Int32Array(_) => Some(4),
+            CType::UInt8Pointer | CType::UInt8Array(_) => Some(1),
             _ => None,
         },
         _ => None,

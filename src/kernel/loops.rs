@@ -1124,6 +1124,7 @@ pub(super) struct EvaluatedMemorySegment {
     pub(super) base: Pointer,
     pub(super) start: Bitvector32Term,
     pub(super) end: Bitvector32Term,
+    pub(super) element_width: u32,
 }
 
 pub(super) fn collect_whole_loop_effect_summaries(
@@ -1432,8 +1433,15 @@ pub(super) fn evaluate_loop_effect_segment(
         }
         Err(message) => return Ok(Err(message)),
     };
+    let element_width =
+        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
 
-    Ok(Ok(EvaluatedMemorySegment { base, start, end }))
+    Ok(Ok(EvaluatedMemorySegment {
+        base,
+        start,
+        end,
+        element_width,
+    }))
 }
 
 pub(super) fn evaluate_loop_effect_segment_with_facts(
@@ -1490,7 +1498,17 @@ pub(super) fn evaluate_loop_effect_segment_with_facts(
         }
         Err(message) => return Ok(Err(message)),
     };
-    Ok(Ok((EvaluatedMemorySegment { base, start, end }, facts)))
+    let element_width =
+        crate::kernel::eval::c_expression_pointer_step_width(state, &segment.base).unwrap_or(4);
+    Ok(Ok((
+        EvaluatedMemorySegment {
+            base,
+            start,
+            end,
+            element_width,
+        },
+        facts,
+    )))
 }
 
 pub(super) fn evaluate_loop_effect_segment_value(
@@ -1549,7 +1567,9 @@ pub(super) fn loop_effect_segment_contains_pointer(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(index) = pointer.element_index_from_base(&segment.base) else {
+    let Some(index) =
+        pointer.element_index_from_base_with_width(&segment.base, segment.element_width)
+    else {
         return false;
     };
     assumptions.proves(&Proposition::ConditionIs(
@@ -1566,7 +1586,13 @@ pub(super) fn loop_effect_segment_contains_range(
     range: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(base_index) = range.base().element_index_from_base(&segment.base) else {
+    if range.element_width() != segment.element_width {
+        return false;
+    }
+    let Some(base_index) = range
+        .base()
+        .element_index_from_base_with_width(&segment.base, segment.element_width)
+    else {
         return false;
     };
     let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());

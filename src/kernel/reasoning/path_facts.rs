@@ -215,31 +215,71 @@ pub(in crate::kernel) fn memory_ranges_disjoint_builtin(
     left_end <= right_start || right_end <= left_start
 }
 
-pub(in crate::kernel) fn int32_element_index_from_offset(
+pub(in crate::kernel) fn element_index_from_offset(
     offset: &PointerOffsetTerm,
+    element_width: u32,
 ) -> Option<Bitvector32Term> {
+    if element_width == 0 {
+        return None;
+    }
     match offset {
         PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
-            int32_element_index_from_offset(right)
+            element_index_from_offset(right, element_width)
         }
         PointerOffsetTerm::Add(left, right)
             if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
         {
-            int32_element_index_from_offset(left)
+            element_index_from_offset(left, element_width)
         }
         PointerOffsetTerm::Add(left, right) => Some(Bitvector32Term::add(
-            int32_element_index_from_offset(left)?,
-            int32_element_index_from_offset(right)?,
+            element_index_from_offset(left, element_width)?,
+            element_index_from_offset(right, element_width)?,
         )),
-        PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+            if *byte_width == i64::from(element_width) =>
+        {
             Some(value.as_ref().clone())
         }
-        PointerOffsetTerm::Constant(offset) if offset % 4 == 0 => {
-            let index = offset / 4;
+        PointerOffsetTerm::Constant(offset) if offset % i64::from(element_width) == 0 => {
+            let index = offset / i64::from(element_width);
             (i32::MIN as i64..=i32::MAX as i64)
                 .contains(&index)
                 .then_some(Bitvector32Term::Constant((index as i32) as u32))
         }
+        _ => None,
+    }
+}
+
+pub(in crate::kernel) fn int32_element_index_from_offset(
+    offset: &PointerOffsetTerm,
+) -> Option<Bitvector32Term> {
+    element_index_from_offset(offset, 4)
+}
+
+pub(in crate::kernel) fn common_pointer_offset_element_width(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+) -> Option<u32> {
+    fn offset_element_width(offset: &PointerOffsetTerm) -> Option<u32> {
+        match offset {
+            PointerOffsetTerm::Int32Scaled { byte_width, .. } => {
+                u32::try_from(*byte_width).ok().filter(|width| *width > 0)
+            }
+            PointerOffsetTerm::Add(left, right) => {
+                match (offset_element_width(left), offset_element_width(right)) {
+                    (Some(left), Some(right)) if left == right => Some(left),
+                    (Some(width), None) | (None, Some(width)) => Some(width),
+                    (None, None) => None,
+                    _ => None,
+                }
+            }
+            PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => None,
+        }
+    }
+
+    match (offset_element_width(left), offset_element_width(right)) {
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(width), None) | (None, Some(width)) => Some(width),
         _ => None,
     }
 }
@@ -298,25 +338,32 @@ pub(in crate::kernel) fn byte_offset_from_pointer_offset(
     }
 }
 
-pub(in crate::kernel) fn int32_element_count_from_bytes(
+pub(in crate::kernel) fn element_count_from_bytes(
     bytes: &Bitvector32Term,
+    element_width: u32,
 ) -> Option<Bitvector32Term> {
+    if element_width == 0 {
+        return None;
+    }
+    let element_width = Bitvector32Term::Constant(element_width);
     match bytes {
-        Bitvector32Term::Multiply(left, right)
-            if right.as_ref() == &Bitvector32Term::Constant(4) =>
-        {
+        Bitvector32Term::Multiply(left, right) if right.as_ref() == &element_width => {
             Some(left.as_ref().clone())
         }
-        Bitvector32Term::Multiply(left, right)
-            if left.as_ref() == &Bitvector32Term::Constant(4) =>
-        {
+        Bitvector32Term::Multiply(left, right) if left.as_ref() == &element_width => {
             Some(right.as_ref().clone())
         }
-        Bitvector32Term::Constant(bytes) if bytes % 4 == 0 => {
-            Some(Bitvector32Term::Constant(bytes / 4))
+        Bitvector32Term::Constant(bytes) if bytes % element_width.as_const()? == 0 => {
+            Some(Bitvector32Term::Constant(bytes / element_width.as_const()?))
         }
         _ => None,
     }
+}
+
+pub(in crate::kernel) fn int32_element_count_from_bytes(
+    bytes: &Bitvector32Term,
+) -> Option<Bitvector32Term> {
+    element_count_from_bytes(bytes, 4)
 }
 
 pub(in crate::kernel) fn signed_const_add(

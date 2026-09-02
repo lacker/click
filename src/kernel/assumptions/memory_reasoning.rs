@@ -193,7 +193,11 @@ impl PureFactContext {
                 memory_range_still_available(range_memory, memory, range_base).then(|| {
                     let preferred = bytes.as_const() == Some(4)
                         && self
-                            .pointer_element_index_from_base_for_memory_resolution(base, range_base)
+                            .pointer_element_index_from_base_for_memory_resolution(
+                                base,
+                                range_base,
+                                bytes.as_const().unwrap_or(4),
+                            )
                             .is_some();
                     (preferred, range_base, range_bytes)
                 })
@@ -386,10 +390,7 @@ impl PureFactContext {
                 let Some(byte_width) = bytes.as_const() else {
                     return false;
                 };
-                if byte_width != 4 {
-                    return false;
-                }
-                let Some(element_count) = int32_element_count_from_bytes(range_bytes) else {
+                let Some(element_count) = element_count_from_bytes(range_bytes, byte_width) else {
                     return false;
                 };
                 pointer_in_range_for_memory_resolution(
@@ -397,6 +398,7 @@ impl PureFactContext {
                     range_base,
                     &Bitvector32Term::Constant(0),
                     &element_count,
+                    byte_width,
                     self,
                 )
             })
@@ -413,9 +415,8 @@ impl PureFactContext {
             return true;
         }
         if let Some(byte_width) = bytes.as_const()
-            && byte_width == 4
-            && let Some(index) = base.element_index_from_base(range_base)
-            && let Some(element_count) = int32_element_count_from_bytes(range_bytes)
+            && let Some(index) = base.element_index_from_base_with_width(range_base, byte_width)
+            && let Some(element_count) = element_count_from_bytes(range_bytes, byte_width)
         {
             let lower =
                 ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
@@ -519,9 +520,9 @@ impl PureFactContext {
             return false;
         }
 
-        if byte_width == 4
-            && let Some(index) = self.pointer_element_index_from_base(pointer, base)
-            && let Some(element_count) = int32_element_count_from_bytes(bytes)
+        if let Some(index) =
+            self.pointer_element_index_from_base_with_width(pointer, base, byte_width)
+            && let Some(element_count) = element_count_from_bytes(bytes, byte_width)
         {
             let lower_condition =
                 ConditionTerm::signed_less_equal(Bitvector32Term::Constant(0), index.clone());
@@ -564,26 +565,30 @@ impl PureFactContext {
         let direct = self
             .memory_separation_candidates(&left.block, &right.block)
             .find_map(|(proposition, left_range, right_range)| {
-                (self.pointer_in_range(
+                (self.pointer_in_range_with_width(
                     left,
                     left_range.base(),
                     left_range.start(),
                     left_range.end(),
-                ) && self.pointer_in_range(
+                    left_range.element_width(),
+                ) && self.pointer_in_range_with_width(
                     right,
                     right_range.base(),
                     right_range.start(),
                     right_range.end(),
-                ) || self.pointer_in_range(
+                    right_range.element_width(),
+                ) || self.pointer_in_range_with_width(
                     right,
                     left_range.base(),
                     left_range.start(),
                     left_range.end(),
-                ) && self.pointer_in_range(
+                    left_range.element_width(),
+                ) && self.pointer_in_range_with_width(
                     left,
                     right_range.base(),
                     right_range.start(),
                     right_range.end(),
+                    right_range.element_width(),
                 ))
                 .then_some(proposition)
             });
@@ -611,26 +616,30 @@ impl PureFactContext {
                             "resource context equality",
                             "range disjointness: indexed candidate",
                             || {
-                                self.pointer_in_range(
+                                self.pointer_in_range_with_width(
                                     left,
                                     left_range.base(),
                                     left_range.start(),
                                     left_range.end(),
-                                ) && self.pointer_in_range(
+                                    left_range.element_width(),
+                                ) && self.pointer_in_range_with_width(
                                     right,
                                     right_range.base(),
                                     right_range.start(),
                                     right_range.end(),
-                                ) || self.pointer_in_range(
+                                    right_range.element_width(),
+                                ) || self.pointer_in_range_with_width(
                                     right,
                                     left_range.base(),
                                     left_range.start(),
                                     left_range.end(),
-                                ) && self.pointer_in_range(
+                                    left_range.element_width(),
+                                ) && self.pointer_in_range_with_width(
                                     left,
                                     right_range.base(),
                                     right_range.start(),
                                     right_range.end(),
+                                    right_range.element_width(),
                                 )
                             },
                         )
@@ -682,26 +691,30 @@ impl PureFactContext {
     ) -> bool {
         self.memory_separation_candidates(&left.block, &right.block)
             .any(|(_, left_range, right_range)| {
-                self.pointer_in_range_by_shallow_fact_graph(
+                self.pointer_in_range_by_shallow_fact_graph_with_width(
                     left,
                     left_range.base(),
                     left_range.start(),
                     left_range.end(),
-                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    left_range.element_width(),
+                ) && self.pointer_in_range_by_shallow_fact_graph_with_width(
                     right,
                     right_range.base(),
                     right_range.start(),
                     right_range.end(),
-                ) || self.pointer_in_range_by_shallow_fact_graph(
+                    right_range.element_width(),
+                ) || self.pointer_in_range_by_shallow_fact_graph_with_width(
                     right,
                     left_range.base(),
                     left_range.start(),
                     left_range.end(),
-                ) && self.pointer_in_range_by_shallow_fact_graph(
+                    left_range.element_width(),
+                ) && self.pointer_in_range_by_shallow_fact_graph_with_width(
                     left,
                     right_range.base(),
                     right_range.start(),
                     right_range.end(),
+                    right_range.element_width(),
                 )
             })
             || self
@@ -710,14 +723,15 @@ impl PureFactContext {
                 .any(|resources| resources.proves_owned_pointers_separate_shallow(left, right))
     }
 
-    pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph(
+    pub(in crate::kernel) fn pointer_in_range_by_shallow_fact_graph_with_width(
         &self,
         pointer: &Pointer,
         base: &Pointer,
         start: &Bitvector32Term,
         end: &Bitvector32Term,
+        element_width: u32,
     ) -> bool {
-        if pointer_in_range_shallow(pointer, base, start, end) {
+        if pointer_in_range_shallow(pointer, base, start, end, element_width) {
             return true;
         }
         if pointer.block != base.block {
@@ -728,10 +742,10 @@ impl PureFactContext {
         };
         let index = match &pointer.offset {
             PointerOffsetTerm::Add(left, right) if offset_matches(left, &base.offset) => {
-                int32_element_index_from_offset(right)
+                element_index_from_offset(right, element_width)
             }
             PointerOffsetTerm::Add(left, right) if offset_matches(right, &base.offset) => {
-                int32_element_index_from_offset(left)
+                element_index_from_offset(left, element_width)
             }
             _ if offset_matches(&pointer.offset, &base.offset) => {
                 Some(Bitvector32Term::Constant(0))
@@ -775,25 +789,24 @@ impl PureFactContext {
         let offset_matches = |left: &PointerOffsetTerm, right: &PointerOffsetTerm| {
             pointer_offsets_match_by_shallow_fact_graph(left, right, self)
         };
-        let index =
-            pointer
-                .element_index_from_base(range.base())
-                .or_else(|| match &pointer.offset {
-                    PointerOffsetTerm::Add(left, right)
-                        if offset_matches(left, &range.base().offset) =>
-                    {
-                        int32_element_index_from_offset(right)
-                    }
-                    PointerOffsetTerm::Add(left, right)
-                        if offset_matches(right, &range.base().offset) =>
-                    {
-                        int32_element_index_from_offset(left)
-                    }
-                    _ if offset_matches(&pointer.offset, &range.base().offset) => {
-                        Some(Bitvector32Term::Constant(0))
-                    }
-                    _ => None,
-                });
+        let index = pointer
+            .element_index_from_base_with_width(range.base(), range.element_width())
+            .or_else(|| match &pointer.offset {
+                PointerOffsetTerm::Add(left, right)
+                    if offset_matches(left, &range.base().offset) =>
+                {
+                    element_index_from_offset(right, range.element_width())
+                }
+                PointerOffsetTerm::Add(left, right)
+                    if offset_matches(right, &range.base().offset) =>
+                {
+                    element_index_from_offset(left, range.element_width())
+                }
+                _ if offset_matches(&pointer.offset, &range.base().offset) => {
+                    Some(Bitvector32Term::Constant(0))
+                }
+                _ => None,
+            });
         let Some(index) = index else {
             return false;
         };
@@ -870,11 +883,12 @@ impl PureFactContext {
             || {
                 self.resource_compositions.iter().any(|resources| {
                     resources.proves_owned_pointers_separate_by(left, right, |pointer, range| {
-                        self.pointer_in_range_by_shallow_fact_graph(
+                        self.pointer_in_range_by_shallow_fact_graph_with_width(
                             pointer,
                             range.base(),
                             range.start(),
                             range.end(),
+                            range.element_width(),
                         )
                     })
                 })
@@ -1016,10 +1030,11 @@ impl PureFactContext {
         })
     }
 
-    fn pointer_element_index_from_base(
+    fn pointer_element_index_from_base_with_width(
         &self,
         pointer: &Pointer,
         base: &Pointer,
+        byte_width: u32,
     ) -> Option<Bitvector32Term> {
         if pointer.block != base.block {
             return None;
@@ -1029,13 +1044,13 @@ impl PureFactContext {
         // range endpoints commonly retain a literal base plus an index, and
         // sending that shape through memory resolution first recursively
         // compares every nested load in the base expression.
-        if let Some(index) = pointer.element_index_from_base(base)
+        if let Some(index) = pointer.element_index_from_base_with_width(base, byte_width)
             && index.as_const().is_some()
         {
             return Some(index);
         }
         if let Some(index) =
-            self.pointer_element_index_from_base_for_memory_resolution(pointer, base)
+            self.pointer_element_index_from_base_for_memory_resolution(pointer, base, byte_width)
         {
             return Some(index);
         }
@@ -1055,20 +1070,20 @@ impl PureFactContext {
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_equal(left, &base.offset) {
-                return int32_element_index_from_offset(right);
+                return element_index_from_offset(right, byte_width);
             }
             if offsets_equal(right, &base.offset) {
-                return int32_element_index_from_offset(left);
+                return element_index_from_offset(left, byte_width);
             }
         }
 
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
             if offsets_equal(&pointer.offset, left) {
-                return int32_element_index_from_offset(right)
+                return element_index_from_offset(right, byte_width)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
             if offsets_equal(&pointer.offset, right) {
-                return int32_element_index_from_offset(left)
+                return element_index_from_offset(left, byte_width)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }
@@ -1083,6 +1098,7 @@ impl PureFactContext {
         &self,
         pointer: &Pointer,
         base: &Pointer,
+        byte_width: u32,
     ) -> Option<Bitvector32Term> {
         #[cfg(test)]
         PROOF_AWARE_POINTER_INDEX_QUERIES.with(|queries| queries.set(queries.get() + 1));
@@ -1102,31 +1118,32 @@ impl PureFactContext {
         };
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_match_for_resolution(left, &base.offset) {
-                return int32_element_index_from_offset(right);
+                return element_index_from_offset(right, byte_width);
             }
             if offsets_match_for_resolution(right, &base.offset) {
-                return int32_element_index_from_offset(left);
+                return element_index_from_offset(left, byte_width);
             }
         }
         if let PointerOffsetTerm::Add(left, right) = &base.offset {
             if offsets_match_for_resolution(&pointer.offset, left) {
-                return int32_element_index_from_offset(right)
+                return element_index_from_offset(right, byte_width)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
             if offsets_match_for_resolution(&pointer.offset, right) {
-                return int32_element_index_from_offset(left)
+                return element_index_from_offset(left, byte_width)
                     .map(|index| Bitvector32Term::subtract(Bitvector32Term::Constant(0), index));
             }
         }
         None
     }
 
-    pub(in crate::kernel) fn pointer_in_range(
+    fn pointer_in_range_with_width(
         &self,
         pointer: &Pointer,
         base: &Pointer,
         start: &Bitvector32Term,
         end: &Bitvector32Term,
+        element_width: u32,
     ) -> bool {
         // A loop invariant can establish that a havoced pointer local names
         // an address in an argument-backed range. Its symbolic block cannot
@@ -1151,7 +1168,13 @@ impl PureFactContext {
                 };
                 equivalent.is_some_and(|equivalent| {
                     !matches!(equivalent.block, PointerBlock::Symbolic(_))
-                        && self.pointer_in_range(equivalent, base, start, end)
+                        && self.pointer_in_range_with_width(
+                            equivalent,
+                            base,
+                            start,
+                            end,
+                            element_width,
+                        )
                 })
             })
         {
@@ -1173,8 +1196,10 @@ impl PureFactContext {
                     self.decide(&condition) == Some(true)
                 }
         };
-        let range_base = base.offset_by_int32_elements(start.clone());
-        if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
+        let range_base = base.offset_by_elements(start.clone(), element_width);
+        if let Some(index) =
+            self.pointer_element_index_from_base_with_width(pointer, &range_base, element_width)
+        {
             let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
             if proves(ConditionTerm::signed_less_equal(
                 Bitvector32Term::Constant(0),
@@ -1185,7 +1210,9 @@ impl PureFactContext {
             }
         }
 
-        let Some(index) = self.pointer_element_index_from_base(pointer, base) else {
+        let Some(index) =
+            self.pointer_element_index_from_base_with_width(pointer, base, element_width)
+        else {
             return false;
         };
         proves(ConditionTerm::signed_less_equal(
@@ -1405,36 +1432,6 @@ impl PureFactContext {
             };
             separation_fact_entails(fact_left, fact_right)
         });
-        if memory_memory_query && std::env::var_os("CLICK_DBG_SEP_PARITY").is_some() {
-            let legacy_hit = self.prop_facts.iter().any(|proposition| {
-                let Proposition::CResourceSeparate {
-                    left: fact_left,
-                    right: fact_right,
-                } = proposition
-                else {
-                    return false;
-                };
-                separation_fact_entails(fact_left, fact_right)
-            });
-            let indexed_hit = residual_hit
-                || match (left, right) {
-                    (CResource::Memory(left_range), CResource::Memory(right_range)) => self
-                        .memory_separation_candidates(
-                            &left_range.base().block,
-                            &right_range.base().block,
-                        )
-                        .any(|(_, fact_left, fact_right)| {
-                            separation_fact_entails(
-                                &CResource::Memory(fact_left.clone()),
-                                &CResource::Memory(fact_right.clone()),
-                            )
-                        }),
-                    _ => false,
-                };
-            if legacy_hit != indexed_hit {
-                eprintln!("SEP-PARITY-FLIP legacy={legacy_hit} indexed={indexed_hit}");
-            }
-        }
         if residual_hit {
             return true;
         }
@@ -1481,12 +1478,15 @@ impl PureFactContext {
             return true;
         }
         if Bitvector32Term::subtract(child.end.clone(), child.start.clone()).as_const() == Some(1) {
-            let child_pointer = child.base.offset_by_int32_elements(child.start.clone());
-            return self.pointer_in_range(
+            let child_pointer = child
+                .base
+                .offset_by_elements(child.start.clone(), child.element_width());
+            return self.pointer_in_range_with_width(
                 &child_pointer,
                 parent.base(),
                 parent.start(),
                 parent.end(),
+                parent.element_width(),
             );
         }
         self.range_covered_by_fact_range(child, parent.base(), parent.start(), parent.end())
@@ -1508,9 +1508,13 @@ impl PureFactContext {
         if left.block != right.block {
             return false;
         }
+        let Some(element_width) = common_pointer_offset_element_width(&left.offset, &right.offset)
+        else {
+            return false;
+        };
         let (Some(left), Some(right)) = (
-            int32_element_index_from_offset(&left.offset),
-            int32_element_index_from_offset(&right.offset),
+            element_index_from_offset(&left.offset, element_width),
+            element_index_from_offset(&right.offset, element_width),
         ) else {
             return false;
         };
@@ -1574,9 +1578,14 @@ impl PureFactContext {
                         (fact_left.as_ref().clone(), fact_right.as_ref().clone())
                     }
                     ConditionTerm::PointerOffsetEqual(fact_left, fact_right) => {
+                        let Some(element_width) =
+                            common_pointer_offset_element_width(fact_left, fact_right)
+                        else {
+                            continue;
+                        };
                         let (Some(fact_left), Some(fact_right)) = (
-                            int32_element_index_from_offset(fact_left),
-                            int32_element_index_from_offset(fact_right),
+                            element_index_from_offset(fact_left, element_width),
+                            element_index_from_offset(fact_right, element_width),
                         ) else {
                             continue;
                         };
@@ -1678,7 +1687,11 @@ impl PureFactContext {
         if target.base.block != base.block {
             return None;
         }
-        let base_delta = self.pointer_element_index_from_base(base, &target.base)?;
+        let base_delta = self.pointer_element_index_from_base_with_width(
+            base,
+            &target.base,
+            target.element_width(),
+        )?;
         let start = Bitvector32Term::add(base_delta.clone(), start.clone());
         let end = Bitvector32Term::add(base_delta, end.clone());
         Some((
@@ -1694,6 +1707,7 @@ impl PureFactContext {
         base: &Pointer,
         start: &Bitvector32Term,
         end: &Bitvector32Term,
+        element_width: u32,
     ) -> bool {
         let resolved = crate::kernel::reasoning::resolve_symbolic_pointer_alias(pointer, self);
         let pointer = &resolved;
@@ -1752,26 +1766,50 @@ impl PureFactContext {
                 || strict && proves_below_predecessor(left, right)
                 || strict && proves_successor_below_predecessor(left, right)
         };
-        // Scalar and pointer fields both occupy one surface element: ranges
-        // count fields, so a pointer-width access at an in-range element
-        // index is authorized exactly like an int32 access.
-        if (byte_width == 4 || byte_width == crate::kernel::C_POINTER_BYTE_WIDTH)
-            && let Some(index) = pointer.element_index_from_base(base)
-            && proves_order(start, &index, false)
-            && proves_order(&index, end, true)
+        // Ranges count logical elements, while accesses are measured in
+        // bytes. A pointer-sized field is therefore two int32-width
+        // elements, but a byte access is one byte element.
+        if element_width > 0
+            && byte_width.is_multiple_of(element_width)
+            && let Some(index) = pointer.element_index_from_base_with_width(base, element_width)
         {
-            return true;
+            // Struct ranges use the historical 4-byte field unit. A loaded C
+            // pointer occupies one such field even though its ABI footprint
+            // is two physical words; preserve that logical-field rule while
+            // treating byte-buffer accesses by their actual byte length.
+            let logical_access_length =
+                if byte_width == crate::kernel::C_POINTER_BYTE_WIDTH && element_width == 4 {
+                    1
+                } else {
+                    byte_width / element_width
+                };
+            let access_length = Bitvector32Term::Constant(logical_access_length);
+            let access_end = Bitvector32Term::add(index.clone(), access_length);
+            let within_range = if byte_width == element_width {
+                // A one-element access occupies the half-open interval
+                // [index, index + 1), so its endpoint is expressed by the
+                // strict element-membership check below. Wider accesses
+                // need their successor endpoint to be at most `end`.
+                proves_order(start, &index, false) && proves_order(&index, end, true)
+            } else {
+                proves_order(start, &index, false) && proves_order(&access_end, end, false)
+            };
+            if within_range {
+                return true;
+            }
         }
 
-        if byte_width.is_multiple_of(4) {
-            let range_base = base.offset_by_int32_elements(start.clone());
-            let access_length = Bitvector32Term::Constant(byte_width / 4);
+        if element_width > 0 && byte_width.is_multiple_of(element_width) {
+            let range_base = base.offset_by_elements(start.clone(), element_width);
+            let access_length = Bitvector32Term::Constant(byte_width / element_width);
             if pointer == &range_base
                 && end == &Bitvector32Term::add(start.clone(), access_length.clone())
             {
                 return true;
             }
-            if let Some(index) = self.pointer_element_index_from_base(pointer, &range_base) {
+            if let Some(index) =
+                self.pointer_element_index_from_base_with_width(pointer, &range_base, element_width)
+            {
                 let range_length = Bitvector32Term::subtract(end.clone(), start.clone());
                 let access_end = Bitvector32Term::add(index.clone(), access_length);
                 if self.decide(&ConditionTerm::signed_less_equal(
@@ -1786,26 +1824,7 @@ impl PureFactContext {
             }
         }
 
-        if let Some(index) = self.pointer_element_index_from_base(pointer, base) {
-            if byte_width == 4 {
-                return self.decide(&ConditionTerm::signed_less_equal(
-                    start.clone(),
-                    index.clone(),
-                )) == Some(true)
-                    && self.decide(&ConditionTerm::signed_less_than(index, end.clone()))
-                        == Some(true);
-            }
-            if byte_width > 4 && byte_width.is_multiple_of(4) {
-                let element_width = Bitvector32Term::Constant(byte_width / 4);
-                let access_end = Bitvector32Term::add(index.clone(), element_width);
-                return self.decide(&ConditionTerm::signed_less_equal(start.clone(), index))
-                    == Some(true)
-                    && self.decide(&ConditionTerm::signed_less_equal(access_end, end.clone()))
-                        == Some(true);
-            }
-        }
-
-        if byte_width == 1 {
+        if byte_width == 1 && element_width == 1 {
             let Some(index) = pointer_byte_offset_from_base(pointer, base) else {
                 return false;
             };
@@ -1852,11 +1871,12 @@ impl PureFactContext {
                             || self.memory_range_contained_by_decided_endpoints(range, available)
                     },
                     |pointer, available| {
-                        self.pointer_in_range_by_shallow_fact_graph(
+                        self.pointer_in_range_by_shallow_fact_graph_with_width(
                             pointer,
                             available.base(),
                             available.start(),
                             available.end(),
+                            available.element_width(),
                         ) || self.pointer_directly_in_memory_range(pointer, available)
                     },
                 )
@@ -1891,18 +1911,23 @@ impl PureFactContext {
                     range,
                     pointer,
                     |pointer, available| {
-                        self.pointer_in_range_by_shallow_fact_graph(
+                        self.pointer_in_range_by_shallow_fact_graph_with_width(
                             pointer,
                             available.base(),
                             available.start(),
                             available.end(),
+                            available.element_width(),
                         ) || self.pointer_directly_in_memory_range(pointer, available)
                     },
                 )
             }) {
                 return true;
             }
-            let direct_index = self.direct_pointer_element_index_from_base(pointer, &range.base);
+            let direct_index = self.direct_pointer_element_index_from_base_with_width(
+                pointer,
+                &range.base,
+                range.element_width(),
+            );
             if let Some(index) = direct_index.as_ref()
                 && let (Some(index), Some(start), Some(end)) = (
                     signed_bitvector_constant(index),
@@ -1923,13 +1948,15 @@ impl PureFactContext {
                 } => {
                     memory_range_shallowly_contained_in_parts(
                         range, left_base, left_start, left_end,
-                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end)
+                    ) && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
                         || memory_range_shallowly_contained_in_parts(
                             range,
                             right_base,
                             right_start,
                             right_end,
-                        ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end)
+                        ) && pointer_in_range_shallow(
+                            pointer, left_base, left_start, left_end, 4,
+                        )
                 }
                 Proposition::CResourceSeparate {
                     left: CResource::Memory(left_range),
@@ -1970,10 +1997,11 @@ impl PureFactContext {
         })
     }
 
-    fn direct_pointer_element_index_from_base(
+    fn direct_pointer_element_index_from_base_with_width(
         &self,
         pointer: &Pointer,
         base: &Pointer,
+        element_width: u32,
     ) -> Option<Bitvector32Term> {
         if pointer.block != base.block {
             return None;
@@ -2003,17 +2031,21 @@ impl PureFactContext {
         }
         if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
             if offsets_equal(left, &base.offset) {
-                return int32_element_index_from_offset(right);
+                return element_index_from_offset(right, element_width);
             }
             if offsets_equal(right, &base.offset) {
-                return int32_element_index_from_offset(left);
+                return element_index_from_offset(left, element_width);
             }
         }
-        pointer.element_index_from_base(base)
+        pointer.element_index_from_base_with_width(base, element_width)
     }
 
     fn pointer_directly_in_memory_range(&self, pointer: &Pointer, range: &CMemoryRange) -> bool {
-        let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) else {
+        let Some(index) = self.direct_pointer_element_index_from_base_with_width(
+            pointer,
+            &range.base,
+            range.element_width(),
+        ) else {
             return false;
         };
         if let (Some(index), Some(start), Some(end)) = (
@@ -2044,7 +2076,10 @@ impl PureFactContext {
         range: &CMemoryRange,
         available: &CMemoryRange,
     ) -> bool {
-        let Some(base_index) = range.base().element_index_from_base(available.base()) else {
+        let Some(base_index) = range
+            .base()
+            .element_index_from_base_with_width(available.base(), available.element_width())
+        else {
             return false;
         };
         let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
@@ -2135,11 +2170,12 @@ impl PureFactContext {
                 range,
                 pointer,
                 |pointer, available| {
-                    self.pointer_in_range_by_shallow_fact_graph(
+                    self.pointer_in_range_by_shallow_fact_graph_with_width(
                         pointer,
                         available.base(),
                         available.start(),
                         available.end(),
+                        available.element_width(),
                     ) || self.pointer_directly_in_memory_range(pointer, available)
                 },
             )
@@ -2162,13 +2198,13 @@ impl PureFactContext {
                 right_end,
             } => {
                 memory_range_shallowly_contained_in_parts(range, left_base, left_start, left_end)
-                    && pointer_in_range_shallow(pointer, right_base, right_start, right_end)
+                    && pointer_in_range_shallow(pointer, right_base, right_start, right_end, 4)
                     || memory_range_shallowly_contained_in_parts(
                         range,
                         right_base,
                         right_start,
                         right_end,
-                    ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end)
+                    ) && pointer_in_range_shallow(pointer, left_base, left_start, left_end, 4)
             }
             Proposition::CResourceSeparate {
                 left: CResource::Memory(left_range),
@@ -2194,13 +2230,13 @@ impl PureFactContext {
                 left.as_ref().clone(),
             )) == Some(true)
             {
-                int32_element_index_from_offset(right)
+                element_index_from_offset(right, range.element_width())
             } else if self.decide(&ConditionTerm::pointer_offset_equal(
                 pointer.offset.clone(),
                 right.as_ref().clone(),
             )) == Some(true)
             {
-                int32_element_index_from_offset(left)
+                element_index_from_offset(left, range.element_width())
             } else {
                 None
             };
@@ -2216,7 +2252,11 @@ impl PureFactContext {
             }
         }
 
-        if let Some(index) = self.direct_pointer_element_index_from_base(pointer, &range.base) {
+        if let Some(index) = self.direct_pointer_element_index_from_base_with_width(
+            pointer,
+            &range.base,
+            range.element_width(),
+        ) {
             // Literal constants first; otherwise resolve each bound through
             // equality facts with per-load snapshot bridging, so a range
             // like data[split..split+1] with split provably 1 proves
@@ -2290,13 +2330,21 @@ impl PureFactContext {
             drop(same_base_timing);
         }
 
-        let fact_base = base.offset_by_int32_elements(start.clone());
-        let range_base = range.base.offset_by_int32_elements(range.start.clone());
+        let fact_base = base.offset_by_elements(start.clone(), range.element_width());
+        let range_base = range
+            .base
+            .offset_by_elements(range.start.clone(), range.element_width());
         let shifted_base_delta = crate::instrumentation::measure_operation(
             "kernel",
             "fact range coverage",
             "fact range coverage: shifted base relation",
-            || self.pointer_element_index_from_base(&range_base, &fact_base),
+            || {
+                self.pointer_element_index_from_base_with_width(
+                    &range_base,
+                    &fact_base,
+                    range.element_width(),
+                )
+            },
         );
         if let Some(base_delta) = shifted_base_delta {
             let range_length = Bitvector32Term::subtract(range.end.clone(), range.start.clone());
@@ -2323,7 +2371,13 @@ impl PureFactContext {
             "kernel",
             "fact range coverage",
             "fact range coverage: direct base relation",
-            || self.pointer_element_index_from_base(&range.base, base),
+            || {
+                self.pointer_element_index_from_base_with_width(
+                    &range.base,
+                    base,
+                    range.element_width(),
+                )
+            },
         );
         let Some(base_delta) = base_delta else {
             return false;

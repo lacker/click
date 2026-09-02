@@ -530,7 +530,9 @@ fn collect_spec_resource_bitvector_variables(
     variables: &mut BTreeSet<Variable>,
 ) {
     match resource {
-        SpecResource::Memory { base, start, end } => {
+        SpecResource::Memory {
+            base, start, end, ..
+        } => {
             collect_spec_expression_bitvector_variables(base, variables);
             collect_spec_expression_bitvector_variables(start, variables);
             collect_spec_expression_bitvector_variables(end, variables);

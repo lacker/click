@@ -1179,6 +1179,7 @@ impl AnnotationLowerer<'_> {
                     base: self.lower_contract_segment_base_to_spec(&segment.base, &environment)?,
                     start: self.lower_c_fragment_to_spec(&segment.start, &environment)?,
                     end: self.lower_c_fragment_to_spec(&segment.end, &environment)?,
+                    element_width: self.contract_segment_element_width(segment),
                 })
             }
             ResourceSubject::Declared {

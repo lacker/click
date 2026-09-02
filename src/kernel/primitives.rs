@@ -3,9 +3,9 @@ use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEq
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution,
     c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
-    int32_element_index_from_offset, memory_snapshots_proven_equal_at_pointer,
-    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
-    resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
+    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
+    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
+    signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -394,6 +394,7 @@ pub enum SpecResource {
         base: SpecExpression,
         start: SpecExpression,
         end: SpecExpression,
+        element_width: u32,
     },
     Composite {
         name: String,

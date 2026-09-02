@@ -1263,10 +1263,11 @@ fn function_claim_holds_on_prepared_path(
                                 || mutable_ranges.iter().any(|range| {
                                     assumptions.pointer_access_in_range(
                                         pointer,
-                                        4,
+                                        range.element_width(),
                                         range.base(),
                                         range.start(),
                                         range.end(),
+                                        range.element_width(),
                                     )
                                 })
                         })

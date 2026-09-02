@@ -1554,6 +1554,7 @@ fn additive_upper_bound_covers_incremented_pointer_access() {
         &base,
         &Bitvector32Term::Constant(0),
         &Bitvector32Term::Constant(3),
+        4,
     ));
 }
 
