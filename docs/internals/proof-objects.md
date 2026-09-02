@@ -219,7 +219,13 @@ certification lowers each ensure at the certified post-state (under the
 binders of a
 recorded completion when the ensure is quantified, since the loads minted
 under a binder carry its identity) and accepts the claim when the lowering
-equals a recorded completion whose premises the contract context holds. Only
+equals a recorded completion whose premises the contract context holds. The
+two are compared in one canonical form, since the proof folds the trivial
+conditions the contract lowering keeps: a term compared with itself, a
+constant premise, conjunct, or quantifier body, a negated condition. A
+completion recorded at
+the artifact's own caller state also certifies a path rebased from that
+state, the rebase having checked the two entries definitionally equal. Only
 a claim with no matching completion is proved from the path's facts.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.

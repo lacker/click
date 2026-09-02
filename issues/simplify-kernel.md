@@ -9,6 +9,10 @@ exception: excluded middle in the certification prover stays until slice
 2, because one surface unit test (`smart_fixed_state_have_if_retains_checked_arm_proofs_directly`)
 closes an `or`-shaped ensure with `assumption()` and claim certification
 does not match that completion, so the arm is what certifies it today.
+Slice 2 is under way: completions are matched in one canonical form and
+across rebased artifacts, which took the second-proof route from 320 claim
+paths to 73 over the harnesses; the rest are closers that record no
+completion and completions in predicate form.
 
 ## Violated invariant
 

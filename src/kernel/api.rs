@@ -2662,6 +2662,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         }
         return CFunctionContractExecution {
             reuse_diagnostic: None,
+            completion_origin_state: None,
             execution: SymbolicCExecution {
                 paths: Vec::new(),
                 limit: None,
@@ -2684,6 +2685,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         }
         return CFunctionContractExecution {
             reuse_diagnostic: None,
+            completion_origin_state: None,
             execution: SymbolicCExecution {
                 paths: Vec::new(),
                 limit: None,
@@ -2692,6 +2694,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     };
     let mut combined_paths = Vec::new();
     let mut reuse_diagnostic = None;
+    let mut completion_origin_state = None;
     for case_facts in resource_condition_cases {
         let case_seed = assumptions_with_propositions(&PureFactContext::new(), &case_facts);
         let Some(mut assumptions) = crate::instrumentation::measure_operation(
@@ -2718,6 +2721,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             }
             return CFunctionContractExecution {
                 reuse_diagnostic: None,
+                completion_origin_state: None,
                 execution: SymbolicCExecution {
                     paths: Vec::new(),
                     limit: None,
@@ -2727,6 +2731,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         let Some(mut entry_state) = c_function_entry_state(&state, &function, &arguments) else {
             return CFunctionContractExecution {
                 reuse_diagnostic: None,
+                completion_origin_state: None,
                 execution: SymbolicCExecution {
                     paths: Vec::new(),
                     limit: None,
@@ -2753,6 +2758,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             ) else {
                 return CFunctionContractExecution {
                     reuse_diagnostic: None,
+                    completion_origin_state: None,
                     execution: SymbolicCExecution {
                         paths: Vec::new(),
                         limit: None,
@@ -3070,6 +3076,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                                 )
                             },
                         )
+                        .map(|execution| (execution, checked.state.clone()))
                     })
             })
             .flatten();
@@ -3110,6 +3117,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                             right_condition == left_condition && right_value != left_value
                         },
                     ) {
+                        let origin = (left.state == right.state).then(|| left.state.clone());
                         let left = checked_execution_at_definitionally_equal_entry_state(
                             left,
                             &state,
@@ -3124,7 +3132,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                         )?;
                         let mut paths = left.paths;
                         paths.extend(right.paths);
-                        return Some(SymbolicCExecution { paths, limit: None });
+                        return Some((SymbolicCExecution { paths, limit: None }, origin));
                     }
                 }
                 None
@@ -3199,14 +3207,21 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             "contract checked body unavailable"
         };
         let reused = reusable.is_some() || rebased_reuse.is_some() || partition_reuse.is_some();
+        if let Some(checked) = &reusable {
+            completion_origin_state = Some(checked.state.clone());
+        } else if let Some((_, origin)) = &rebased_reuse {
+            completion_origin_state = Some(origin.clone());
+        } else if let Some((_, Some(origin))) = &partition_reuse {
+            completion_origin_state = Some(origin.clone());
+        }
         let mut execution = crate::instrumentation::measure_operation(
             function.name(),
             "contract certification",
             body_operation,
             || match (reusable, rebased_reuse, partition_reuse) {
                 (Some(checked), _, _) => checked.execution.clone(),
-                (None, Some(execution), _) => execution,
-                (None, None, Some(execution)) => execution,
+                (None, Some((execution, _)), _) => execution,
+                (None, None, Some((execution, _))) => execution,
                 // A kernel caller that supplied no artifact asks for the
                 // kernel's own exact execution; that is one execution, not a
                 // rerun. With artifacts supplied, certification never
@@ -3308,6 +3323,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
         if let Some(limit) = execution.limit {
             return CFunctionContractExecution {
                 reuse_diagnostic: None,
+                completion_origin_state: None,
                 execution: SymbolicCExecution {
                     paths: Vec::new(),
                     limit: Some(limit),
@@ -3318,6 +3334,7 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
     }
     CFunctionContractExecution {
         reuse_diagnostic,
+        completion_origin_state,
         execution: SymbolicCExecution {
             paths: combined_paths,
             limit: None,

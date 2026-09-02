@@ -899,6 +899,7 @@ fn function_claim_holds_on_prepared_path(
     claim: &CFunctionContractClaim,
     path: &CertifiedFunctionClaimPath,
     checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+    completion_origin_state: Option<&CState>,
 ) -> bool {
     let CertifiedFunctionClaimPath {
         caller_state,
@@ -1048,14 +1049,19 @@ fn function_claim_holds_on_prepared_path(
                             "completion match",
                             || {
                                 checked_propositions
-                                    .get(&path.proposition)
+                                    .get(&completion_key(&path.proposition))
                                     .into_iter()
                                     .flatten()
                                     .any(|proof| {
                                         // Cheapest checks first: a completion from another
                                         // path or function is rejected before any proving.
+                                        // A completion made at the state the artifact's
+                                        // proof ran at certifies a path rebased from it.
+                                        let completion_state = proof.specification.state();
                                         if proof.function != *function
-                                            || proof.specification.state() != caller_state
+                                            || (completion_state != caller_state
+                                                && Some(completion_state)
+                                                    != completion_origin_state)
                                             || proof.specification.arguments() != arguments
                                             || !c_function_outcomes_definitionally_equal(
                                                 function,
@@ -1465,13 +1471,108 @@ pub fn c_verified_function_contract_claims(
     c_verified_function_contract_claims_with_checked_propositions(function, contract_execution, &[])
 }
 
+/// The form in which a completed proposition is matched against a lowered
+/// ensure. The two are lowerings of one claim by different code: the proof
+/// folds trivial conditions as it lowers (a term compared with itself, a
+/// constant premise), the contract lowering keeps them. This folds both to
+/// one form by exact structural rules: no fact is consulted.
+pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
+    fn truth(value: bool) -> Proposition {
+        Proposition::ConditionIs(ConditionTerm::Constant(value), true)
+    }
+    fn as_truth(proposition: &Proposition) -> Option<bool> {
+        match proposition {
+            Proposition::ConditionIs(ConditionTerm::Constant(constant), value) => {
+                Some(constant == value)
+            }
+            _ => None,
+        }
+    }
+    fn reflexive(condition: &ConditionTerm) -> bool {
+        match condition {
+            ConditionTerm::Bitvector32Equal(left, right) => left == right,
+            ConditionTerm::PointerEqual(left, right) => left == right,
+            ConditionTerm::PointerOffsetEqual(left, right) => left == right,
+            _ => false,
+        }
+    }
+    match proposition {
+        Proposition::ConditionIs(condition, value) => {
+            if let ConditionTerm::Constant(constant) = condition {
+                truth(constant == value)
+            } else if reflexive(condition) {
+                truth(*value)
+            } else {
+                proposition.clone()
+            }
+        }
+        Proposition::Not(body) => match completion_key(body) {
+            Proposition::ConditionIs(condition, value) => {
+                Proposition::ConditionIs(condition, !value)
+            }
+            body => Proposition::Not(Box::new(body)),
+        },
+        Proposition::And(left, right) => {
+            let (left, right) = (completion_key(left), completion_key(right));
+            match (as_truth(&left), as_truth(&right)) {
+                (Some(false), _) | (_, Some(false)) => truth(false),
+                (Some(true), _) => right,
+                (_, Some(true)) => left,
+                _ => Proposition::And(Box::new(left), Box::new(right)),
+            }
+        }
+        Proposition::Or(left, right) => {
+            let (left, right) = (completion_key(left), completion_key(right));
+            match (as_truth(&left), as_truth(&right)) {
+                (Some(true), _) | (_, Some(true)) => truth(true),
+                (Some(false), _) => right,
+                (_, Some(false)) => left,
+                _ => Proposition::Or(Box::new(left), Box::new(right)),
+            }
+        }
+        Proposition::Implies(premise, body) => {
+            let (premise, body) = (completion_key(premise), completion_key(body));
+            match (as_truth(&premise), as_truth(&body)) {
+                (Some(true), _) => body,
+                (Some(false), _) | (_, Some(true)) => truth(true),
+                _ => Proposition::Implies(Box::new(premise), Box::new(body)),
+            }
+        }
+        // A quantifier over a constant body is that constant: every sort a
+        // binder ranges over is inhabited.
+        Proposition::ForAll { body, .. } => {
+            let body = completion_key(body);
+            if as_truth(&body).is_some() {
+                return body;
+            }
+            let mut forall = proposition.clone();
+            if let Proposition::ForAll { body: slot, .. } = &mut forall {
+                *slot = Box::new(body);
+            }
+            forall
+        }
+        Proposition::Exists { body, .. } => {
+            let body = completion_key(body);
+            if as_truth(&body).is_some() {
+                return body;
+            }
+            let mut exists = proposition.clone();
+            if let Proposition::Exists { body: slot, .. } = &mut exists {
+                *slot = Box::new(body);
+            }
+            exists
+        }
+        _ => proposition.clone(),
+    }
+}
+
 fn checked_proposition_index(
     checked_propositions: &[CCheckedFunctionProposition],
 ) -> BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>> {
     let mut index = BTreeMap::new();
     for checked in checked_propositions {
         index
-            .entry(checked.proposition.clone())
+            .entry(completion_key(&checked.proposition))
             .or_insert_with(Vec::new)
             .push(checked);
     }
@@ -1539,6 +1640,7 @@ pub(crate) fn c_verified_function_contract_claims_with_checked_propositions(
                             claim,
                             path,
                             &checked_propositions,
+                            contract_execution.completion_origin_state.as_ref(),
                         )
                     })
                 },
@@ -1607,7 +1709,13 @@ pub(crate) fn c_unverified_function_contract_claims_with_checked_propositions(
         .iter()
         .filter(|claim| {
             !paths.iter().all(|path| {
-                function_claim_holds_on_prepared_path(function, claim, path, &checked_propositions)
+                function_claim_holds_on_prepared_path(
+                    function,
+                    claim,
+                    path,
+                    &checked_propositions,
+                    contract_execution.completion_origin_state.as_ref(),
+                )
             })
         })
         .map(|claim| claim.key().clone())

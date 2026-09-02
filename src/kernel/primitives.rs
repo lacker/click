@@ -2102,6 +2102,11 @@ pub struct CFunctionContractExecution {
     /// Why no supplied checked artifact could be reused when certification
     /// produced no paths. Callers report it; it carries no authority.
     pub(super) reuse_diagnostic: Option<String>,
+    /// The caller state the reused artifact's proof ran at, when its paths
+    /// were rebased onto this contract's caller state. A claim the proof
+    /// completed at that state certifies the rebased path: the rebase
+    /// checked the two entry representations definitionally equal.
+    pub(super) completion_origin_state: Option<CState>,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.

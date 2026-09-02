@@ -1774,6 +1774,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
     };
     let execution = CFunctionContractExecution {
         reuse_diagnostic: None,
+        completion_origin_state: None,
         execution: SymbolicCExecution {
             paths: vec![path],
             limit: None,
@@ -1838,6 +1839,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
     };
     let execution = CFunctionContractExecution {
         reuse_diagnostic: None,
+        completion_origin_state: None,
         execution: SymbolicCExecution {
             paths: vec![path],
             limit: None,
@@ -3050,4 +3052,80 @@ fn a_completed_proof_object_yields_its_checked_execution() {
         .err(),
         Some("a trace does not reach a return")
     );
+}
+
+#[test]
+fn completion_key_folds_trivial_conditions_the_proof_lowering_folds() {
+    use crate::kernel::api::completion_key;
+    let x = Bitvector32Term::Variable(Variable(1));
+    let y = Bitvector32Term::Variable(Variable(2));
+    let truth = |value: bool| Proposition::ConditionIs(ConditionTerm::Constant(value), true);
+    let equal = |left: &Bitvector32Term, right: &Bitvector32Term, value: bool| {
+        Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(Box::new(left.clone()), Box::new(right.clone())),
+            value,
+        )
+    };
+    let nontrivial = equal(&x, &y, true);
+
+    // A term compared with itself is a constant.
+    assert_eq!(completion_key(&equal(&x, &x, true)), truth(true));
+    assert_eq!(completion_key(&equal(&x, &x, false)), truth(false));
+    // A constant condition folds to the canonical truth value.
+    assert_eq!(
+        completion_key(&Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            false
+        )),
+        truth(true)
+    );
+    // Negating a condition flips its value.
+    assert_eq!(
+        completion_key(&Proposition::Not(Box::new(nontrivial.clone()))),
+        equal(&x, &y, false)
+    );
+    // Constant premises and conjuncts disappear.
+    assert_eq!(
+        completion_key(&Proposition::Implies(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::Constant(false),
+                false
+            )),
+            Box::new(nontrivial.clone()),
+        )),
+        nontrivial
+    );
+    assert_eq!(
+        completion_key(&Proposition::And(
+            Box::new(equal(&y, &y, true)),
+            Box::new(nontrivial.clone()),
+        )),
+        nontrivial
+    );
+    assert_eq!(
+        completion_key(&Proposition::Or(
+            Box::new(nontrivial.clone()),
+            Box::new(truth(true))
+        )),
+        truth(true)
+    );
+    // A quantifier folds its body, and over a constant body is the constant.
+    let quantified = |body: Proposition| Proposition::ForAll {
+        var: Variable(3),
+        sort: Sort::CInt32,
+        body: Box::new(body),
+    };
+    assert_eq!(
+        completion_key(&quantified(equal(&x, &x, true))),
+        truth(true)
+    );
+    assert_eq!(
+        completion_key(&quantified(Proposition::And(
+            Box::new(truth(true)),
+            Box::new(nontrivial.clone()),
+        ))),
+        quantified(nontrivial.clone())
+    );
+    // Nothing else changes.
+    assert_eq!(completion_key(&nontrivial), nontrivial);
 }
