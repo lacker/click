@@ -7,10 +7,10 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     Bitvector32Term, CCompositeResourceDefinition, CConditionOutcome, CExpression, CFunction,
-    CFunctionExecutionCandidates, CLoopEffectCheck, CMemoryRange, CResourceFact, CResourceSpec,
-    CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule, ExecutionBudget,
-    ExecutionLimit, ExecutionPureFact, Proposition, PureFactContext, ResourceContext,
-    SpecProposition, Theorem,
+    CFunctionExecutionCandidates, CLoopEffectCheck, CMemoryRange, CResource, CResourceFact,
+    CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
+    ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
+    ResourceContext, SpecProposition, Theorem,
 };
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
@@ -1085,6 +1085,20 @@ impl CheckedExecutionBranch {
         let [then_arm, else_arm] = checked_arms
             .try_into()
             .map_err(|_| "the checked interface branch does not have exactly two arms")?;
+        let conditional_heap_frees = conditional_heap_frees(arm_effect_facts);
+        if !conditional_heap_frees.is_empty()
+            && !interface_resources_guard_heap_frees(
+                function,
+                &arm_interface_resources,
+                [arms[0].reached_state(), arms[1].reached_state()],
+                arm_facts,
+                &conditional_heap_frees,
+            )
+        {
+            return Err(
+                "a conditional heap deallocation must be represented by an arm-sensitive owned resource",
+            );
+        }
         let interface_effect_facts = checked_interface_effect_facts(
             &split.state,
             joined_state,
@@ -1187,6 +1201,7 @@ fn checked_interface_effect_facts(
 ) -> Result<Vec<ExecutionPureFact>, &'static str> {
     let mut pointers = Vec::new();
     let mut ranges = Vec::new();
+    let mut heap_frees = [Vec::new(), Vec::new()];
     for arm_index in 0..2 {
         let assumptions = arm_facts[arm_index].assumptions();
         let mut memory = split_state.memory().clone();
@@ -1234,10 +1249,27 @@ fn checked_interface_effect_facts(
                         }
                     }
                 }
-                Proposition::CHeapAllocationFreed { .. } => {
-                    return Err(
-                        "an interface join over conditional heap deallocation is not yet supported",
-                    );
+                Proposition::CHeapAllocationFreed {
+                    before,
+                    after,
+                    allocation_base,
+                    bytes,
+                } => {
+                    if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
+                        &memory,
+                        before,
+                        assumptions,
+                    ) {
+                        return Err(
+                            "an interface heap-free effect does not start at its current memory",
+                        );
+                    }
+                    memory = after.clone();
+                    heap_frees[arm_index].push((
+                        allocation_base.clone(),
+                        bytes.clone(),
+                        after.clone(),
+                    ));
                 }
                 _ if fact.is_certified() => {}
                 _ => return Err("an interface arm contains unchecked effect metadata"),
@@ -1253,6 +1285,20 @@ fn checked_interface_effect_facts(
     }
 
     if pointers.is_empty() && ranges.is_empty() {
+        if heap_frees[0] == heap_frees[1] && !heap_frees[0].is_empty() {
+            let facts = heap_frees[0]
+                .iter()
+                .map(|(allocation_base, bytes, after)| {
+                    ExecutionPureFact::certified(Proposition::CHeapAllocationFreed {
+                        before: split_state.memory().clone(),
+                        after: after.clone(),
+                        allocation_base: allocation_base.clone(),
+                        bytes: bytes.clone(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            return Ok(facts);
+        }
         return Ok(common_non_memory_effect_facts(arm_effect_facts));
     }
     let proposition = if ranges.is_empty() {
@@ -1281,6 +1327,74 @@ fn checked_interface_effect_facts(
     let mut facts = vec![ExecutionPureFact::certified(proposition)];
     facts.extend(common_non_memory_effect_facts(arm_effect_facts));
     Ok(facts)
+}
+
+fn conditional_heap_frees(
+    arm_effect_facts: [&[ExecutionPureFact]; 2],
+) -> [Vec<(Pointer, Bitvector32Term)>; 2] {
+    std::array::from_fn(|arm_index| {
+        arm_effect_facts[arm_index]
+            .iter()
+            .filter_map(|fact| match fact.proposition() {
+                Proposition::CHeapAllocationFreed {
+                    allocation_base,
+                    bytes,
+                    ..
+                } => Some((allocation_base.clone(), bytes.clone())),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+fn interface_resources_guard_heap_frees(
+    function: &CFunction,
+    arm_resources: &[Vec<CResourceFact>; 2],
+    arm_states: [&CState; 2],
+    arm_facts: [&ProofFacts; 2],
+    heap_frees: &[Vec<(Pointer, Bitvector32Term)>; 2],
+) -> bool {
+    let has_allocation = |arm_index: usize, base: &Pointer, bytes: &Bitvector32Term| {
+        arm_resources[arm_index].iter().any(|resource| {
+            if resource
+                .allocation()
+                .is_some_and(|(candidate_base, candidate_bytes)| {
+                    candidate_base == base && candidate_bytes == bytes
+                })
+            {
+                return true;
+            }
+            if !resource.is_own() || !matches!(resource.resource(), CResource::Composite { .. }) {
+                return false;
+            }
+            crate::kernel::functions::expand_composite_resource_fact(
+                &ResourceContext::new().unchecked_with_fact(resource.clone()),
+                resource,
+                function.composite_resource_definitions(),
+                arm_states[arm_index].memory(),
+                arm_facts[arm_index].assumptions(),
+            )
+            .is_some_and(|expanded| {
+                expanded.facts().iter().any(|fact| {
+                    fact.allocation()
+                        .is_some_and(|(candidate_base, candidate_bytes)| {
+                            candidate_base == base && candidate_bytes == bytes
+                        })
+                })
+            })
+        })
+    };
+
+    if heap_frees[0] == heap_frees[1] {
+        return true;
+    }
+    if heap_frees[0].is_empty() == heap_frees[1].is_empty() {
+        return false;
+    }
+    let freed_arm = usize::from(heap_frees[0].is_empty());
+    heap_frees[freed_arm].iter().all(|(base, bytes)| {
+        !has_allocation(freed_arm, base, bytes) && has_allocation(1 - freed_arm, base, bytes)
+    })
 }
 
 fn common_non_memory_effect_facts(
@@ -3598,6 +3712,81 @@ mod tests {
                         && after == joined.memory()
                         && pointers == &vec![left_pointer, right_pointer]
             )
+        ));
+    }
+
+    #[test]
+    fn conditional_heap_free_is_checked_as_a_guarded_lifetime_join() {
+        let allocation_base = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let before = CState::new().with_memory(
+            CMemory::new()
+                .with_heap_allocation_claim(allocation_base.clone(), 16)
+                .expect("the allocation claim should be fresh"),
+        );
+        let freed = before.clone().with_memory(
+            before
+                .memory()
+                .clone()
+                .free_heap_block(&allocation_base)
+                .expect("the freed arm should retire the allocation"),
+        );
+        let retained = before.clone();
+        let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
+        let free_effect = ExecutionPureFact::certified(Proposition::CHeapAllocationFreed {
+            before: before.memory().clone(),
+            after: freed.memory().clone(),
+            allocation_base: allocation_base.clone(),
+            bytes: Bitvector32Term::Constant(16),
+        });
+        let mut freed_core = parent.clone();
+        freed_core.state = freed.clone().into();
+        freed_core.effect_facts.push(free_effect.clone());
+        let retained_core = parent.clone();
+        let siblings = [&freed, &retained];
+        let joined = crate::kernel::abstract_c_state_for_interface_join_across(
+            &freed,
+            &siblings,
+            &BTreeMap::new(),
+        )
+        .expect("the conditional heap states should abstract");
+        let facts = ProofFacts::default();
+        let summaries = checked_interface_effect_facts(
+            &before,
+            &joined,
+            [&freed_core, &retained_core],
+            [&facts, &facts],
+            [std::slice::from_ref(&free_effect), &[]],
+        )
+        .expect("a conditional free should be checked at the branch boundary");
+        assert!(summaries.is_empty());
+
+        let function = c_function(
+            CType::Void,
+            "conditional_heap_free",
+            Vec::new(),
+            CStatement::Return(CExpression::Value(CValue::Void)),
+        );
+        let free_facts = [
+            Vec::new(),
+            vec![CResourceFact::own_allocation(allocation_base.clone(), 16)],
+        ];
+        let states = [&freed, &retained];
+        assert!(interface_resources_guard_heap_frees(
+            &function,
+            &free_facts,
+            states,
+            [&facts, &facts],
+            &conditional_heap_frees([std::slice::from_ref(&free_effect), &[],]),
+        ));
+        assert!(!interface_resources_guard_heap_frees(
+            &function,
+            &[Vec::new(), Vec::new()],
+            states,
+            [&facts, &facts],
+            &conditional_heap_frees([std::slice::from_ref(&free_effect), &[],]),
         ));
     }
 

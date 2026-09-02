@@ -40,7 +40,7 @@ re-execution stands behind those checks any more:
 - [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
-## Functionality gaps: 30
+## Functionality gaps: 29
 
 C language coverage:
 
@@ -71,7 +71,6 @@ Semantics and reasoning:
 - [Prove a loop invariant that relates a havoced pointer local to the index](pointer-local-loop-invariants.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
 - [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
-- [Join branches that differ in heap deallocation](conditional-deallocation-joins.md)
 - [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)

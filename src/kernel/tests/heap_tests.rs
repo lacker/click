@@ -580,6 +580,50 @@ fn free_of_external_allocation_preserves_unrelated_external_cells() {
 }
 
 #[test]
+fn interface_heap_join_retains_potential_live_allocation() {
+    let allocation_base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let retained = CState::new().with_memory(
+        CMemory::new()
+            .with_heap_allocation_claim(allocation_base.clone(), 16)
+            .expect("the allocation claim should be fresh"),
+    );
+    let freed = retained.clone().with_memory(
+        retained
+            .memory()
+            .clone()
+            .free_heap_block(&allocation_base)
+            .expect("the retained arm should be able to free the allocation"),
+    );
+    let siblings = [&freed, &retained];
+    let freed_join = crate::kernel::abstract_c_state_for_interface_join_across(
+        &freed,
+        &siblings,
+        &BTreeMap::new(),
+    )
+    .expect("the freed arm should abstract");
+    let retained_join = crate::kernel::abstract_c_state_for_interface_join_across(
+        &retained,
+        &siblings,
+        &BTreeMap::new(),
+    )
+    .expect("the retained arm should abstract");
+
+    assert_eq!(freed_join, retained_join);
+    assert_eq!(
+        freed_join.memory().live_heap_block_size(&allocation_base),
+        Some(&Bitvector32Term::Constant(16))
+    );
+    assert!(
+        !freed_join
+            .memory()
+            .is_deallocated_heap_address(&allocation_base)
+    );
+}
+
+#[test]
 fn free_requires_allocation_authority_not_just_write_access() {
     let mut success = successful_heap_allocation_state();
     let allocation = success

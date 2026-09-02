@@ -489,9 +489,21 @@ fn abstract_c_state_for_join_across_with_policy(
             .all(|sibling| comparable_memory(sibling) == expected)
     };
     if !common_memory {
-        abstract_state.memory = abstract_state
-            .memory
-            .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+        if preserve_exact_common_memory {
+            let sibling_memories = sibling_states
+                .iter()
+                .map(|sibling| &sibling.memory)
+                .collect::<Vec<_>>();
+            abstract_state.memory = abstract_state.memory.with_interface_memory_havoc(
+                variables.next(),
+                &preserved_blocks,
+                &sibling_memories,
+            )?;
+        } else {
+            abstract_state.memory = abstract_state
+                .memory
+                .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+        }
     }
     for (name, value, c_type) in abstract_objects {
         sync_stack_local(&mut abstract_state, &name, &value);

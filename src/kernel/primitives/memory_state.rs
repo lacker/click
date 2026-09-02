@@ -554,6 +554,88 @@ impl CMemory {
         self
     }
 
+    /// Forgets branch-local cell values and constructs the conservative heap
+    /// state exported by an interface join. A branch may retire an allocation
+    /// while its sibling keeps it live; the join must retain the potential
+    /// live allocation so a guarded resource can decide whether the
+    /// continuation may use it. Tombstones are retained only when every arm
+    /// agrees that the allocation is retired.
+    ///
+    /// This is deliberately separate from loop havoc. The joined heap is the
+    /// union of potential live allocations, so making the transition look like
+    /// a loop havoc would record a false memory-DAG derivation. The resulting
+    /// snapshot is a provenance barrier instead: no load from before the
+    /// branch may be transported across it without explicit interface facts.
+    pub(in crate::kernel) fn with_interface_memory_havoc(
+        mut self,
+        variable: Variable,
+        preserved_blocks: &BTreeSet<PointerBlock>,
+        sibling_memories: &[&CMemory],
+    ) -> Result<Self, String> {
+        let Some(first) = sibling_memories.first() else {
+            return Err("an interface memory join has no sibling states".to_string());
+        };
+
+        let mut blocks = BTreeMap::new();
+        for memory in sibling_memories {
+            for (block, contents) in memory.blocks.iter() {
+                if let Some(existing) = blocks.insert(block.clone(), contents.clone())
+                    && existing != *contents
+                {
+                    return Err(format!(
+                        "interface arms disagree on the size of memory block {block:?}"
+                    ));
+                }
+            }
+        }
+
+        let mut live_allocations = BTreeMap::new();
+        for memory in sibling_memories {
+            for (base, bytes) in &memory.heap.live_allocations {
+                if let Some(existing) = live_allocations.insert(base.clone(), bytes.clone())
+                    && existing != *bytes
+                {
+                    return Err(format!(
+                        "interface arms disagree on the size of heap allocation {base:?}"
+                    ));
+                }
+            }
+        }
+
+        let mut deallocated_allocations = first.heap.deallocated_allocations.clone();
+        deallocated_allocations.retain(|base, bytes| {
+            !live_allocations.contains_key(base)
+                && sibling_memories
+                    .iter()
+                    .all(|memory| memory.heap.deallocated_allocations.get(base) == Some(bytes))
+        });
+
+        let pending_allocations = first.heap.pending_allocations.clone();
+        if sibling_memories
+            .iter()
+            .any(|memory| memory.heap.pending_allocations != pending_allocations)
+        {
+            return Err("interface arms disagree on pending heap allocations".to_string());
+        }
+
+        let mut uninitialized_allocations = first.heap.uninitialized_allocations.clone();
+        for memory in sibling_memories {
+            uninitialized_allocations.extend(memory.heap.uninitialized_allocations.iter().cloned());
+        }
+
+        std::sync::Arc::make_mut(&mut self.cells)
+            .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
+        blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        self.blocks = std::sync::Arc::new(blocks);
+        self.heap = std::sync::Arc::new(CHeapMemory {
+            live_allocations,
+            deallocated_allocations,
+            pending_allocations,
+            uninitialized_allocations,
+        });
+        Ok(self)
+    }
+
     pub(in crate::kernel) fn with_call_memory_havoc(
         mut self,
         variable: Variable,

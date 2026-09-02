@@ -188,6 +188,17 @@ contract certification consume (`ExecutionProofCore::checked_function_execution`
 one path per trace, its completing theorem under the contract's exit rule.
 It evaluates no C, derives no fact, and walks nothing again.
 
+An interface `branch ensuring` may join different heap lifetimes when the
+interface includes an owned, arm-sensitive resource that represents the
+lifetime. The kernel's interface abstraction retains the union of potential
+live allocations, keeps a tombstone only when every arm agrees that the
+allocation is retired, and forgets branch-local cell values behind a memory
+provenance barrier. It then checks that the exported resource expands to the
+allocation on the retaining arm and not on the freeing arm. A conditional
+`CHeapAllocationFreed` fact is therefore validated inside the branch evidence
+but is not published as an unconditional free effect for the joined state.
+An unrelated resource cannot hide the lifetime difference.
+
 Opaque-contract certification then reuses that checked execution at the
 contract entry. It authorizes each artifact premise from the reconstructed
 contract context, from the registered predicate unfoldings (an identity whose
