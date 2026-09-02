@@ -2,8 +2,8 @@
 
 `data + i + j` with `i == INT_MAX` and `j == 1` and `data + k` with
 `k == INT_MIN` have equal 32-bit index sums but exact offsets of `+2^33` and
-`-2^33` bytes, so `p == q` must not be decided true. (Forming `data + INT_MAX
-+ 1` is also undefined behavior in C; see `issues/pointer-arithmetic-overflow.md`.)
+`-2^33` bytes, so `p == q` must not be decided true. Forming `data + INT_MAX
++ 1` is also undefined behavior in C.
 
 ```c filename=c_pointer_equality_rejects_wrapped_index_sum.c
 int32 ptr_cmp(int32 data[], int32 i, int32 j, int32 k) {

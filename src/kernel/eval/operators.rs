@@ -184,6 +184,391 @@ pub(in crate::kernel) fn apply_c_add(
     }
 }
 
+pub(in crate::kernel) fn evaluate_c_comparison_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    operator: CComparisonOperator,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let left_step_width = c_expression_pointer_step_width(state, left);
+    let right_step_width = c_expression_pointer_step_width(state, right);
+    evaluate_c_value_binary_paths(
+        state,
+        left,
+        right,
+        assumptions,
+        budget,
+        |left, right, facts, obligations| {
+            apply_c_comparison(
+                operator,
+                left,
+                right,
+                left_step_width,
+                right_step_width,
+                facts,
+                obligations,
+                assumptions,
+            )
+        },
+    )
+}
+
+pub(in crate::kernel) fn evaluate_c_subtract_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let left_step_width = c_expression_pointer_step_width(state, left);
+    let right_step_width = c_expression_pointer_step_width(state, right);
+    evaluate_c_value_binary_paths(
+        state,
+        left,
+        right,
+        assumptions,
+        budget,
+        |left, right, facts, obligations| {
+            apply_c_subtract(
+                state,
+                left,
+                right,
+                left_step_width,
+                right_step_width,
+                facts,
+                obligations,
+                assumptions,
+            )
+        },
+    )
+}
+
+fn evaluate_c_value_binary_paths(
+    state: &CState,
+    left: &CExpression,
+    right: &CExpression,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    apply: impl Fn(CValue, CValue, Vec<ExecutionPureFact>, Vec<ProofObligation>) -> Vec<CExpressionPath>,
+) -> ExecutionResult<Vec<CExpressionPath>> {
+    let mut paths = Vec::new();
+    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
+        let CExpressionPath {
+            outcome: left_outcome,
+            facts: left_facts,
+            obligations: left_obligations,
+        } = left_path;
+        let left = match left_outcome {
+            CExpressionOutcome::Value(value) => value,
+            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(error),
+                    facts: left_facts,
+                    obligations: left_obligations,
+                });
+                continue;
+            }
+        };
+
+        let right_assumptions =
+            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
+        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
+            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                &left_facts,
+                &left_obligations,
+                &right_path.facts,
+                &right_path.obligations,
+                assumptions,
+            ) else {
+                continue;
+            };
+
+            match right_path.outcome {
+                CExpressionOutcome::Value(value) => {
+                    paths.extend(apply(left.clone(), value, facts, obligations));
+                }
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    });
+                }
+                CExpressionOutcome::RuntimeError(error) => {
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(error),
+                        facts,
+                        obligations,
+                    });
+                }
+            }
+        }
+    }
+
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn pointer_operation_step_width(
+    left_step_width: Option<u32>,
+    right_step_width: Option<u32>,
+) -> Option<u32> {
+    match (left_step_width, right_step_width) {
+        (Some(left), Some(right)) if left != right => None,
+        (Some(width), _) | (_, Some(width)) => Some(width),
+        (None, None) => Some(4),
+    }
+}
+
+fn pointer_element_index(pointer: &Pointer, byte_width: u32) -> Option<Bitvector32Term> {
+    pointer_index_from_offset_term(&pointer.offset, byte_width)
+}
+
+fn pointer_element_indices(
+    left: &Pointer,
+    right: &Pointer,
+    byte_width: u32,
+) -> Option<(Bitvector32Term, Bitvector32Term)> {
+    let zero = Bitvector32Term::Constant(0);
+    let relative = match (&left.offset, &right.offset) {
+        (left, right) if left == right => Some((zero.clone(), zero.clone())),
+        (
+            PointerOffsetTerm::Add(left_base, left_addend),
+            PointerOffsetTerm::Add(right_base, right_addend),
+        ) if left_base == right_base => Some((
+            pointer_index_from_offset_term(left_addend, byte_width)?,
+            pointer_index_from_offset_term(right_addend, byte_width)?,
+        )),
+        (PointerOffsetTerm::Add(base, addend), right) if base.as_ref() == right => Some((
+            pointer_index_from_offset_term(addend, byte_width)?,
+            zero.clone(),
+        )),
+        (left, PointerOffsetTerm::Add(base, addend)) if base.as_ref() == left => Some((
+            zero.clone(),
+            pointer_index_from_offset_term(addend, byte_width)?,
+        )),
+        _ => None,
+    };
+    relative.or_else(|| {
+        Some((
+            pointer_element_index(left, byte_width)?,
+            pointer_element_index(right, byte_width)?,
+        ))
+    })
+}
+
+pub(in crate::kernel) fn pointer_order_condition(
+    left: Bitvector32Term,
+    right: Bitvector32Term,
+    operator: CComparisonOperator,
+) -> ConditionTerm {
+    match operator {
+        CComparisonOperator::LessThan => ConditionTerm::signed_less_than(left, right),
+        CComparisonOperator::LessEqual => ConditionTerm::signed_less_equal(left, right),
+        CComparisonOperator::GreaterThan => ConditionTerm::signed_greater_than(left, right),
+        CComparisonOperator::GreaterEqual => ConditionTerm::signed_greater_equal(left, right),
+        CComparisonOperator::Equal | CComparisonOperator::NotEqual => {
+            unreachable!("pointer order condition received equality operator")
+        }
+    }
+}
+
+fn apply_same_block_pointer_operation(
+    left: Pointer,
+    right: Pointer,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    apply: impl FnOnce(
+        Pointer,
+        Pointer,
+        Vec<ExecutionPureFact>,
+        Vec<ProofObligation>,
+    ) -> Vec<CExpressionPath>,
+) -> Vec<CExpressionPath> {
+    let left_base = Pointer {
+        block: left.block.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right_base = Pointer {
+        block: right.block.clone(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let same_block = ConditionTerm::pointer_equal(left_base, right_base);
+    match decide_with_facts(assumptions, &facts, &same_block) {
+        Some(true) => apply(left, right, facts, obligations),
+        Some(false) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+            facts,
+            obligations,
+        }],
+        None => {
+            let mut same_block_facts = facts.clone();
+            add_condition_path_fact(&mut same_block_facts, assumptions, same_block.clone(), true)
+                .expect("same-block pointer guard should be consistent");
+            let mut paths = apply(left, right, same_block_facts, obligations.clone());
+
+            let mut different_block_facts = facts;
+            add_condition_path_fact(&mut different_block_facts, assumptions, same_block, false)
+                .expect("different-block pointer guard should be consistent");
+            paths.push(CExpressionPath {
+                outcome: CExpressionOutcome::UndefinedBehavior(
+                    CUndefinedBehavior::PointerArithmetic,
+                ),
+                facts: different_block_facts,
+                obligations,
+            });
+            paths
+        }
+    }
+}
+
+fn apply_c_comparison(
+    operator: CComparisonOperator,
+    left: CValue,
+    right: CValue,
+    left_step_width: Option<u32>,
+    right_step_width: Option<u32>,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            let Some(byte_width) = pointer_operation_step_width(left_step_width, right_step_width)
+            else {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            };
+            apply_same_block_pointer_operation(
+                left,
+                right,
+                facts,
+                obligations,
+                assumptions,
+                move |left, right, facts, obligations| {
+                    let Some((left, right)) = pointer_element_indices(&left, &right, byte_width)
+                    else {
+                        return vec![CExpressionPath {
+                            outcome: CExpressionOutcome::RuntimeError(
+                                CRuntimeError::IndeterminatePointeeType,
+                            ),
+                            facts,
+                            obligations,
+                        }];
+                    };
+                    condition_as_c_int32_paths(
+                        pointer_order_condition(left, right, operator),
+                        facts,
+                        obligations,
+                        assumptions,
+                    )
+                },
+            )
+        }
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_)),
+        ) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_int32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            condition_as_c_int32_paths(
+                pointer_order_condition(left, right, operator),
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        _ => vec![c_type_mismatch_expression_path(facts, obligations)],
+    }
+}
+
+pub(in crate::kernel) fn apply_c_subtract(
+    state: &CState,
+    left: CValue,
+    right: CValue,
+    left_step_width: Option<u32>,
+    right_step_width: Option<u32>,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    match (left, right) {
+        (
+            left @ (CValue::Int32(_) | CValue::UInt8(_)),
+            right @ (CValue::Int32(_) | CValue::UInt8(_)),
+        ) => {
+            let mut facts = facts;
+            let Some(left) = promote_c_int32_path_value(left, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+        }
+        (CValue::Pointer(pointer), right @ (CValue::Int32(_) | CValue::UInt8(_))) => {
+            let mut facts = facts;
+            let Some(right) = promote_c_int32_path_value(right, &mut facts, assumptions) else {
+                return Vec::new();
+            };
+            let Some(byte_width) = pointer_operation_step_width(left_step_width, None) else {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            };
+            pointer_offset_by_elements_paths(
+                state,
+                pointer,
+                Bitvector32Term::subtract(Bitvector32Term::Constant(0), right),
+                byte_width,
+                facts,
+                obligations,
+                assumptions,
+            )
+        }
+        (CValue::Pointer(left), CValue::Pointer(right)) => {
+            let Some(byte_width) = pointer_operation_step_width(left_step_width, right_step_width)
+            else {
+                return vec![c_type_mismatch_expression_path(facts, obligations)];
+            };
+            apply_same_block_pointer_operation(
+                left,
+                right,
+                facts,
+                obligations,
+                assumptions,
+                move |left, right, facts, obligations| {
+                    let Some((left, right)) = pointer_element_indices(&left, &right, byte_width)
+                    else {
+                        return vec![CExpressionPath {
+                            outcome: CExpressionOutcome::RuntimeError(
+                                CRuntimeError::IndeterminatePointeeType,
+                            ),
+                            facts,
+                            obligations,
+                        }];
+                    };
+                    apply_c_int32_subtract(left, right, facts, obligations, assumptions)
+                },
+            )
+        }
+        _ => vec![c_type_mismatch_expression_path(facts, obligations)],
+    }
+}
+
 #[derive(Clone)]
 struct PointerFormationGuard {
     condition: ConditionTerm,
@@ -1017,75 +1402,16 @@ pub(in crate::kernel) fn evaluate_c_equal_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
-    let mut paths = Vec::new();
-    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
-        let CExpressionPath {
-            outcome: left_outcome,
-            facts: left_facts,
-            obligations: left_obligations,
-        } = left_path;
-
-        let left = match left_outcome {
-            CExpressionOutcome::Value(left) => left,
-            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-            CExpressionOutcome::RuntimeError(error) => {
-                paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(error),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-        };
-
-        let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
-                &left_facts,
-                &left_obligations,
-                &right_path.facts,
-                &right_path.obligations,
-                assumptions,
-            ) else {
-                continue;
-            };
-
-            match right_path.outcome {
-                CExpressionOutcome::Value(right) => {
-                    paths.extend(apply_c_equal(
-                        left.clone(),
-                        right,
-                        facts,
-                        obligations,
-                        assumptions,
-                    ));
-                }
-                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                    paths.push(CExpressionPath {
-                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
-                        facts,
-                        obligations,
-                    })
-                }
-                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-                }),
-            }
-        }
-    }
-
-    budget.check_path_width(paths.len())?;
-    Ok(paths)
+    evaluate_c_value_binary_paths(
+        state,
+        left,
+        right,
+        assumptions,
+        budget,
+        |left, right, facts, obligations| {
+            apply_c_equal(left, right, facts, obligations, assumptions)
+        },
+    )
 }
 
 pub(in crate::kernel) fn apply_c_equal(
@@ -1142,75 +1468,16 @@ pub(in crate::kernel) fn evaluate_c_not_equal_paths(
     assumptions: &PureFactContext,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CExpressionPath>> {
-    let mut paths = Vec::new();
-    for left_path in evaluate_c_expression_paths(state, left, assumptions, budget)? {
-        let CExpressionPath {
-            outcome: left_outcome,
-            facts: left_facts,
-            obligations: left_obligations,
-        } = left_path;
-
-        let left = match left_outcome {
-            CExpressionOutcome::Value(left) => left,
-            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-            CExpressionOutcome::RuntimeError(error) => {
-                paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(error),
-                    facts: left_facts,
-                    obligations: left_obligations,
-                });
-                continue;
-            }
-        };
-
-        let right_assumptions =
-            assumptions_with_path_context(assumptions, &left_facts, &left_obligations);
-        for right_path in evaluate_c_expression_paths(state, right, &right_assumptions, budget)? {
-            let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
-                &left_facts,
-                &left_obligations,
-                &right_path.facts,
-                &right_path.obligations,
-                assumptions,
-            ) else {
-                continue;
-            };
-
-            match right_path.outcome {
-                CExpressionOutcome::Value(right) => {
-                    paths.extend(apply_c_not_equal(
-                        left.clone(),
-                        right,
-                        facts,
-                        obligations,
-                        assumptions,
-                    ));
-                }
-                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                    paths.push(CExpressionPath {
-                        outcome: CExpressionOutcome::UndefinedBehavior(undefined_behavior),
-                        facts,
-                        obligations,
-                    })
-                }
-                CExpressionOutcome::RuntimeError(error) => paths.push(CExpressionPath {
-                    outcome: CExpressionOutcome::RuntimeError(error),
-                    facts,
-                    obligations,
-                }),
-            }
-        }
-    }
-
-    budget.check_path_width(paths.len())?;
-    Ok(paths)
+    evaluate_c_value_binary_paths(
+        state,
+        left,
+        right,
+        assumptions,
+        budget,
+        |left, right, facts, obligations| {
+            apply_c_not_equal(left, right, facts, obligations, assumptions)
+        },
+    )
 }
 
 pub(in crate::kernel) fn apply_c_not_equal(

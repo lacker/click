@@ -1814,26 +1814,51 @@ pub(super) fn c_value_comparison_proposition(
     right: &CValue,
 ) -> Option<Proposition> {
     let pointer_condition = match (left, right) {
-        (CValue::Pointer(left), CValue::Pointer(right)) => {
-            Some(pointer_equality_condition(left.clone(), right.clone()))
-        }
-        (CValue::Pointer(pointer), CValue::Int32(bits))
-        | (CValue::Int32(bits), CValue::Pointer(pointer))
-            if bits.as_const() == Some(0) =>
-        {
-            Some(pointer_is_null_condition(pointer.clone()))
-        }
-        _ => None,
-    };
-    if let Some(condition) = pointer_condition {
-        return match operator {
-            CComparisonOperator::Equal => Some(Proposition::ConditionIs(condition, true)),
-            CComparisonOperator::NotEqual => Some(Proposition::ConditionIs(condition, false)),
+        (CValue::Pointer(left), CValue::Pointer(right)) => match operator {
+            CComparisonOperator::Equal => Some((
+                pointer_equality_condition(left.clone(), right.clone()),
+                true,
+            )),
+            CComparisonOperator::NotEqual => Some((
+                pointer_equality_condition(left.clone(), right.clone()),
+                false,
+            )),
+            CComparisonOperator::LessThan
+            | CComparisonOperator::LessEqual
+            | CComparisonOperator::GreaterThan
+            | CComparisonOperator::GreaterEqual
+                if left.block == right.block =>
+            {
+                let left = byte_offset_from_pointer_offset(&left.offset)?;
+                let right = byte_offset_from_pointer_offset(&right.offset)?;
+                Some((pointer_order_condition(left, right, operator), true))
+            }
             CComparisonOperator::LessThan
             | CComparisonOperator::LessEqual
             | CComparisonOperator::GreaterThan
             | CComparisonOperator::GreaterEqual => None,
-        };
+        },
+        (CValue::Pointer(pointer), CValue::Int32(bits))
+        | (CValue::Int32(bits), CValue::Pointer(pointer))
+            if bits.as_const() == Some(0) =>
+        {
+            match operator {
+                CComparisonOperator::Equal => {
+                    Some((pointer_is_null_condition(pointer.clone()), true))
+                }
+                CComparisonOperator::NotEqual => {
+                    Some((pointer_is_null_condition(pointer.clone()), false))
+                }
+                CComparisonOperator::LessThan
+                | CComparisonOperator::LessEqual
+                | CComparisonOperator::GreaterThan
+                | CComparisonOperator::GreaterEqual => None,
+            }
+        }
+        _ => None,
+    };
+    if let Some((condition, value)) = pointer_condition {
+        return Some(Proposition::ConditionIs(condition, value));
     }
 
     let left = c_value_int32_term(left)?;

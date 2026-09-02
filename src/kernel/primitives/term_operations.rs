@@ -530,6 +530,9 @@ impl ConditionTerm {
         left: Bitvector32Term,
         right: Bitvector32Term,
     ) -> Self {
+        if right.as_const() == Some(0) {
+            return Self::Constant(false);
+        }
         match (left.as_const(), right.as_const()) {
             (Some(left), Some(right)) => {
                 Self::Constant((left as i32).overflowing_sub(right as i32).1)

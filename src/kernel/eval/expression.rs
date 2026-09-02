@@ -177,65 +177,37 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 })
                 .collect()
         }
-        CExpression::LessThan(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::LessThan(left, right) => evaluate_c_comparison_paths(
             state,
             left,
             right,
             assumptions,
             budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::signed_less_than(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
+            CComparisonOperator::LessThan,
         )?,
-        CExpression::LessEqual(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::LessEqual(left, right) => evaluate_c_comparison_paths(
             state,
             left,
             right,
             assumptions,
             budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::signed_less_equal(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
+            CComparisonOperator::LessEqual,
         )?,
-        CExpression::GreaterThan(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::GreaterThan(left, right) => evaluate_c_comparison_paths(
             state,
             left,
             right,
             assumptions,
             budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::signed_greater_than(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
+            CComparisonOperator::GreaterThan,
         )?,
-        CExpression::GreaterEqual(left, right) => evaluate_c_int32_binary_paths(
+        CExpression::GreaterEqual(left, right) => evaluate_c_comparison_paths(
             state,
             left,
             right,
             assumptions,
             budget,
-            |left, right, facts, obligations| {
-                condition_as_c_int32_paths(
-                    ConditionTerm::signed_greater_equal(left, right),
-                    facts,
-                    obligations,
-                    assumptions,
-                )
-            },
+            CComparisonOperator::GreaterEqual,
         )?,
         CExpression::Equal(left, right) => {
             evaluate_c_equal_paths(state, left, right, assumptions, budget)?
@@ -255,16 +227,9 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::Add(left, right) => {
             evaluate_c_add_paths(state, left, right, assumptions, budget)?
         }
-        CExpression::Subtract(left, right) => evaluate_c_int32_binary_paths(
-            state,
-            left,
-            right,
-            assumptions,
-            budget,
-            |left, right, facts, obligations| {
-                apply_c_int32_subtract(left, right, facts, obligations, assumptions)
-            },
-        )?,
+        CExpression::Subtract(left, right) => {
+            evaluate_c_subtract_paths(state, left, right, assumptions, budget)?
+        }
         CExpression::Multiply(left, right) => evaluate_c_int32_binary_paths(
             state,
             left,

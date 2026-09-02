@@ -325,6 +325,29 @@ fn spec_pointer_equality_lowers_to_a_pure_fact() {
 }
 
 #[test]
+fn spec_pointer_order_lowers_same_block_offsets() {
+    let left = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+    assert_eq!(
+        c_value_comparison_proposition(
+            &CValue::Pointer(left),
+            CComparisonOperator::LessThan,
+            &CValue::Pointer(right),
+        ),
+        Some(Proposition::ConditionIs(
+            ConditionTerm::Constant(true),
+            true,
+        )),
+    );
+}
+
+#[test]
 fn symbolic_pointer_truthiness_keeps_null_and_nonnull_paths() {
     let paths = c_truthiness_paths(
         CValue::Pointer(Pointer::symbolic(Variable(22_000))),
@@ -980,6 +1003,189 @@ fn byte_offset_rejects_a_pointer_beyond_the_object() {
             state,
             expression,
             outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic,),
+        }
+    );
+}
+
+#[test]
+fn pointer_relational_comparison_orders_same_block_elements() {
+    let first = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let second = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let state = CState::new()
+        .with_local("first", CValue::Pointer(first))
+        .with_local("second", CValue::Pointer(second));
+    let examples = [
+        (c_less_than(c_variable("first"), c_variable("second")), 1),
+        (c_less_equal(c_variable("first"), c_variable("second")), 1),
+        (c_greater_than(c_variable("second"), c_variable("first")), 1),
+        (
+            c_greater_equal(c_variable("second"), c_variable("first")),
+            1,
+        ),
+    ];
+
+    for (expression, expected) in examples {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("same-block pointer comparison should evaluate");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::Value(int32(expected)),
+            }
+        );
+    }
+}
+
+#[test]
+fn pointer_subtraction_returns_same_block_element_distance() {
+    let start = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let end = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let state = CState::new()
+        .with_local("start", CValue::Pointer(start))
+        .with_local("end", CValue::Pointer(end));
+    let expression = c_subtract(c_variable("end"), c_variable("start"));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("same-block pointer subtraction should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::Value(int32(2)),
+        }
+    );
+}
+
+#[test]
+fn uint8_pointer_subtraction_returns_byte_distance() {
+    let start = Pointer {
+        block: "bytes".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let end = Pointer {
+        block: "bytes".into(),
+        offset: PointerOffsetTerm::Constant(3),
+    };
+    let mut state = CState::new()
+        .with_local("start", CValue::Pointer(start.clone()))
+        .with_local("end", CValue::Pointer(end.clone()));
+    state
+        .locals
+        .set_typed("start", CValue::Pointer(start), CType::UInt8Pointer);
+    state
+        .locals
+        .set_typed("end", CValue::Pointer(end), CType::UInt8Pointer);
+    let expression = c_subtract(c_variable("end"), c_variable("start"));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("same-block uint8 pointer subtraction should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::Value(int32(3)),
+        }
+    );
+}
+
+#[test]
+fn pointer_subtraction_by_one_steps_back_one_element() {
+    let pointer = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(pointer))
+        .with_memory(CMemory::new().with_block("array", 12));
+    let expression = c_subtract(c_variable("p"), c_int32_literal(1));
+    let result = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(4),
+    };
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("pointer subtraction by one should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::Value(CValue::Pointer(result)),
+        }
+    );
+}
+
+#[test]
+fn pointer_comparison_rejects_different_blocks_as_undefined_behavior() {
+    let left = Pointer {
+        block: "left".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "right".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("left", CValue::Pointer(left))
+        .with_local("right", CValue::Pointer(right));
+    let expression = c_less_than(c_variable("left"), c_variable("right"));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("cross-block pointer comparison should evaluate to UB");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+        }
+    );
+}
+
+#[test]
+fn pointer_subtraction_rejects_different_blocks_as_undefined_behavior() {
+    let left = Pointer {
+        block: "left".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let right = Pointer {
+        block: "right".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("left", CValue::Pointer(left))
+        .with_local("right", CValue::Pointer(right));
+    let expression = c_subtract(c_variable("left"), c_variable("right"));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("cross-block pointer subtraction should evaluate to UB");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
         }
     );
 }
