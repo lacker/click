@@ -52,6 +52,12 @@ forever; an ordinary Click contract does not claim that it terminates. Loop
 invariants prove safety across every finite number of iterations and describe
 any exit that does occur.
 
+The guarantee covers the modeled C0 execution and resources, not the physical
+machine running the verifier or program. In particular, a verified function
+can still exhaust the process stack, address space, or available memory; those
+resource limits are outside the current judgment. C constructs outside C0's
+model are rejected with a diagnostic rather than silently approximated.
+
 For example, a Click contract can say that a function returns a particular
 value, preserves part of memory, writes only a stated range, or maintains an
 array property such as permutation.

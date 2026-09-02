@@ -58,7 +58,13 @@ C language coverage:
 - [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Support taking the address of a parameter](address-of-parameter.md)
-- [Placeholder for floating point, function pointers, varargs, volatile, and concurrency](far-horizon-c-features.md)
+- [Model floating-point values](floating-point.md)
+- [Model function pointers](function-pointers.md)
+- [Model variadic functions](variadic-functions.md)
+- [Model volatile objects](volatile-objects.md)
+- [Model concurrency and atomics](concurrency-and-atomics.md)
+- [Lift the block-scoped declaration restriction](block-scoped-declarations.md)
+- [Bound non-heap resource exhaustion](resource-exhaustion.md)
 - [Verify one unchanged existing-source fixture](audit-existing-c-source-fidelity.md)
 
 Semantics and reasoning:

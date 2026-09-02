@@ -847,6 +847,9 @@ impl Parser {
     fn parse_function(mut self) -> Result<C0Function, C0SyntaxError> {
         self.parse_struct_declarations()?;
         let return_type = self.parse_type()?.c_type;
+        if self.peek() == Some(&Token::LParen) {
+            return Err(self.error_here("function-pointer declarations are not supported in C0"));
+        }
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         self.push_scope();
@@ -956,6 +959,11 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
+            if self.peek() == Some(&Token::LParen) {
+                return Err(
+                    self.error_here("function-pointer declarations are not supported in C0")
+                );
+            }
             if parsed_type.c_type == C0Type::Void {
                 return Err(self.error_here("function parameters cannot have type `void`"));
             }
@@ -1031,6 +1039,13 @@ impl Parser {
                         struct_name: None,
                     })
                 }
+            }
+            Some(Token::Ident(name)) if name == "float" || name == "double" => Err(self
+                .error_at_previous(format!(
+                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
+                ))),
+            Some(Token::Ident(name)) if name == "volatile" => {
+                Err(self.error_at_previous("the `volatile` qualifier is not supported in C0"))
             }
             Some(token) => Err(self.error_at_previous(format!(
                 "expected type `void`, `int32`, `uint8`, or `struct`, got {}",
@@ -1168,8 +1183,20 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
+            Some(Token::Ident(name)) if name == "float" || name == "double" => Err(self
+                .error_here(format!(
+                    "unsupported C type `{name}`: floating-point values are not modeled in C0"
+                ))),
+            Some(Token::Ident(name)) if name == "volatile" => {
+                Err(self.error_here("the `volatile` qualifier is not supported in C0"))
+            }
             Some(Token::Ident(name)) if name == "int32" || name == "uint8" || name == "struct" => {
                 let parsed_type = self.parse_type()?;
+                if self.peek() == Some(&Token::LParen) {
+                    return Err(
+                        self.error_here("function-pointer declarations are not supported in C0")
+                    );
+                }
                 let name = self.expect_ident("local name")?;
                 self.declare_name(&name)?;
                 let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
@@ -1945,6 +1972,13 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             }
             index += 2;
             continue;
+        }
+
+        if ch == '.' && chars.get(index + 1) == Some(&'.') && chars.get(index + 2) == Some(&'.') {
+            return Err(C0SyntaxError::at(
+                position,
+                "variadic parameter lists (`...`) are not supported in C0",
+            ));
         }
 
         if is_ident_start(ch) {
