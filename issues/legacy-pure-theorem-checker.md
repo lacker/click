@@ -14,8 +14,7 @@ which fails for this theorem, so it is published with no kernel authority. That 
 leaving the binder free in `available`; its `Have`
 (`pure_theorems.rs:3036-3075`) opens `Proof::for_pure_goal` with those
 captured facts as requirements, and the nested `have` goal re-lowers its own
-binder to the same id (see
-[have-binder-capture.md](have-binder-capture.md)); its `Assumption`
+binder to the same id; its `Assumption`
 (`pure_theorems.rs:3140-3150`) closes through
 `quantified_equivalent_available_fact` (mutual `derive_simp_proposition`
 derivability between two `forall` facts,

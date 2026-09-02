@@ -104,6 +104,5 @@ Kernel tests, one per defect:
   `split`/`assumption` symptom above verifies.
 - `scripts/check.sh` passes.
 
-Related: [have-binder-capture.md](have-binder-capture.md),
-[surface-substitution-capture.md](surface-substitution-capture.md),
+Related: [surface-substitution-capture.md](surface-substitution-capture.md),
 [legacy-pure-theorem-checker.md](legacy-pure-theorem-checker.md).

@@ -164,8 +164,9 @@ fn apply_logical_goal_tactic(
                 *goal = *consequent;
                 Ok(false)
             }
-            Proposition::ForAll { body, .. } => {
-                *goal = *body;
+            Proposition::ForAll { var, body, .. } => {
+                let (_, body) = crate::kernel::freshen_int32_forall_body(var, &body, available);
+                *goal = body;
                 Ok(false)
             }
             Proposition::Not(body) => {

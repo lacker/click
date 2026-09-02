@@ -84,5 +84,4 @@ the binder to `k`, or the parameter to `m`, each makes `fold` fail).
   binder verifies unchanged.
 - `scripts/check.sh` passes.
 
-Related: [kernel-binder-hygiene.md](kernel-binder-hygiene.md),
-[have-binder-capture.md](have-binder-capture.md).
+Related: [kernel-binder-hygiene.md](kernel-binder-hygiene.md).

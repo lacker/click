@@ -18,6 +18,7 @@ use std::sync::Arc;
 #[derive(Clone, Default)]
 pub(crate) struct ProofFacts {
     ordered: PersistentSequence<Proposition>,
+    reserved_variables: PersistentSet<Variable>,
     prioritized: Option<Arc<PrioritizedProofFacts>>,
     top_level_exact: PersistentSet<Proposition>,
     exact: PersistentSet<Proposition>,
@@ -87,6 +88,7 @@ impl ProofFacts {
 
     pub(crate) fn from_ordered(facts: &[Proposition]) -> Self {
         let mut ordered = PersistentSequence::default();
+        let mut reserved_variables = PersistentSet::default();
         let mut top_level_exact = PersistentSet::default();
         let mut exact = PersistentSet::default();
         let mut proper_conjuncts = PersistentSet::default();
@@ -99,6 +101,9 @@ impl ProofFacts {
         let mut implicit_transport_assumptions = PureFactContext::new();
         let mut by_predicate = PersistentMap::default();
         for fact in facts {
+            for variable in crate::kernel::proposition_variables(fact) {
+                reserved_variables = reserved_variables.with_value(variable);
+            }
             if top_level_exact.contains(fact) {
                 continue;
             }
@@ -132,6 +137,7 @@ impl ProofFacts {
         }
         Self {
             ordered,
+            reserved_variables,
             prioritized: None,
             top_level_exact,
             exact,
@@ -204,8 +210,13 @@ impl ProofFacts {
         ordered.push(fact.clone());
         let implicit_transport_assumptions =
             index_implicit_transport_context(self.implicit_transport_assumptions.clone(), &fact);
+        let mut reserved_variables = self.reserved_variables.clone();
+        for variable in crate::kernel::proposition_variables(&fact) {
+            reserved_variables = reserved_variables.with_value(variable);
+        }
         Self {
             ordered,
+            reserved_variables,
             prioritized: self.prioritized.clone(),
             top_level_exact: self.top_level_exact.with_value(fact.clone()),
             exact,
@@ -220,6 +231,35 @@ impl ProofFacts {
             implicit_transport_assumptions,
             by_predicate: index_predicate_fact(self.by_predicate.clone(), &fact),
         }
+    }
+
+    pub(crate) fn freshen_int32_forall_body(
+        &self,
+        binder: Variable,
+        body: &Proposition,
+    ) -> (Variable, Proposition) {
+        if !self.reserved_variables.contains(&binder) {
+            return (binder, body.clone());
+        }
+        let body_variables = crate::kernel::proposition_variables(body);
+        let start = Variable(0);
+        let mut fresh = start;
+        loop {
+            if !self.reserved_variables.contains(&fresh) && !body_variables.contains(&fresh) {
+                break;
+            }
+            fresh = Variable(fresh.0.wrapping_add(1));
+            assert_ne!(
+                fresh, start,
+                "all symbolic variable identifiers are already reserved"
+            );
+        }
+        let body = crate::kernel::substitute_int32_variable_in_proposition(
+            body,
+            binder,
+            Bitvector32Term::Variable(fresh),
+        );
+        (fresh, body)
     }
 
     pub(crate) fn with_predicate_unfold_fact(&self, fact: Proposition) -> Self {

@@ -22,12 +22,11 @@ when evidence exposes one.
 
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 8
+## Soundness issues: 7
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
 - [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
-- [Make `intro` bind a variable fresh with respect to the available facts](have-binder-capture.md)
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
 

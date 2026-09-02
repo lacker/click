@@ -615,11 +615,10 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
                 Some(antecedent.as_ref().clone()),
                 PropositionIntroduction::Implication,
             ),
-            Proposition::ForAll { var, body, .. } => (
-                body.as_ref().clone(),
-                None,
-                PropositionIntroduction::Universal { variable: *var },
-            ),
+            Proposition::ForAll { var, body, .. } => {
+                let (variable, body) = facts.freshen_int32_forall_body(*var, body);
+                (body, None, PropositionIntroduction::Universal { variable })
+            }
             Proposition::Not(body) => (
                 Proposition::ConditionIs(crate::kernel::ConditionTerm::Constant(false), true),
                 Some(body.as_ref().clone()),
@@ -1610,5 +1609,64 @@ impl<P: Clone, O: Clone, E: Clone> ProofBranches<ProofBranch<ProofObligation<P, 
 
     pub(crate) fn is_discharged(&self) -> bool {
         self.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::proof::PropositionObligation;
+    use crate::kernel::{Bitvector32Term, Sort, Term, Variable};
+
+    #[test]
+    fn intro_freshens_a_universal_binder_away_from_ambient_facts() {
+        let binder = Variable(186);
+        let body = Proposition::Predicate {
+            name: "holds".to_string(),
+            arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(binder))],
+        };
+        let goal = Proposition::ForAll {
+            var: binder,
+            sort: Sort::CInt32,
+            body: Box::new(body.clone()),
+        };
+        let branch = ProofBranch::new(
+            ProofObligation::Proposition(PropositionObligation::new(goal, ())),
+            ProofBranchState {
+                facts: ProofFacts::from_ordered(std::slice::from_ref(&body)),
+                unfolded_predicates: PersistentOrderedSet::default(),
+                execution: None,
+            },
+        );
+        let proof: ProofObject<(), ProofObligation<(), Arc<OutcomeProofState<()>>>, ()> =
+            ProofObject::root((), branch);
+        let mut introduced = None;
+
+        let next = proof
+            .apply_intro(|_, introduction| match introduction {
+                PropositionIntroduction::Universal { variable } => {
+                    introduced = Some(variable);
+                }
+                _ => panic!("expected universal introduction"),
+            })
+            .unwrap_or_else(|_| panic!("universal introduction should be accepted"));
+
+        let introduced = introduced.expect("universal introduction should report its binder");
+        assert_ne!(introduced, binder);
+        let branch = next
+            .state
+            .open_branches
+            .get(BranchId::ROOT)
+            .expect("the introduced branch remains open");
+        let ProofObligation::Proposition(obligation) = &branch.obligation else {
+            panic!("universal introduction should retain a proposition goal");
+        };
+        assert_eq!(
+            obligation.proposition(),
+            &Proposition::Predicate {
+                name: "holds".to_string(),
+                arguments: vec![Term::Bitvector32(Bitvector32Term::Variable(introduced))],
+            }
+        );
     }
 }

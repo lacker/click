@@ -49,8 +49,7 @@ with its own test; split this file if any of them grows.
    re-proved at contract certification (loop-phase proofs, pure theorems,
    resource scopes). `docs/internals/proof-objects.md` says the kernel
    containers never accept presentation as evidence; the fact store does.
-   This is the mechanism behind [have-binder-capture.md](have-binder-capture.md)
-   and [legacy-pure-theorem-checker.md](legacy-pure-theorem-checker.md).
+   This is the mechanism behind [legacy-pure-theorem-checker.md](legacy-pure-theorem-checker.md).
    Resolve by making every publication go through a checked operation that
    derives the fact, or by narrowing the callers to the kernel and documenting
    the remaining trust. Double execution was removed on 2026-09-02

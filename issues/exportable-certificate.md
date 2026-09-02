@@ -5,11 +5,10 @@ Found by the 2026-09-01 kernel audit at cb034b21.
 Trust in a Click verdict ends at this binary's exit status. `ProofCertificate`
 serializes surface operations and "carries no semantic authority of its own"
 (`docs/internals/proof-objects.md:129-140`); `click audit` and `click expand`
-re-run the same binary on the same or rewritten source. There is no artifact
-a smaller, independent checker could validate. The audit's binder-capture
-regression ([have-binder-capture.md](have-binder-capture.md)) passes
-`click audit`, which shows that an independent artifact check is the missing
-line of defense, not a nicety.
+re-run the same binary on the same or rewritten source. There is no artifact a
+smaller, independent checker could validate. The binder-capture regression is
+now rejected by the verifier, but an independent artifact check remains the
+missing line of defense, not a nicety.
 
 ## Violated invariant
 
@@ -23,8 +22,7 @@ re-checked by a small trusted core.
 `click verify --emit-certificate out.json` on `examples/linked-list` produces
 an artifact, and `click check-certificate out.json` (or an external reference
 checker) accepts it. Mutating one derivation step in the artifact makes the
-checker reject it. The artifact for the have-binder-capture regression is
-rejected by the checker even while the current verifier accepts the proof.
+checker reject it.
 
 ## Acceptance criteria
 

@@ -950,6 +950,30 @@ pub fn substitute_int32_variable_in_proposition(
     substitute_bitvector_variable_in_proposition(proposition, variable, &value)
 }
 
+/// Introduces an int32 universal's binder into a proposition without allowing
+/// it to reuse a variable identity already present in the surrounding proof
+/// facts. The body is the scope of the binder, so alpha-renaming it before
+/// exposing that scope is what makes the operation safe at a proof-object
+/// boundary rather than relying on a surface lowerer's numbering convention.
+pub(crate) fn freshen_int32_forall_body(
+    binder: Variable,
+    body: &Proposition,
+    surrounding: &[Proposition],
+) -> (Variable, Proposition) {
+    if !surrounding
+        .iter()
+        .any(|proposition| proposition_variables(proposition).contains(&binder))
+    {
+        return (binder, body.clone());
+    }
+    let mut propositions = surrounding.to_vec();
+    propositions.push(body.clone());
+    let fresh = fresh_int32_variable_for_propositions(&propositions);
+    let body =
+        substitute_int32_variable_in_proposition(body, binder, Bitvector32Term::Variable(fresh));
+    (fresh, body)
+}
+
 /// Planning evidence for certificate lowering: the guided instantiation
 /// values the atomic prover would try for one universally quantified int32
 /// fact against a target condition fact, plus every value of a
@@ -1010,10 +1034,19 @@ pub fn forall_guided_instantiation_candidate_values(
 pub fn fresh_int32_variable_for_propositions(propositions: &[Proposition]) -> Variable {
     let mut reserved = BTreeSet::new();
     for proposition in propositions {
-        collect_proposition_bitvector_variables(proposition, &mut reserved);
-        collect_proposition_bound_variables(proposition, &mut reserved);
+        reserved.extend(proposition_variables(proposition));
     }
     KernelVariableGenerator::fresh_for(0, reserved).next()
+}
+
+/// Collects every free variable and logical binder identity in one
+/// proposition. Proof facts retain this set incrementally so freshness checks
+/// do not rebuild the entire ambient fact list for each universal intro.
+pub(crate) fn proposition_variables(proposition: &Proposition) -> BTreeSet<Variable> {
+    let mut variables = BTreeSet::new();
+    collect_proposition_bitvector_variables(proposition, &mut variables);
+    collect_proposition_bound_variables(proposition, &mut variables);
+    variables
 }
 
 pub fn c_max_body() -> CStatement {
