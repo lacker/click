@@ -1819,6 +1819,58 @@ fn c0_syntax_lowers_local_array_initializer_stores() {
 }
 
 #[test]
+fn c0_syntax_flattens_multidimensional_local_array_indices() {
+    let function = syntax::parse_function(
+        r#"
+        int32 matrix_roundtrip() {
+            int32 values[2][3];
+            values[0][0] = 1;
+            values[1][2] = 7;
+            return values[1][2];
+        }
+        "#,
+    )
+    .expect("multidimensional local array should parse")
+    .to_kernel_function();
+
+    let first = crate::kernel::Pointer {
+        block: "local:values".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let last = crate::kernel::Pointer {
+        block: "local:values".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(20),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:values", 24)
+            .store(first, crate::kernel::int32(1))
+            .store(last, crate::kernel::int32(7)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("multidimensional local array should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
 fn c0_syntax_local_array_decays_to_pointer_argument() {
     let read_first = syntax::parse_function(
         r#"

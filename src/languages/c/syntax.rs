@@ -839,6 +839,7 @@ struct Parser {
     structs: BTreeMap<String, C0StructLayout>,
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
+    variable_array_shapes: BTreeMap<String, Vec<u32>>,
     /// The names declared in each open lexical scope, innermost last:
     /// the function's parameters, then one entry per `{ ... }` block and
     /// per `for` statement. Click's kernel keys a local by its name alone,
@@ -859,6 +860,7 @@ impl Parser {
             structs: BTreeMap::new(),
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            variable_array_shapes: BTreeMap::new(),
             scopes: Vec::new(),
             abi,
         })
@@ -873,6 +875,7 @@ impl Parser {
     fn pop_scope(&mut self) {
         for name in self.scopes.pop().unwrap_or_default() {
             self.variable_structs.remove(&name);
+            self.variable_array_shapes.remove(&name);
         }
     }
 
@@ -1261,9 +1264,12 @@ impl Parser {
         Ok(pointer_type)
     }
 
-    fn parse_local_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
+    fn parse_local_array_shape(
+        &mut self,
+        c_type: C0Type,
+    ) -> Result<(C0Type, Option<Vec<u32>>), C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
-            return Ok(c_type);
+            return Ok((c_type, None));
         }
         let (array_type, element_width, element_name): (fn(u32) -> C0Type, u32, &str) = match c_type
         {
@@ -1272,34 +1278,45 @@ impl Parser {
             _ => return Err(self.error_here("only scalar local arrays are supported")),
         };
 
-        self.position += 1;
-        let length = match self.next() {
-            Some(Token::Number(number)) => {
-                let length = number.parse::<u32>().map_err(|_| {
-                    self.error_here(format!("array length `{number}` is out of range"))
-                })?;
-                if length == 0 {
-                    return Err(self.error_here("local arrays must have positive length"));
+        let mut dimensions = Vec::new();
+        let mut element_count = 1u32;
+        while self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let length = match self.next() {
+                Some(Token::Number(number)) => {
+                    let length = number.parse::<u32>().map_err(|_| {
+                        self.error_here(format!("array length `{number}` is out of range"))
+                    })?;
+                    if length == 0 {
+                        return Err(self.error_here("local arrays must have positive length"));
+                    }
+                    length
                 }
-                if length.checked_mul(element_width).is_none() {
-                    return Err(self.error_here(format!(
-                        "array length `{number}` is too large for {element_name} elements"
+                Some(token) => {
+                    return Err(self.error_at_previous(format!(
+                        "expected local array length, got {}",
+                        token.describe()
                     )));
                 }
-                length
-            }
-            Some(token) => {
-                return Err(self.error_at_previous(format!(
-                    "expected local array length, got {}",
-                    token.describe()
-                )));
-            }
-            None => {
-                return Err(self.error_here("expected local array length, got end of input"));
-            }
-        };
-        self.expect(Token::RBracket)?;
-        Ok(array_type(length))
+                None => {
+                    return Err(self.error_here("expected local array length, got end of input"));
+                }
+            };
+            element_count = element_count.checked_mul(length).ok_or_else(|| {
+                self.error_here(format!(
+                    "array dimensions are too large for {element_name} elements"
+                ))
+            })?;
+            dimensions.push(length);
+            self.expect(Token::RBracket)?;
+        }
+        if element_count.checked_mul(element_width).is_none() {
+            return Err(self.error_here(format!(
+                "array dimensions are too large for {element_name} elements"
+            )));
+        }
+        let shape = (dimensions.len() > 1).then_some(dimensions);
+        Ok((array_type(element_count), shape))
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -1375,7 +1392,10 @@ impl Parser {
                 }
                 let name = self.expect_ident("local name")?;
                 self.declare_name(&name)?;
-                let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
+                let (c_type, array_shape) = self.parse_local_array_shape(parsed_type.c_type)?;
+                if let Some(shape) = array_shape {
+                    self.variable_array_shapes.insert(name.clone(), shape);
+                }
                 if parsed_type.struct_name.is_some() {
                     if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
                         return Err(self.error_here("only pointer-to-struct types are supported"));
@@ -1396,6 +1416,11 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+                        if self.variable_array_shapes.contains_key(&name) {
+                            return Err(self.error_here(
+                                "multidimensional array initializers are not supported",
+                            ));
+                        }
                         self.position += 1;
                         let initializer = self.parse_local_array_initializer(&name, c_type)?;
                         self.expect(Token::Semicolon)?;
@@ -1995,7 +2020,35 @@ impl Parser {
                     self.position += 1;
                     let index = self.parse_expression()?;
                     self.expect(Token::RBracket)?;
-                    expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                    let shape = match &expression {
+                        C0Expression::Variable(name) => {
+                            self.variable_array_shapes.get(name).cloned()
+                        }
+                        _ => None,
+                    };
+                    if let Some(shape) = shape {
+                        let name = match &expression {
+                            C0Expression::Variable(name) => name,
+                            _ => unreachable!("array shape belongs to a variable"),
+                        };
+                        let mut indexes = vec![index];
+                        while self.peek() == Some(&Token::LBracket) {
+                            self.position += 1;
+                            indexes.push(self.parse_expression()?);
+                            self.expect(Token::RBracket)?;
+                        }
+                        if indexes.len() != shape.len() {
+                            return Err(self.error_here(format!(
+                                "multidimensional array `{name}` requires {} indices, got {}",
+                                shape.len(),
+                                indexes.len()
+                            )));
+                        }
+                        let offset = flatten_array_indices(indexes, &shape);
+                        expression = C0Expression::Index(Box::new(expression), Box::new(offset));
+                    } else {
+                        expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                    }
                 }
                 Some(Token::Arrow) => {
                     self.position += 1;
@@ -2015,6 +2068,25 @@ impl Parser {
 
     fn parse_indexed_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
         let mut base = self.parse_primary()?;
+        if let C0Expression::Variable(name) = &base
+            && let Some(shape) = self.variable_array_shapes.get(name).cloned()
+        {
+            let mut indexes = Vec::new();
+            while self.peek() == Some(&Token::LBracket) {
+                self.position += 1;
+                indexes.push(self.parse_expression()?);
+                self.expect(Token::RBracket)?;
+            }
+            if indexes.len() != shape.len() {
+                return Err(self.error_here(format!(
+                    "multidimensional array `{name}` requires {} indices, got {}",
+                    shape.len(),
+                    indexes.len()
+                )));
+            }
+            let offset = flatten_array_indices(indexes, &shape);
+            return Ok(C0Expression::Add(Box::new(base), Box::new(offset)));
+        }
         loop {
             self.expect(Token::LBracket)?;
             let index = self.parse_expression()?;
@@ -2221,6 +2293,36 @@ impl Parser {
         }
         token
     }
+}
+
+fn flatten_array_indices(indexes: Vec<C0Expression>, dimensions: &[u32]) -> C0Expression {
+    let mut terms = Vec::with_capacity(indexes.len());
+    for (index, expression) in indexes.into_iter().enumerate() {
+        let stride = dimensions[index + 1..]
+            .iter()
+            .copied()
+            .fold(1u32, |stride, dimension| {
+                stride
+                    .checked_mul(dimension)
+                    .expect("validated array shape has a representable stride")
+            });
+        terms.push(if stride == 1 {
+            expression
+        } else {
+            C0Expression::Multiply(
+                Box::new(expression),
+                Box::new(C0Expression::Int32Literal(stride)),
+            )
+        });
+    }
+    let mut terms = terms.into_iter();
+    let mut offset = terms
+        .next()
+        .expect("a multidimensional access has at least one index");
+    for term in terms {
+        offset = C0Expression::Add(Box::new(offset), Box::new(term));
+    }
+    offset
 }
 
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
