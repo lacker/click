@@ -1396,7 +1396,13 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
-                        return Err(self.error_here("local array initializers are not supported"));
+                        self.position += 1;
+                        let initializer = self.parse_local_array_initializer(&name, c_type)?;
+                        self.expect(Token::Semicolon)?;
+                        return Ok(C0Statement::Seq(
+                            Box::new(declaration),
+                            Box::new(initializer),
+                        ));
                     }
                     self.position += 1;
                     if matches!(self.peek(), Some(Token::Ident(_)))
@@ -1518,6 +1524,68 @@ impl Parser {
             }
             None => Err(self.error_here("expected statement, got end of input")),
         }
+    }
+
+    fn parse_local_array_initializer(
+        &mut self,
+        name: &str,
+        c_type: C0Type,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let (length, element_type) = match c_type {
+            C0Type::Int32Array(length) => (length, C0Type::Int32),
+            C0Type::UInt8Array(length) => (length, C0Type::UInt8),
+            _ => unreachable!("array initializer called for a scalar type"),
+        };
+        self.expect(Token::LBrace)?;
+        let mut values = Vec::new();
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if values.len() == length as usize {
+                    return Err(
+                        self.error_here(format!("too many initializers for `{name}[{length}]`"))
+                    );
+                }
+                values.push(self.parse_expression()?);
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `{name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `{name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        let mut stores = Vec::with_capacity(length as usize);
+        for index in 0..length {
+            let value = values
+                .get(index as usize)
+                .cloned()
+                .unwrap_or(C0Expression::Int32Literal(0));
+            stores.push(C0Statement::Store {
+                pointer: C0Expression::Add(
+                    Box::new(C0Expression::Variable(name.to_string())),
+                    Box::new(C0Expression::Int32Literal(index)),
+                ),
+                value,
+                value_type: Some(element_type),
+            });
+        }
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {

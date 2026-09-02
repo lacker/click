@@ -279,21 +279,18 @@ fn c0_syntax_accepts_declaration_initializer_in_for_loop() {
 }
 
 #[test]
-fn c0_syntax_names_unsupported_local_array_initializers() {
+fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"
         int32 unsupported() {
-            int32 values[2] = 0;
+            int32 values[2] = {1, 2, 3};
             return 0;
         }
         "#,
     )
-    .expect_err("array initialization is not in the C0 subset");
+    .expect_err("an array initializer cannot exceed the declared length");
 
-    assert_eq!(
-        error.message(),
-        "local array initializers are not supported"
-    );
+    assert_eq!(error.message(), "too many initializers for `values[2]`");
 }
 
 #[test]
@@ -1760,6 +1757,61 @@ fn c0_syntax_targets_kernel_local_array_storage() {
             arguments: Vec::new(),
             outcome: crate::kernel::CFunctionOutcome::Return {
                 value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_lowers_local_array_initializer_stores() {
+    let function = syntax::parse_function(
+        r#"
+        int32 local_array_initializer() {
+            int32 a[3] = {1, 2};
+            return a[2];
+        }
+        "#,
+    )
+    .expect("local array initializer should parse")
+    .to_kernel_function();
+
+    let a0 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let a1 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+    };
+    let a2 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(8),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:a", 12)
+            .store(a0, crate::kernel::int32(1))
+            .store(a1, crate::kernel::int32(2))
+            .store(a2, crate::kernel::int32(0)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local array initializer should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(0),
                 state: final_state,
             },
         }
