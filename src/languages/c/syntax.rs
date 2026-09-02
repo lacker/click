@@ -14,6 +14,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.standard-spellings",
     "type.typedef",
     "type.pointer",
+    "type.pointer-to-pointer",
     "type.array-parameter",
     "type.local-array",
     "type.struct-pointer",
@@ -45,6 +46,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.null-pointer",
     "expression.address-of",
     "expression.sizeof-struct",
+    "expression.sizeof-type",
     "expression.call",
     "expression.index",
     "expression.field",
@@ -148,6 +150,12 @@ impl CAbi {
     }
 }
 
+impl C0Type {
+    pub(crate) fn abi_size_bytes(self) -> u32 {
+        CAbi::SUPPORTED.size_and_alignment(self).0
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum C0Statement {
     Skip,
@@ -206,6 +214,11 @@ pub enum C0Expression {
     UInt8Literal(u8),
     SizeOfStruct {
         name: String,
+        bytes: u32,
+    },
+    SizeOfType {
+        c_type: C0Type,
+        struct_name: Option<String>,
         bytes: u32,
     },
     LessThan(Box<C0Expression>, Box<C0Expression>),
@@ -472,7 +485,9 @@ impl C0Expression {
             }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
-            Self::SizeOfStruct { bytes, .. } => crate::kernel::c_int32_literal(*bytes),
+            Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
+                crate::kernel::c_int32_literal(*bytes)
+            }
             Self::LessThan(left, right) => crate::kernel::c_less_than(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -1632,7 +1647,15 @@ impl Parser {
             )));
         };
         if let Some(target_struct) = self.variable_structs.get(&target) {
-            let C0Expression::SizeOfStruct { name, .. } = bytes else {
+            let Some(name) = (match bytes {
+                C0Expression::SizeOfStruct { name, .. } => Some(name.as_str()),
+                C0Expression::SizeOfType {
+                    c_type: C0Type::Int32,
+                    struct_name: Some(name),
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            }) else {
                 return Err(self.error_here(format!(
                     "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
                 )));
@@ -1986,15 +2009,38 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            self.expect_ident_spelling("struct")?;
-            let name = self.expect_ident("struct name")?;
+            if self.peek_ident() == Some("struct") {
+                self.position += 1;
+                let name = self.expect_ident("struct name")?;
+                self.expect(Token::RParen)?;
+                let bytes = self
+                    .structs
+                    .get(&name)
+                    .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfStruct { name, bytes });
+            }
+            let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
-            let bytes = self
-                .structs
-                .get(&name)
-                .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
-                .size_bytes;
-            return Ok(C0Expression::SizeOfStruct { name, bytes });
+            if parsed_type.c_type == C0Type::Void {
+                return Err(self.error_at_previous("`sizeof(void)` is not supported"));
+            }
+            if let (C0Type::Int32, Some(name)) = (parsed_type.c_type, &parsed_type.struct_name) {
+                let bytes = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfStruct {
+                    name: name.clone(),
+                    bytes,
+                });
+            }
+            return Ok(C0Expression::SizeOfType {
+                c_type: parsed_type.c_type,
+                struct_name: parsed_type.struct_name,
+                bytes: parsed_type.c_type.abi_size_bytes(),
+            });
         }
         let at = self.error_context();
         match self.next() {

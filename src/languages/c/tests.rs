@@ -568,6 +568,36 @@ fn c0_syntax_accepts_runtime_sized_int32_allocation() {
 }
 
 #[test]
+fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
+    let function = syntax::parse_function(
+        r#"
+        int32 sizes() {
+            return sizeof(int32) + sizeof(uint8) + sizeof(int32*) + sizeof(uint8**);
+        }
+        "#,
+    )
+    .expect("sizeof should accept every supported scalar and pointer type");
+
+    let syntax::C0Statement::Return(expression) = function.body() else {
+        panic!("sizeof expression should remain in the return statement");
+    };
+    let kernel_expression = expression.to_kernel_expression();
+    assert_eq!(
+        kernel_expression,
+        crate::kernel::c_add(
+            crate::kernel::c_add(
+                crate::kernel::c_add(
+                    crate::kernel::c_int32_literal(4),
+                    crate::kernel::c_int32_literal(1),
+                ),
+                crate::kernel::c_int32_literal(8),
+            ),
+            crate::kernel::c_int32_literal(8),
+        )
+    );
+}
+
+#[test]
 fn c0_syntax_rejects_dynamic_struct_malloc_and_wrong_free_arity() {
     let malloc_error = syntax::parse_function(
         r#"

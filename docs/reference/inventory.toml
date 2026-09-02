@@ -26,6 +26,10 @@ id = "c0.type.pointer"
 path = "reference/language/c0.md#supported-types"
 
 [[item]]
+id = "c0.type.pointer-to-pointer"
+path = "reference/language/c0.md#supported-types"
+
+[[item]]
 id = "c0.type.array-parameter"
 path = "reference/language/c0.md#supported-types"
 
@@ -147,6 +151,10 @@ path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
 id = "c0.expression.sizeof-struct"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.sizeof-type"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]

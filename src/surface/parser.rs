@@ -2759,14 +2759,22 @@ impl Parser {
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            self.expect_ident_spelling("struct")?;
-            let name = self.expect_ident("struct name")?;
-            self.expect(Token::RParen)?;
-            let bytes = self
-                .struct_layouts
-                .get(&name)
-                .ok_or_else(|| self.error(format!("unknown struct declaration `{name}`")))?
-                .size_bytes();
+            let bytes = if self.peek_ident() == Some("struct") {
+                self.position += 1;
+                let name = self.expect_ident("struct name")?;
+                self.expect(Token::RParen)?;
+                self.struct_layouts
+                    .get(&name)
+                    .ok_or_else(|| self.error(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes()
+            } else {
+                let parsed_type = self.parse_type()?;
+                self.expect(Token::RParen)?;
+                if parsed_type.c_type == C0Type::Void {
+                    return Err(self.error("`sizeof(void)` is not supported"));
+                }
+                parsed_type.c_type.abi_size_bytes()
+            };
             return Ok(ContractExpression::CFragment(CExpression::Value(int32(
                 bytes,
             ))));
