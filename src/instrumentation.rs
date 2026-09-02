@@ -1466,8 +1466,9 @@ pub enum SealRefusal {
     QuantifiedResourceClose,
 }
 
-/// Why opaque-contract certification executed a function body instead of
-/// reusing a checked artifact from claim finishing.
+/// Why opaque-contract certification could not reuse a checked artifact from
+/// claim finishing. With artifacts supplied it then produces no paths; only a
+/// kernel caller that supplied none gets the kernel's own body execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ContractFallback {
     /// No artifact for this function had matching execution metadata.

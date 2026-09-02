@@ -1051,10 +1051,18 @@ pub(in crate::surface) fn verify_c0_sources_with_environment(
             }
             let claims_started = std::time::Instant::now();
             if contract_execution.path_count() == 0 && contract_execution.limit().is_none() {
-                return Err(ClickError::new(format!(
-                    "could not certify contract for `{}`: exact symbolic execution produced no valid paths",
-                    function_block.signature.name(),
-                )));
+                return Err(ClickError::new(
+                    match contract_execution.reuse_diagnostic() {
+                        Some(detail) => format!(
+                            "could not certify contract for `{}`: {detail}",
+                            function_block.signature.name(),
+                        ),
+                        None => format!(
+                            "could not certify contract for `{}`: exact symbolic execution produced no valid paths",
+                            function_block.signature.name(),
+                        ),
+                    },
+                ));
             }
             if let Some(verified) = frontier_loop_artifacts {
                 let mut loop_measures = BTreeMap::new();

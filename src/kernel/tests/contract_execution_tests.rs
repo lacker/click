@@ -1424,10 +1424,18 @@ fn contract_certification_reuses_a_matching_kernel_checked_execution() {
     );
     assert_eq!(
         crate::kernel::api::take_checked_function_body_execution_count(),
-        1,
-        "an artifact with an unproved entry assumption must not be reused"
+        0,
+        "an artifact with an unproved entry assumption must not be reused, and certification must not execute the body instead"
     );
-    assert!(c_verified_function_contract_claims(&function, &fallback).is_some());
+    assert_eq!(fallback.path_count(), 0);
+    assert!(
+        fallback
+            .reuse_diagnostic()
+            .is_some_and(|detail| detail.contains("a condition fact")),
+        "{:?}",
+        fallback.reuse_diagnostic()
+    );
+    assert!(c_verified_function_contract_claims(&function, &fallback).is_none());
 }
 
 #[test]
@@ -1514,10 +1522,12 @@ fn contract_certification_reuses_complementary_checked_entry_partitions() {
     );
     assert_eq!(
         crate::kernel::api::take_checked_function_body_execution_count(),
-        1,
-        "one side of an entry partition is not a complete contract frontier"
+        0,
+        "one side of an entry partition is not a complete contract frontier, and certification must not execute the body instead"
     );
-    assert!(c_verified_function_contract_claims(&function, &fallback).is_some());
+    assert_eq!(fallback.path_count(), 0);
+    assert!(fallback.reuse_diagnostic().is_some());
+    assert!(c_verified_function_contract_claims(&function, &fallback).is_none());
 }
 
 #[test]
@@ -1628,11 +1638,19 @@ fn contract_certification_reuses_definitionally_equal_entry_resources() {
     );
     assert_eq!(
         crate::kernel::api::take_checked_function_body_execution_count(),
-        1,
-        "recursive resource representations must fall back without attempting entry rebasing"
+        0,
+        "recursive resource representations are not rebased without a kernel-issued entry origin, and certification must not execute the body instead"
+    );
+    assert_eq!(recursive_execution.path_count(), 0);
+    assert!(
+        recursive_execution
+            .reuse_diagnostic()
+            .is_some_and(|detail| detail.contains("different entry state")),
+        "{:?}",
+        recursive_execution.reuse_diagnostic()
     );
     assert!(
-        c_verified_function_contract_claims(&recursive_function, &recursive_execution).is_some()
+        c_verified_function_contract_claims(&recursive_function, &recursive_execution).is_none()
     );
 }
 
@@ -1713,6 +1731,7 @@ fn body_safety_claim_rejects_an_unproved_execution_condition() {
         )),
     };
     let execution = CFunctionContractExecution {
+        reuse_diagnostic: None,
         execution: SymbolicCExecution {
             paths: vec![path],
             limit: None,
@@ -1776,6 +1795,7 @@ fn body_safety_claim_uses_path_facts_for_verification_conditions() {
         )),
     };
     let execution = CFunctionContractExecution {
+        reuse_diagnostic: None,
         execution: SymbolicCExecution {
             paths: vec![path],
             limit: None,

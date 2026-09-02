@@ -11,25 +11,23 @@ partitions, shared continuations, verified and concretely executed loops,
 post-execution resource folds, nested resource scopes, counted resources, and
 `branch ensuring` interfaces.
 
-Two fallback mechanisms still execute a function body independently after its
-proof-directed execution:
+Neither former fallback executes a body any more:
 
 1. In `finish_ordered_proof` (`src/surface/proof/claim_proofs.rs`), claim
-   finishing calls `checked_c_function_execution_from_proof_evidence`
-   (`src/kernel/api.rs`) and, whenever that sealer returns `None` or one of
-   three explicit guards fires, selects `cached_independent_execution`.
+   finishing seals the retained trace once per proof and finishes every
+   candidate against its own sealed path; a sealing refusal is the proof's
+   error (slice 7).
 2. At the opaque-contract boundary
    (`prove_c_function_contract_execution_paths_with_checked_artifacts`,
-   `src/kernel/api.rs`), final certification reuses an exact,
-   resource-rebased, or exhaustive entry-partition checked artifact when it
-   can. If none matches, it silently falls back to fresh symbolic execution of
-   the function body.
+   `src/kernel/api.rs`), certification reuses an exact, entry-rebased, or
+   exhaustive entry-partition checked artifact. When none applies with
+   artifacts supplied it produces no paths and names the premise kind or
+   entry-state component that blocked reuse (slice 8). Only a kernel caller
+   that supplies no artifact gets the kernel's own body execution.
 
-Consequently, one proof can still perform its proof-directed statement
-execution, an independent claim execution, and another contract-finalization
-execution. The independent-execution cache reduces repeated work but preserves
-the wrong architecture. It can also produce the characteristic failure in
-which proof construction succeeds but a later execution cannot reproduce it.
+What remains is the reconciliation in claim finishing between the sealed
+path's outcome and the outcome snapshot the proof's outcome goals hold (the
+second pass of slice 7) and the arena acceptance contract (slice 9).
 
 The proof object already retains statement theorems, checked branch structure,
 proof-case partitions, resource representation transitions, and function-entry
@@ -78,7 +76,8 @@ entry-state delta; examples 3, 11, 5, 15):
   resource at entry) and the resource rebase did not apply.
 
 Fixture lists per row are reproducible from the instrumentation described in
-slice 1; do not keep the fixture lists in this file.
+slice 1; do not keep the fixture lists in this file. After slice 8
+(2026-09-02) every pin in both tables is zero.
 
 ## Violated invariant
 
@@ -314,9 +313,89 @@ sequential binder substitution in
 are masked only by the exact checks and re-execution this slice removes. Land
 them before it.
 
-### 8. Contract boundary
+### 8. Contract boundary (landed 2026-09-02)
 
-With every claim supplying a sealed artifact, make artifact reuse structural:
+Artifact reuse is structural now. Each artifact premise is checked against
+the reconstructed contract context extended with (a) every registered
+predicate identity whose instantiated body and side obligations the context
+proves (`predicate_unfoldings()` at the raw entry state), and (b) containment
+and separation facts derived on demand from the composite definitions
+(`evaluate_composite_resource_relation_propositions`) for exactly the
+composites some unauthorized premise names, viewed composites included and
+transitively through composite children, so the work is bounded by the
+premises rather than the resource depth.
+`checked_execution_at_definitionally_equal_entry_state` trusts
+`entry_representation_origin` (the sealer already checked that
+representation through the `CheckedFunctionEntry`) and no longer refuses
+recursive definitions when the origin is the contract state; the
+`entry_resource_rebase_supported` gate is gone. A reused path's entry
+assumptions become that extended context (every proof premise was just
+authorized from it), so claim certification sees requirement bodies and
+derived entry facts the proof never spelled out. The `(None, None, None)` arm
+executes a body only when the caller supplied no artifact (kernel unit
+tests); with artifacts it records the `ContractFallback` cause, returns no
+paths, and `CFunctionContractExecution::reuse_diagnostic` names the blocking
+premise kind or entry-state component, which `src/surface/verification.rs`
+reports as the contract error. The kernel reuse tests assert that an
+unauthorized condition premise, one side of an entry partition, and an
+unrebased recursive artifact each yield no paths without a body execution.
+Every `ContractFallback` pin is zero in both harnesses.
+
+Removing the fallback exposed one surface soundness gap it had masked:
+`initial_claim_context` lowered an explicit `defined(...)` requirement at the
+folded entry state, where its loads read no cell, so the requirement
+collapsed to `false` and the proof context of
+`mdtests/region_relative_index_read.md` was vacuous; the kernel then refused
+the artifact because the contract context cannot derive `false`. Such
+requirements are now lowered at the definedness state the implicit
+arithmetic guards already use, and that fixture is the regression.
+
+It exposed a second one of the same kind: claim finishing sealed the
+proof's `function_entry_execution_prerequisites` (facts a `have`, `unfold`,
+or `observe` derived at the entry state) as entry assumptions of the whole
+function, although inside a proof-level `if` arm they hold only under that
+arm's case (`allocated_vector_push` in `examples/owned-vector` carried the
+else arm's `len != cap` and `len < cap` on every path). Those facts stay
+where the proof object retained them, in the per-step fact contexts the
+sealer reads per path, and are no longer sealed as entry assumptions. The
+kernel's `entry_prerequisites` field and the entry-derivation discharge at
+the contract boundary are now vestigial; delete them with the second pass
+of slice 7.
+
+Reuse also changed what claim certification proves against. A freshly
+executed path carried the contract context plus the kernel's own execution
+facts; a sealed path carries the proof's execution facts and, from slice 3,
+its completion context, so its context is about twice as large (for
+`allocated_vector_push` in `examples/owned-vector`: 23 separation, 20
+loadability, and 12 quantified facts against 11, 7, and 9). Certification
+re-proved every ensure on that path, because the completed proposition a
+closer records was bound to the sealed path only when the proof's outcome
+state equalled the sealed one exactly and most closers recorded no
+completion at all; the prover's quantified and disjunctive search over the
+larger context took 340 s for one `forall` ensure where the fresh path took
+3 s, which made the examples harness take 7 minutes.
+
+Certification now matches instead of proving. The `assumption()` and
+`normalize()` closers record the kernel-completed proposition
+(`ClaimClosure::by_exact_check_completing`); the binding accepts the same
+result, memory, and locals (the exit rule changes only resources and
+populations) and, for a completion whose root was a fixed-state frontier,
+takes the path outcome from the drain; the sealed path's specification
+carries the path's own entry premises, which the contract context already
+authorized before reuse, so the completion's requirements are met by
+`assumptions.proves`; and a quantified ensure is lowered under the binders
+of a recorded completion (`lower_ensure_under_completion_binders`), since
+the loads minted under a binder carry its identity, so the lowering equals
+the completion. Ensure lowering also defers non-exact loadability
+obligations and discharges them from resources and exact facts before the
+prover. `owned-vector` verifies in 11 s in the harness (16 s before slice 8,
+76 s with slice 8 alone); the examples harness takes 18 s
+(32 s before slice 8) and mdtests 18 s (19.5 s). A claim
+whose lowering still differs from its completion (an implication whose
+premise the surface simplified away, say) is proved from the path's facts
+as before.
+
+The plan was:
 
 - A premise that is the registered predicate identity of one of the
   function's own `requires` clauses is authorized; the kernel already holds

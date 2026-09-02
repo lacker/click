@@ -19,11 +19,7 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// executed a function body because the sealer refused or a guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[];
-const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[
-    (ContractFallback::UnauthorizedPredicatePremise, 19),
-    (ContractFallback::UnauthorizedResourcePremise, 13),
-    (ContractFallback::EntryStateDelta, 7),
-];
+const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 
 #[test]
 fn mdtests() {

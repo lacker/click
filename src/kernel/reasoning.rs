@@ -7,6 +7,7 @@ pub(crate) use substitution::resolve_load_variables_from_registry;
 pub(crate) use substitution::resolve_load_variables_via;
 pub(crate) use substitution::resolve_minted_load_pointer;
 pub(crate) use substitution::resolve_minted_load_variables;
+pub(in crate::kernel) use substitution::substitute_bitvector_variable_in_spec_proposition;
 pub(in crate::kernel) mod memory_resolution;
 pub(crate) use memory_resolution::pointers_disjoint_by_range_memoized;
 pub(crate) use memory_resolution::with_bounded_snapshot_comparison;

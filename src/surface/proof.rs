@@ -2156,6 +2156,31 @@ pub(super) fn initial_claim_context(
         click_function_environment,
     )?;
     requirement_pure_facts.extend(population_facts);
+    // The lowerings of requirements that mention `defined(...)` at this
+    // folded state; they are replaced at the definedness state below.
+    let folded_defined_facts = function_block
+        .requires()
+        .iter()
+        .filter(|requirement| {
+            matches!(
+                requirement.inner(),
+                Requirement::Proposition(surface) if click_proposition_mentions_defined(surface)
+            )
+        })
+        .map(|requirement| {
+            requirement_propositions(
+                std::slice::from_ref(requirement),
+                parsed_function.parameters(),
+                &arguments,
+                &state,
+                predicate_environment,
+                click_function_environment,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let mut surface_propositions = SurfacePropositionMap::default();
     for requirement in function_block.requires() {
         let surface = match requirement.inner() {
@@ -2168,6 +2193,10 @@ pub(super) fn initial_claim_context(
         let Some(surface) = surface else {
             continue;
         };
+        // Recorded below at the definedness state instead.
+        if click_proposition_mentions_defined(&surface) {
+            continue;
+        }
         let lowered = requirement_propositions(
             std::slice::from_ref(requirement),
             parsed_function.parameters(),
@@ -2219,6 +2248,35 @@ pub(super) fn initial_claim_context(
         predicate_environment,
         click_function_environment,
     )?;
+    // An explicit `defined(...)` requirement evaluates C loads, which need
+    // the composite cores projected for that purpose. Lowered at the folded
+    // entry state it reads no cell and collapses to `false`, which would make
+    // the whole proof context vacuous. Re-lower those requirements at the
+    // definedness state and replace their entry facts.
+    requirement_pure_facts.retain(|fact| !folded_defined_facts.contains(fact));
+    for requirement in function_block.requires() {
+        let Requirement::Proposition(surface) = requirement.inner() else {
+            continue;
+        };
+        if !click_proposition_mentions_defined(surface) {
+            continue;
+        }
+        let projected = requirement_propositions(
+            std::slice::from_ref(requirement),
+            parsed_function.parameters(),
+            &arguments,
+            &definedness_state,
+            predicate_environment,
+            click_function_environment,
+        )?;
+        let [projected] = projected.as_slice() else {
+            continue;
+        };
+        if !requirement_pure_facts.contains(projected) {
+            requirement_pure_facts.push(projected.clone());
+        }
+        surface_propositions.record_lowering(surface, projected)?;
+    }
     let definedness = requirement_definedness_propositions(
         function_block.requires(),
         parsed_function.parameters(),
@@ -2266,6 +2324,29 @@ pub(super) fn initial_claim_context(
         requirement_pure_facts,
         surface_propositions,
     ))
+}
+
+fn click_proposition_mentions_defined(proposition: &ClickProposition) -> bool {
+    match proposition {
+        ClickProposition::Defined { .. } => true,
+        ClickProposition::At { proposition, .. } | ClickProposition::Not(proposition) => {
+            click_proposition_mentions_defined(proposition)
+        }
+        ClickProposition::And(left, right)
+        | ClickProposition::Or(left, right)
+        | ClickProposition::Implies(left, right) => {
+            click_proposition_mentions_defined(left) || click_proposition_mentions_defined(right)
+        }
+        ClickProposition::ForAll { body, .. }
+        | ClickProposition::Exists { body, .. }
+        | ClickProposition::RangeAll { body, .. }
+        | ClickProposition::RangeAny { body, .. } => click_proposition_mentions_defined(body),
+        ClickProposition::Comparison { .. }
+        | ClickProposition::Separate { .. }
+        | ClickProposition::Contains { .. }
+        | ClickProposition::Loadable { .. }
+        | ClickProposition::PredicateCall { .. } => false,
+    }
 }
 
 pub(super) fn proof_contains_frontier_loop(proof: &SourceProof) -> bool {

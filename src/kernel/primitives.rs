@@ -2076,6 +2076,9 @@ pub struct SymbolicCExecution {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CFunctionContractExecution {
     pub(super) execution: SymbolicCExecution,
+    /// Why no supplied checked artifact could be reused when certification
+    /// produced no paths. Callers report it; it carries no authority.
+    pub(super) reuse_diagnostic: Option<String>,
 }
 
 /// A kernel-created record of one exact whole-function execution judgment.
@@ -2117,6 +2120,13 @@ impl CFunctionContractExecution {
 
     pub fn limit(&self) -> Option<&ExecutionLimit> {
         self.execution.limit.as_ref()
+    }
+
+    /// Why certification produced no paths although checked artifacts were
+    /// supplied: the premise kind or entry-state component that blocked
+    /// reuse.
+    pub fn reuse_diagnostic(&self) -> Option<&str> {
+        self.reuse_diagnostic.as_deref()
     }
 }
 

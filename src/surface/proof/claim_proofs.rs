@@ -849,6 +849,18 @@ mod exit_claim {
                 checked_proposition: None,
             })
         }
+
+        /// Close a proposition claim that an exact kernel check discharged,
+        /// retaining the completed kernel judgment so certification can
+        /// match the claim instead of proving it again.
+        pub(super) fn by_exact_check_completing(
+            checked_proposition: Option<crate::kernel::proof::CheckedProposition>,
+        ) -> Self {
+            Self::Closed(ClosedClaim {
+                certificate: ClaimCertificate::ExactCheck,
+                checked_proposition,
+            })
+        }
     }
 }
 
@@ -1109,13 +1121,11 @@ pub(super) fn finish_ordered_proof<'a>(
             .execution_start_facts
             .as_ref()
             .clone();
-        certification_facts.extend(
-            proof_execution
-                .core
-                .function_entry_execution_prerequisites
-                .iter()
-                .cloned(),
-        );
+        // Facts the proof derived at function entry stay where the proof
+        // object retained them: in the fact context of every later checked
+        // step, which the sealer reads per path. They are not entry
+        // assumptions of the whole function; inside a proof-level `if` arm
+        // they hold only under that arm's case.
         certification_facts.extend(
             proof_execution
                 .presentation
@@ -2326,7 +2336,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                     {
                                         Ok(proof) => {
                                             retained_certificate = Some(proof.certificate());
-                                            closures[claim_index] = ClaimClosure::by_exact_check();
+                                            closures[claim_index] =
+                                                ClaimClosure::by_exact_check_completing(
+                                                    proof.completed_proposition().ok(),
+                                                );
                                             closed_any = true;
                                             break;
                                         }
@@ -2447,7 +2460,10 @@ pub(super) fn finish_ordered_proof<'a>(
                                         Ok(proof) => {
                                             retained_certificate
                                                 .get_or_insert_with(|| proof.certificate());
-                                            closures[claim_index] = ClaimClosure::by_exact_check();
+                                            closures[claim_index] =
+                                                ClaimClosure::by_exact_check_completing(
+                                                    proof.completed_proposition().ok(),
+                                                );
                                             closed_any = true;
                                         }
                                         Err(_) => check_verification_deadline()?,
@@ -3565,12 +3581,18 @@ pub(super) fn finish_ordered_proof<'a>(
                         )));
                     }
 
+                    // The specification's requirements are the sealed path's
+                    // own entry premises: exactly what the sealer checked the
+                    // path under and what contract certification authorizes
+                    // from the contract context before reusing the path, so a
+                    // claim completed on the path is bound to premises
+                    // certification already holds.
                     let (certified_path, specification_outcome, specification_requirements) =
                         if proof_execution.core.execution_abstraction {
                             (
                                 certified_path.clone(),
                                 certified_outcomes[certified_path_index].clone(),
-                                certification_facts.clone(),
+                                certified_path.assumptions().pure_facts(),
                             )
                         } else {
                             let certified_outcome = &certified_outcomes[certified_path_index];
@@ -3595,7 +3617,9 @@ pub(super) fn finish_ordered_proof<'a>(
                                 "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  {outcome_delta}"
                             ))
                         })?;
-                            (certified_path, outcome.clone(), path_requirements.clone())
+                            let specification_requirements =
+                                certified_path.assumptions().pure_facts();
+                            (certified_path, outcome.clone(), specification_requirements)
                         };
                     let specification = c_function_specification(
                         pre_state.clone(),
@@ -3636,6 +3660,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                     &specification,
                                     &theorem,
                                     completion,
+                                    Some(&outcome),
                                 )
                             });
                         verified.push(VerifiedCTheorem {

@@ -8,6 +8,7 @@ pub(crate) fn c_checked_function_proposition(
     specification: &CFunctionSpecification,
     theorem: &Theorem,
     completion: &crate::kernel::proof::CheckedProposition,
+    path_outcome: Option<&CFunctionOutcome>,
 ) -> Option<CCheckedFunctionProposition> {
     let mut conclusion = theorem.proposition();
     while let Proposition::Implies(_, body) = conclusion {
@@ -27,11 +28,30 @@ pub(crate) fn c_checked_function_proposition(
     if theorem_specification != specification {
         return None;
     }
-    let outcome = completion.outcome()?;
     let CFunctionOutcome::Return { value, state } = specification.outcome() else {
         return None;
     };
-    if outcome.result.as_ref() != value || &*outcome.state != state {
+    // The completion records the outcome it was proved at when its root was
+    // focused from a function-outcome obligation; a root focused on a
+    // fixed-state frontier records none, and the caller names the path
+    // outcome that frontier was built from.
+    let (result, outcome_state): (&CValue, &CState) = match completion.outcome() {
+        Some(outcome) => (outcome.result.as_ref(), &outcome.state),
+        None => match path_outcome {
+            Some(CFunctionOutcome::Return { value, state }) => (value, state),
+            _ => return None,
+        },
+    };
+    // The sealed outcome is the proof's outcome under the contract's exit
+    // rule: the same result, memory, and locals, with resources and
+    // populations in the contract's representation. A proposition the proof
+    // completed about the result and memory holds at either; a proposition
+    // that embeds the raw state cannot match a lowering at the sealed one
+    // and is simply never consulted.
+    if result != value
+        || outcome_state.memory() != state.memory()
+        || outcome_state.locals() != state.locals()
+    {
         return None;
     }
     Some(CCheckedFunctionProposition {
@@ -824,6 +844,160 @@ struct CertifiedFunctionClaimPath {
     effect_facts: Vec<ExecutionPureFact>,
 }
 
+/// Quantifier binders of a lowered proposition, in traversal order.
+fn proposition_quantifier_binders(proposition: &Proposition, binders: &mut Vec<Variable>) {
+    match proposition {
+        Proposition::ForAll { var, body, .. } | Proposition::Exists { var, body, .. } => {
+            binders.push(*var);
+            proposition_quantifier_binders(body, binders);
+        }
+        Proposition::And(left, right)
+        | Proposition::Or(left, right)
+        | Proposition::Implies(left, right) => {
+            proposition_quantifier_binders(left, binders);
+            proposition_quantifier_binders(right, binders);
+        }
+        Proposition::Not(body) => proposition_quantifier_binders(body, binders),
+        _ => {}
+    }
+}
+
+/// Quantifier binders of a specification proposition, in traversal order.
+fn spec_quantifier_binders(proposition: &SpecProposition, binders: &mut Vec<Variable>) {
+    match proposition {
+        SpecProposition::ForAllInt32 { variable, body, .. }
+        | SpecProposition::ExistsInt32 { variable, body, .. } => {
+            binders.push(*variable);
+            spec_quantifier_binders(body, binders);
+        }
+        SpecProposition::And(left, right)
+        | SpecProposition::Or(left, right)
+        | SpecProposition::Implies(left, right) => {
+            spec_quantifier_binders(left, binders);
+            spec_quantifier_binders(right, binders);
+        }
+        SpecProposition::Not(body) => spec_quantifier_binders(body, binders),
+        _ => {}
+    }
+}
+
+/// Renames one quantifier binder of a specification proposition, in the
+/// binder and throughout its body. Variable substitution alone stops at the
+/// binding site, which is exactly the occurrence to change here.
+fn rename_spec_binder(
+    proposition: &SpecProposition,
+    from: Variable,
+    to: Variable,
+) -> SpecProposition {
+    let rename_body = |body: &SpecProposition| {
+        crate::kernel::reasoning::substitute_bitvector_variable_in_spec_proposition(
+            body,
+            from,
+            &Bitvector32Term::Variable(to),
+        )
+    };
+    match proposition {
+        SpecProposition::ForAllInt32 {
+            name,
+            variable,
+            body,
+        } => SpecProposition::ForAllInt32 {
+            name: name.clone(),
+            variable: if *variable == from { to } else { *variable },
+            body: Box::new(if *variable == from {
+                rename_body(body)
+            } else {
+                rename_spec_binder(body, from, to)
+            }),
+        },
+        SpecProposition::ExistsInt32 {
+            name,
+            variable,
+            body,
+        } => SpecProposition::ExistsInt32 {
+            name: name.clone(),
+            variable: if *variable == from { to } else { *variable },
+            body: Box::new(if *variable == from {
+                rename_body(body)
+            } else {
+                rename_spec_binder(body, from, to)
+            }),
+        },
+        SpecProposition::And(left, right) => SpecProposition::And(
+            Box::new(rename_spec_binder(left, from, to)),
+            Box::new(rename_spec_binder(right, from, to)),
+        ),
+        SpecProposition::Or(left, right) => SpecProposition::Or(
+            Box::new(rename_spec_binder(left, from, to)),
+            Box::new(rename_spec_binder(right, from, to)),
+        ),
+        SpecProposition::Implies(left, right) => SpecProposition::Implies(
+            Box::new(rename_spec_binder(left, from, to)),
+            Box::new(rename_spec_binder(right, from, to)),
+        ),
+        SpecProposition::Not(body) => {
+            SpecProposition::Not(Box::new(rename_spec_binder(body, from, to)))
+        }
+        other => other.clone(),
+    }
+}
+
+/// Lowers a quantified ensure under the binders of a completed proposition
+/// that has the same quantifier shape, when every lowered path then matches
+/// a completion; otherwise lowers it under its own binders. One extra
+/// lowering per distinct binder list a completion names.
+fn lower_ensure_under_completion_binders(
+    post_state: &CState,
+    ensure: &SpecProposition,
+    entry_state: &CState,
+    lowering_assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+    checked_propositions: &BTreeMap<Proposition, Vec<&CCheckedFunctionProposition>>,
+) -> Result<Vec<crate::kernel::spec::SpecPropositionPath>, ExecutionLimit> {
+    let mut spec_binders = Vec::new();
+    spec_quantifier_binders(ensure, &mut spec_binders);
+    if !spec_binders.is_empty() {
+        let mut tried = std::collections::BTreeSet::new();
+        for key in checked_propositions.keys() {
+            let mut key_binders = Vec::new();
+            proposition_quantifier_binders(key, &mut key_binders);
+            if key_binders.len() != spec_binders.len()
+                || key_binders == spec_binders
+                || !tried.insert(key_binders.clone())
+            {
+                continue;
+            }
+            let renamed = spec_binders
+                .iter()
+                .zip(&key_binders)
+                .fold(ensure.clone(), |proposition, (from, to)| {
+                    rename_spec_binder(&proposition, *from, *to)
+                });
+            let paths = lower_spec_proposition_at_state_with_loop_entry(
+                post_state,
+                &renamed,
+                Some(entry_state),
+                lowering_assumptions,
+                budget,
+            )?;
+            if !paths.is_empty()
+                && paths
+                    .iter()
+                    .all(|path| checked_propositions.contains_key(&path.proposition))
+            {
+                return Ok(paths);
+            }
+        }
+    }
+    lower_spec_proposition_at_state_with_loop_entry(
+        post_state,
+        ensure,
+        Some(entry_state),
+        lowering_assumptions,
+        budget,
+    )
+}
+
 fn prepare_function_claim_path(
     function: &CFunction,
     path: &SymbolicCExecutionPath,
@@ -1097,38 +1271,72 @@ fn function_claim_holds_on_prepared_path(
             if registered_predicate_ensure_holds {
                 return true;
             }
-            let lowering_assumptions = assumptions.clone().allow_symbolic_contract_loads();
-            let Ok(paths) = lower_spec_proposition_at_state_with_loop_entry(
-                post_state,
-                ensure,
-                Some(entry_state),
-                &lowering_assumptions,
-                &mut budget,
-            ) else {
+            // Lowering records the ensure's load obligations instead of
+            // searching the whole path context for each one as it goes; they
+            // are discharged below, resources and exact facts first. The
+            // general prover is the last resort because on a sealed path,
+            // whose facts include every loadability the proof established at
+            // intermediate memories, its quantified and disjunctive search is
+            // the dominant certification cost.
+            let lowering_assumptions = assumptions
+                .clone()
+                .allow_symbolic_contract_loads()
+                .defer_non_exact_loadability_obligations();
+            // A completed proposition from the proof spells a quantified
+            // ensure under the binders the proof lowered it with, and every
+            // load minted under a binder carries that binder's identity.
+            // Lower the ensure under the binders the proof's completions
+            // name, so the lowering can match a completion instead of being
+            // proved again; the ensure's own binders remain the fallback.
+            let lowered = crate::instrumentation::measure_operation(
+                function.name(),
+                "contract claim",
+                "ensure lowering",
+                || {
+                    lower_ensure_under_completion_binders(
+                        post_state,
+                        ensure,
+                        entry_state,
+                        &lowering_assumptions,
+                        &mut budget,
+                        checked_propositions,
+                    )
+                },
+            );
+            let Ok(paths) = lowered else {
                 return false;
             };
             !paths.is_empty()
                 && paths.into_iter().all(|path| {
-                    let obligations_hold = path.obligations.iter().all(|obligation| {
-                        certification_proves_proposition(assumptions, obligation.proposition())
-                            || contract_endpoints_certify_loadability(
-                                entry_state,
-                                entry_resources,
-                                post_state,
-                                post_resources,
-                                obligation.proposition(),
-                                assumptions,
-                            )
-                            || loadable_covered_by_fact(assumptions, obligation.proposition())
-                            || forall_loadable_covered_by_fact(
-                                assumptions,
-                                obligation.proposition(),
-                            )
-                            || certification_proves_exists_obligation_from_facts(
-                                assumptions,
-                                obligation.proposition(),
-                            )
-                    });
+                    let obligations_hold = crate::instrumentation::measure_operation(
+                        function.name(),
+                        "contract claim",
+                        "obligation discharge",
+                        || {
+                            path.obligations.iter().all(|obligation| {
+                                contract_endpoints_certify_loadability(
+                                    entry_state,
+                                    entry_resources,
+                                    post_state,
+                                    post_resources,
+                                    obligation.proposition(),
+                                    assumptions,
+                                ) || loadable_covered_by_fact(assumptions, obligation.proposition())
+                                    || forall_loadable_covered_by_fact(
+                                        assumptions,
+                                        obligation.proposition(),
+                                    )
+                                    || certification_proves_exists_obligation_from_facts(
+                                        assumptions,
+                                        obligation.proposition(),
+                                    )
+                                    || certification_proves_proposition(
+                                        assumptions,
+                                        obligation.proposition(),
+                                    )
+                            })
+                        },
+                    );
                     let mut path_propositions = path
                         .facts
                         .iter()
@@ -1141,23 +1349,34 @@ fn function_claim_holds_on_prepared_path(
                         .extend(finite_forall_instantiations(&path_propositions.clone()));
                     let path_assumptions =
                         assumptions_with_propositions(assumptions, &path_propositions);
-                    let proposition_holds = checked_propositions
-                        .get(&path.proposition)
-                        .into_iter()
-                        .flatten()
-                        .any(|proof| {
-                            let function_matches = proof.function == *function;
-                            let state_matches = proof.specification.state() == caller_state;
-                            let arguments_match = proof.specification.arguments() == arguments;
-                            let outcome_matches = c_function_outcomes_definitionally_equal(
-                                function,
-                                proof.specification.outcome(),
-                                outcome,
-                                assumptions,
-                            );
-                            let requirements_match =
+                    let proposition_holds =
+                        crate::instrumentation::measure_operation(
+                            function.name(),
+                            "contract claim",
+                            "completion match",
+                            || {
+                                checked_propositions
+                                    .get(&path.proposition)
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|proof| {
+                                        // Cheapest checks first: a completion from another
+                                        // path or function is rejected before any proving.
+                                        if proof.function != *function
+                                            || proof.specification.state() != caller_state
+                                            || proof.specification.arguments() != arguments
+                                            || !c_function_outcomes_definitionally_equal(
+                                                function,
+                                                proof.specification.outcome(),
+                                                outcome,
+                                                assumptions,
+                                            )
+                                        {
+                                            return false;
+                                        }
+                                        let requirements_match =
                                 proof.specification.requires().iter().all(|requirement| {
-                                    match requirement {
+                                    let ok = assumptions.proves(requirement) || match requirement {
                                         Proposition::CResourceComposition(required) => {
                                             resource_context_definitionally_contains(
                                                 required_resources,
@@ -1205,19 +1424,24 @@ fn function_claim_holds_on_prepared_path(
                                             assumptions,
                                             requirement,
                                         ),
-                                    }
+                                    };
+                                    ok
                                 });
-                            function_matches
-                                && state_matches
-                                && arguments_match
-                                && outcome_matches
-                                && requirements_match
-                        })
-                        || certification_proves_post_proposition(
-                            &path_assumptions,
-                            &path.proposition,
-                            return_state.memory(),
-                            execution_facts,
+                                        requirements_match
+                                    })
+                            },
+                        ) || crate::instrumentation::measure_operation(
+                            function.name(),
+                            "contract claim",
+                            "post proposition proof",
+                            || {
+                                certification_proves_post_proposition(
+                                    &path_assumptions,
+                                    &path.proposition,
+                                    return_state.memory(),
+                                    execution_facts,
+                                )
+                            },
                         );
                     obligations_hold && proposition_holds
                 })

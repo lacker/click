@@ -187,6 +187,28 @@ cannot be sealed, the refusal is typed (`instrumentation::SealRefusal`) and
 counted; the fixture harnesses pin those counts
 (`docs/internals/testing.md`, "Body rerun ratchet").
 
+Opaque-contract certification then reuses that sealed execution at the
+contract entry. It authorizes each artifact premise from the reconstructed
+contract context, from the registered predicate unfoldings (an identity whose
+instantiated body the context proves), and from containment and separation
+facts derived on demand from the composite definitions at the entry state;
+an artifact whose entry the kernel tied to the contract caller state through
+its `CheckedFunctionEntry` is rebased without a second equivalence search.
+With artifacts supplied, certification never executes the function body:
+when no artifact can be reused it produces no paths and names the premise
+kind or entry-state component that blocked reuse, which the surface reports
+as the contract failure. Those non-reuse outcomes are counted under
+`instrumentation::ContractFallback` and pinned by the same ratchet.
+
+Claims are certified by matching, not by proving again. Every claim closer
+records the kernel-completed proposition it discharged, the sealed path's
+specification carries that path's own entry premises, and certification
+lowers each ensure at the sealed post-state (under the binders of a
+recorded completion when the ensure is quantified, since the loads minted
+under a binder carry its identity) and accepts the claim when the lowering
+equals a recorded completion whose premises the contract context holds. Only
+a claim with no matching completion is proved from the path's facts.
+
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A
 recorded `CState` is logically complete, but its memory, facts, and resources

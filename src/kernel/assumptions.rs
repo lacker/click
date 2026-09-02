@@ -3133,6 +3133,11 @@ impl SymbolicCExecution {
 }
 
 impl SymbolicCExecutionPath {
+    /// The entry premises this path was checked under.
+    pub fn assumptions(&self) -> &PureFactContext {
+        &self.assumptions
+    }
+
     pub fn facts(&self) -> &[ExecutionPureFact] {
         &self.facts
     }

@@ -394,7 +394,8 @@ allocation effect.
 
 If a directly required composite resource has an undecided conditional body,
 opaque-contract certification derives both guard cases from the kernel
-resource definition and executes the function in each case. This permits a
+resource definition and certifies the function in each case from the checked
+execution sealed by the claim proofs. This permits a
 proof-only case split to justify branchless C such as unconditional
 `free(nullable_pointer)`. Both cases are mandatory; a safe empty/null case
 cannot hide an unsafe active-resource case. Mutable footprints inferred from
