@@ -430,6 +430,30 @@ impl PureFactContext {
                 offset: right.clone(),
             })
         };
+        let translated = |goal_left: &Pointer,
+                          goal_right: &Pointer,
+                          fact_left: &Pointer,
+                          fact_right: &Pointer| {
+            goal_left.block == fact_left.block
+                && goal_right.block == fact_right.block
+                && pointer_offsets_have_same_advance(
+                    &goal_left.offset,
+                    &fact_left.offset,
+                    &goal_right.offset,
+                    &fact_right.offset,
+                    self,
+                )
+        };
+        if self.condition_facts.iter().any(|(condition, value)| {
+            let ConditionTerm::PointerEqual(fact_left, fact_right) = condition else {
+                return false;
+            };
+            *value
+                && (translated(left, right, fact_left, fact_right)
+                    || translated(left, right, fact_right, fact_left))
+        }) {
+            return true;
+        }
         let mut seen = BTreeSet::from([left.clone()]);
         let mut frontier = vec![left.clone()];
         while let Some(current) = frontier.pop() {
@@ -770,6 +794,102 @@ impl PureFactContext {
             let right = self.simplify_bitvector_under_assumptions(&right);
             self.has_order_path_for_memory_resolution(&left, &right, strict)
         })
+    }
+}
+
+/// Whether both goal pointers advance their corresponding fact pointers by
+/// the same exact offset. This is the pointer-congruence case needed by an
+/// induction step such as `p == arr + i` followed by `p = p + 1` and
+/// `i = i + 1`. Integer additions inside scaled offsets are distributed only
+/// when their signed-overflow predicate is already known false; otherwise
+/// exact pointer offsets must remain opaque.
+fn pointer_offsets_have_same_advance(
+    goal_left: &PointerOffsetTerm,
+    fact_left: &PointerOffsetTerm,
+    goal_right: &PointerOffsetTerm,
+    fact_right: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> bool {
+    let Some(left_delta) = pointer_offset_additive_delta(goal_left, fact_left, assumptions) else {
+        return false;
+    };
+    let Some(right_delta) = pointer_offset_additive_delta(goal_right, fact_right, assumptions)
+    else {
+        return false;
+    };
+    left_delta == right_delta
+}
+
+fn pointer_offset_additive_delta(
+    goal: &PointerOffsetTerm,
+    fact: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> Option<Vec<PointerOffsetTerm>> {
+    let mut goal = pointer_offset_addends(goal, assumptions)?;
+    for fact_addend in pointer_offset_addends(fact, assumptions)? {
+        let index = goal
+            .iter()
+            .position(|addend| pointer_offset_addends_equal(addend, &fact_addend, assumptions))?;
+        goal.remove(index);
+    }
+    Some(goal)
+}
+
+fn pointer_offset_addends_equal(
+    left: &PointerOffsetTerm,
+    right: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let (
+        PointerOffsetTerm::Int32Scaled {
+            value: left_value,
+            byte_width: left_width,
+        },
+        PointerOffsetTerm::Int32Scaled {
+            value: right_value,
+            byte_width: right_width,
+        },
+    ) = (left, right)
+    else {
+        return false;
+    };
+    left_width == right_width
+        && assumptions.decide(&ConditionTerm::equal(
+            left_value.as_ref().clone(),
+            right_value.as_ref().clone(),
+        )) == Some(true)
+}
+
+fn pointer_offset_addends(
+    offset: &PointerOffsetTerm,
+    assumptions: &PureFactContext,
+) -> Option<Vec<PointerOffsetTerm>> {
+    match offset {
+        PointerOffsetTerm::Constant(0) => Some(Vec::new()),
+        PointerOffsetTerm::Add(left, right) => {
+            let mut addends = pointer_offset_addends(left, assumptions)?;
+            addends.extend(pointer_offset_addends(right, assumptions)?);
+            Some(addends)
+        }
+        PointerOffsetTerm::Int32Scaled { value, byte_width } => match value.as_ref() {
+            Bitvector32Term::Add(left, right)
+                if assumptions.decide(&ConditionTerm::signed_add_overflows(
+                    left.as_ref().clone(),
+                    right.as_ref().clone(),
+                )) == Some(false) =>
+            {
+                let left = PointerOffsetTerm::scale_int32(left.as_ref().clone(), *byte_width);
+                let right = PointerOffsetTerm::scale_int32(right.as_ref().clone(), *byte_width);
+                let mut addends = pointer_offset_addends(&left, assumptions)?;
+                addends.extend(pointer_offset_addends(&right, assumptions)?);
+                Some(addends)
+            }
+            _ => Some(vec![offset.clone()]),
+        },
+        _ => Some(vec![offset.clone()]),
     }
 }
 

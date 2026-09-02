@@ -34,6 +34,39 @@ pub(crate) fn resolve_minted_load_pointer(
     resolved
 }
 
+/// Rewrites a havoced symbolic pointer local through one explicit pointer
+/// equality. The equality is deliberately limited to an exact fact and one
+/// hop: resource lookup can use the concrete block's index without turning
+/// alias reasoning into an unbounded graph walk.
+pub(crate) fn resolve_symbolic_pointer_alias(
+    pointer: &Pointer,
+    assumptions: &PureFactContext,
+) -> Pointer {
+    if !matches!(pointer.block, PointerBlock::Symbolic(_)) {
+        return pointer.clone();
+    }
+    assumptions
+        .condition_facts
+        .iter()
+        .find_map(|(condition, value)| {
+            if !*value {
+                return None;
+            }
+            let ConditionTerm::PointerEqual(left, right) = condition else {
+                return None;
+            };
+            if left.as_ref() == pointer && !matches!(right.block, PointerBlock::Symbolic(_)) {
+                Some(right.as_ref().clone())
+            } else if right.as_ref() == pointer && !matches!(left.block, PointerBlock::Symbolic(_))
+            {
+                Some(left.as_ref().clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| pointer.clone())
+}
+
 /// Resolves load variables in a proposition through
 /// defining-equation propositions (`v == load(snapshot, ptr)`), restoring
 /// the load terms. For surface-form synthesis, where the internal

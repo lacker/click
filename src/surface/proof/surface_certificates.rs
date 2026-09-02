@@ -4890,6 +4890,124 @@ fn plan_explicit_le_and_not_lt_implies_eq(
     None
 }
 
+/// Plans the small proof that commonly finishes a pointer/index loop:
+/// rewrite the load through the loop invariant's pointer equality, then
+/// rewrite the array index after proving that the loop counter equals the
+/// bound. The kernel's general memory reasoning can establish this equality,
+/// but the generated Surface proof must expose the same fact through checked
+/// rewrites rather than carrying legacy derivation evidence across the
+/// smart/simple boundary.
+pub(super) fn plan_pointer_advanced_load_equality(
+    goal: &Proposition,
+    premise_pairs: &[(Proposition, ClickProposition)],
+) -> Option<Vec<ProofTactic>> {
+    let Proposition::ConditionIs(ConditionTerm::Bitvector32Equal(left, right), true) = goal else {
+        return None;
+    };
+    let (left_pointer, right_pointer) = (
+        registered_load_pointer(left.as_ref())?,
+        registered_load_pointer(right.as_ref())?,
+    );
+
+    for (pointer_kernel, pointer_surface) in premise_pairs {
+        let Proposition::ConditionIs(ConditionTerm::PointerEqual(fact_left, fact_right), true) =
+            pointer_kernel
+        else {
+            continue;
+        };
+        let (pointer_surface, fact_array_pointer) = if fact_left.as_ref() == &left_pointer {
+            (pointer_surface.clone(), fact_right.as_ref())
+        } else if fact_right.as_ref() == &left_pointer {
+            (
+                reverse_surface_equality(pointer_surface)?,
+                fact_left.as_ref(),
+            )
+        } else {
+            continue;
+        };
+        if fact_array_pointer.block != right_pointer.block {
+            continue;
+        }
+        let (source_index, target_index) =
+            pointer_array_index_pair(&fact_array_pointer.offset, &right_pointer.offset)?;
+        let index_goal = Proposition::ConditionIs(
+            ConditionTerm::Bitvector32Equal(
+                Box::new(source_index.clone()),
+                Box::new(target_index.clone()),
+            ),
+            true,
+        );
+        let index_proof = plan_explicit_le_and_not_lt_implies_eq(&index_goal, premise_pairs)?;
+        let (_, index_surface) = premise_pairs.iter().find(|(kernel, _)| {
+            signed_nonstrict_parts(kernel)
+                .is_some_and(|(left, right)| left == &source_index && right == &target_index)
+        })?;
+        let (index_left, index_right) = surface_nonstrict_parts(index_surface)?;
+        let index_surface = ClickProposition::Comparison {
+            left: index_left,
+            operator: ComparisonOperator::Equal,
+            right: index_right,
+        };
+        return Some(vec![
+            ProofTactic::Have(ProofHave {
+                proposition: index_surface.clone(),
+                proof: SourceProof::Script(index_proof),
+            }),
+            ProofTactic::Rewrite(pointer_surface),
+            ProofTactic::Rewrite(index_surface),
+            ProofTactic::Normalize,
+        ]);
+    }
+    None
+}
+
+fn registered_load_pointer(term: &Bitvector32Term) -> Option<Pointer> {
+    let Bitvector32Term::Variable(variable) = term else {
+        return None;
+    };
+    crate::kernel::registered_load_origin_for_variable(variable).map(|(_, pointer)| pointer)
+}
+
+fn pointer_array_index_pair(
+    source: &PointerOffsetTerm,
+    target: &PointerOffsetTerm,
+) -> Option<(Bitvector32Term, Bitvector32Term)> {
+    let source = pointer_offset_addends(source)?;
+    let target = pointer_offset_addends(target)?;
+    if source.len() != 2 || target.len() != 2 {
+        return None;
+    }
+    let common = source.iter().find(|addend| target.contains(addend))?;
+    let source_index = source
+        .iter()
+        .find(|addend| **addend != *common)
+        .and_then(|addend| pointer_int32_scaled_value(addend))?;
+    let target_index = target
+        .iter()
+        .find(|addend| **addend != *common)
+        .and_then(|addend| pointer_int32_scaled_value(addend))?;
+    Some((source_index, target_index))
+}
+
+fn pointer_offset_addends(offset: &PointerOffsetTerm) -> Option<Vec<PointerOffsetTerm>> {
+    match offset {
+        PointerOffsetTerm::Constant(0) => Some(Vec::new()),
+        PointerOffsetTerm::Add(left, right) => {
+            let mut addends = pointer_offset_addends(left)?;
+            addends.extend(pointer_offset_addends(right)?);
+            Some(addends)
+        }
+        _ => Some(vec![offset.clone()]),
+    }
+}
+
+fn pointer_int32_scaled_value(offset: &PointerOffsetTerm) -> Option<Bitvector32Term> {
+    let PointerOffsetTerm::Int32Scaled { value, byte_width } = offset else {
+        return None;
+    };
+    (*byte_width == 4).then(|| value.as_ref().clone())
+}
+
 fn plan_explicit_ge_and_not_gt_implies_eq(
     goal: &Proposition,
     premise_pairs: &[(Proposition, ClickProposition)],

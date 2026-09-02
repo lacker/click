@@ -3876,6 +3876,58 @@ fn same_block_pointer_equality_transports_through_equal_offsets() {
 }
 
 #[test]
+fn symbolic_pointer_equality_transports_through_equal_displacements() {
+    let base = Bitvector32Term::Variable(Variable(100_000));
+    let index = Bitvector32Term::Variable(Variable(1_000_000));
+    let source_left = Pointer {
+        block: PointerBlock::Symbolic(Variable(1_000_001)),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let source_right = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::scale_int32(base.clone(), 4)),
+            Box::new(PointerOffsetTerm::scale_int32(index.clone(), 4)),
+        ),
+    };
+    let goal_left = source_left.offset_by_int32_elements(Bitvector32Term::Constant(1));
+    let goal_right = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Add(
+            Box::new(PointerOffsetTerm::scale_int32(base, 4)),
+            Box::new(PointerOffsetTerm::scale_int32(
+                Bitvector32Term::add(index, Bitvector32Term::Constant(1)),
+                4,
+            )),
+        ),
+    };
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::pointer_equal(source_left, source_right),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_add_overflows(
+                Bitvector32Term::Variable(Variable(1_000_000)),
+                Bitvector32Term::Constant(1),
+            ),
+            false,
+        );
+
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::signed_add_overflows(
+            Bitvector32Term::Variable(Variable(1_000_000)),
+            Bitvector32Term::Constant(1),
+        )),
+        Some(false),
+    );
+    assert_eq!(
+        assumptions.decide(&ConditionTerm::pointer_equal(goal_left, goal_right)),
+        Some(true),
+    );
+}
+
+#[test]
 fn builtin_obligation_solver_discharges_concrete_invariant() {
     let pointer = Pointer {
         block: "block".into(),

@@ -1277,6 +1277,8 @@ impl ResourceContext {
         // structural check then answers from the exact supporting resource
         // instead of comparing every historical range through call havoc.
         let resolved = crate::kernel::reasoning::resolve_minted_load_pointer(pointer, assumptions);
+        let resolved =
+            crate::kernel::reasoning::resolve_symbolic_pointer_alias(&resolved, assumptions);
         let pointer = &resolved;
         if self.permits_memory_read_structurally(pointer, byte_width, assumptions) {
             return true;

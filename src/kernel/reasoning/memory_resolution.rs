@@ -540,7 +540,14 @@ pub(in crate::kernel) fn pointers_proven_equal_for_memory_resolution_with_depth(
         ) == Some(true)
         || assumptions
             .exact_condition_value(&ConditionTerm::pointer_equal(left.clone(), right.clone()))
-            == Some(true);
+            == Some(true)
+        // A loop invariant may establish an equality for a pointer local at
+        // the loop head. After the loop, both the local and the argument
+        // pointer can have advanced by the same proven displacement. Reuse
+        // the bounded pointer congruence relation here so memory-load
+        // equality sees the same certified address fact as ordinary pointer
+        // simplification.
+        || assumptions.has_pointer_equality_path(left, right);
     candidate
         && !assumptions.pointers_proven_disjoint_by_explicit_range_for_memory_resolution_with_depth(
             left,

@@ -2038,6 +2038,7 @@ impl<'a> Proof<'a> {
             .or_else(|| {
                 plan_explicit_loadability_transport(goal, self.surface_goal()?, premise_pairs)
             })
+            .or_else(|| plan_pointer_advanced_load_equality(goal, premise_pairs))
             .or_else(|| {
                 let recorded =
                     recorded_int32_increment_upper_bound_pairs(derivation, &premise_pairs)?;

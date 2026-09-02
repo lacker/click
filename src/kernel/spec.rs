@@ -1273,6 +1273,8 @@ pub(super) fn evaluate_spec_add_paths(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<SpecExpressionPath>> {
     let mut paths = Vec::new();
+    let left_step_width = spec_expression_pointer_step_width(state, left);
+    let right_step_width = spec_expression_pointer_step_width(state, right);
     for left_path in evaluate_spec_expression_paths_with_loop_entry(
         state,
         left,
@@ -1303,8 +1305,8 @@ pub(super) fn evaluate_spec_add_paths(
                     state,
                     left_path.value.clone(),
                     right_path.value,
-                    None,
-                    None,
+                    left_step_width,
+                    right_step_width,
                     facts,
                     obligations,
                     assumptions,
@@ -1315,6 +1317,19 @@ pub(super) fn evaluate_spec_add_paths(
         }
     }
     Ok(paths)
+}
+
+fn spec_expression_pointer_step_width(state: &CState, expression: &SpecExpression) -> Option<u32> {
+    match expression {
+        SpecExpression::CExpression(expression) => {
+            c_expression_pointer_step_width(state, expression)
+        }
+        SpecExpression::PointerOffset { byte_width, .. } => Some(*byte_width),
+        SpecExpression::Add(left, right) => spec_expression_pointer_step_width(state, left)
+            .or_else(|| spec_expression_pointer_step_width(state, right)),
+        SpecExpression::Subtract(left, _) => spec_expression_pointer_step_width(state, left),
+        _ => None,
+    }
 }
 
 pub(super) fn evaluate_spec_int32_binary_paths(

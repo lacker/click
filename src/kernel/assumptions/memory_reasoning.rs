@@ -1128,6 +1128,35 @@ impl PureFactContext {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        // A loop invariant can establish that a havoced pointer local names
+        // an address in an argument-backed range. Its symbolic block cannot
+        // be indexed against that range directly, so follow the explicit
+        // equality once to the concrete argument block. Restricting the
+        // transport to symbolic blocks keeps this bounded and avoids walking
+        // equality cycles back into the havoced pointer.
+        if matches!(pointer.block, PointerBlock::Symbolic(_))
+            && self.condition_facts.iter().any(|(condition, value)| {
+                let ConditionTerm::PointerEqual(left, right) = condition else {
+                    return false;
+                };
+                if !*value {
+                    return false;
+                }
+                let equivalent = if left.as_ref() == pointer {
+                    Some(right.as_ref())
+                } else if right.as_ref() == pointer {
+                    Some(left.as_ref())
+                } else {
+                    None
+                };
+                equivalent.is_some_and(|equivalent| {
+                    !matches!(equivalent.block, PointerBlock::Symbolic(_))
+                        && self.pointer_in_range(equivalent, base, start, end)
+                })
+            })
+        {
+            return true;
+        }
         let proves = |condition: ConditionTerm| {
             self.exact_condition_value(&condition) == Some(true)
                 || self.exact_ordering_modulo_canonical_atoms(&condition)
@@ -1666,6 +1695,8 @@ impl PureFactContext {
         start: &Bitvector32Term,
         end: &Bitvector32Term,
     ) -> bool {
+        let resolved = crate::kernel::reasoning::resolve_symbolic_pointer_alias(pointer, self);
+        let pointer = &resolved;
         let proves_below_predecessor = |left: &Bitvector32Term, right: &Bitvector32Term| {
             let predecessor_upper =
                 Bitvector32Term::subtract(right.clone(), Bitvector32Term::Constant(1));

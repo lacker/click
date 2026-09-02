@@ -52,7 +52,6 @@ C language coverage:
 - [Parse the everyday C syntax the C0 frontend rejects](c-syntax-conveniences.md)
 - [Allow function calls in expression position](calls-in-expressions.md)
 - [Specify external and libc functions without a body](external-function-contracts.md)
-- [Evaluate pointer relational comparison and pointer subtraction](pointer-comparison-and-subtraction.md)
 - [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
@@ -68,7 +67,6 @@ Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
 - [Reason about byte-width element indices](byte-element-index-reasoning.md)
-- [Prove a loop invariant that relates a havoced pointer local to the index](pointer-local-loop-invariants.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
 - [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
 - [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
