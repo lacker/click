@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{files_with_extension, read_verifying_sources, source_refs};
-use click::instrumentation::{self, ContractFallback, SealRefusal};
+use click::instrumentation::{self, ContractFallback};
 use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
@@ -15,7 +15,6 @@ const QUARANTINED: &[(&str, &str)] = &[];
 
 /// The body-rerun ratchet (`docs/internals/testing.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.
-const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[];
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 
 #[test]
@@ -81,11 +80,8 @@ fn example_projects() {
     let census = instrumentation::take_body_rerun_census();
     if requested.is_none()
         && !run_quarantined
-        && let Some(mismatch) = instrumentation::body_rerun_census_mismatch(
-            &census,
-            SEAL_REFUSAL_BASELINE,
-            CONTRACT_FALLBACK_BASELINE,
-        )
+        && let Some(mismatch) =
+            instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
     {
         panic!("body rerun ratchet (tests/examples.rs baselines):\n{mismatch}");
     }

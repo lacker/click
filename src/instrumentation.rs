@@ -1415,58 +1415,6 @@ mod tests {
     }
 }
 
-/// Why the kernel sealer could not compose a retained proof trace into the
-/// checked function execution. A refusal fails the proof: some proof
-/// operation did not retain what sealing needs (`docs/internals/proof-objects.md`,
-/// evidence traces and sealing).
-/// The fixture harnesses pin the count of every reason at zero.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum SealRefusal {
-    /// The proof published a different number of paths than it retained
-    /// traces.
-    PathCount,
-    /// The retained proof-case partitions do not match the paths' case facts.
-    CasePartition,
-    /// The proof's function does not refine the checked function's source.
-    FunctionSource,
-    /// No usable entry state: none derivable, populations without a checked
-    /// entry artifact, missing entry resource facts, or a trace whose initial
-    /// state is not the entry state.
-    EntryState,
-    /// A statement or condition theorem premise is not an exact retained
-    /// fact of the path.
-    UnretainedPremise,
-    /// The proved statement is not the next source statement.
-    StatementMismatch,
-    /// The proved entry state does not match the sealed running state.
-    StateMismatch,
-    /// Retired (2026-09-01): a `return` or
-    /// diverging outcome now ends the path and drops the unreachable tail.
-    /// The variant stays so older pins still name it, at zero.
-    ReturnWithTail,
-    /// The trace ran past its source or its completed outcome, or ended
-    /// without one.
-    IncompleteTrace,
-    /// The sealed outcome differs from the outcome the proof published.
-    OutcomeMismatch,
-    /// The contract's exit rule hit an execution limit while sealing.
-    ExitRule,
-    /// Malformed evidence: an invalid case arm, a resource event that does
-    /// not advance the state, an unexpected theorem shape, an erroring
-    /// statement outcome, or a branch that does not match its source.
-    InvalidEvidence,
-    /// Retired (2026-09-01): the sealed path
-    /// now applies the contract's exit rule, so an implicitly closed counted
-    /// entry seals. The variant stays so older pins still name it, at zero.
-    ImplicitCountedClose,
-    /// Retired by slice 6: an outcome proof that unfolded a predicate never
-    /// needed the guard; the unfolded facts belong to the outcome goal.
-    OutcomeUnfold,
-    /// Retired by slice 6: a quantified fold or close after execution is
-    /// covered by the contract's exit rule on the sealed path.
-    QuantifiedResourceClose,
-}
-
 /// Why opaque-contract certification could not reuse a checked artifact from
 /// claim finishing. With artifacts supplied it then produces no paths; only a
 /// kernel caller that supplied none gets the kernel's own body execution.
@@ -1488,15 +1436,10 @@ pub enum ContractFallback {
 }
 
 /// The process-wide count of body reruns by reason since the last take.
-pub type BodyRerunCensus = (
-    std::collections::BTreeMap<SealRefusal, usize>,
-    std::collections::BTreeMap<ContractFallback, usize>,
-);
+pub type BodyRerunCensus = std::collections::BTreeMap<ContractFallback, usize>;
 
-static BODY_RERUN_CENSUS: std::sync::Mutex<BodyRerunCensus> = std::sync::Mutex::new((
-    std::collections::BTreeMap::new(),
-    std::collections::BTreeMap::new(),
-));
+static BODY_RERUN_CENSUS: std::sync::Mutex<BodyRerunCensus> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 fn body_rerun_census() -> std::sync::MutexGuard<'static, BodyRerunCensus> {
     BODY_RERUN_CENSUS
@@ -1504,12 +1447,8 @@ fn body_rerun_census() -> std::sync::MutexGuard<'static, BodyRerunCensus> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-pub fn record_seal_refusal(reason: SealRefusal) {
-    *body_rerun_census().0.entry(reason).or_default() += 1;
-}
-
 pub fn record_contract_fallback(cause: ContractFallback) {
-    *body_rerun_census().1.entry(cause).or_default() += 1;
+    *body_rerun_census().entry(cause).or_default() += 1;
 }
 
 /// Takes and clears the census. Verification of one corpus runs serially in
@@ -1523,7 +1462,6 @@ pub fn take_body_rerun_census() -> BodyRerunCensus {
 /// which must not land) or fell (lower the pin so it cannot rise back).
 pub fn body_rerun_census_mismatch(
     census: &BodyRerunCensus,
-    expected_seal: &[(SealRefusal, usize)],
     expected_contract: &[(ContractFallback, usize)],
 ) -> Option<String> {
     fn diff<K: Copy + Ord + std::fmt::Debug>(
@@ -1546,7 +1484,7 @@ pub fn body_rerun_census_mismatch(
             let now = actual.get(&key).copied().unwrap_or(0);
             if now > was {
                 report.push(format!(
-                    "{label} {key:?} rose from {was} to {now}: a proof that used to seal now reruns its body"
+                    "{label} {key:?} rose from {was} to {now}: a proof that used to reuse its checked execution now reruns its body"
                 ));
             } else if now < was {
                 report.push(format!(
@@ -1561,13 +1499,7 @@ pub fn body_rerun_census_mismatch(
         }
     }
     let mut report = Vec::new();
-    diff("seal refusal", &census.0, expected_seal, &mut report);
-    diff(
-        "contract fallback",
-        &census.1,
-        expected_contract,
-        &mut report,
-    );
+    diff("contract fallback", census, expected_contract, &mut report);
     (!report.is_empty()).then(|| report.join("\n"))
 }
 
@@ -1576,49 +1508,18 @@ mod body_rerun_census_tests {
     use super::*;
 
     #[test]
-    fn ratchet_reports_rises_and_falls_in_both_tables() {
-        let census: BodyRerunCensus = (
-            [
-                (SealRefusal::ReturnWithTail, 2),
-                (SealRefusal::OutcomeUnfold, 1),
-            ]
+    fn ratchet_reports_rises_and_falls() {
+        let census: BodyRerunCensus = [(ContractFallback::EntryStateDelta, 1)]
             .into_iter()
-            .collect(),
-            [(ContractFallback::EntryStateDelta, 1)]
-                .into_iter()
-                .collect(),
-        );
+            .collect();
         assert_eq!(
-            body_rerun_census_mismatch(
-                &census,
-                &[
-                    (SealRefusal::ReturnWithTail, 2),
-                    (SealRefusal::OutcomeUnfold, 1)
-                ],
-                &[(ContractFallback::EntryStateDelta, 1)],
-            ),
+            body_rerun_census_mismatch(&census, &[(ContractFallback::EntryStateDelta, 1)]),
             None
         );
-        let mismatch = body_rerun_census_mismatch(
-            &census,
-            &[
-                (SealRefusal::ReturnWithTail, 1),
-                (SealRefusal::OutcomeUnfold, 3),
-            ],
-            &[],
-        )
-        .expect("a rise and a fall are both reported");
-        assert!(
-            mismatch.contains("ReturnWithTail rose from 1 to 2"),
-            "{mismatch}"
-        );
-        assert!(
-            mismatch.contains("OutcomeUnfold fell from 3 to 1"),
-            "{mismatch}"
-        );
-        assert!(
-            mismatch.contains("EntryStateDelta rose from 0 to 1"),
-            "{mismatch}"
-        );
+        let rise = body_rerun_census_mismatch(&census, &[]).expect("a rise is reported");
+        assert!(rise.contains("EntryStateDelta rose from 0 to 1"), "{rise}");
+        let fall = body_rerun_census_mismatch(&census, &[(ContractFallback::EntryStateDelta, 3)])
+            .expect("a fall is reported");
+        assert!(fall.contains("EntryStateDelta fell from 3 to 1"), "{fall}");
     }
 }

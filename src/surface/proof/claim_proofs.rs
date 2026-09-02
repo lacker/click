@@ -1167,62 +1167,34 @@ pub(super) fn finish_ordered_proof<'a>(
         } else {
             CFunctionContractExecutionMode::VerifyLoops
         };
-        // Sealing composes the retained kernel theorems into the checked
-        // execution once for the whole proof, under the contract's own
-        // entry assumptions; every path carries its case facts itself. A
-        // refusal means some proof operation did not retain what sealing
-        // needs: it is counted by reason (the fixture harnesses pin every
-        // count at zero) and fails the proof. Nothing executes the body
-        // again to decide whether the proof was valid.
-        let sealed_execution = crate::instrumentation::measure_operation(
+        // The proof object composes the checked execution from its retained
+        // traces, every step of which it checked when recorded, under the
+        // contract's own entry assumptions; every path carries its case
+        // facts itself. Nothing executes the body again to decide whether
+        // the proof was valid.
+        let completed_execution = crate::instrumentation::measure_operation(
             function_block.signature().name(),
             &proof_label,
-            "proof evidence sealing",
+            "proof completion",
             || {
-                crate::kernel::checked_c_function_execution_from_proof_evidence(
-                    execution,
-                    function,
-                    proof_execution.core.function_entry.as_deref(),
-                    &proof_execution.core.execution_evidence,
-                    assumptions_from_propositions(&base_certification_facts),
-                    function_environment.clone(),
-                    execution_semantics,
-                    execution_mode,
-                )
-                .map_err(|refusal| {
-                    crate::instrumentation::record_seal_refusal(refusal);
-                    ClickError::new(format!(
-                        "`{proof_label}`: the retained proof evidence could not be sealed into a checked execution ({refusal:?}); a proof operation did not retain what sealing needs"
-                    ))
-                })
+                proof_execution
+                    .core
+                    .checked_function_execution(
+                        execution,
+                        function,
+                        assumptions_from_propositions(&base_certification_facts),
+                        function_environment.clone(),
+                        execution_semantics,
+                        execution_mode,
+                    )
+                    .map_err(|reason| {
+                        ClickError::new(format!(
+                            "`{proof_label}`: the proof object could not complete its checked function execution: {reason}"
+                        ))
+                    })
             },
         )?;
-        // The proof object composes the same execution from its checked
-        // traces without a walk. Until the sealer is deleted, both are
-        // computed and must agree path for path.
-        let completed_execution = proof_execution
-            .core
-            .checked_function_execution(
-                execution,
-                function,
-                assumptions_from_propositions(&base_certification_facts),
-                function_environment.clone(),
-                execution_semantics,
-                execution_mode,
-            )
-            .map_err(|reason| {
-                ClickError::new(format!(
-                    "`{proof_label}`: the proof object could not complete its checked function execution: {reason}"
-                ))
-            })?;
-        completed_execution
-            .agrees_with(&sealed_execution)
-            .map_err(|difference| {
-                ClickError::new(format!(
-                    "`{proof_label}`: the proof object's checked function execution differs from the sealed one: {difference}"
-                ))
-            })?;
-        let certified_outcomes = sealed_execution
+        let certified_outcomes = completed_execution
             .paths()
             .iter()
             .map(|path| match implication_body(path.theorem().proposition()) {
@@ -1238,7 +1210,7 @@ pub(super) fn finish_ordered_proof<'a>(
                     Ok(outcome.clone())
                 }
                 proposition => Err(ClickError::new(format!(
-                    "sealing for `{proof_label}` produced an inexact theorem body {proposition:?}"
+                    "completion for `{proof_label}` produced an inexact theorem body {proposition:?}"
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1282,7 +1254,7 @@ pub(super) fn finish_ordered_proof<'a>(
                         // an exact contradictory path fact; it owns no goal.
                         continue 'execution_path;
                     };
-                    let certified_path = &sealed_execution.paths()[certified_path_index];
+                    let certified_path = &completed_execution.paths()[certified_path_index];
                     let mut path_grouped_surface_closers = Vec::new();
                     let mut path_surface_post_tactics = Vec::new();
                     let mut path_deferred_capture_tactics = Vec::new();
@@ -3666,7 +3638,7 @@ pub(super) fn finish_ordered_proof<'a>(
                                 .frontier_loop_clauses
                                 .to_vec(),
                             frontier_loop_rules: proof_execution.core.frontier_loop_rules.to_vec(),
-                            checked_execution: sealed_execution.clone(),
+                            checked_execution: completed_execution.clone(),
                             checked_proposition,
                         });
                     }

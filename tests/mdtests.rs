@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use click::cli::{MdTestExpectation, read_mdtest, run_parallel};
-use click::instrumentation::{self, ContractFallback, SealRefusal};
+use click::instrumentation::{self, ContractFallback};
 use click::surface::verify_c0_sources;
 
 const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
@@ -18,7 +18,6 @@ const QUARANTINED: &[(&str, &str)] = &[];
 /// the whole unfiltered corpus, claim finishing or contract certification
 /// executed a function body because the sealer refused or a guard declined,
 /// by reason. A count may only fall; lower its pin when it does.
-const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[];
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];
 
 #[test]
@@ -77,11 +76,8 @@ fn mdtests() {
     if failures.is_empty() {
         if !filtered
             && std::env::var_os(RUN_QUARANTINED).is_none()
-            && let Some(mismatch) = instrumentation::body_rerun_census_mismatch(
-                &census,
-                SEAL_REFUSAL_BASELINE,
-                CONTRACT_FALLBACK_BASELINE,
-            )
+            && let Some(mismatch) =
+                instrumentation::body_rerun_census_mismatch(&census, CONTRACT_FALLBACK_BASELINE)
         {
             panic!("body rerun ratchet (tests/mdtests.rs baselines):\n{mismatch}");
         }

@@ -292,11 +292,9 @@ impl CheckedResourceRewrite {
         )
     }
 
-    pub(crate) fn advances_sealed(&self, function: &CFunction, state: &CState) -> bool {
-        function
-            .composite_resource_definitions()
-            .contains(&self.definition)
-            && state == &self.before_state
+    /// The registered composite definition the event applied.
+    pub(crate) fn definition(&self) -> &CCompositeResourceDefinition {
+        &self.definition
     }
 }
 
@@ -497,11 +495,9 @@ impl CheckedResourceObservation {
         )
     }
 
-    pub(crate) fn advances_sealed(&self, function: &CFunction, state: &CState) -> bool {
-        function
-            .composite_resource_definitions()
-            .contains(&self.definition)
-            && state == &self.before_state
+    /// The registered composite definition the event applied.
+    pub(crate) fn definition(&self) -> &CCompositeResourceDefinition {
+        &self.definition
     }
 }
 
@@ -715,10 +711,6 @@ impl CheckedProofCaseArm {
 
     pub(crate) fn arm_index(&self) -> usize {
         self.arm_index
-    }
-
-    pub(crate) fn facts(&self) -> &ProofFacts {
-        &self.facts
     }
 
     pub(crate) fn is_valid(&self) -> bool {
@@ -2065,9 +2057,13 @@ fn check_evidence_events(
 /// does not complete, continues past its completion, or completes in an
 /// error outcome yields nothing.
 fn trace_completion(
+    function: &CFunction,
     events: &[CheckedExecutionEvent],
     assumptions: &PureFactContext,
 ) -> Result<(CStatementOutcome, PureFactContext, Vec<ExecutionPureFact>), &'static str> {
+    if !events_use_the_function_definitions(function, events) {
+        return Err("a retained resource event was checked under other composite definitions");
+    }
     let mut completed: Option<(CStatementOutcome, PureFactContext)> = None;
     let mut interface_execution_facts: Vec<ExecutionPureFact> = Vec::new();
     for (index, event) in events.iter().enumerate() {
@@ -2131,6 +2127,34 @@ fn trace_completion(
         return Err("a trace does not reach a return");
     };
     Ok((outcome, executed_under, interface_execution_facts))
+}
+
+/// Whether every resource observation, rewrite, and interface join in the
+/// events, and in every joined branch's arms, was checked under the
+/// composite resource definitions of `function`.
+fn events_use_the_function_definitions(
+    function: &CFunction,
+    events: &[CheckedExecutionEvent],
+) -> bool {
+    let definitions = function.composite_resource_definitions();
+    events.iter().all(|event| match event {
+        CheckedExecutionEvent::ResourceObservation(observation) => {
+            definitions.contains(observation.definition())
+        }
+        CheckedExecutionEvent::ResourceRewrite(rewrite) => {
+            definitions.contains(rewrite.definition())
+        }
+        CheckedExecutionEvent::Branch(branch) => {
+            branch.matches_interface_resource_definitions(function)
+                && (0..2).all(|arm_index| {
+                    events_use_the_function_definitions(function, branch.arm_events(arm_index))
+                })
+        }
+        CheckedExecutionEvent::Statement(_)
+        | CheckedExecutionEvent::Condition(_)
+        | CheckedExecutionEvent::Context(_)
+        | CheckedExecutionEvent::ProofCase(_) => true,
+    })
 }
 
 fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(), &'static str> {
@@ -3021,7 +3045,7 @@ impl ExecutionProofCore {
         let mut paths = Vec::with_capacity(candidates.paths().len());
         for (candidate, trace) in candidates.paths().iter().zip(&self.execution_evidence) {
             let (completed, statement_assumptions, interface_execution_facts) =
-                trace_completion(&trace.to_vec(), &assumptions)?;
+                trace_completion(function, &trace.to_vec(), &assumptions)?;
             let (outcome, obligations) = crate::kernel::c_function_outcome_from_statement_outcome(
                 candidates.state(),
                 function,
@@ -3387,7 +3411,9 @@ mod tests {
             Vec::new(),
         )]);
         assert!(
-            !observation.advances_sealed(&changed_definition, &before),
+            !changed_definition
+                .composite_resource_definitions()
+                .contains(observation.definition()),
             "a retained observation must remain tied to its checked definition"
         );
     }
