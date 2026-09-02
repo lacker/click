@@ -9,6 +9,37 @@ fn parser_accepts_its_supported_parenthesis_depth() {
 }
 
 #[test]
+fn parser_accepts_standard_c_type_spellings_in_sidecars() {
+    let file = parser::parse_file_items(
+        r#"
+        int standard_types(int p[], unsigned char byte, int32_t index, uint8_t tag) {
+            ensures result == 0;
+        }
+        "#,
+    )
+    .expect("standard C type spellings should parse in sidecars");
+
+    assert_eq!(
+        file.function_blocks()[0].signature().return_type(),
+        C0Type::Int32
+    );
+    assert_eq!(
+        file.function_blocks()[0]
+            .signature()
+            .parameters()
+            .iter()
+            .map(|parameter| parameter.c_type)
+            .collect::<Vec<_>>(),
+        vec![
+            C0Type::Int32Pointer,
+            C0Type::UInt8,
+            C0Type::Int32,
+            C0Type::UInt8,
+        ]
+    );
+}
+
+#[test]
 fn parser_rejects_excessive_parenthesis_depth_with_a_source_diagnostic() {
     let source = super::scaling_tests::theorem_with_parenthesized_requirement(
         parser::PARENTHESIS_NESTING_LIMIT + 1,

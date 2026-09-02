@@ -50,6 +50,58 @@ fn c0_array_parameter_syntax_lowers_to_pointer_parameter() {
 }
 
 #[test]
+fn c0_accepts_standard_integer_spellings_and_struct_typedefs() {
+    let function = syntax::parse_function(
+        r#"
+        struct record {
+            int value;
+            unsigned char tag;
+        };
+        typedef struct record record_t;
+        typedef int32_t index_t;
+
+        int read_record(record_t* record, index_t index) {
+            int result;
+            uint8_t tag;
+            result = record->value + index;
+            tag = record->tag;
+            return result + tag;
+        }
+        "#,
+    )
+    .expect("standard C spellings and typedefs should parse");
+
+    assert_eq!(function.return_type(), syntax::C0Type::Int32);
+    assert_eq!(
+        function.parameters()[0].c_type(),
+        syntax::C0Type::Int32Pointer
+    );
+    assert_eq!(function.parameters()[0].struct_name(), Some("record"));
+    assert_eq!(function.parameters()[1].c_type(), syntax::C0Type::Int32);
+    assert_eq!(
+        function.structs()["record"].field("tag").unwrap().c_type(),
+        syntax::C0Type::UInt8
+    );
+}
+
+#[test]
+fn c0_rejects_unmodeled_standard_integer_widths_and_char() {
+    for (source, spelling) in [
+        ("long unsupported() { return 0; }", "long"),
+        ("size_t unsupported() { return 0; }", "size_t"),
+        ("char unsupported() { return 0; }", "char"),
+    ] {
+        let error = syntax::parse_function(source)
+            .expect_err("unmodeled standard C types should be rejected");
+        assert!(
+            error.message().contains(spelling),
+            "diagnostic for `{spelling}` did not mention the spelling: {}",
+            error.message()
+        );
+    }
+}
+
+#[test]
 fn c0_syntax_ignores_line_and_block_comments() {
     let function = syntax::parse_function(
         r#"

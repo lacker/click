@@ -34,12 +34,13 @@ binders introduced by Click itself use `name: type`: theorem and resource
 parameters, pure-function and predicate parameters, typed `let` bindings, and
 `forall`/`exists` variables.
 
-Click signatures currently understand `void` C return types, `int32`, `uint8`,
-`int32*`, `uint8*`, pilot `struct name*` parameters, and array-parameter
-spellings such as `int32 p[]` and `uint8 bytes[]`. `void` is not an object or
-parameter type. A `void` contract has no `result` binding; it may still state
-resource transfer, memory effects, and return-state propositions that do not
-mention a result.
+Click signatures currently understand `void` C return types, `int32`/`int`/
+`int32_t`, `uint8`/`unsigned char`/`uint8_t`, their pointer forms, pilot
+`struct name*` parameters, and array-parameter spellings such as `int32 p[]`
+and `uint8 bytes[]`. C typedefs may alias these modeled types. `void` is not
+an object or parameter type. A `void` contract has no `result` binding; it may
+still state resource transfer, memory effects, and return-state propositions
+that do not mention a result.
 Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues

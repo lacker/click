@@ -23,7 +23,7 @@ arbitrary byte layouts, `size_t`, general `void *` conversions, allocator
 declarations, custom allocators, `calloc`, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
-declarations with `int32` and pointer-valued fields, plus chained
+declarations with `int32`, `uint8`, and pointer-valued fields, plus chained
 `p->child->field` loads/stores through struct pointers. It retains pointee
 struct names through those chains and models field alignment and tail padding.
 It still has no struct values, embedded struct values, arrays of structs,
@@ -36,10 +36,12 @@ than approximated.
 ## Type support is still narrow
 
 The verifier supports `void` function returns, `int32`, and a byte-like
-`uint8` type, including `uint8*`, `uint8[]`, ASCII character literals, byte
-loads/stores, byte promotion through integer operators, and typed Click array
-refs. It does not support `void` objects, parameters, or pointers. This is not
-a full C integer model: there are no casts beyond checked
+`uint8` type, including their standard spellings (`int`/`int32_t` and
+`unsigned char`/`uint8_t`), `uint8*`, `uint8[]`, ASCII character literals,
+byte loads/stores, byte promotion through integer operators, and typed Click
+array refs. C typedefs may alias these modeled types and named struct-pointer
+types. It does not support `void` objects, parameters, or pointers. This is
+not a full C integer model: there are no casts beyond checked
 `int32`-to-`uint8` narrowing, no broad usual-arithmetic-conversion lattice, and
 no general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, multiplication, division, and remainder
