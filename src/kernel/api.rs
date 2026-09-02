@@ -1947,7 +1947,8 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
         )
 }
 
-/// Whether every premise of a retained transition theorem is retained: an
+/// The first premise of a retained transition theorem that is not retained,
+/// if any. A premise is retained when it is an
 /// exact fact of the entry context, of the context the theorem was proved
 /// under (`CheckedExecutionEvent::Context`), of the candidate path, an
 /// obligation, or a resource-certified loadability. A loadability premise
@@ -1955,7 +1956,7 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
 /// wider range of the same block (a callee's requirement inside the caller's
 /// `loadable(p[0..n])`), which is the one range rule the executor
 /// discharged it with. Nothing else is derived.
-pub(in crate::kernel) fn proof_evidence_premises_are_retained(
+pub(in crate::kernel) fn proof_evidence_unretained_premise(
     theorem: &Theorem,
     assumptions: &PureFactContext,
     executed_under: Option<&PureFactContext>,
@@ -1963,7 +1964,7 @@ pub(in crate::kernel) fn proof_evidence_premises_are_retained(
     obligations: &[ProofObligation],
     state: &CState,
     function_entry_resource_facts: Option<&PureFactContext>,
-) -> bool {
+) -> Option<Proposition> {
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
         if !assumptions.proves_exact(premise)
@@ -1983,11 +1984,11 @@ pub(in crate::kernel) fn proof_evidence_premises_are_retained(
             ) && function_entry_resource_facts
                 .is_some_and(|facts| facts.proves_exact(premise)))
         {
-            return false;
+            return Some(premise.as_ref().clone());
         }
         proposition = body;
     }
-    true
+    None
 }
 
 pub(crate) fn execution_evidence_states_match(

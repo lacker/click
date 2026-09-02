@@ -2057,17 +2057,19 @@ fn complete_early_return(
             _ => PureFactContext::new(),
         };
         match &events[index] {
-            CheckedExecutionEvent::Statement(theorem) => core.record_statement_transition(
-                function,
-                &[],
-                theorem.clone(),
-                context,
-                execution_facts,
-                &[],
-            )?,
-            CheckedExecutionEvent::Condition(theorem) => {
-                core.record_condition_transition(function, &[], theorem.clone(), context, &[], &[])?
-            }
+            CheckedExecutionEvent::Statement(theorem) => core
+                .record_statement_transition(
+                    function,
+                    &[],
+                    theorem.clone(),
+                    context,
+                    execution_facts,
+                    &[],
+                )
+                .map_err(|refusal| refusal.reason)?,
+            CheckedExecutionEvent::Condition(theorem) => core
+                .record_condition_transition(function, &[], theorem.clone(), context, &[], &[])
+                .map_err(|refusal| refusal.reason)?,
             CheckedExecutionEvent::Context(_) => {}
             _ => return Err("the test records only theorems"),
         }
@@ -2649,19 +2651,24 @@ fn recording_statement_evidence_checks_it_advances_the_frontier() {
         PureFactContext::new(),
     )
     .expect("the body's first statement from the entry state advances the entry frontier");
+    let refusal = record(
+        Theorem::new(verifies(entry_state.clone(), c_return(c_int32_literal(1)))),
+        PureFactContext::new(),
+    )
+    .expect_err("a later statement is not the frontier's next");
     assert_eq!(
-        record(
-            Theorem::new(verifies(entry_state.clone(), c_return(c_int32_literal(1)))),
-            PureFactContext::new(),
-        ),
-        Err("statement evidence does not prove the frontier's next source statement")
+        refusal.reason,
+        "statement evidence does not prove the frontier's next source statement"
     );
+    assert_eq!(refusal.expected.as_ref(), Some(&branch));
+    assert_eq!(refusal.proved, Some(c_return(c_int32_literal(1))));
     let elsewhere = entry_state.clone().with_local("x", int32(1));
     assert_eq!(
         record(
             Theorem::new(verifies(elsewhere, branch.clone())),
             PureFactContext::new(),
-        ),
+        )
+        .map_err(|refusal| refusal.reason),
         Err("evidence does not start from the running state")
     );
     let premise = Proposition::ConditionIs(
@@ -2675,10 +2682,13 @@ fn recording_statement_evidence_checks_it_advances_the_frontier() {
         Box::new(premise.clone()),
         Box::new(verifies(entry_state, branch)),
     ));
+    let refusal = record(conditional.clone(), PureFactContext::new())
+        .expect_err("an unretained premise is refused");
     assert_eq!(
-        record(conditional.clone(), PureFactContext::new()),
-        Err("evidence assumes a premise the proof did not retain")
+        refusal.reason,
+        "evidence assumes a premise the proof did not retain"
     );
+    assert_eq!(refusal.premise.as_ref(), Some(&premise));
     record(
         conditional,
         PureFactContext::new().assume_proposition(premise),
@@ -2718,6 +2728,7 @@ fn recording_condition_evidence_checks_it_decides_the_frontier() {
             crate::kernel::proof::ExecutionFrontier::default(),
         );
         core.record_condition_transition(&function, &[], theorem, context, path_facts, &[])
+            .map_err(|refusal| refusal.reason)
     };
     record(
         Theorem::new(evaluates(entry_state.clone(), condition.clone())),
@@ -2792,7 +2803,8 @@ fn recording_condition_evidence_checks_it_decides_the_frontier() {
             PureFactContext::new(),
             &[],
             &[],
-        ),
+        )
+        .map_err(|refusal| refusal.reason),
         Err("condition evidence does not decide the frontier's next `if` or `while`")
     );
 }
@@ -2855,7 +2867,8 @@ fn recorded_evidence_reaches_the_theorem_outcome_not_the_driver_state() {
             PureFactContext::new(),
             &[],
             &[],
-        ),
+        )
+        .map_err(|refusal| refusal.reason),
         Err("evidence does not start from the running state")
     );
     core.record_statement_transition(
@@ -2876,7 +2889,8 @@ fn recorded_evidence_reaches_the_theorem_outcome_not_the_driver_state() {
             PureFactContext::new(),
             &[],
             &[],
-        ),
+        )
+        .map_err(|refusal| refusal.reason),
         Err("evidence was recorded after the trace completed")
     );
 }
@@ -2934,17 +2948,22 @@ fn recorded_evidence_consumes_the_source_not_the_driver_frontier() {
     core.frontier.position = crate::kernel::proof::FrontierPosition::StatementEntry {
         remaining: std::sync::Arc::new(c_return(c_int32_literal(0))),
     };
-    assert_eq!(
-        core.record_statement_transition(
+    let refusal = core
+        .record_statement_transition(
             &function,
             &[],
             returning(c_return(c_int32_literal(0)), 0),
             PureFactContext::new(),
             &[],
             &[],
-        ),
-        Err("statement evidence does not prove the frontier's next source statement")
+        )
+        .expect_err("the driver's frontier does not decide the source");
+    assert_eq!(
+        refusal.reason,
+        "statement evidence does not prove the frontier's next source statement"
     );
+    assert_eq!(refusal.expected.as_ref(), Some(&tail));
+    assert_eq!(refusal.proved, Some(c_return(c_int32_literal(0))));
     core.record_statement_transition(
         &function,
         &[],

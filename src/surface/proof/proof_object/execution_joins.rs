@@ -171,9 +171,14 @@ impl<'a> Proof<'a> {
                     &transition.path_facts,
                     &[],
                 )
-                .map_err(|reason| {
+                .map_err(|refusal| {
                     self.step_error(format!(
-                        "`branch` recorded condition evidence the proof object rejected: {reason}"
+                        "`branch` recorded condition evidence the proof object rejected: {}",
+                        crate::surface::proof::cursor_execution::describe_evidence_refusal(
+                            &refusal,
+                            context.parsed_function.parameters(),
+                            context.arguments,
+                        )
                     ))
                 })?;
             record_statement_program_snapshot_state(

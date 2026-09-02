@@ -607,9 +607,10 @@ pub(super) fn execute_branch_step_from_frontier_position(
             &condition_transition.path_facts,
             &[],
         )
-        .map_err(|reason| {
+        .map_err(|refusal| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {reason}"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {}",
+                describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
     let state: &mut CState = &mut execution.core.state;
@@ -819,9 +820,10 @@ fn execute_concrete_loop_head_step(
             &condition_transition.path_facts,
             &[],
         )
-        .map_err(|reason| {
+        .map_err(|refusal| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {reason}"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded condition evidence the proof object rejected: {}",
+                describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
     let state: &mut CState = &mut execution.core.state;
@@ -1649,9 +1651,10 @@ fn execute_step_from_frontier_position_selecting_path(
                     .collect::<Vec<_>>(),
                 transitions[0].context.clone(),
             )
-            .map_err(|reason| {
+            .map_err(|refusal| {
                 ClickError::new(format!(
-                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {reason}"
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {}",
+                    describe_evidence_refusal(&refusal, parameters, arguments)
                 ))
             })?;
         let mut completed_outcomes = Vec::new();
@@ -1873,9 +1876,10 @@ fn execute_step_from_frontier_position_selecting_path(
             &transition.execution_facts,
             &transition.obligations,
         )
-        .map_err(|reason| {
+        .map_err(|refusal| {
             ClickError::new(format!(
-                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {reason}"
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {}",
+                describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
     let state: &mut CState = &mut execution.core.state;
@@ -2712,5 +2716,91 @@ mod cursor_sequence_tests {
             .expect("the small-stack cursor thread should start")
             .join()
             .expect("large straight-line cursor advancement should be stack bounded");
+    }
+}
+
+/// The driver's account of a refused record call: the proof object's reason,
+/// then what it expected and what it was offered when the judgment concerned
+/// statements or a premise.
+pub(super) fn describe_evidence_refusal(
+    refusal: &crate::kernel::proof::EvidenceRefusal,
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+) -> String {
+    let mut text = refusal.reason.to_string();
+    if let Some(expected) = &refusal.expected {
+        text.push_str(&format!(
+            "; the source statement to consume next is `{}`",
+            describe_statement_head(expected)
+        ));
+    }
+    if let Some(proved) = &refusal.proved {
+        text.push_str(&format!(
+            ", the theorem proves `{}`",
+            describe_statement_head(proved)
+        ));
+    }
+    if let Some(premise) = &refusal.premise {
+        text.push_str(&format!(
+            "; the premise is {}",
+            describe_pure_fact(premise, parameters, arguments)
+        ));
+    }
+    text
+}
+
+/// A one-line C spelling of a statement's head, enough to recognize it in
+/// a diagnostic: the first statement of a sequence, a loop or branch by its
+/// condition, a body by its operation.
+fn describe_statement_head(statement: &CStatement) -> String {
+    match statement {
+        CStatement::Seq(first, _) => describe_statement_head(first),
+        CStatement::Skip => "skip".to_string(),
+        CStatement::Declare { name, .. } => format!("declare {name}"),
+        CStatement::Assign { name, expression } => {
+            format!("{name} = {}", describe_c_expression(expression))
+        }
+        CStatement::CallAssign {
+            target,
+            function_name,
+            arguments,
+        } => format!(
+            "{target} = {function_name}({})",
+            arguments
+                .iter()
+                .map(describe_c_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        CStatement::Call {
+            function_name,
+            arguments,
+        } => format!(
+            "{function_name}({})",
+            arguments
+                .iter()
+                .map(describe_c_expression)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        CStatement::HeapAllocate { target, bytes } => {
+            format!("{target} = malloc({})", describe_c_expression(bytes))
+        }
+        CStatement::HeapFree { pointer } => format!("free({})", describe_c_expression(pointer)),
+        CStatement::Assert { condition, .. } => {
+            format!("assert({})", describe_c_expression(condition))
+        }
+        CStatement::Return(expression) => format!("return {}", describe_c_expression(expression)),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            format!(
+                "*{} = {}",
+                describe_c_expression(pointer),
+                describe_c_expression(value)
+            )
+        }
+        CStatement::If { condition, .. } => format!("if ({})", describe_c_expression(condition)),
+        CStatement::While { condition, .. } => {
+            format!("while ({})", describe_c_expression(condition))
+        }
     }
 }

@@ -2157,6 +2157,32 @@ fn events_use_the_function_definitions(
     })
 }
 
+/// Why a record call refused the evidence offered to it. `reason` names
+/// the judgment that failed; the statements and premise, when the judgment
+/// concerned them, let the driver's diagnostic say what the proof object
+/// expected and what it was offered.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct EvidenceRefusal {
+    pub(crate) reason: &'static str,
+    /// The source statement the evidence had to consume next.
+    pub(crate) expected: Option<CStatement>,
+    /// The statement the offered theorem proves.
+    pub(crate) proved: Option<CStatement>,
+    /// The premise the offered theorem assumes that nothing retains.
+    pub(crate) premise: Option<Proposition>,
+}
+
+impl From<&'static str> for EvidenceRefusal {
+    fn from(reason: &'static str) -> Self {
+        Self {
+            reason,
+            expected: None,
+            proved: None,
+            premise: None,
+        }
+    }
+}
+
 fn validate_checked_event_shapes(events: &[CheckedExecutionEvent]) -> Result<(), &'static str> {
     for event in events {
         let (theorem, statement) = match event {
@@ -2263,7 +2289,7 @@ impl ExecutionProofCore {
         context: PureFactContext,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), EvidenceRefusal> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         let (outcome, source_after) = self.check_statement_evidence(
             function,
@@ -2310,7 +2336,7 @@ impl ExecutionProofCore {
             &[crate::kernel::ProofObligation],
         )],
         context: PureFactContext,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), EvidenceRefusal> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         for (theorem, execution_facts, obligations) in outcomes {
             let (outcome, _) = self.check_statement_evidence(
@@ -2322,7 +2348,7 @@ impl ExecutionProofCore {
                 obligations,
             )?;
             if matches!(outcome, CStatementOutcome::Normal(_)) {
-                return Err("an outcome fork records only completing outcomes");
+                return Err("an outcome fork records only completing outcomes".into());
             }
         }
         let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
@@ -2427,10 +2453,10 @@ impl ExecutionProofCore {
         &self,
         function: &CFunction,
         arguments: &[CExpression],
-    ) -> Result<std::borrow::Cow<'_, CState>, &'static str> {
+    ) -> Result<std::borrow::Cow<'_, CState>, EvidenceRefusal> {
         use std::borrow::Cow;
         if self.evidence_completed {
-            return Err("evidence was recorded after the trace completed");
+            return Err("evidence was recorded after the trace completed".into());
         }
         if let Some(state) = &self.evidence_state {
             return Ok(Cow::Borrowed(state));
@@ -2440,7 +2466,7 @@ impl ExecutionProofCore {
         }
         crate::kernel::c_function_entry_state(&self.state, function, arguments)
             .map(Cow::Owned)
-            .ok_or("the function's arguments do not bind at entry")
+            .ok_or_else(|| EvidenceRefusal::from("the function's arguments do not bind at entry"))
     }
 
     /// Checks that a statement theorem advances this frontier: it proves
@@ -2463,7 +2489,7 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(CStatementOutcome, Option<Arc<CStatement>>), &'static str> {
+    ) -> Result<(CStatementOutcome, Option<Arc<CStatement>>), EvidenceRefusal> {
         let running_state = self.running_state(function, arguments)?;
         let (proved_state, proved_statement, outcome) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
@@ -2472,7 +2498,9 @@ impl ExecutionProofCore {
                     statement,
                     outcome,
                 } => (state, statement, outcome),
-                _ => return Err("retained statement evidence has a non-statement conclusion"),
+                _ => {
+                    return Err("retained statement evidence has a non-statement conclusion".into());
+                }
             };
         // The source left after the theorem: a `Skip` theorem consumes a
         // `Skip` at the head of the source when there is one and otherwise
@@ -2492,12 +2520,17 @@ impl ExecutionProofCore {
             }
         } else {
             let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
-                return Err("statement evidence was recorded with no source statement remaining");
+                return Err(
+                    "statement evidence was recorded with no source statement remaining".into(),
+                );
             };
             if !statements_have_same_source(&next, proved_statement) {
-                return Err(
-                    "statement evidence does not prove the frontier's next source statement",
-                );
+                return Err(EvidenceRefusal {
+                    reason: "statement evidence does not prove the frontier's next source statement",
+                    expected: Some(next.into_owned()),
+                    proved: Some(proved_statement.clone()),
+                    premise: None,
+                });
             }
             tail
         };
@@ -2526,7 +2559,7 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         path_facts: &[Proposition],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(CState, Option<Arc<CStatement>>), &'static str> {
+    ) -> Result<(CState, Option<Arc<CStatement>>), EvidenceRefusal> {
         let running_state = self.running_state(function, arguments)?;
         let (proved_state, proved_condition, value) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
@@ -2535,21 +2568,31 @@ impl ExecutionProofCore {
                     condition,
                     outcome: CConditionOutcome::Value(value),
                 } => (state, condition, *value),
-                _ => return Err("retained condition evidence has a non-value conclusion"),
+                _ => return Err("retained condition evidence has a non-value conclusion".into()),
             };
         let Some((next, tail)) = self.next_source_statement_and_tail(function) else {
-            return Err("condition evidence was recorded with no source statement remaining");
+            return Err(
+                "condition evidence was recorded with no source statement remaining".into(),
+            );
         };
         let decided = match &*next {
             CStatement::If { condition, .. } | CStatement::While { condition, .. } => condition,
             _ => {
-                return Err(
-                    "condition evidence does not decide the frontier's next `if` or `while`",
-                );
+                return Err(EvidenceRefusal {
+                    reason: "condition evidence does not decide the frontier's next `if` or `while`",
+                    expected: Some(next.into_owned()),
+                    proved: None,
+                    premise: None,
+                });
             }
         };
         if decided != proved_condition {
-            return Err("condition evidence does not decide the frontier's next source condition");
+            return Err(EvidenceRefusal {
+                reason: "condition evidence does not decide the frontier's next source condition",
+                expected: Some(next.clone().into_owned()),
+                proved: None,
+                premise: None,
+            });
         }
         // The source left after the decision: the selected arm, or the loop
         // body followed by the loop head again, before the tail.
@@ -2638,7 +2681,7 @@ impl ExecutionProofCore {
         proved_state: &CState,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), EvidenceRefusal> {
         let no_assumptions = PureFactContext::new();
         let entry_assumptions = self
             .function_entry
@@ -2672,7 +2715,7 @@ impl ExecutionProofCore {
                 )
             };
         if !states_match {
-            return Err("evidence does not start from the running state");
+            return Err("evidence does not start from the running state".into());
         }
         let mut retained_execution_facts = execution_facts.to_vec();
         for fact in self.effect_facts.iter() {
@@ -2684,7 +2727,7 @@ impl ExecutionProofCore {
             .function_entry
             .as_ref()
             .and_then(|entry| entry.relation_facts());
-        if !crate::kernel::api::proof_evidence_premises_are_retained(
+        if let Some(premise) = crate::kernel::api::proof_evidence_unretained_premise(
             theorem,
             entry_assumptions,
             Some(context),
@@ -2693,7 +2736,12 @@ impl ExecutionProofCore {
             running_state,
             entry_relation_facts,
         ) {
-            return Err("evidence assumes a premise the proof did not retain");
+            return Err(EvidenceRefusal {
+                reason: "evidence assumes a premise the proof did not retain",
+                expected: None,
+                proved: None,
+                premise: Some(premise),
+            });
         }
         Ok(())
     }
@@ -2712,7 +2760,7 @@ impl ExecutionProofCore {
         context: PureFactContext,
         path_facts: &[Proposition],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), EvidenceRefusal> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         let (reached, source_after) = self.check_condition_evidence(
             function,
