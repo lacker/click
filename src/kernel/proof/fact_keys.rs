@@ -356,6 +356,12 @@ enum AlphaBitvectorKey {
         then_term: Box<Self>,
         else_term: Box<Self>,
     },
+    RangeFold {
+        start: Box<Self>,
+        end: Box<Self>,
+        initial: Box<Self>,
+        body: Box<Self>,
+    },
     PureFunctionApplication {
         name: String,
         arguments: Vec<Self>,
@@ -424,7 +430,8 @@ fn alpha_variable_key(
 
 fn alpha_pointer_offset_key(
     offset: &PointerOffsetTerm,
-    bindings: &BTreeMap<Variable, usize>,
+    bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
 ) -> Option<AlphaPointerOffsetKey> {
     Some(match offset {
         PointerOffsetTerm::Constant(value) => AlphaPointerOffsetKey::Constant(*value),
@@ -432,12 +439,12 @@ fn alpha_pointer_offset_key(
             AlphaPointerOffsetKey::Variable(alpha_variable_key(*variable, bindings))
         }
         PointerOffsetTerm::Add(left, right) => AlphaPointerOffsetKey::Add(
-            Box::new(alpha_pointer_offset_key(left, bindings)?),
-            Box::new(alpha_pointer_offset_key(right, bindings)?),
+            Box::new(alpha_pointer_offset_key(left, bindings, next_binder)?),
+            Box::new(alpha_pointer_offset_key(right, bindings, next_binder)?),
         ),
         PointerOffsetTerm::Int32Scaled { value, byte_width } => {
             AlphaPointerOffsetKey::Int32Scaled {
-                value: Box::new(alpha_bitvector_key(value, bindings)?),
+                value: Box::new(alpha_bitvector_key(value, bindings, next_binder)?),
                 byte_width: *byte_width,
             }
         }
@@ -446,7 +453,8 @@ fn alpha_pointer_offset_key(
 
 fn alpha_pointer_key(
     pointer: &Pointer,
-    bindings: &BTreeMap<Variable, usize>,
+    bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
 ) -> Option<AlphaPointerKey> {
     let block = match &pointer.block {
         PointerBlock::Concrete(name) => AlphaPointerBlockKey::Concrete(name.clone()),
@@ -458,20 +466,21 @@ fn alpha_pointer_key(
     };
     Some(AlphaPointerKey {
         block,
-        offset: alpha_pointer_offset_key(&pointer.offset, bindings)?,
+        offset: alpha_pointer_offset_key(&pointer.offset, bindings, next_binder)?,
     })
 }
 
 fn alpha_bitvector_key(
     term: &Bitvector32Term,
-    bindings: &BTreeMap<Variable, usize>,
+    bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
 ) -> Option<AlphaBitvectorKey> {
-    let binary =
+    let mut binary =
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaBitvectorKey> {
             Some(AlphaBitvectorKey::Binary(
                 operator,
-                Box::new(alpha_bitvector_key(left, bindings)?),
-                Box::new(alpha_bitvector_key(right, bindings)?),
+                Box::new(alpha_bitvector_key(left, bindings, next_binder)?),
+                Box::new(alpha_bitvector_key(right, bindings, next_binder)?),
             ))
         };
     Some(match term {
@@ -481,9 +490,11 @@ fn alpha_bitvector_key(
                 .then(|| crate::kernel::registered_load_for_variable(variable))
                 .flatten()
             {
-                Some((_, pointer)) => {
-                    AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(&pointer, bindings)?))
-                }
+                Some((_, pointer)) => AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(
+                    &pointer,
+                    bindings,
+                    next_binder,
+                )?)),
                 None => AlphaBitvectorKey::Variable(alpha_variable_key(*variable, bindings)),
             }
         }
@@ -515,44 +526,85 @@ fn alpha_bitvector_key(
         Bitvector32Term::BitwiseXor(left, right) => {
             binary(AlphaBitvectorBinaryOp::BitwiseXor, left, right)?
         }
-        Bitvector32Term::BitwiseNot(body) => {
-            AlphaBitvectorKey::BitwiseNot(Box::new(alpha_bitvector_key(body, bindings)?))
-        }
+        Bitvector32Term::BitwiseNot(body) => AlphaBitvectorKey::BitwiseNot(Box::new(
+            alpha_bitvector_key(body, bindings, next_binder)?,
+        )),
         Bitvector32Term::If {
             condition,
             then_term,
             else_term,
         } => AlphaBitvectorKey::If {
-            condition: Box::new(alpha_condition_key(condition, bindings)?),
-            then_term: Box::new(alpha_bitvector_key(then_term, bindings)?),
-            else_term: Box::new(alpha_bitvector_key(else_term, bindings)?),
+            condition: Box::new(alpha_condition_key(condition, bindings, next_binder)?),
+            then_term: Box::new(alpha_bitvector_key(then_term, bindings, next_binder)?),
+            else_term: Box::new(alpha_bitvector_key(else_term, bindings, next_binder)?),
         },
-        Bitvector32Term::RangeFold { .. } => return None,
+        Bitvector32Term::RangeFold {
+            start,
+            end,
+            initial,
+            accumulator,
+            item,
+            body,
+        } => {
+            let start = Box::new(alpha_bitvector_key(start, bindings, next_binder)?);
+            let end = Box::new(alpha_bitvector_key(end, bindings, next_binder)?);
+            let initial = Box::new(alpha_bitvector_key(initial, bindings, next_binder)?);
+
+            // Range-fold accumulator and item variables are binders just like
+            // proposition quantifiers. Canonicalize their body under fresh
+            // structural ordinals, then restore any enclosing binding so a
+            // fold cannot change the meaning of a sibling term.
+            let accumulator_ordinal = *next_binder;
+            *next_binder += 1;
+            let previous_accumulator = bindings.insert(*accumulator, accumulator_ordinal);
+            let item_ordinal = *next_binder;
+            *next_binder += 1;
+            let previous_item = bindings.insert(*item, item_ordinal);
+            let body = alpha_bitvector_key(body, bindings, next_binder);
+            if let Some(previous) = previous_item {
+                bindings.insert(*item, previous);
+            } else {
+                bindings.remove(item);
+            }
+            if let Some(previous) = previous_accumulator {
+                bindings.insert(*accumulator, previous);
+            } else {
+                bindings.remove(accumulator);
+            }
+
+            AlphaBitvectorKey::RangeFold {
+                start,
+                end,
+                initial,
+                body: Box::new(body?),
+            }
+        }
         Bitvector32Term::PureFunctionApplication { name, arguments } => {
             AlphaBitvectorKey::PureFunctionApplication {
                 name: name.clone(),
                 arguments: arguments
                     .iter()
-                    .map(|argument| alpha_bitvector_key(argument, bindings))
+                    .map(|argument| alpha_bitvector_key(argument, bindings, next_binder))
                     .collect::<Option<Vec<_>>>()?,
             }
         }
         Bitvector32Term::MemoryLoad(_, pointer) => {
-            AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings)?))
+            AlphaBitvectorKey::Load(Box::new(alpha_pointer_key(pointer, bindings, next_binder)?))
         }
     })
 }
 
 fn alpha_condition_key(
     condition: &ConditionTerm,
-    bindings: &BTreeMap<Variable, usize>,
+    bindings: &mut BTreeMap<Variable, usize>,
+    next_binder: &mut usize,
 ) -> Option<AlphaConditionKey> {
-    let binary =
+    let mut binary =
         |operator, left: &Bitvector32Term, right: &Bitvector32Term| -> Option<AlphaConditionKey> {
             Some(AlphaConditionKey::Binary(
                 operator,
-                alpha_bitvector_key(left, bindings)?,
-                alpha_bitvector_key(right, bindings)?,
+                alpha_bitvector_key(left, bindings, next_binder)?,
+                alpha_bitvector_key(right, bindings, next_binder)?,
             ))
         };
     Some(match condition {
@@ -591,12 +643,12 @@ fn alpha_condition_key(
             binary(AlphaConditionBinaryOp::ShiftLeftOverflows, left, right)?
         }
         ConditionTerm::PointerOffsetEqual(left, right) => AlphaConditionKey::PointerOffsetEqual(
-            alpha_pointer_offset_key(left, bindings)?,
-            alpha_pointer_offset_key(right, bindings)?,
+            alpha_pointer_offset_key(left, bindings, next_binder)?,
+            alpha_pointer_offset_key(right, bindings, next_binder)?,
         ),
         ConditionTerm::PointerEqual(left, right) => AlphaConditionKey::PointerEqual(
-            alpha_pointer_key(left, bindings)?,
-            alpha_pointer_key(right, bindings)?,
+            alpha_pointer_key(left, bindings, next_binder)?,
+            alpha_pointer_key(right, bindings, next_binder)?,
         ),
     })
 }
@@ -616,9 +668,10 @@ fn alpha_proposition_key(
         Some((left, right))
     };
     Some(match proposition {
-        Proposition::ConditionIs(condition, value) => {
-            AlphaPropositionKey::Condition(alpha_condition_key(condition, bindings)?, *value)
-        }
+        Proposition::ConditionIs(condition, value) => AlphaPropositionKey::Condition(
+            alpha_condition_key(condition, bindings, next_binder)?,
+            *value,
+        ),
         Proposition::And(left, right) => {
             let (left, right) = binary(left, right, bindings, next_binder)?;
             AlphaPropositionKey::And(left, right)

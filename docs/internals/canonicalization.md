@@ -107,6 +107,15 @@ refers to one through a snapshot form such as `at(statement(3).entry, x)` or
   load variable for it are therefore one vertex, one affine atom, one bound
   entry, and one fact. This keying is deterministic and assumption-free, so
   exact checking is unaffected.
+- The quantified-fact index uses an alpha-canonical structural key: logical
+  binder identities and the accumulator/item binders inside a `range_fold`
+  body are assigned deterministic ordinals while the key is built. Universal
+  facts with the same shape therefore share an index entry even when lowering
+  gave their binders different variable identities. Target-guided universal
+  specialization can use matching signed-order, overflow, equality, and
+  pointer conditions to propose symbolic arguments; each proposed argument
+  and every substituted guard still needs an ordinary checked derivation
+  before the fact is retained.
 - The arithmetic provers join by canonical form: the memory-resolution
   equality's deep arm compares full canonical forms, the increment and
   decrement overflow helpers match bases canonically, and

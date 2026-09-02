@@ -1165,6 +1165,7 @@ pub(crate) fn assumptions_for_direct_fact_transport(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::proof::facts::ProofFacts;
     use crate::kernel::proof::quantified_equivalence_index_key;
     use crate::kernel::{
         CMemory, CMemoryRange, CResource, CValue, Pointer, PointerBlock, PointerOffsetTerm,
@@ -1363,6 +1364,49 @@ mod tests {
             quantified_equivalence_index_key(&written)
         );
         assert!(quantified_binder_equivalent(&left, &renamed));
+    }
+
+    #[test]
+    fn quantified_check_key_canonicalizes_range_fold_binders() {
+        let universal = |index: Variable, accumulator: Variable, item: Variable| {
+            let fold = Bitvector32Term::range_fold(
+                Bitvector32Term::Variable(index),
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(index),
+                    Bitvector32Term::Constant(4),
+                ),
+                Bitvector32Term::Constant(0),
+                accumulator,
+                item,
+                Bitvector32Term::add(
+                    Bitvector32Term::Variable(accumulator),
+                    Bitvector32Term::Variable(item),
+                ),
+            );
+            Proposition::ForAll {
+                var: index,
+                sort: Sort::CInt32,
+                body: Box::new(Proposition::ConditionIs(
+                    ConditionTerm::equal(fold, Bitvector32Term::Constant(0)),
+                    true,
+                )),
+            }
+        };
+
+        let left = universal(Variable(30_000), Variable(30_001), Variable(30_002));
+        let renamed = universal(Variable(40_000), Variable(40_001), Variable(40_002));
+        assert_eq!(
+            quantified_equivalence_index_key(&left),
+            quantified_equivalence_index_key(&renamed),
+            "range-fold binders should be alpha-equivalent in quantified fact keys"
+        );
+
+        let facts = ProofFacts::from_ordered(std::slice::from_ref(&left));
+        assert_eq!(
+            facts.matching_quantified_fact(&renamed),
+            Some(left),
+            "the alpha-equivalent range-fold fact should be found through its index"
+        );
     }
 
     /// The perpetual-service `fold(service(owner))` near-miss: the body's

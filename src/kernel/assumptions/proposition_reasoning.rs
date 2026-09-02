@@ -3242,6 +3242,99 @@ impl PureFactContext {
                 }
             }
         }
+        fn collect_condition_candidates(
+            pattern: &ConditionTerm,
+            target: &ConditionTerm,
+            bound: Variable,
+            candidates: &mut BTreeSet<Bitvector32Term>,
+        ) {
+            match (pattern, target) {
+                (
+                    ConditionTerm::Bitvector32SignedLessThan(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedLessThan(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedLessEqual(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedLessEqual(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedGreaterThan(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedGreaterThan(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedGreaterEqual(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedGreaterEqual(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedAddOverflows(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedAddOverflows(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedSubtractOverflows(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedMultiplyOverflows(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedMultiplyOverflows(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedDivideOverflows(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedDivideOverflows(target_left, target_right),
+                )
+                | (
+                    ConditionTerm::Bitvector32SignedShiftLeftOverflows(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32SignedShiftLeftOverflows(target_left, target_right),
+                ) => {
+                    collect_term_candidates(pattern_left, target_left, bound, candidates);
+                    collect_term_candidates(pattern_right, target_right, bound, candidates);
+                }
+                (
+                    ConditionTerm::Bitvector32Equal(pattern_left, pattern_right),
+                    ConditionTerm::Bitvector32Equal(target_left, target_right),
+                ) => {
+                    collect_term_candidates(pattern_left, target_left, bound, candidates);
+                    collect_term_candidates(pattern_right, target_right, bound, candidates);
+                    collect_term_candidates(pattern_left, target_right, bound, candidates);
+                    collect_term_candidates(pattern_right, target_left, bound, candidates);
+                }
+                (
+                    ConditionTerm::PointerOffsetEqual(pattern_left, pattern_right),
+                    ConditionTerm::PointerOffsetEqual(target_left, target_right),
+                ) => {
+                    collect_offset_candidates(pattern_left, target_left, bound, candidates);
+                    collect_offset_candidates(pattern_right, target_right, bound, candidates);
+                    collect_offset_candidates(pattern_left, target_right, bound, candidates);
+                    collect_offset_candidates(pattern_right, target_left, bound, candidates);
+                }
+                (
+                    ConditionTerm::PointerEqual(pattern_left, pattern_right),
+                    ConditionTerm::PointerEqual(target_left, target_right),
+                ) => {
+                    collect_pointer_candidates(pattern_left, target_left, bound, candidates);
+                    collect_pointer_candidates(pattern_right, target_right, bound, candidates);
+                    collect_pointer_candidates(pattern_left, target_right, bound, candidates);
+                    collect_pointer_candidates(pattern_right, target_left, bound, candidates);
+                }
+                _ => {}
+            }
+        }
+        fn collect_proposition_condition_candidates(
+            proposition: &Proposition,
+            target: &ConditionTerm,
+            bound: Variable,
+            candidates: &mut BTreeSet<Bitvector32Term>,
+        ) {
+            match proposition {
+                Proposition::ConditionIs(pattern, _) => {
+                    collect_condition_candidates(pattern, target, bound, candidates)
+                }
+                Proposition::And(left, right) => {
+                    collect_proposition_condition_candidates(left, target, bound, candidates);
+                    collect_proposition_condition_candidates(right, target, bound, candidates);
+                }
+                _ => {}
+            }
+        }
         let mut candidates = BTreeSet::new();
         let mut variables = BTreeSet::new();
         collect_condition_bitvector_variables(condition, &mut variables);
@@ -3250,19 +3343,7 @@ impl PureFactContext {
             Proposition::Implies(_, conclusion) => conclusion.as_ref(),
             conclusion => conclusion,
         };
-        if let (
-            Proposition::ConditionIs(
-                ConditionTerm::Bitvector32Equal(pattern_left, pattern_right),
-                _,
-            ),
-            ConditionTerm::Bitvector32Equal(target_left, target_right),
-        ) = (conclusion, condition)
-        {
-            collect_term_candidates(pattern_left, target_left, var, &mut candidates);
-            collect_term_candidates(pattern_right, target_right, var, &mut candidates);
-            collect_term_candidates(pattern_left, target_right, var, &mut candidates);
-            collect_term_candidates(pattern_right, target_left, var, &mut candidates);
-        }
+        collect_proposition_condition_candidates(conclusion, condition, var, &mut candidates);
         candidates
     }
 

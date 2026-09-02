@@ -2635,6 +2635,62 @@ fn quantified_loadability_fact_certifies_an_instantiated_load() {
 }
 
 #[test]
+fn quantified_signed_condition_fact_certifies_a_symbolic_index() {
+    let fact_index = Variable(2_110_000);
+    let target_index = Variable(2_110_001);
+    let length = Bitvector32Term::Variable(Variable(2_110_002));
+    let guard = |index: Variable| {
+        Proposition::And(
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(0),
+                    Bitvector32Term::Variable(index),
+                ),
+                true,
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(Bitvector32Term::Variable(index), length.clone()),
+                true,
+            )),
+        )
+    };
+    let fact = forall_int32(
+        fact_index,
+        Proposition::Implies(
+            Box::new(guard(fact_index)),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Variable(fact_index),
+                    Bitvector32Term::Constant(1),
+                ),
+                true,
+            )),
+        ),
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(fact.clone())
+        .assume_proposition(guard(target_index));
+    let target = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Variable(target_index),
+            Bitvector32Term::Constant(1),
+        ),
+        true,
+    );
+
+    let derivation = assumptions
+        .derive_simp_proposition(&target)
+        .expect("a universal with symbolic bounds should specialize at the target index");
+    let (selected, argument, guards) = derivation
+        .forall_int32_instantiation()
+        .expect("the specialization should retain its universal evidence");
+    assert_eq!(selected, &fact);
+    assert_eq!(argument, &Bitvector32Term::Variable(target_index));
+    assert_eq!(guards.len(), 2);
+    assert!(derivation.check(&assumptions));
+}
+
+#[test]
 fn quantified_atomic_derivation_retains_its_specialization_and_guards() {
     let memory = CMemory::new();
     let data = Pointer {
