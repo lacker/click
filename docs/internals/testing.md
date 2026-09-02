@@ -65,7 +65,10 @@ cargo test --test examples
 Prover regressions usually manifest as hangs rather than failures, so the
 suite has a hard per-test time budget enforced by cargo-nextest. Install it
 once with `cargo install cargo-nextest --locked` (or `brew install
-cargo-nextest`), then run:
+cargo-nextest`). The gate also renders the documentation with the pinned
+mdBook, installed once per machine into a root shared by every worktree with
+`scripts/install-tools.sh`; `scripts/check.sh` only looks tools up and never
+reaches the network. Then run:
 
 ```sh
 cargo nextest run

@@ -61,7 +61,14 @@ lives in [docs/](docs/). Start with [Click documentation](docs/index.md), which
 organizes the site into Technical reference, Concepts, and Internals. A future
 human-written guide will remain a separate work.
 
-The site uses the repository-pinned mdBook version. Serve it locally with:
+The site uses the repository-pinned mdBook version. Install it once per
+machine (the only step that needs the network) with:
+
+```sh
+scripts/install-tools.sh
+```
+
+Then serve the site locally with:
 
 ```sh
 scripts/mdbook-serve.sh
@@ -69,7 +76,8 @@ scripts/mdbook-serve.sh
 
 This builds the site, serves it at `http://localhost:3000`, and rebuilds on
 changes. `scripts/mdbook-build.sh` writes static output to
-`target/click-docs/`.
+`target/click-docs/`. The tool lives in a root shared by every checkout and
+worktree (`scripts/tools.sh`), so the gate never installs it.
 
 High-value entry points:
 

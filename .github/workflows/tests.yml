@@ -19,6 +19,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # The documentation tooling is installed once into the shared tool
+      # root (`scripts/tools.sh`) and cached by version; the gate itself
+      # never installs anything or touches the network.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/click/tools
+          key: ${{ runner.os }}-click-tools-${{ hashFiles('scripts/tools.sh') }}
+      - run: scripts/install-tools.sh
       # The same script a developer runs locally, so the two cannot drift.
       - run: ./scripts/check.sh
         env:
