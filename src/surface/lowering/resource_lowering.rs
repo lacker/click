@@ -755,15 +755,10 @@ pub(in crate::surface) fn memory_range_loadable_prop(
     range: &CMemoryRange,
     element_width: u32,
 ) -> Proposition {
-    let element_count = bitvector32_subtract(range.end().clone(), range.start().clone());
-    let bytes = bitvector32_multiply(element_count, Bitvector32Term::Constant(element_width));
+    let (base, bytes) = range.byte_footprint_for_element_width(element_width);
     Proposition::CMemoryLoadable {
         memory: memory.clone(),
-        base: offset_pointer_by_elements(
-            range.base().clone(),
-            range.start().clone(),
-            element_width,
-        ),
+        base,
         bytes,
     }
 }

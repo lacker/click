@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn memory_range_can_be_framed_as_a_byte_footprint() {
+    let base = Pointer {
+        block: "byte-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let range = CMemoryRange::new(
+        base.clone(),
+        Bitvector32Term::Constant(2),
+        Bitvector32Term::Constant(5),
+    );
+
+    let (byte_base, byte_length) = range.byte_footprint_for_element_width(1);
+    assert_eq!(
+        byte_base,
+        base.offset_by_elements(Bitvector32Term::Constant(2), 1)
+    );
+    assert_eq!(byte_length, Bitvector32Term::Constant(3));
+
+    let (int32_base, int32_length) = range.byte_footprint_for_element_width(4);
+    assert_eq!(
+        int32_base,
+        base.offset_by_elements(Bitvector32Term::Constant(2), 4)
+    );
+    assert_eq!(int32_length, Bitvector32Term::Constant(12));
+}
+
+#[test]
 fn structural_range_offset_precedes_proof_aware_pointer_resolution() {
     let base = Pointer {
         block: PointerBlock::ExternalArgument,

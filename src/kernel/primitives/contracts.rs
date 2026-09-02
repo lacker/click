@@ -351,6 +351,27 @@ impl CMemoryRange {
         Self { base, start, end }
     }
 
+    /// Returns this element-indexed range as a physical byte footprint.
+    ///
+    /// `CMemoryRange` deliberately keeps its public bounds in element units:
+    /// those are the units used by resource clauses such as `p[0..n]`.
+    /// Callers that need to compare the actual memory occupied by a range can
+    /// use this bounded, derived view without introducing a second resource
+    /// representation. The returned pointer is the first byte of the range;
+    /// the second value is its byte length.
+    pub(crate) fn byte_footprint_for_element_width(
+        &self,
+        element_width: u32,
+    ) -> (Pointer, Bitvector32Term) {
+        assert!(element_width > 0, "memory element width must be positive");
+        let element_count = Bitvector32Term::subtract(self.end.clone(), self.start.clone());
+        (
+            self.base
+                .offset_by_elements(self.start.clone(), element_width),
+            Bitvector32Term::multiply(element_count, Bitvector32Term::Constant(element_width)),
+        )
+    }
+
     pub fn base(&self) -> &Pointer {
         &self.base
     }
