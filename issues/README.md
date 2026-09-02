@@ -80,4 +80,3 @@ Proof language and tooling:
 
 - [Lift proof-shape restrictions that force restructuring](proof-shape-restrictions.md)
 - [Export a machine-checkable proof artifact](exportable-certificate.md)
-- [Split the two expansion census unit tests](split-expansion-census-tests.md)

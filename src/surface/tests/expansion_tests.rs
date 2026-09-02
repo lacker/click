@@ -10297,58 +10297,79 @@ fn bound_universal_outcome_retains_instantiation_and_transport() {
         .expect("the retained bound universal proof should check independently");
 }
 
-#[test]
-fn bound_universal_fixture_census_has_no_outcome_fallbacks() {
-    for (filename, function) in [
-        ("bubble_pass3_max_suffix.md", "bubble_pass3"),
-        ("bubble_sort3_two_pass_sorted.md", "bubble_sort3_two_pass"),
-    ] {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("mdtests")
-            .join(filename);
-        let source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
-        let mdtest = crate::cli::parse_mdtest(&path, &source)
-            .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
-        let click_source = mdtest
-            .click_source
-            .as_deref()
-            .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
-        let c_sources = mdtest
-            .c_sources
-            .iter()
-            .map(|(name, source)| (name.as_str(), source.as_str()))
-            .collect::<Vec<_>>();
-        let (verified, events) =
-            crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
-        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
-        let fallback_events = events
-            .iter()
-            .filter(|event| {
-                matches!(
-                    event,
-                    crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                        if name == "outcome simp legacy exit planning"
-                            || name == "outcome simp compatibility construction"
-                )
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            fallback_events.is_empty(),
-            "`{}` entered outcome fallback planning: {fallback_events:#?}",
-            path.display()
-        );
+const BOUND_UNIVERSAL_FIXTURE_CASES: &[(&str, &str)] = &[
+    ("bubble_pass3_max_suffix.md", "bubble_pass3"),
+    ("bubble_sort3_two_pass_sorted.md", "bubble_sort3_two_pass"),
+];
 
-        let expanded =
-            expand_c0_claim_source(click_source, &c_sources, function, CProofClaim::Grouped)
-                .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
-        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
-            panic!(
-                "expanded proof from `{}` failed independent verification: {error:?}",
-                path.display()
+fn assert_bound_universal_fixture_has_no_outcome_fallbacks(filename: &str, function: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("mdtests")
+        .join(filename);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let mdtest = crate::cli::parse_mdtest(&path, &source)
+        .unwrap_or_else(|error| panic!("failed to parse `{}`: {error}", path.display()));
+    let click_source = mdtest
+        .click_source
+        .as_deref()
+        .unwrap_or_else(|| panic!("`{}` has no Click source", path.display()));
+    let c_sources = mdtest
+        .c_sources
+        .iter()
+        .map(|(name, source)| (name.as_str(), source.as_str()))
+        .collect::<Vec<_>>();
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(click_source, &c_sources));
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    let fallback_events = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+                        || name == "outcome simp compatibility construction"
             )
-        });
-    }
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        fallback_events.is_empty(),
+        "`{}` entered outcome fallback planning: {fallback_events:#?}",
+        path.display()
+    );
+
+    let expanded = expand_c0_claim_source(click_source, &c_sources, function, CProofClaim::Grouped)
+        .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+    verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+        panic!(
+            "expanded proof from `{}` failed independent verification: {error:?}",
+            path.display()
+        )
+    });
+}
+
+#[test]
+fn bound_universal_bubble_pass3_max_suffix_has_no_outcome_fallbacks() {
+    let (filename, function) = BOUND_UNIVERSAL_FIXTURE_CASES[0];
+    assert_bound_universal_fixture_has_no_outcome_fallbacks(filename, function);
+}
+
+#[test]
+fn bound_universal_bubble_sort3_two_pass_sorted_has_no_outcome_fallbacks() {
+    let (filename, function) = BOUND_UNIVERSAL_FIXTURE_CASES[1];
+    assert_bound_universal_fixture_has_no_outcome_fallbacks(filename, function);
+}
+
+#[test]
+fn bound_universal_fixture_split_covers_original_census() {
+    assert_eq!(
+        BOUND_UNIVERSAL_FIXTURE_CASES,
+        &[
+            ("bubble_pass3_max_suffix.md", "bubble_pass3"),
+            ("bubble_sort3_two_pass_sorted.md", "bubble_sort3_two_pass"),
+        ]
+    );
 }
 
 #[test]
@@ -10438,85 +10459,200 @@ fn snapshot_and_post_call_transport_fixtures_have_no_outcome_fallbacks() {
     }
 }
 
-#[test]
-fn resource_example_pipelines_have_no_outcome_fallbacks() {
+const RESOURCE_EXAMPLE_PIPELINE_CASES: &[(&str, &str, &str, &str)] = &[
+    (
+        "linked-list",
+        "linked_list.click",
+        "list_roundtrip",
+        "rewrite(at(statement(5).entry, observed) == at(statement(5).entry, node->value));",
+    ),
+    (
+        "input-cursor",
+        "input_cursor.click",
+        "input_cursor_take",
+        "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
+    ),
+    (
+        "owned-segmented-buffer",
+        "owned_segmented_buffer.click",
+        "owned_segmented_buffer_swap",
+        "apply(int32_successor_le_implies_lt(0, owner->first_len)) using {",
+    ),
+    (
+        "owned-string",
+        "owned_string.click",
+        "owned_string_init",
+        "rewrite(owner->cap == capacity);",
+    ),
+    (
+        "recursive-zero-list",
+        "recursive_zero_list.click",
+        "zero_list_pipeline",
+        "fold(zero_list(first));",
+    ),
+    (
+        "vector-push",
+        "vector_push.click",
+        "vector_push",
+        "apply(int32_increment_preserves_order(",
+    ),
+];
+
+fn assert_resource_example_pipeline_has_no_outcome_fallbacks(
+    project: &str,
+    sidecar: &str,
+    function: &str,
+    retained_step: &str,
+) {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for (project, sidecar, function, retained_step) in [
-        (
-            "linked-list",
-            "linked_list.click",
-            "list_roundtrip",
-            "rewrite(at(statement(5).entry, observed) == at(statement(5).entry, node->value));",
-        ),
-        (
-            "input-cursor",
-            "input_cursor.click",
-            "input_cursor_take",
-            "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
-        ),
-        (
-            "owned-segmented-buffer",
-            "owned_segmented_buffer.click",
-            "owned_segmented_buffer_swap",
-            "apply(int32_successor_le_implies_lt(0, owner->first_len)) using {",
-        ),
-        (
-            "owned-string",
-            "owned_string.click",
-            "owned_string_init",
-            "rewrite(owner->cap == capacity);",
-        ),
-        (
-            "recursive-zero-list",
-            "recursive_zero_list.click",
-            "zero_list_pipeline",
-            "fold(zero_list(first));",
-        ),
-        (
-            "vector-push",
-            "vector_push.click",
-            "vector_push",
-            "apply(int32_increment_preserves_order(",
-        ),
-    ] {
-        let path = manifest.join("examples").join(project).join(sidecar);
-        let click_source = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
-        let sources = crate::cli::read_verifying_sources(&path, &click_source)
-            .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
-        let c_sources = crate::cli::source_refs(&sources);
+    let path = manifest.join("examples").join(project).join(sidecar);
+    let click_source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read `{}`: {error}", path.display()));
+    let sources = crate::cli::read_verifying_sources(&path, &click_source)
+        .unwrap_or_else(|error| panic!("failed to load `{}`: {error}", path.display()));
+    let c_sources = crate::cli::source_refs(&sources);
 
-        let (verified, events) =
-            crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
-        verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
-        let fallback_events = events
-            .iter()
-            .filter(|event| {
-                matches!(
-                    event,
-                    crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
-                        if name == "outcome simp legacy exit planning"
-                            || name == "outcome simp compatibility construction"
-                )
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            fallback_events.is_empty(),
-            "`{}` entered outcome fallback planning: {fallback_events:#?}",
-            path.display()
-        );
-
-        let expanded =
-            expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
-                .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
-        assert!(expanded.contains(retained_step), "{expanded}");
-        verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
-            panic!(
-                "expanded proof from `{}` failed independent verification: {error:?}",
-                path.display()
+    let (verified, events) =
+        crate::instrumentation::collect(|| verify_c0_sources(&click_source, &c_sources));
+    verified.unwrap_or_else(|error| panic!("`{}` failed: {error:?}", path.display()));
+    let fallback_events = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                crate::instrumentation::VerificationEvent::OperationFinished { name, .. }
+                    if name == "outcome simp legacy exit planning"
+                        || name == "outcome simp compatibility construction"
             )
-        });
-    }
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        fallback_events.is_empty(),
+        "`{}` entered outcome fallback planning: {fallback_events:#?}",
+        path.display()
+    );
+
+    let expanded =
+        expand_c0_claim_source(&click_source, &c_sources, function, CProofClaim::Grouped)
+            .unwrap_or_else(|error| panic!("failed to expand `{}`: {error:?}", path.display()));
+    assert!(expanded.contains(retained_step), "{expanded}");
+    verify_c0_sources(&expanded, &c_sources).unwrap_or_else(|error| {
+        panic!(
+            "expanded proof from `{}` failed independent verification: {error:?}",
+            path.display()
+        )
+    });
+}
+
+#[test]
+fn linked_list_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[0];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn input_cursor_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[1];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn owned_segmented_buffer_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[2];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn owned_string_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[3];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn recursive_zero_list_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[4];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn vector_push_pipeline_has_no_outcome_fallbacks() {
+    let (project, sidecar, function, retained_step) = RESOURCE_EXAMPLE_PIPELINE_CASES[5];
+    assert_resource_example_pipeline_has_no_outcome_fallbacks(
+        project,
+        sidecar,
+        function,
+        retained_step,
+    );
+}
+
+#[test]
+fn resource_example_pipeline_split_covers_original_census() {
+    assert_eq!(
+        RESOURCE_EXAMPLE_PIPELINE_CASES,
+        &[
+            (
+                "linked-list",
+                "linked_list.click",
+                "list_roundtrip",
+                "rewrite(at(statement(5).entry, observed) == at(statement(5).entry, node->value));",
+            ),
+            (
+                "input-cursor",
+                "input_cursor.click",
+                "input_cursor_take",
+                "transport(at(statement(2).entry, loadable(old(owner->data[0..owner->len])))",
+            ),
+            (
+                "owned-segmented-buffer",
+                "owned_segmented_buffer.click",
+                "owned_segmented_buffer_swap",
+                "apply(int32_successor_le_implies_lt(0, owner->first_len)) using {",
+            ),
+            (
+                "owned-string",
+                "owned_string.click",
+                "owned_string_init",
+                "rewrite(owner->cap == capacity);",
+            ),
+            (
+                "recursive-zero-list",
+                "recursive_zero_list.click",
+                "zero_list_pipeline",
+                "fold(zero_list(first));",
+            ),
+            (
+                "vector-push",
+                "vector_push.click",
+                "vector_push",
+                "apply(int32_increment_preserves_order(",
+            ),
+        ]
+    );
 }
 
 #[test]
