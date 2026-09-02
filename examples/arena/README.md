@@ -21,7 +21,9 @@ The intended Click proof will give each live region exclusive access to its
 backing interval, make `arena_free` consume that authority, and require every
 region to be returned before `arena_destroy` can consume the arena.
 
-`arena.click` currently keeps every source in the C0 parser gate but does not
-yet declare contracts. This is intentionally a C-only checkpoint; the open
-arena resource-ownership issue defines the proof work rather than treating the
-parser-only sidecar as verification of the allocator.
+`arena.click` keeps every source in the C0 parser gate and declares checked
+contracts for `arena_region_length`, `arena_read`, and `arena_write` over the
+`arena_region` and shared `arena_metadata` resources. The allocator entry
+points are still unverified; the open arena resource-ownership issue defines
+that proof work rather than treating the parser-only sources as verification
+of the allocator.

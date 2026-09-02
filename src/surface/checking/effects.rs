@@ -831,10 +831,23 @@ pub(in crate::surface) fn evaluate_effect_segment(
     // without indexing the proof's accumulated snapshot facts; fall back to
     // contextual equality reasoning only when the expression actually needs
     // it.
-    evaluate(&PureFactContext::new()).or_else(|_| {
-        let assumptions = assumptions_from_propositions(available_pure_facts);
-        evaluate(&assumptions)
-    })
+    evaluate(&PureFactContext::new())
+        .or_else(|_| {
+            let assumptions = assumptions_from_propositions(available_pure_facts);
+            evaluate(&assumptions)
+        })
+        .or_else(|_| {
+            // A footprint may name a place inside a composite the contract
+            // owns but the entry state keeps folded (a field of a contained
+            // unit, say). Its loads are contract loads: name them
+            // symbolically, as requirement lowering does; certification
+            // re-evaluates the footprint against the expanded entry
+            // resources and is the authority on their loadability.
+            let assumptions = assumptions_from_propositions(available_pure_facts)
+                .allow_symbolic_contract_loads()
+                .prefer_symbolic_external_loads();
+            evaluate(&assumptions)
+        })
 }
 
 pub(in crate::surface) fn evaluate_requirement_segment(

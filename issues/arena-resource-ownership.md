@@ -33,14 +33,13 @@ separation before accepting the cell. `arena_read` is the end-to-end
 regression; a focused kernel test covers dependent indexed ranges in compact
 resource compositions.
 
-The next bounded blocker is `arena_write`. Its unfolded local execution proof
-can perform the indexed store and restore the region resource, but the hidden
-second whole-function execution currently fails to reproduce that resource
-path. This is now tracked as the general
-[double-execution issue](double-execution.md): retain the proof object's typed
-execution evidence rather than teaching a second executor to imitate its
-resource representation. Do not add redundant accessor preconditions or
-weaken the mutable footprint to route around it.
+`arena_write` now verifies with a one-cell mutable footprint through the
+same scoped opens as `arena_read`; the hidden second whole-function
+execution that used to fail to reproduce its resource path is gone (the
+[double-execution issue](double-execution.md) retains the proof object's
+typed execution evidence instead). The footprint evaluation had to learn to
+name a load through a folded contained unit symbolically. The next bounded
+blockers are `arena_free`, `arena_alloc`, `arena_init`, and `arena_destroy`.
 
 ## Violated invariant
 

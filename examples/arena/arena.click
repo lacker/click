@@ -102,3 +102,55 @@ int32 arena_read(struct region* region, int32 index) {
         }
     }
 }
+
+void arena_write(struct region* region, int32 index, int32 value) {
+    requires 0 <= index;
+    requires defined(region->start + index) and
+        region->start + index < region->end;
+    owns arena_region(region);
+    mutable region->arena->data[region->start + index..region->start + index + 1];
+
+    ensures region->arena->data[region->start + index] == value;
+} by {
+    observe(arena_region(region));
+    observe(arena_metadata(region->arena));
+    open(arena_region(region)) {
+        open(arena_metadata(region->arena)) {
+            have defined(region->start + index) by {
+                simp() using {
+                    defined(region->start + index) and
+                        region->start + index < region->end;
+                }
+            }
+            have region->start + index < region->end by {
+                simp() using {
+                    defined(region->start + index) and
+                        region->start + index < region->end;
+                }
+            }
+            have 0 <= index by {
+                assumption();
+            }
+            have region->start <= region->start + index by {
+                apply(int32_add_nonnegative_right_is_at_least_left(
+                    region->start,
+                    index
+                )) using {
+                    0 <= index;
+                    defined(region->start + index);
+                }
+            }
+            have region->start + index + 1 <= region->end by {
+                apply(int32_increment_upper_bound(
+                    region->start + index,
+                    region->end
+                )) using {
+                    region->start + index < region->end;
+                }
+            }
+            execute();
+            frame();
+            simp();
+        }
+    }
+}

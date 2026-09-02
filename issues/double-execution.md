@@ -25,9 +25,8 @@ Neither former fallback executes a body any more:
    entry-state component that blocked reuse (slice 8). Only a kernel caller
    that supplies no artifact gets the kernel's own body execution.
 
-What remains is the reconciliation in claim finishing between the sealed
-path's outcome and the outcome snapshot the proof's outcome goals hold (the
-second pass of slice 7) and the arena acceptance contract (slice 9).
+Every slice has landed; what remains is the final acceptance pass below
+and the vestigial entry-derivation machinery noted under slice 8.
 
 The proof object already retains statement theorems, checked branch structure,
 proof-case partitions, resource representation transitions, and function-entry
@@ -284,7 +283,7 @@ and 10 to 14), which the second pass of slice 3 owns. Claim finishing now
 reruns a body 13 times over the mdtests, from 100, and 14 times over the
 examples, from 48.
 
-### 7. Delete the fallback and the alignment (first pass landed 2026-09-02)
+### 7. Delete the fallback and the alignment (landed 2026-09-02)
 
 `cached_independent_execution`, its thread-local cache and clear hook, the
 `certification_cache`, and the per-group independent execution are gone
@@ -296,14 +295,14 @@ into groups) is replaced by index identity: claim finishing seals once and
 finishes every candidate against its own sealed path. Claim finishing never
 executes a body again.
 
-Still to delete: `certify_c_function_execution_path_resource_representation`
-and its cache, and `describe_function_outcome_delta`. They reconcile the
-sealed path's outcome (the body's under the contract's exit rule) with the
-outcome snapshot the proof's outcome goals hold (the body's raw outcome, or
-the framed one). The right order is to derive the outcome goals from the
-sealed outcome so the two are one value, then delete the reconciliation;
-that touches `split_function_outcomes` and the implicit-close handling in
-the drain and is its own slice.
+Second pass (landed 2026-09-02):
+`certify_c_function_execution_path_resource_representation`, its cache, and
+`describe_function_outcome_delta` are deleted. The sealed path's outcome,
+the body's under the contract's exit rule, is the specification's outcome on
+every path; the proof's own outcome snapshot differs from it only in ghost
+resource representation, and a claim completed at that snapshot is bound to
+the sealed path by result, memory, and locals (slice 8), so nothing
+reconciles the two outcomes any more.
 
 The remaining kernel-API-only audit bugs (claim coverage and injected entry
 facts in [contract-rule-trust-boundary.md](contract-rule-trust-boundary.md),
@@ -412,11 +411,23 @@ Then delete the `(None, None, None)` body-execution arm: an artifact that
 still cannot be reused is a local evidence error naming the premise or state
 component that blocked it.
 
-### 9. Arena acceptance contract
+### 9. Arena acceptance contract (landed 2026-09-02)
 
-Add the intended `arena_write` contract to `examples/arena/arena.click`, keeping
-the existing C unchanged and its mutable footprint narrow. Its nested resource
-scopes must verify with zero independent whole-body executions.
+`examples/arena/arena.click` now carries the `arena_write` contract: it owns
+`arena_region(region)`, its mutable footprint is the one written cell
+`region->arena->data[region->start + index..region->start + index + 1]`, and
+its proof opens the region and the shared metadata scopes, establishes the
+index bounds inside them, executes, and frames. The C is unchanged. With
+every fallback deleted there is no independent whole-body execution to count;
+the example verifies through the sealed claim proofs alone.
+
+The footprint exposed one more surface gap: the effect check evaluated a
+mutable segment at the folded entry state, where `region->arena->data` (a
+field of the metadata unit contained in the region) is not loadable, and
+failed with a missing loadability fact. Footprint evaluation now falls back
+to naming such loads symbolically, as requirement lowering does; contract
+certification re-evaluates the footprint against the expanded entry
+resources and remains the authority on their loadability.
 
 ## Not in scope
 
