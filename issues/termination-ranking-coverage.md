@@ -44,6 +44,6 @@ non-decreasing must expect `fail: ... does not decrease`.
   it, in keeping with the untrusted-plan design in `docs/internals/kernel.md`.
 - The mdtests above pass; `scripts/check.sh` passes.
 
-Related: [termination-measure-aliasing.md](termination-measure-aliasing.md)
-must land first; a richer measure language widens that hole if aliasing
-stays unchecked.
+Note: the ranking rejects any measure whose address is taken
+(`reject_address_escaped_measure` in `src/kernel/termination.rs`); a richer
+measure language must keep that check for every variable a measure mentions.

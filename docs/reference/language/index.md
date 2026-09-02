@@ -122,9 +122,13 @@ The numeric proof shape is also deliberately small. A function measure must be
 one `int32` variable. A recursive edge passes `measure - K`, and a loop back
 edge updates `measure = measure - K`, for a positive constant `K`; the path
 guard must make the resulting value nonnegative. Mutually recursive functions
-all declare their corresponding numeric parameter. Structural measures do not
-yet support mutual C recursion. Nested rankings, mixed numeric/structural
-tuples, and compound expressions are rejected rather than guessed.
+all declare their corresponding numeric parameter. A numeric measure must also
+stay a plain variable: if the function takes its address anywhere
+(`&measure`), a store through that pointer, directly or inside a callee,
+could change the measure without a ranked update, so the plan is rejected.
+Structural measures do not yet support mutual C recursion. Nested rankings,
+mixed numeric/structural tuples, and compound expressions are rejected rather
+than guessed.
 
 Supplying any C `decreases` clause asks Click to certify termination of the
 whole function, so every reachable loop and recursive component must be ranked

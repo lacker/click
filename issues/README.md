@@ -23,7 +23,7 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 15
+## Soundness issues: 14
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
@@ -35,7 +35,6 @@ Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
 - [Decide pointer-offset equality in the offset model, not modulo 2^32](pointer-offset-wrap.md)
 - [Check the witnessing load's snapshot before certifying loadability](loadability-witness-snapshot.md)
-- [Account for memory and call writes to the termination measure](termination-measure-aliasing.md)
 
 Reachable through the kernel API; the untrusted surface currently masks them
 and [double-execution](double-execution.md) removes that mask:
@@ -47,7 +46,7 @@ and [double-execution](double-execution.md) removes that mask:
 - [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
-## Functionality gaps: 27
+## Functionality gaps: 28
 
 C language coverage:
 
@@ -63,6 +62,7 @@ C language coverage:
 - [Evaluate pointer relational comparison and pointer subtraction](pointer-comparison-and-subtraction.md)
 - [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
+- [Support taking the address of a parameter](address-of-parameter.md)
 - [Placeholder for floating point, function pointers, varargs, volatile, and concurrency](far-horizon-c-features.md)
 - [Verify one unchanged existing-source fixture](audit-existing-c-source-fidelity.md)
 

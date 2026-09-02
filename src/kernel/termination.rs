@@ -578,6 +578,95 @@ fn refined_lower_bound(condition: &CExpression, variable: &str, branch: bool, cu
     direct.unwrap_or(current).max(current)
 }
 
+/// Whether `expression` takes the address of the local `name`.
+fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
+    use CExpression::*;
+    let inner = |body: &CExpression| expression_takes_address_of(body, name);
+    match expression {
+        Value(_) | Variable(_) => false,
+        AddressOf(body) => {
+            matches!(body.as_ref(), Variable(target) if target == name) || inner(body)
+        }
+        PointerOffsetBytes { pointer, .. } | TypedLoad { pointer, .. } => inner(pointer),
+        Not(body) | BitwiseNot(body) | Load(body) => inner(body),
+        LessThan(left, right)
+        | LessEqual(left, right)
+        | GreaterThan(left, right)
+        | GreaterEqual(left, right)
+        | Equal(left, right)
+        | NotEqual(left, right)
+        | And(left, right)
+        | Or(left, right)
+        | Add(left, right)
+        | Subtract(left, right)
+        | Multiply(left, right)
+        | Divide(left, right)
+        | Remainder(left, right)
+        | ShiftLeft(left, right)
+        | ShiftRight(left, right)
+        | BitwiseAnd(left, right)
+        | BitwiseOr(left, right)
+        | BitwiseXor(left, right)
+        | Index(left, right) => inner(left) || inner(right),
+    }
+}
+
+/// Whether any expression in `statement` takes the address of the local
+/// `name`. A local's cell can be written through a pointer only if its
+/// address was taken somewhere in the function, so this is the complete
+/// syntactic condition for "a store or a callee might change this local
+/// without assigning it by name".
+fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
+    let escapes = |expression: &CExpression| expression_takes_address_of(expression, name);
+    match statement {
+        CStatement::Skip | CStatement::Declare { .. } => false,
+        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
+            escapes(expression)
+        }
+        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
+            arguments.iter().any(escapes)
+        }
+        CStatement::HeapAllocate { bytes, .. } => escapes(bytes),
+        CStatement::HeapFree { pointer } => escapes(pointer),
+        CStatement::Assert { condition, .. } => escapes(condition),
+        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
+            escapes(pointer) || escapes(value)
+        }
+        CStatement::Seq(first, second) => {
+            statement_takes_address_of(first, name) || statement_takes_address_of(second, name)
+        }
+        CStatement::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            escapes(condition)
+                || statement_takes_address_of(then_branch, name)
+                || statement_takes_address_of(else_branch, name)
+        }
+        CStatement::While {
+            condition, body, ..
+        } => escapes(condition) || statement_takes_address_of(body, name),
+    }
+}
+
+/// The ranking checkers below are syntactic over assignments by name, so a
+/// measure whose address escapes could be reset through a pointer, directly
+/// or by a callee, without any ranked update. Such measures are rejected.
+fn reject_address_escaped_measure(
+    function_name: &str,
+    measure: &str,
+    body: &CStatement,
+) -> Result<(), CTerminationError> {
+    if statement_takes_address_of(body, measure) {
+        return Err(error(format!(
+            "termination measure `{measure}` in `{function_name}` has its address taken; a store \
+             through that pointer could change the measure without a ranked update"
+        )));
+    }
+    Ok(())
+}
+
 fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
     match statement {
         CStatement::CallAssign { function_name, .. } | CStatement::Call { function_name, .. } => {
@@ -968,6 +1057,9 @@ pub fn c_verified_function_termination_rules(
             let function = functions[name];
             let empty = BTreeMap::new();
             let loop_measures = plans.get(name).map_or(&empty, |plan| &plan.loop_measures);
+            for measure in loop_measures.values() {
+                reject_address_escaped_measure(name, measure, &function.source_body)?;
+            }
             let mut next_loop = 0;
             component_ok &= check_loops(&function.source_body, loop_measures, &mut next_loop)?;
             if loop_measures.keys().any(|index| *index >= next_loop) {
@@ -997,6 +1089,7 @@ pub fn c_verified_function_termination_rules(
                 } else {
                     let index = parameter_indices[name];
                     let measure = &function.parameters[index].name;
+                    reject_address_escaped_measure(name, measure, &function.source_body)?;
                     recursion_paths(
                         &function.source_body,
                         measure,
@@ -1038,4 +1131,68 @@ pub fn c_verified_function_termination_rules(
             function: rule.function.clone(),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod address_escape_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn variable(name: &str) -> CExpression {
+        CExpression::Variable(name.to_string())
+    }
+
+    fn address_of(name: &str) -> CExpression {
+        CExpression::AddressOf(Box::new(variable(name)))
+    }
+
+    #[test]
+    fn store_through_escaped_address_is_detected() {
+        // p = &i; *p = q;
+        let escape = CStatement::Assign {
+            name: "p".to_string(),
+            expression: address_of("i"),
+        };
+        let store = CStatement::Store {
+            pointer: variable("p"),
+            value: variable("q"),
+        };
+        let body = CStatement::Seq(Arc::new(escape), Arc::new(store));
+        assert!(statement_takes_address_of(&body, "i"));
+        assert!(!statement_takes_address_of(&body, "q"));
+        assert!(reject_address_escaped_measure("spin", "i", &body).is_err());
+        assert!(reject_address_escaped_measure("spin", "q", &body).is_ok());
+    }
+
+    #[test]
+    fn helper_call_receiving_the_address_is_detected() {
+        let call = CStatement::Call {
+            function_name: "reset".to_string(),
+            arguments: vec![address_of("n")],
+        };
+        assert!(statement_takes_address_of(&call, "n"));
+        assert!(reject_address_escaped_measure("f", "n", &call).is_err());
+    }
+
+    #[test]
+    fn escape_inside_a_loop_or_branch_body_is_detected() {
+        let escape = CStatement::Assign {
+            name: "p".to_string(),
+            expression: CExpression::Add(Box::new(address_of("n")), Box::new(variable("k"))),
+        };
+        let branch = CStatement::If {
+            condition: variable("c"),
+            then_branch: Box::new(CStatement::Skip),
+            else_branch: Box::new(escape),
+        };
+        let body = CStatement::While {
+            condition: variable("c"),
+            invariant: Vec::new(),
+            invariant_checks: Vec::new(),
+            effect_checks: Vec::new(),
+            body: Box::new(branch),
+        };
+        assert!(statement_takes_address_of(&body, "n"));
+        assert!(!statement_takes_address_of(&body, "c"));
+    }
 }
