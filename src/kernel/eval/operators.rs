@@ -90,6 +90,7 @@ pub(in crate::kernel) fn evaluate_c_add_paths(
             };
 
             paths.extend(apply_c_add(
+                state,
                 left.clone(),
                 right,
                 left_step_width,
@@ -106,6 +107,7 @@ pub(in crate::kernel) fn evaluate_c_add_paths(
 }
 
 pub(in crate::kernel) fn apply_c_add(
+    state: &CState,
     left: CValue,
     right: CValue,
     left_step_width: Option<u32>,
@@ -143,13 +145,15 @@ pub(in crate::kernel) fn apply_c_add(
                 }];
             };
             let offset = canonicalized_offset_index_term(offset, &mut facts);
-            vec![CExpressionPath {
-                outcome: CExpressionOutcome::Value(CValue::Pointer(
-                    pointer.offset_by_elements(offset, byte_width),
-                )),
+            pointer_offset_by_elements_paths(
+                state,
+                pointer,
+                offset,
+                byte_width,
                 facts,
                 obligations,
-            }]
+                assumptions,
+            )
         }
         (offset @ (CValue::Int32(_) | CValue::UInt8(_)), CValue::Pointer(pointer)) => {
             let mut facts = facts;
@@ -166,16 +170,309 @@ pub(in crate::kernel) fn apply_c_add(
                 }];
             };
             let offset = canonicalized_offset_index_term(offset, &mut facts);
-            vec![CExpressionPath {
-                outcome: CExpressionOutcome::Value(CValue::Pointer(
-                    pointer.offset_by_elements(offset, byte_width),
-                )),
+            pointer_offset_by_elements_paths(
+                state,
+                pointer,
+                offset,
+                byte_width,
                 facts,
                 obligations,
-            }]
+                assumptions,
+            )
         }
         _ => vec![c_type_mismatch_expression_path(facts, obligations)],
     }
+}
+
+#[derive(Clone)]
+struct PointerFormationGuard {
+    condition: ConditionTerm,
+    value: bool,
+}
+
+fn pointer_offset_by_elements_paths(
+    state: &CState,
+    pointer: Pointer,
+    offset: Bitvector32Term,
+    byte_width: u32,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    let result = pointer.offset_by_elements(offset.clone(), byte_width);
+    let mut guards = Vec::new();
+
+    // Pointer offsets are exact i64 terms, but the source index is a signed
+    // int32. Once a pointer has a known element index, the next addition must
+    // stay in that signed domain. This catches the cumulative case
+    // `data + INT_MAX + 1`, even though each individual source operand is a
+    // valid int32.
+    if let Some(index) = pointer_index_from_offset(&pointer, byte_width)
+        && index != Bitvector32Term::Constant(0)
+        && offset != Bitvector32Term::Constant(0)
+    {
+        guards.push(PointerFormationGuard {
+            condition: ConditionTerm::signed_add_overflows(index, offset),
+            value: false,
+        });
+    }
+
+    // A resource-backed read may legitimately refer to storage that has not
+    // been materialized in the byte map yet. Let that explicit memory range
+    // extend the concrete materialization bound; it is still only consulted
+    // when the result (including a range endpoint) is provably in the range.
+    let resource_backed =
+        pointer_is_in_memory_resource(state.resources(), assumptions, &facts, &result, byte_width);
+    if !resource_backed {
+        guards.extend(pointer_block_bounds(state, &result, byte_width));
+    }
+
+    apply_pointer_formation_guards(result, guards, facts, obligations, assumptions)
+}
+
+pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
+    state: &CState,
+    pointer: Pointer,
+    bytes: u32,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    let result = pointer.offset_by_bytes(bytes);
+    let guards = pointer_block_bounds(state, &result, 1);
+    apply_pointer_formation_guards(result, guards, facts, obligations, assumptions)
+}
+
+fn pointer_index_from_offset(pointer: &Pointer, byte_width: u32) -> Option<Bitvector32Term> {
+    if pointer.block != PointerBlock::ExternalArgument {
+        return pointer_index_from_offset_term(&pointer.offset, byte_width);
+    }
+
+    // External argument pointers carry a symbolic shared-memory offset, not
+    // an element index from the beginning of an object. Only the additions
+    // structurally introduced after that opaque base participate in the
+    // cumulative-index check. Concrete zero-based test pointers retain the
+    // direct fallback so their first large addition is checked on the next
+    // operation as well.
+    pointer
+        .offset
+        .as_const()
+        .and_then(|offset| pointer_index_from_concrete_offset(offset, byte_width))
+        .or_else(|| pointer_arithmetic_index(&pointer.offset, byte_width))
+}
+
+fn pointer_index_from_offset_term(
+    offset: &PointerOffsetTerm,
+    byte_width: u32,
+) -> Option<Bitvector32Term> {
+    match byte_width {
+        4 => int32_element_index_from_offset(offset),
+        1 => byte_offset_from_pointer_offset(offset),
+        _ => None,
+    }
+}
+
+fn pointer_index_from_concrete_offset(offset: i64, byte_width: u32) -> Option<Bitvector32Term> {
+    match byte_width {
+        4 if offset % 4 == 0 => {
+            let index = offset / 4;
+            (i32::MIN as i64..=i32::MAX as i64)
+                .contains(&index)
+                .then_some(Bitvector32Term::Constant((index as i32) as u32))
+        }
+        1 if (i32::MIN as i64..=i32::MAX as i64).contains(&offset) => {
+            Some(Bitvector32Term::Constant((offset as i32) as u32))
+        }
+        _ => None,
+    }
+}
+
+fn pointer_arithmetic_index(
+    offset: &PointerOffsetTerm,
+    byte_width: u32,
+) -> Option<Bitvector32Term> {
+    let PointerOffsetTerm::Add(left, right) = offset else {
+        return None;
+    };
+    let right = pointer_index_from_offset_term(right, byte_width)?;
+    let left = match left.as_ref() {
+        PointerOffsetTerm::Add(..) => pointer_arithmetic_index(left, byte_width)?,
+        // The first addend is the pointer's opaque base. It is not an
+        // element displacement, even if its byte representation happens to
+        // be aligned.
+        _ => Bitvector32Term::Constant(0),
+    };
+    Some(Bitvector32Term::add(left, right))
+}
+
+fn pointer_block_bounds(
+    state: &CState,
+    pointer: &Pointer,
+    byte_width: u32,
+) -> Vec<PointerFormationGuard> {
+    let Some(block_size) = state.memory().block_size(&pointer.block).cloned() else {
+        return Vec::new();
+    };
+
+    // Concrete offsets can exceed the signed bitvector representation. Check
+    // those directly against the byte-sized block instead of silently
+    // rebuilding them through a wrapping int32 term.
+    if let (Some(offset), Some(size)) = (pointer.offset.as_const(), block_size.as_const()) {
+        if offset < 0 || offset > i64::from(size) {
+            return vec![PointerFormationGuard {
+                condition: ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(1),
+                    Bitvector32Term::Constant(0),
+                ),
+                value: true,
+            }];
+        }
+        return Vec::new();
+    }
+
+    let (offset, size) = match byte_width {
+        4 => {
+            let Some(offset) = int32_element_index_from_offset(&pointer.offset) else {
+                return Vec::new();
+            };
+            let Some(size) = int32_element_count_from_bytes(&block_size) else {
+                return Vec::new();
+            };
+            (offset, size)
+        }
+        1 => {
+            let Some(offset) = byte_offset_from_pointer_offset(&pointer.offset) else {
+                return Vec::new();
+            };
+            (offset, block_size)
+        }
+        _ => return Vec::new(),
+    };
+
+    vec![
+        PointerFormationGuard {
+            condition: ConditionTerm::signed_greater_equal(
+                offset.clone(),
+                Bitvector32Term::Constant(0),
+            ),
+            value: true,
+        },
+        PointerFormationGuard {
+            condition: ConditionTerm::signed_less_equal(offset, size),
+            value: true,
+        },
+    ]
+}
+
+fn pointer_is_in_memory_resource(
+    resources: &ResourceContext,
+    assumptions: &PureFactContext,
+    facts: &[ExecutionPureFact],
+    pointer: &Pointer,
+    byte_width: u32,
+) -> bool {
+    let decide =
+        |condition: ConditionTerm| decide_with_facts(assumptions, facts, &condition) == Some(true);
+    // This is intentionally a small, structural query. It recognizes the
+    // range shape produced by pointer arithmetic without asking the resource
+    // algebra to search unrelated resources.
+    let contains_range = |resources: &ResourceContext| {
+        resources.facts().iter().any(|fact| {
+            let Some(range) = fact.memory_range() else {
+                return false;
+            };
+            if range.element_width() != byte_width {
+                return false;
+            }
+            let Some(index) = pointer_index_from_base(pointer, range.base(), byte_width) else {
+                return false;
+            };
+            decide(ConditionTerm::signed_less_equal(
+                range.start().clone(),
+                index.clone(),
+            )) && decide(ConditionTerm::signed_less_equal(index, range.end().clone()))
+        })
+    };
+    contains_range(resources) || assumptions.resource_compositions.iter().any(contains_range)
+}
+
+fn pointer_index_from_base(
+    pointer: &Pointer,
+    base: &Pointer,
+    byte_width: u32,
+) -> Option<Bitvector32Term> {
+    match byte_width {
+        4 => pointer.element_index_from_base(base),
+        1 => pointer_byte_offset_from_base(pointer, base),
+        _ => None,
+    }
+}
+
+fn apply_pointer_formation_guards(
+    pointer: Pointer,
+    guards: Vec<PointerFormationGuard>,
+    facts: Vec<ExecutionPureFact>,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+) -> Vec<CExpressionPath> {
+    let mut normal = vec![CExpressionPath {
+        outcome: CExpressionOutcome::Value(CValue::Pointer(pointer)),
+        facts,
+        obligations,
+    }];
+    let mut paths = Vec::new();
+
+    for guard in guards {
+        let mut next = Vec::new();
+        for path in normal {
+            match decide_with_facts(assumptions, &path.facts, &guard.condition) {
+                Some(known) if known == guard.value => next.push(path),
+                Some(_) => paths.push(CExpressionPath {
+                    outcome: CExpressionOutcome::UndefinedBehavior(
+                        CUndefinedBehavior::PointerArithmetic,
+                    ),
+                    facts: path.facts,
+                    obligations: path.obligations,
+                }),
+                None => {
+                    let mut valid_facts = path.facts.clone();
+                    add_condition_path_fact(
+                        &mut valid_facts,
+                        assumptions,
+                        guard.condition.clone(),
+                        guard.value,
+                    )
+                    .expect("pointer formation guard should be consistent");
+                    next.push(CExpressionPath {
+                        outcome: path.outcome.clone(),
+                        facts: valid_facts,
+                        obligations: path.obligations.clone(),
+                    });
+
+                    let invalid_value = !guard.value;
+                    let mut invalid_facts = path.facts;
+                    add_condition_path_fact(
+                        &mut invalid_facts,
+                        assumptions,
+                        guard.condition.clone(),
+                        invalid_value,
+                    )
+                    .expect("pointer formation guard should be consistent");
+                    paths.push(CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(
+                            CUndefinedBehavior::PointerArithmetic,
+                        ),
+                        facts: invalid_facts,
+                        obligations: path.obligations,
+                    });
+                }
+            }
+        }
+        normal = next;
+    }
+
+    paths.extend(normal);
+    paths
 }
 
 pub(in crate::kernel) fn apply_c_int32_add(

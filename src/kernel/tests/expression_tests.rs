@@ -829,6 +829,162 @@ fn pointer_addition_scales_int32_offsets_for_loads() {
 }
 
 #[test]
+fn pointer_addition_rejects_an_int32_index_beyond_the_object() {
+    let base = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(base))
+        .with_memory(CMemory::new().with_block("array", 8));
+    let expression = c_add(c_variable("p"), c_int32_literal(3));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("concrete out-of-object pointer arithmetic should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+        }
+    );
+}
+
+#[test]
+fn pointer_index_sum_overflow_is_pointer_undefined_behavior() {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new().with_local("p", CValue::Pointer(base));
+    let expression = c_add(
+        c_add(c_variable("p"), c_int32_literal(i32::MAX as u32)),
+        c_int32_literal(1),
+    );
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("concrete cumulative pointer arithmetic should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic),
+        }
+    );
+}
+
+#[test]
+fn pointer_index_sum_overflow_is_undefined_for_a_uint8_pointer() {
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut state = CState::new().with_local("p", CValue::Pointer(base.clone()));
+    state
+        .locals
+        .set_typed("p", CValue::Pointer(base), CType::UInt8Pointer);
+    let expression = c_add(
+        c_add(c_variable("p"), c_int32_literal(i32::MAX as u32)),
+        c_int32_literal(1),
+    );
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("concrete uint8 cumulative pointer arithmetic should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic,),
+        }
+    );
+}
+
+#[test]
+fn pointer_addition_allows_the_one_past_int32_element() {
+    let base = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(base.clone()))
+        .with_memory(CMemory::new().with_block("array", 8));
+    let expression = c_add(c_variable("p"), c_int32_literal(2));
+    let result = Pointer {
+        block: "array".into(),
+        offset: PointerOffsetTerm::Constant(8),
+    };
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("one-past pointer arithmetic should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::Value(CValue::Pointer(result)),
+        }
+    );
+}
+
+#[test]
+fn pointer_addition_rejects_a_uint8_index_beyond_the_object() {
+    let base = Pointer {
+        block: "bytes".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let mut state = CState::new()
+        .with_local("p", CValue::Pointer(base.clone()))
+        .with_memory(CMemory::new().with_block("bytes", 4));
+    state
+        .locals
+        .set_typed("p", CValue::Pointer(base), CType::UInt8Pointer);
+    let expression = c_add(c_variable("p"), c_int32_literal(5));
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("concrete uint8 out-of-object pointer arithmetic should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic,),
+        }
+    );
+}
+
+#[test]
+fn byte_offset_rejects_a_pointer_beyond_the_object() {
+    let base = Pointer {
+        block: "object".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let state = CState::new()
+        .with_local("p", CValue::Pointer(base))
+        .with_memory(CMemory::new().with_block("object", 4));
+    let expression = c_pointer_offset_bytes(c_variable("p"), 5);
+
+    let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+        .expect("concrete out-of-object byte offset should evaluate");
+
+    assert_eq!(
+        theorem.proposition(),
+        &Proposition::CExpressionEvaluates {
+            state,
+            expression,
+            outcome: CExpressionOutcome::UndefinedBehavior(CUndefinedBehavior::PointerArithmetic,),
+        }
+    );
+}
+
+#[test]
 fn viewed_memory_resource_permits_pointer_addition_load_beyond_memory_block() {
     let base = Pointer {
         block: "block".into(),

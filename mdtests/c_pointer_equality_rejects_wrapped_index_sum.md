@@ -33,5 +33,5 @@ int32 ptr_cmp(int32 data[], int32 i, int32 j, int32 k) {
 ```
 
 ```expect
-fail: unclosed goal
+fail: undefined behavior: pointer arithmetic left the pointed-to object
 ```

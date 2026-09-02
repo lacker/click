@@ -28,6 +28,7 @@ pub(super) use memory_loads::*;
 pub(crate) use memory_loads::{clear_load_canonicalization_caches, clear_load_variable_registry};
 #[cfg(test)]
 pub(crate) use memory_loads::{load_variable_registry_len, with_load_variable_registry_capacity};
+pub(super) use operators::pointer_offset_by_bytes_paths;
 pub(super) use operators::*;
 pub(crate) use statements::resolve_pending_heap_allocations;
 pub(super) use statements::*;

@@ -179,7 +179,9 @@ fn index_loaded_from_an_opaque_cell_takes_a_canonical_offset() {
     assert!(!execution.paths().is_empty());
     let mut saw_a_canonical_offset = false;
     for path in execution.paths() {
-        let Proposition::CStatementExecutes { outcome, .. } = path.theorem().proposition() else {
+        let Proposition::CStatementExecutes { outcome, .. } =
+            path.theorem().proposition().peel_implications()
+        else {
             panic!("execution should prove a statement judgment");
         };
         let CStatementOutcome::Return { value, .. } = outcome else {

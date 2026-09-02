@@ -388,6 +388,9 @@ pub(super) fn describe_function_outcome(
             crate::kernel::CUndefinedBehavior::SignedOverflow => {
                 "undefined behavior: signed overflow".to_string()
             }
+            crate::kernel::CUndefinedBehavior::PointerArithmetic => {
+                "undefined behavior: pointer arithmetic left the pointed-to object".to_string()
+            }
             crate::kernel::CUndefinedBehavior::DivisionByZero => {
                 "undefined behavior: division by zero".to_string()
             }

@@ -738,6 +738,10 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
+    pub(in crate::kernel) fn block_size(&self, block: &PointerBlock) -> Option<&Bitvector32Term> {
+        self.blocks.get(block).map(CBlock::size)
+    }
+
     /// Whether some allocation this snapshot has already freed may contain
     /// `pointer`. Freed allocations are few, so this scans them directly.
     pub(in crate::kernel) fn freed_heap_allocation_may_contain(&self, pointer: &Pointer) -> bool {

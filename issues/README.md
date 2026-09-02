@@ -67,7 +67,6 @@ Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
 - [Reason about byte-width element indices](byte-element-index-reasoning.md)
-- [Model out-of-object pointer formation as undefined behavior](pointer-arithmetic-overflow.md)
 - [Prove a loop invariant that relates a havoced pointer local to the index](pointer-local-loop-invariants.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
 - [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)

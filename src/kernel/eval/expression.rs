@@ -148,25 +148,32 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::PointerOffsetBytes { pointer, bytes } => {
             evaluate_c_expression_paths(state, pointer, assumptions, budget)?
                 .into_iter()
-                .map(|path| CExpressionPath {
-                    outcome: match path.outcome {
-                        CExpressionOutcome::Value(CValue::Pointer(pointer)) => {
-                            CExpressionOutcome::Value(CValue::Pointer(
-                                pointer.offset_by_bytes(*bytes),
-                            ))
-                        }
-                        CExpressionOutcome::Value(_) => {
-                            CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch)
-                        }
-                        CExpressionOutcome::UndefinedBehavior(error) => {
-                            CExpressionOutcome::UndefinedBehavior(error)
-                        }
-                        CExpressionOutcome::RuntimeError(error) => {
-                            CExpressionOutcome::RuntimeError(error)
-                        }
-                    },
-                    facts: path.facts,
-                    obligations: path.obligations,
+                .flat_map(|path| match path.outcome {
+                    CExpressionOutcome::Value(CValue::Pointer(pointer)) => {
+                        pointer_offset_by_bytes_paths(
+                            state,
+                            pointer,
+                            *bytes,
+                            path.facts,
+                            path.obligations,
+                            assumptions,
+                        )
+                    }
+                    CExpressionOutcome::Value(_) => vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }],
+                    CExpressionOutcome::UndefinedBehavior(error) => vec![CExpressionPath {
+                        outcome: CExpressionOutcome::UndefinedBehavior(error),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }],
+                    CExpressionOutcome::RuntimeError(error) => vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(error),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    }],
                 })
                 .collect()
         }

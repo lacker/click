@@ -1300,6 +1300,7 @@ pub(super) fn evaluate_spec_add_paths(
             };
             paths.extend(
                 apply_c_add(
+                    state,
                     left_path.value.clone(),
                     right_path.value,
                     None,

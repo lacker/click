@@ -747,6 +747,7 @@ pub struct CVerifiedLoopRule {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CUndefinedBehavior {
     SignedOverflow,
+    PointerArithmetic,
     DivisionByZero,
     InvalidShift,
     InvalidMemory,
