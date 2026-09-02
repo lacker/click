@@ -2869,19 +2869,6 @@ fn execution_apply_uses_only_named_evidence_and_forks_persistently() {
                 .shares_storage_with(&applied_execution.core.state),
             "theorem application does not alter the C state"
         );
-        assert!(
-            root_execution
-                .core
-                .function_entry_execution_prerequisites
-                .len()
-                == 0
-        );
-        assert!(
-            applied_execution
-                .core
-                .function_entry_execution_prerequisites
-                .contains(&kernel_conclusion)
-        );
         let alternative = root
             .apply_step(step)
             .expect("the retained ancestor should support another checked descendant");

@@ -1195,14 +1195,6 @@ pub(super) fn finish_ordered_proof<'a>(
                 })
             },
         )?;
-        let sealed_execution = checked_c_function_execution_with_entry_derivations(
-            sealed_execution,
-            proof_execution.core.function_entry_derivations.to_vec(),
-            proof_execution
-                .core
-                .function_entry_execution_prerequisites
-                .to_vec(),
-        );
         let certified_outcomes = sealed_execution
             .paths()
             .iter()

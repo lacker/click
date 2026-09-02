@@ -37,5 +37,5 @@ rejected by the checker even while the current verifier accepts the proof.
   artifact establishes.
 - `scripts/check.sh` passes.
 
-Related: [double-execution.md](double-execution.md), whose typed evidence is
-the natural content of this artifact.
+Related: the retained typed evidence (`docs/internals/proof-objects.md`)
+is the natural content of this artifact.

@@ -29,8 +29,8 @@ loop) is not copied back, and no DAG provenance crosses the loop, so a
 post-loop load of such a cell cannot be related to its pre-loop value except
 through the surface-consumed summary. The two mechanisms also differ from
 the call case, where provenance is the single source of truth, which
-matters as [double-execution.md](double-execution.md) moves certification
-onto retained typed evidence.
+matters now that certification runs on retained typed evidence
+(`docs/internals/proof-objects.md`).
 
 ## Violated invariant
 

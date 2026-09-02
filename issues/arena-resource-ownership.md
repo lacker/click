@@ -36,8 +36,8 @@ resource compositions.
 `arena_write` now verifies with a one-cell mutable footprint through the
 same scoped opens as `arena_read`; the hidden second whole-function
 execution that used to fail to reproduce its resource path is gone (the
-[double-execution issue](double-execution.md) retains the proof object's
-typed execution evidence instead). The footprint evaluation had to learn to
+proof object's typed execution evidence is retained instead; see
+`docs/internals/proof-objects.md`). The footprint evaluation had to learn to
 name a load through a folded contained unit symbolically. The next bounded
 blockers are `arena_free`, `arena_alloc`, `arena_init`, and `arena_destroy`.
 

@@ -53,8 +53,8 @@ with its own test; split this file if any of them grows.
    and [legacy-pure-theorem-checker.md](legacy-pure-theorem-checker.md).
    Resolve by making every publication go through a checked operation that
    derives the fact, or by narrowing the callers to the kernel and documenting
-   the remaining trust. Coordinate with [double-execution.md](double-execution.md),
-   which removes the re-execution that currently masks this.
+   the remaining trust. Double execution was removed on 2026-09-02
+   (`docs/internals/proof-objects.md`), so no re-execution masks this now.
 
 ## Violated invariant
 

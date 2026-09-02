@@ -2099,12 +2099,6 @@ pub struct CCheckedFunctionExecution {
     /// Original contract caller state when a kernel-checked proof entered C
     /// execution through a definitionally equal resource representation.
     pub(super) entry_representation_origin: Option<CState>,
-    /// Kernel-issued implications whose conclusions were added to the exact
-    /// entry assumptions by an explicit proof certificate.
-    pub(super) entry_derivations: Vec<Theorem>,
-    /// Exact proof-selected evaluator prerequisites justified by
-    /// `entry_derivations`.
-    pub(super) entry_prerequisites: Vec<Proposition>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

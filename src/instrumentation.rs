@@ -1417,7 +1417,8 @@ mod tests {
 
 /// Why the kernel sealer could not compose a retained proof trace into the
 /// checked function execution. A refusal fails the proof: some proof
-/// operation did not retain what sealing needs (`issues/double-execution.md`).
+/// operation did not retain what sealing needs (`docs/internals/proof-objects.md`,
+/// evidence traces and sealing).
 /// The fixture harnesses pin the count of every reason at zero.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SealRefusal {
@@ -1439,7 +1440,7 @@ pub enum SealRefusal {
     StatementMismatch,
     /// The proved entry state does not match the sealed running state.
     StateMismatch,
-    /// Retired by slice 2 of `issues/double-execution.md`: a `return` or
+    /// Retired (2026-09-01): a `return` or
     /// diverging outcome now ends the path and drops the unreachable tail.
     /// The variant stays so older pins still name it, at zero.
     ReturnWithTail,
@@ -1454,7 +1455,7 @@ pub enum SealRefusal {
     /// not advance the state, an unexpected theorem shape, an erroring
     /// statement outcome, or a branch that does not match its source.
     InvalidEvidence,
-    /// Retired by slice 6 of `issues/double-execution.md`: the sealed path
+    /// Retired (2026-09-01): the sealed path
     /// now applies the contract's exit rule, so an implicitly closed counted
     /// entry seals. The variant stays so older pins still name it, at zero.
     ImplicitCountedClose,

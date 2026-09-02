@@ -560,7 +560,6 @@ pub(super) fn observe_composite_resource_for_proof(
     facts: ProofFacts,
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
-    count_certification_facts: &mut PersistentOrderedSet<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -576,7 +575,6 @@ pub(super) fn observe_composite_resource_for_proof(
         &mut facts,
         surface_propositions,
         count_derivations,
-        count_certification_facts,
         predicate_environment,
         click_function_environment,
         claim_label,
@@ -600,7 +598,6 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
     available_pure_facts: &mut F,
     surface_propositions: &mut SurfacePropositionMap,
     count_derivations: &mut PersistentOrderedSet<Theorem>,
-    count_certification_facts: &mut PersistentOrderedSet<Proposition>,
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
     claim_label: &str,
@@ -697,9 +694,6 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
             if !count_derivations.contains(&derivation) {
                 count_derivations.insert(derivation);
             }
-            if !count_certification_facts.contains(&count_kernel) {
-                count_certification_facts.insert(count_kernel.clone());
-            }
             surface_propositions.record_lowering(&count_witness, &count_kernel)?;
             available_pure_facts.insert(count_kernel);
         } else if explicit_quantity {
@@ -744,9 +738,6 @@ fn observe_composite_resource_with_facts<F: ResourcePureFacts>(
         })?;
         if !count_derivations.contains(&nonnegative_derivation) {
             count_derivations.insert(nonnegative_derivation);
-        }
-        if !count_certification_facts.contains(&nonnegative_kernel) {
-            count_certification_facts.insert(nonnegative_kernel.clone());
         }
         surface_propositions.record_lowering(&nonnegative_witness, &nonnegative_kernel)?;
         available_pure_facts.insert(nonnegative_kernel);

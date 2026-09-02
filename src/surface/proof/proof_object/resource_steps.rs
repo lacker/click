@@ -551,7 +551,6 @@ impl<'a> Proof<'a> {
             self.facts().clone(),
             &mut execution.presentation.surface_propositions,
             &mut execution.core.function_entry_derivations,
-            &mut execution.core.function_entry_execution_prerequisites,
             context.predicate_environment,
             context.click_function_environment,
             context.claim_label,

@@ -14,7 +14,7 @@ const BUBBLE_SORT3_WORK_LIMIT: usize = 100_000;
 /// they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[];
 
-/// The body-rerun ratchet (`issues/double-execution.md`): how many times, over
+/// The body-rerun ratchet (`docs/internals/testing.md`): how many times, over
 /// the whole unfiltered corpus, claim finishing or contract certification
 /// executed a function body because the sealer refused or a guard declined,
 /// by reason. A count may only fall; lower its pin when it does.

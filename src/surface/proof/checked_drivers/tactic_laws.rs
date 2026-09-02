@@ -1,5 +1,4 @@
 use super::*;
-use crate::kernel::prove_pure_proposition_from_context;
 use crate::surface::proof::proof_object::ExecutionProofState;
 
 /// The one mid-execution `have` law: checked fixed-state proof first, generated
@@ -172,44 +171,6 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         }
     };
     let retained_certificate = surface_certificate;
-    // Carry any kernel-issued standard-theorem authority selected
-    // inside the fixed-state Proof back to the enclosing entry proof.
-    if execution
-        .core
-        .frontier
-        .execution_start_state
-        .as_ref()
-        .is_none_or(|start| start == state)
-        && let SourceProof::Script(have_tactics) = &have.proof
-    {
-        for have_tactic in have_tactics {
-            let ProofTactic::ApplyTheoremUsing { application, .. } = have_tactic else {
-                continue;
-            };
-            if let Some(derivation) = kernel_standard_theorem_derivation_in_current_state(
-                theorem_environment,
-                application,
-                parsed_function.parameters(),
-                arguments,
-                proof_context.old_reference_state(&execution.core.frontier, state),
-                &state,
-                &execution.presentation.recorded_snapshots,
-                predicate_environment,
-                click_function_environment,
-                &have_facts,
-            )? {
-                let mut conclusion = derivation.proposition();
-                while let Proposition::Implies(_, body) = conclusion {
-                    conclusion = body;
-                }
-                execution
-                    .core
-                    .function_entry_execution_prerequisites
-                    .insert(conclusion.clone());
-                execution.core.function_entry_derivations.insert(derivation);
-            }
-        }
-    }
     // Record the search-time lowering only after the selected
     // Surface operations have closed the checked Proof. Recording
     // it earlier could make a nontrivial snapshot equality appear
@@ -218,21 +179,6 @@ pub(in crate::surface::proof) fn check_mid_execution_have(
         .presentation
         .surface_propositions
         .record_lowering(&have.proposition, &fact)?;
-    if execution
-        .core
-        .frontier
-        .execution_start_state
-        .as_ref()
-        .is_none_or(|start| start == state)
-        && let Some(derivation) =
-            prove_pure_proposition_from_context(&assumptions_from_propositions(&have_facts), &fact)
-    {
-        execution
-            .core
-            .function_entry_execution_prerequisites
-            .insert(fact.clone());
-        execution.core.function_entry_derivations.insert(derivation);
-    }
     if !pure_facts.contains(&fact) {
         pure_facts.push(fact.clone());
     }

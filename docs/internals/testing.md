@@ -195,9 +195,9 @@ pinned baselines at the top of `tests/mdtests.rs` and `tests/examples.rs`.
 
 The comparison is exact in both directions. A count that rose means a proof
 that used to seal, or an artifact that used to be reused, no longer is, and
-that change must not land. A count that fell means a slice of
-`issues/double-execution.md` landed; lower the pin in the same change so the
-count cannot rise back. A filtered run
+that change must not land. A count that fell means a rerun cause was
+removed; lower the pin in the same change so the count cannot rise back. A
+filtered run
 (`MDTEST_FILTER`, `CLICK_EXAMPLE`) or a run with `CLICK_RUN_QUARANTINED=1`
 skips the comparison.
 

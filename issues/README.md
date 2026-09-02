@@ -18,9 +18,8 @@ the complexity contract and scaling-regression policy. Proposals without a
 failing deterministic curve are not open roadmap items; file a narrow issue
 when evidence exposes one.
 
-## Architecture issues: 2
+## Architecture issues: 1
 
-- [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
 ## Soundness issues: 8
@@ -32,8 +31,9 @@ Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
 
-Reachable through the kernel API; the untrusted surface currently masks them
-and [double-execution](double-execution.md) removes that mask:
+Reachable through the kernel API; the surface's exact checks currently mask
+them, and since the removal of double execution (2026-09-02) no whole-body
+re-execution stands behind those checks any more:
 
 - [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
 - [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)

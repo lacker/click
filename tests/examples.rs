@@ -13,7 +13,7 @@ const RUN_QUARANTINED: &str = "CLICK_RUN_QUARANTINED";
 /// remove entries as they are fixed (see docs/internals/testing.md).
 const QUARANTINED: &[(&str, &str)] = &[];
 
-/// The body-rerun ratchet (`issues/double-execution.md`) over every example
+/// The body-rerun ratchet (`docs/internals/testing.md`) over every example
 /// project; see `tests/mdtests.rs` for the rule.
 const SEAL_REFUSAL_BASELINE: &[(SealRefusal, usize)] = &[];
 const CONTRACT_FALLBACK_BASELINE: &[(ContractFallback, usize)] = &[];

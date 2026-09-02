@@ -34,5 +34,5 @@ over the retained paths. A second with a guarded resource
   can case-split on; both arms remain mandatory.
 - The tests above pass; `scripts/check.sh` passes.
 
-Related: [double-execution.md](double-execution.md) owns the join evidence
-design this extends.
+Related: the retained join evidence described in
+`docs/internals/proof-objects.md`, which this extends.

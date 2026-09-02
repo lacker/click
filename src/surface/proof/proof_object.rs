@@ -223,7 +223,6 @@ struct CheckedExecutionJoinArm<'v> {
     condition_theorem: Option<&'v Theorem>,
     introduced_facts: Vec<Proposition>,
     introduced_effect_facts: Vec<ExecutionPureFact>,
-    introduced_prerequisites: Vec<Proposition>,
     introduced_derivations: Vec<Theorem>,
     introduced_unfolds: Vec<String>,
     /// Frontier-local loops the arm proved inside its region. They are
@@ -381,11 +380,6 @@ enum ProofScopeStructure {
     Have {
         proposition: ClickProposition,
         kernel: Proposition,
-        /// The explicit script proving this `have`, when the source gave
-        /// one. The join carries standard-theorem authority selected by an
-        /// explicit `apply using` at function entry into the enclosing
-        /// execution frontier, as the shared mid-execution law does.
-        script: Option<Vec<ProofTactic>>,
     },
     Open {
         resource: ResourceClause,

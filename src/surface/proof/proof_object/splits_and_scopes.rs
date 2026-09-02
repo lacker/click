@@ -997,7 +997,6 @@ impl<'a> Proof<'a> {
             structure: Box::new(ProofScopeStructure::Have {
                 proposition,
                 kernel,
-                script: None,
             }),
             body,
             introduced_facts: Vec::new(),

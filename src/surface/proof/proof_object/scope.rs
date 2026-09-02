@@ -23,15 +23,6 @@ impl<'a> ProofScope<'a> {
         Ok(next)
     }
 
-    /// Attaches the explicit source script proving a `have` scope so its
-    /// join can carry the script's standard-theorem authority.
-    pub(in crate::surface::proof) fn with_have_script(mut self, tactics: &[ProofTactic]) -> Self {
-        if let ProofScopeStructure::Have { script, .. } = self.structure.as_mut() {
-            *script = Some(tactics.to_vec());
-        }
-        self
-    }
-
     /// Opens another composite resource from this scope's current checked
     /// body. The returned nested scope can only rejoin through `join_nested`,
     /// which checks that it descends from this exact body.
@@ -959,16 +950,11 @@ impl<'a> ProofScope<'a> {
 
     /// The enclosing-frontier bookkeeping of a checked execution `have`,
     /// shared in meaning with `check_mid_execution_have`: lowering and
-    /// certificate fact recording, plus function-entry derivation authority
-    /// when execution has not yet left the entry state. Every lookup uses
-    /// the frontier's indexed fact context; no fact vector is rebuilt.
+    /// certificate fact recording.
     fn carry_have_into_frontier(
-        context: &ExecutionProofContext<'a>,
         execution: &mut ExecutionProofState,
-        root_facts: &ProofFacts,
         proposition: &ClickProposition,
         kernel: &Proposition,
-        script: Option<&[ProofTactic]>,
     ) -> Result<(), ClickError> {
         execution
             .presentation
@@ -979,57 +965,6 @@ impl<'a> ProofScope<'a> {
             .surface_record
             .certificate_facts
             .insert(kernel.clone());
-        let at_entry = execution
-            .core
-            .frontier
-            .execution_start_state
-            .as_ref()
-            .is_none_or(|start| start == &*execution.core.state);
-        if !at_entry {
-            return Ok(());
-        }
-        let assumptions = root_facts.assumptions();
-        for tactic in script.into_iter().flatten() {
-            let ProofTactic::ApplyTheoremUsing { application, .. } = tactic else {
-                continue;
-            };
-            let pre_state = context
-                .old_reference_state(&execution.core.frontier, &execution.core.state)
-                .clone();
-            if let Some(derivation) =
-                kernel_standard_theorem_derivation_in_current_state_with_assumptions(
-                    context.theorem_environment,
-                    application,
-                    context.parsed_function.parameters(),
-                    context.arguments,
-                    &pre_state,
-                    &execution.core.state,
-                    &execution.presentation.recorded_snapshots,
-                    context.predicate_environment,
-                    context.click_function_environment,
-                    assumptions,
-                )?
-            {
-                let mut conclusion = derivation.proposition();
-                while let Proposition::Implies(_, body) = conclusion {
-                    conclusion = body;
-                }
-                execution
-                    .core
-                    .function_entry_execution_prerequisites
-                    .insert(conclusion.clone());
-                execution.core.function_entry_derivations.insert(derivation);
-            }
-        }
-        if let Some(derivation) =
-            crate::kernel::prove_pure_proposition_from_context(assumptions, kernel)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(kernel.clone());
-            execution.core.function_entry_derivations.insert(derivation);
-        }
         Ok(())
     }
 
@@ -1044,7 +979,6 @@ impl<'a> ProofScope<'a> {
             ProofScopeStructure::Have {
                 proposition,
                 kernel,
-                script,
             } => {
                 if !self.body.is_complete() {
                     return Err(self
@@ -1064,7 +998,7 @@ impl<'a> ProofScope<'a> {
                     // lowering, its certificate fact, and any function-entry
                     // authority the checked fact or an explicit theorem
                     // application establishes for later statement checks.
-                    (ProofContext::Execution(context), Obligation::Frontier(_)) => {
+                    (ProofContext::Execution(_), Obligation::Frontier(_)) => {
                         let mut execution = self
                             .root
                             .branch_execution()
@@ -1074,14 +1008,7 @@ impl<'a> ProofScope<'a> {
                                 self.root
                                     .step_error("`have` scope lost its execution frontier")
                             })?;
-                        Self::carry_have_into_frontier(
-                            context,
-                            &mut execution,
-                            self.root.facts(),
-                            &proposition,
-                            &kernel,
-                            script.as_deref(),
-                        )?;
+                        Self::carry_have_into_frontier(&mut execution, &proposition, &kernel)?;
                         Some(Arc::new(execution))
                     }
                     _ => self

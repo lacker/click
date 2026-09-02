@@ -1304,45 +1304,6 @@ pub(super) fn surface_snapshot_selector(surface: &ClickProposition) -> Option<Sn
     }
 }
 
-fn proposition_tree_contains(root: &Proposition, target: &Proposition) -> bool {
-    root == target
-        || match root {
-            Proposition::And(left, right) | Proposition::Or(left, right) => {
-                proposition_tree_contains(left, target) || proposition_tree_contains(right, target)
-            }
-            _ => false,
-        }
-}
-
-pub(super) fn statement_expression_definedness(
-    state: &CState,
-    statement: &CStatement,
-) -> Vec<Proposition> {
-    let mut expressions = Vec::new();
-    match statement {
-        CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
-            expressions.push(expression)
-        }
-        CStatement::CallAssign { arguments, .. } | CStatement::Call { arguments, .. } => {
-            expressions.extend(arguments)
-        }
-        CStatement::HeapAllocate { bytes, .. } => expressions.push(bytes),
-        CStatement::HeapFree { pointer } => expressions.push(pointer),
-        CStatement::Assert { condition, .. }
-        | CStatement::If { condition, .. }
-        | CStatement::While { condition, .. } => expressions.push(condition),
-        CStatement::Store { pointer, value } | CStatement::TypedStore { pointer, value, .. } => {
-            expressions.push(pointer);
-            expressions.push(value);
-        }
-        CStatement::Skip | CStatement::Declare { .. } | CStatement::Seq(_, _) => {}
-    }
-    expressions
-        .into_iter()
-        .filter_map(|expression| c_expression_definedness_proposition(state, expression).ok())
-        .collect()
-}
-
 #[cfg(test)]
 thread_local! {
     static PLANNING_STATEMENT_TRANSITIONS: std::cell::RefCell<Vec<(String, usize, String)>> = const {
@@ -1771,27 +1732,6 @@ fn execute_step_from_frontier_position_selecting_path(
         .next()
         .expect("one statement transition was required");
     let introduced_facts = transition.introduced_facts.clone();
-    let definedness = statement_expression_definedness(&current_state, &step_statement);
-    for derivation in &execution.core.function_entry_derivations {
-        let mut conclusion = derivation.proposition();
-        while let Proposition::Implies(_, body) = conclusion {
-            conclusion = body;
-        }
-        if definedness
-            .iter()
-            .any(|required| proposition_tree_contains(required, conclusion))
-            && exact_fact_is_available(conclusion, available_pure_facts)
-            && !proof_context
-                .constants
-                .execution_start_facts
-                .contains(conclusion)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(conclusion.clone());
-        }
-    }
     if matches!(loop_step_policy, LoopStepPolicy::ApplyVerifiedRule)
         && let Some(loop_index) = loop_index
         && matches!(transition.outcome, CStatementOutcome::Normal(_))

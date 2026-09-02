@@ -1,5 +1,4 @@
 use super::*;
-use crate::kernel::prove_c_function_contract_predicate_unfolding;
 use crate::surface::proof::proof_object::ExecutionProofState;
 
 pub(in crate::surface::proof) struct CheckedPredicateUnfold {
@@ -63,14 +62,11 @@ pub(in crate::surface::proof) fn check_unfold_predicate_facts(
     available_pure_facts: &ProofFacts,
     name: &String,
 ) -> Result<CheckedPredicateUnfold, ClickError> {
-    let function = proof_context.function;
-    let arguments = proof_context.arguments;
     let predicate_environment = proof_context.predicate_environment;
     let click_function_environment = proof_context.click_function_environment;
     let claim_label = proof_context.claim_label;
     let tactic_index = proof_context.tactic_index;
 
-    let state: &CState = &execution.core.state;
     let unfolded_predicates = &mut execution.core.unfolded_predicates;
 
     let checked_facts = check_unfold_predicate_in_facts(
@@ -121,38 +117,14 @@ pub(in crate::surface::proof) fn check_unfold_predicate_facts(
                 assumptions,
             )
             .ok()?;
-            Some((kernel.clone(), surface, unfolded))
+            Some((surface, unfolded))
         })
         .collect::<Vec<_>>();
-    for (predicate, surface, kernel) in surface_unfoldings {
+    for (surface, kernel) in surface_unfoldings {
         execution
             .presentation
             .surface_propositions
             .record_lowering(&surface, &kernel)?;
-        let contract_unfolding = execution
-            .core
-            .frontier
-            .execution_start_state
-            .as_ref()
-            .is_none_or(|start| start == state)
-            .then(|| {
-                prove_c_function_contract_predicate_unfolding(
-                    state,
-                    function,
-                    arguments,
-                    &predicate,
-                    &kernel,
-                    assumptions,
-                )
-            })
-            .flatten();
-        if let Some(derivation) = contract_unfolding {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(kernel);
-            execution.core.function_entry_derivations.insert(derivation);
-        }
     }
     Ok(CheckedPredicateUnfold {
         facts: checked_facts.facts,

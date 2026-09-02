@@ -1575,7 +1575,8 @@ pub(crate) struct ExecutionProofCore {
     pub(crate) loop_effect_goal: Option<LoopEffectGoal>,
     pub(crate) next_path_choice: usize,
     pub(crate) concrete_loop_execution: bool,
-    pub(crate) function_entry_execution_prerequisites: PersistentOrderedSet<Proposition>,
+    /// Kernel theorems whose conclusions justify the facts a resource
+    /// observation introduces (its count and quantity witnesses).
     pub(crate) function_entry_derivations: PersistentOrderedSet<Theorem>,
     pub(crate) region_invariants_closed: bool,
     pub(crate) next_opaque_call: u64,
@@ -1944,7 +1945,6 @@ impl ExecutionProofCore {
             loop_effect_goal: None,
             next_path_choice: 0,
             concrete_loop_execution: false,
-            function_entry_execution_prerequisites: Default::default(),
             function_entry_derivations: Default::default(),
             region_invariants_closed: false,
             next_opaque_call: 0,

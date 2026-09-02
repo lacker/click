@@ -1363,7 +1363,6 @@ pub(super) fn solve_nested_have<'a>(
             // step that fails is an error, never a miss for search to
             // rescue. A script containing smart tactics may decline to the
             // shared law.
-            let nested = nested.with_have_script(body);
             if authoritative && !script_contains_linear_search(body) {
                 nested.try_authoritative_linear_script(body)?
             } else {

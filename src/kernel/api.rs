@@ -1871,8 +1871,6 @@ pub fn prove_checked_c_function_execution_with_environment(
         mode,
         execution,
         entry_representation_origin: None,
-        entry_derivations: Vec::new(),
-        entry_prerequisites: Vec::new(),
     }
 }
 
@@ -2768,101 +2766,7 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
         entry_representation_origin: has_checked_entry
             .then(|| function_entry.map(|entry| entry.caller_state().clone()))
             .flatten(),
-        entry_derivations: Vec::new(),
-        entry_prerequisites: Vec::new(),
     })
-}
-
-/// Attaches kernel-issued entry-fact derivations to a checked execution.
-///
-/// The checked execution remains sealed: only derivations concluding in one
-/// of its exact assumptions are retained, and callers cannot manufacture a
-/// [`Theorem`]. Contract certification independently discharges every
-/// implication premise before using the artifact.
-pub fn checked_c_function_execution_with_entry_derivations(
-    mut checked: CCheckedFunctionExecution,
-    derivations: Vec<Theorem>,
-    prerequisites: Vec<Proposition>,
-) -> CCheckedFunctionExecution {
-    checked.entry_derivations = derivations
-        .into_iter()
-        .filter(|derivation| {
-            let mut body = derivation.proposition();
-            while let Proposition::Implies(_, next) = body {
-                body = next;
-            }
-            checked.assumptions.proves_exact(body)
-        })
-        .collect();
-    checked.entry_prerequisites = prerequisites
-        .into_iter()
-        .filter(|prerequisite| {
-            checked.assumptions.proves_exact(prerequisite)
-                && checked.entry_derivations.iter().any(|derivation| {
-                    let mut conclusion = derivation.proposition();
-                    while let Proposition::Implies(_, body) = conclusion {
-                        conclusion = body;
-                    }
-                    conclusion == prerequisite
-                })
-        })
-        .collect();
-    checked
-}
-
-/// Seals one contract-local predicate unfolding as an implication theorem.
-///
-/// The claimed sides must be the exact instantiations registered on the
-/// kernel function. Contract certification separately reconstructs the entry
-/// contract and discharges the opaque predicate premise before accepting the
-/// unfolded body as a checked-execution assumption.
-pub fn prove_c_function_contract_predicate_unfolding(
-    caller_state: &CState,
-    function: &CFunction,
-    arguments: &[CExpression],
-    claimed_predicate: &Proposition,
-    claimed_body: &Proposition,
-    assumptions: &PureFactContext,
-) -> Option<Theorem> {
-    let entry_state = c_function_entry_state(caller_state, function, arguments)?;
-    let mut budget = ExecutionBudget::default();
-    function
-        .predicate_unfoldings()
-        .iter()
-        .find_map(|unfolding| {
-            let (predicate, body) =
-                contract_certification::instantiate_contract_predicate_unfolding(
-                    &entry_state,
-                    unfolding,
-                    assumptions,
-                    &mut budget,
-                )?;
-            (predicate == *claimed_predicate && body == *claimed_body)
-                .then(|| Theorem::new(Proposition::Implies(Box::new(predicate), Box::new(body))))
-        })
-}
-
-/// Seals a pure consequence of an exact proof context as an implication
-/// chain over only the premises consumed by the kernel derivation.
-///
-/// Contract certification independently re-proves every premise before
-/// admitting the conclusion to a checked execution's entry context.
-pub fn prove_pure_proposition_from_context(
-    assumptions: &PureFactContext,
-    proposition: &Proposition,
-) -> Option<Theorem> {
-    let derivation = assumptions.derive_proposition(proposition)?;
-    if !derivation.check(assumptions) {
-        return None;
-    }
-    let theorem = derivation
-        .context_premises()
-        .into_iter()
-        .rev()
-        .fold(proposition.clone(), |body, premise| {
-            Proposition::Implies(Box::new(premise), Box::new(body))
-        });
-    Some(Theorem::new(theorem))
 }
 
 /// Reports whether an exact pure-fact context is contradictory.
@@ -3484,43 +3388,6 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
             }
             entry_state.resources = entry_resources;
         }
-        // Explicit entry theorem applications can justify facts used by the
-        // checked execution even when ghost-resource opening prevents reusing
-        // its exact entry state. Every attached theorem is kernel-issued, its
-        // conclusion had to be an exact checked-execution assumption, and all
-        // implication premises are independently discharged here before the
-        // conclusion enters the reconstructed contract context.
-        for checked in checked_artifacts {
-            if checked.function != function
-                || checked.arguments != arguments
-                || checked.environment != environment
-                || checked.execution_semantics != execution_semantics
-                || checked.mode != mode
-            {
-                continue;
-            }
-            // Check attached kernel derivations in certificate order. A
-            // later explicit theorem application may use a fact established
-            // by an earlier one, but only selected evaluator prerequisites
-            // escape into the reconstructed execution context.
-            let mut derivation_assumptions = assumptions.clone();
-            for derivation in &checked.entry_derivations {
-                let mut body = derivation.proposition();
-                let mut premises_hold = true;
-                while let Proposition::Implies(premise, next) = body {
-                    if !certification_proves_proposition(&derivation_assumptions, premise) {
-                        premises_hold = false;
-                        break;
-                    }
-                    body = next;
-                }
-                if premises_hold {
-                    derivation_assumptions =
-                        derivation_assumptions.assume_proposition(body.clone());
-                    assumptions = assumptions.assume_proposition(body.clone());
-                }
-            }
-        }
         let matches_execution_metadata_except_state = |checked: &CCheckedFunctionExecution| {
             checked.function == function
                 && checked.arguments == arguments
@@ -3637,23 +3504,9 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 }
             }
         }
-        let derivation_dischargeable = |derivation: &Theorem, conclusion: &Proposition| {
-            let mut body = derivation.proposition();
-            while let Proposition::Implies(premise, next) = body {
-                if !certification_proves_proposition(&assumptions, premise) {
-                    return false;
-                }
-                body = next;
-            }
-            body == conclusion
-        };
         let checked_premise_is_authorized =
-            |checked: &CCheckedFunctionExecution, premise: &Proposition| {
+            |_checked: &CCheckedFunctionExecution, premise: &Proposition| {
                 reuse_assumptions.proves(premise)
-                    || checked
-                        .entry_derivations
-                        .iter()
-                        .any(|derivation| derivation_dischargeable(derivation, premise))
             };
         let reusable = checked_artifacts.iter().find(|checked| {
             checked.state == state
@@ -3751,8 +3604,8 @@ pub fn prove_c_function_contract_execution_paths_with_checked_artifacts_and_pure
                 None
             })
             .flatten();
-        // Why nothing above applied: the census key
-        // (`issues/double-execution.md`) and a short description for the
+        // Why nothing above applied: the census key (the body-rerun ratchet
+        // in `docs/internals/testing.md`) and a short description for the
         // caller's diagnostic. Same-state artifacts report their first
         // unauthorized premise; otherwise the entry state itself differed.
         let fallback_cause = (reusable.is_none()

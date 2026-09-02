@@ -310,19 +310,9 @@ impl<'a> Proof<'a> {
         {
             return Err(self.step_error(format!("{name} arm retained the wrong condition theorem")));
         }
-        if arm
-            .execution
-            .core
-            .function_entry_execution_prerequisites
-            .len()
-            != parent_execution
-                .core
-                .function_entry_execution_prerequisites
-                .len()
-                + arm.introduced_prerequisites.len()
-            || arm.execution.core.function_entry_derivations.len()
-                != parent_execution.core.function_entry_derivations.len()
-                    + arm.introduced_derivations.len()
+        if arm.execution.core.function_entry_derivations.len()
+            != parent_execution.core.function_entry_derivations.len()
+                + arm.introduced_derivations.len()
             || arm.execution.presentation.frontier_loop_clauses.len()
                 != parent_execution.presentation.frontier_loop_clauses.len()
                     + arm.introduced_loop_clauses.len()
@@ -1857,11 +1847,6 @@ impl<'a> Proof<'a> {
             .suffix_since(&delta_execution.core.effect_facts)
             .ok_or_else(not_descended)?
             .to_vec();
-        let introduced_prerequisites = execution
-            .core
-            .function_entry_execution_prerequisites
-            .introduced_since(&delta_execution.core.function_entry_execution_prerequisites)
-            .ok_or_else(not_descended)?;
         let introduced_derivations = execution
             .core
             .function_entry_derivations
@@ -1894,7 +1879,6 @@ impl<'a> Proof<'a> {
                 condition_theorem,
                 introduced_facts,
                 introduced_effect_facts,
-                introduced_prerequisites,
                 introduced_derivations,
                 introduced_unfolds,
                 introduced_loop_clauses,
@@ -2686,12 +2670,6 @@ fn migrate_arm_metadata(
     retain_common_unfolds: bool,
 ) {
     for arm in arms {
-        for fact in &arm.introduced_prerequisites {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(fact.clone());
-        }
         for theorem in &arm.introduced_derivations {
             execution
                 .core

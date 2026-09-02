@@ -122,7 +122,6 @@ impl<'a> Proof<'a> {
             view.effect_facts,
             view.predicate_environment,
             view.click_function_environment,
-            false,
         )?;
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(self.checked_fact_transition(
@@ -140,19 +139,13 @@ impl<'a> Proof<'a> {
         application: &TheoremApplication,
         surface_premises: &[ClickProposition],
     ) -> Result<CheckedFocusedTransition, ClickError> {
-        let mut execution = self
+        let execution = self
             .execution()
             .cloned()
             .ok_or_else(|| self.step_error("execution-frontier proof lost its semantic state"))?;
         let pre_state = context
             .old_reference_state(&execution.core.frontier, &execution.core.state)
             .clone();
-        let retain_function_entry_derivation = execution
-            .core
-            .frontier
-            .execution_start_state
-            .as_ref()
-            .is_none_or(|start| start == &*execution.core.state);
         let checked = check_fixed_state_theorem_application_using_facts(
             context.theorem_environment,
             application,
@@ -171,27 +164,7 @@ impl<'a> Proof<'a> {
             &execution.core.effect_facts,
             context.predicate_environment,
             context.click_function_environment,
-            retain_function_entry_derivation,
         )?;
-        if let Some(prerequisite) = checked.function_entry_prerequisite
-            && !execution
-                .core
-                .function_entry_execution_prerequisites
-                .contains(&prerequisite)
-        {
-            execution
-                .core
-                .function_entry_execution_prerequisites
-                .insert(prerequisite);
-        }
-        if let Some(derivation) = checked.function_entry_derivation
-            && !execution
-                .core
-                .function_entry_derivations
-                .contains(&derivation)
-        {
-            execution.core.function_entry_derivations.insert(derivation);
-        }
         let complete = self.goal().is_some_and(|goal| checked.facts.contains(goal));
         Ok(self.checked_execution_transition(
             checked.facts,
