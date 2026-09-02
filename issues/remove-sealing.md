@@ -8,8 +8,8 @@ check still in place as a backstop, and the last slice deletes that check.
 
 Slice 1 turned out to be unnecessary and was dropped: the frontier already
 holds each trace's running state and remaining source, and traces only
-fork after the forking step's theorems are checked. Slices 2 and 3 landed
-on 2026-09-02.
+fork after the forking step's theorems are checked. Slices 2, 3, and 4
+landed on 2026-09-02.
 
 ## Violated invariant
 
@@ -89,14 +89,24 @@ replacing.
    facts at the end. A `branch` arm records its condition while it still
    stands at the parent's `if`. Pending heap allocation resolution stays
    with the driver until the frontier moves into the kernel.
-4. **Resource observations, rewrites, and case arms.** Advance the
-   progress state on an observation or rewrite (already kernel-checked) and
-   the progress assumptions on a case arm, including an arm recorded after
-   a path's returning statement.
-5. **Branch joins.** The join record calls check that each arm's progress
-   ended at the parent's common tail with the joined state (or the
-   interface successor facts) and advance the parent's progress; the
-   sealer's recursive branch walk becomes redundant.
+4. **The reached state.** Done. The core holds the state its evidence
+   has reached (`evidence_state`): a statement theorem's outcome, a
+   condition theorem's state with a pending allocation resolved, an
+   observation's or rewrite's successor, a join's joined state. Once set,
+   the checks read it and never the driver's copy of the state, so the
+   chain is validated from the theorems alone; a returning or diverging
+   theorem or an outcome fork completes the trace, after which only case
+   arms may be recorded. Case arms were already validated when recorded.
+   Still driver-owned: the remaining source (`frontier.position`), which
+   slice 5 moves.
+5. **The reached source and branch joins.** The core holds the source its
+   evidence has yet to consume, advanced by the sealer's rules (statement
+   tail, selected arm or loop body then head, `Skip` handling), and checks
+   the next theorem against it instead of the driver's frontier. The join
+   record calls already walk each arm's trace from the split over the
+   full source and require the common continuation and the joined state;
+   they additionally check that the split's `if` is the parent's next
+   source statement.
 6. **Completion.** Add `ExecutionProofCore::checked_function_execution(...)`
    deriving the whole-function execution from the finished traces: path
    count from the traces themselves, the contract's exit rule per trace, the

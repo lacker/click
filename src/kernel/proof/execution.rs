@@ -758,7 +758,7 @@ fn branch_split_starts_at_parent(
     arguments: &[CExpression],
     root_facts: &ProofFacts,
 ) -> bool {
-    if split_state == &*parent.state {
+    if split_state == parent.reached_state() {
         return true;
     }
     if !parent.frontier.is_at_function_entry()
@@ -774,7 +774,7 @@ fn branch_split_starts_at_parent(
         return false;
     }
     let Some(entry_state) =
-        crate::kernel::c_function_entry_state(&parent.state, function, arguments)
+        crate::kernel::c_function_entry_state(parent.reached_state(), function, arguments)
     else {
         return false;
     };
@@ -815,7 +815,7 @@ impl CheckedExecutionBranch {
         if arms.iter().any(|arm| !arm.frontier.is_at_region_boundary()) {
             return Err("a branch arm has not reached its typed boundary");
         }
-        if *arms[0].state != *arms[1].state {
+        if arms[0].reached_state() != arms[1].reached_state() {
             return Err("the branch arms do not have one joined state");
         }
         if !split.validates_exhaustive_join(
@@ -855,7 +855,7 @@ impl CheckedExecutionBranch {
             if progress.completed.is_some() || progress.remaining != split.continuation {
                 return Err("a branch arm theorem trace does not reach the shared continuation");
             }
-            if progress.state != *arm.state {
+            if &progress.state != arm.reached_state() {
                 return Err("a branch arm theorem trace does not reach its recorded state");
             }
             checked_arms.push(CheckedExecutionBranchArm {
@@ -868,7 +868,7 @@ impl CheckedExecutionBranch {
             .map_err(|_| "the checked branch does not have exactly two arms")?;
         let interface_effect_facts = checked_interface_effect_facts(
             &split.state,
-            &arms[0].state,
+            arms[0].reached_state(),
             arms,
             arm_facts,
             arm_effect_facts,
@@ -876,7 +876,7 @@ impl CheckedExecutionBranch {
         Ok(Self {
             split,
             arms: [then_arm, else_arm],
-            joined_state: (*arms[0].state).clone(),
+            joined_state: arms[0].reached_state().clone(),
             interface_successor_facts: None,
             interface_execution_facts: Vec::new(),
             interface_effect_facts,
@@ -929,21 +929,21 @@ impl CheckedExecutionBranch {
             .state
             .locals()
             .object_values()
-            .filter(|(name, value)| arms[1].state.locals().get(name) == Some(*value))
+            .filter(|(name, value)| arms[1].reached_state().locals().get(name) == Some(*value))
             .map(|(name, value)| (name.to_string(), value.clone()))
             .collect::<BTreeMap<_, _>>();
         if &expected_stable_locals != stable_join_locals {
             return Err("the interface stable-local set is not exact");
         }
-        let sibling_states = [&*arms[0].state, &*arms[1].state];
+        let sibling_states = [arms[0].reached_state(), arms[1].reached_state()];
         let abstract_then = crate::kernel::abstract_c_state_for_interface_join_across(
-            &arms[0].state,
+            arms[0].reached_state(),
             &sibling_states,
             stable_join_locals,
         )
         .map_err(|_| "the then interface state could not be abstracted")?;
         let abstract_else = crate::kernel::abstract_c_state_for_interface_join_across(
-            &arms[1].state,
+            arms[1].reached_state(),
             &sibling_states,
             stable_join_locals,
         )
@@ -963,7 +963,7 @@ impl CheckedExecutionBranch {
         let mut successor_interface_resource_facts = Vec::new();
         for spec in interface_resource_specs {
             for (index, (arm, facts)) in arms.iter().zip(arm_facts).enumerate() {
-                let fact = evaluate_interface_resource_spec(spec, &arm.state, facts)
+                let fact = evaluate_interface_resource_spec(spec, arm.reached_state(), facts)
                     .ok_or("an interface resource does not lower in a concrete arm")?;
                 arm_interface_resources[index].push(fact);
             }
@@ -990,7 +990,7 @@ impl CheckedExecutionBranch {
         let common_resources = ResourceContext::common_exact_descendant(
             &arm_residuals[0],
             &arm_residuals[1],
-            parent.state.resources(),
+            parent.reached_state().resources(),
         )
         .ok_or("the interface arm resources do not descend from the branch root")?;
         let expected_resources = common_resources
@@ -1021,7 +1021,8 @@ impl CheckedExecutionBranch {
             .unwrap_or(&split.state);
         for spec in interface_specs {
             for (arm, facts) in arms.iter().zip(arm_facts) {
-                if !interface_spec_is_established(spec, &arm.state, reference_state, facts) {
+                if !interface_spec_is_established(spec, arm.reached_state(), reference_state, facts)
+                {
                     return Err("an interface fact is not established by both concrete arms");
                 }
             }
@@ -1079,7 +1080,7 @@ impl CheckedExecutionBranch {
             if !crate::kernel::api::execution_evidence_states_match(
                 function,
                 &progress.state,
-                &arm.state,
+                arm.reached_state(),
                 arm_facts[index].assumptions(),
             ) {
                 return Err("an interface arm trace does not reach its recorded state");
@@ -1585,6 +1586,16 @@ pub(crate) struct ProofExecutionContinuation {
 #[derive(Clone)]
 pub(crate) struct ExecutionProofCore {
     pub(crate) state: SharedValue<CState>,
+    /// The state the retained evidence has reached on the open trace: the
+    /// outcome of the last recorded theorem, observation, rewrite, or
+    /// join. `None` until the first is recorded, when the theorem starts
+    /// from the function entry bound from `state`. Once set, the checks
+    /// read this and never `state`: the chain is validated from the
+    /// theorems alone.
+    pub(crate) evidence_state: Option<CState>,
+    /// The open trace has completed with a returning or diverging theorem
+    /// or an outcome fork; only post-execution case arms may follow.
+    pub(crate) evidence_completed: bool,
     pub(crate) frontier: ExecutionFrontier,
     pub(crate) effect_facts: SharedVec<ExecutionPureFact>,
     /// One append-only evidence trace per operational outcome represented by
@@ -1959,6 +1970,8 @@ impl ExecutionProofCore {
     pub(crate) fn at_entry(state: CState, frontier: ExecutionFrontier) -> Self {
         Self {
             state: state.into(),
+            evidence_state: None,
+            evidence_completed: false,
             frontier,
             effect_facts: Default::default(),
             execution_evidence: vec![PersistentSequence::default()].into(),
@@ -2017,7 +2030,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
-        self.check_statement_evidence(
+        let outcome = self.check_statement_evidence(
             function,
             arguments,
             &theorem,
@@ -2028,6 +2041,19 @@ impl ExecutionProofCore {
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
+        }
+        match outcome {
+            CStatementOutcome::Normal(next_state) => self.evidence_state = Some(next_state),
+            CStatementOutcome::Return { state, .. } => {
+                self.evidence_state = Some(state);
+                self.evidence_completed = true;
+            }
+            // An error outcome is recorded so the driver reports it; it
+            // completes the trace without a state a later theorem could
+            // start from, and completion will not accept it as a path.
+            CStatementOutcome::VerificationDiverges
+            | CStatementOutcome::UndefinedBehavior(_)
+            | CStatementOutcome::RuntimeError(_) => self.evidence_completed = true,
         }
         Ok(())
     }
@@ -2048,7 +2074,7 @@ impl ExecutionProofCore {
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
         for (theorem, execution_facts, obligations) in outcomes {
-            self.check_statement_evidence(
+            let outcome = self.check_statement_evidence(
                 function,
                 arguments,
                 theorem,
@@ -2056,6 +2082,9 @@ impl ExecutionProofCore {
                 execution_facts,
                 obligations,
             )?;
+            if matches!(outcome, CStatementOutcome::Normal(_)) {
+                return Err("an outcome fork records only completing outcomes");
+            }
         }
         let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
         self.execution_evidence = outcomes
@@ -2068,6 +2097,8 @@ impl ExecutionProofCore {
             })
             .collect::<Vec<_>>()
             .into();
+        self.evidence_state = None;
+        self.evidence_completed = true;
         Ok(())
     }
 
@@ -2092,17 +2123,30 @@ impl ExecutionProofCore {
         Some(head)
     }
 
-    /// The state the frontier's next theorem must start from. At function
-    /// entry the core holds the caller-side state (resource observations
-    /// and rewrites recorded there keep that form, and the trace holds
-    /// their entry-bound states); the theorem starts from binding the
-    /// arguments in it, as the recorded observations were bound.
+    /// The state the retained evidence has reached, or the core's state
+    /// before any evidence is recorded.
+    pub(crate) fn reached_state(&self) -> &CState {
+        self.evidence_state.as_ref().unwrap_or(&self.state)
+    }
+
+    /// The state the frontier's next theorem must start from: the state the
+    /// evidence has reached. Before any evidence, at function entry, the
+    /// core holds the caller-side state (resource observations and
+    /// rewrites recorded there keep that form, and the trace holds their
+    /// entry-bound states); the theorem starts from binding the arguments
+    /// in it, as the recorded observations were bound.
     fn running_state(
         &self,
         function: &CFunction,
         arguments: &[CExpression],
     ) -> Result<std::borrow::Cow<'_, CState>, &'static str> {
         use std::borrow::Cow;
+        if self.evidence_completed {
+            return Err("evidence was recorded after the trace completed");
+        }
+        if let Some(state) = &self.evidence_state {
+            return Ok(Cow::Borrowed(state));
+        }
         if !matches!(self.frontier.position, FrontierPosition::FunctionEntry) {
             return Ok(Cow::Borrowed(&self.state));
         }
@@ -2131,13 +2175,15 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         execution_facts: &[ExecutionPureFact],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(), &'static str> {
+    ) -> Result<CStatementOutcome, &'static str> {
         let running_state = self.running_state(function, arguments)?;
-        let (proved_state, proved_statement) =
+        let (proved_state, proved_statement, outcome) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
                 Proposition::CStatementVerifies {
-                    state, statement, ..
-                } => (state, statement),
+                    state,
+                    statement,
+                    outcome,
+                } => (state, statement, outcome),
                 _ => return Err("retained statement evidence has a non-statement conclusion"),
             };
         if !matches!(proved_statement, CStatement::Skip) {
@@ -2158,7 +2204,8 @@ impl ExecutionProofCore {
             proved_state,
             execution_facts,
             obligations,
-        )
+        )?;
+        Ok(outcome.clone())
     }
 
     /// Checks that a condition theorem decides the frontier's next `if` or
@@ -2174,7 +2221,7 @@ impl ExecutionProofCore {
         context: &PureFactContext,
         path_facts: &[Proposition],
         obligations: &[crate::kernel::ProofObligation],
-    ) -> Result<(), &'static str> {
+    ) -> Result<CState, &'static str> {
         let running_state = self.running_state(function, arguments)?;
         let (proved_state, proved_condition) =
             match crate::kernel::api::proof_evidence_conclusion(theorem) {
@@ -2212,7 +2259,24 @@ impl ExecutionProofCore {
             proved_state,
             &path_facts,
             obligations,
-        )
+        )?;
+        // A condition on a pending `malloc` result decides that allocation's
+        // outcome: the reached state resolves the pending allocation from
+        // the decided facts, the kernel rule execution applies right after
+        // the condition.
+        let mut reached = proved_state.clone();
+        if reached.memory().has_pending_heap_allocation() {
+            let no_assumptions = PureFactContext::new();
+            let entry_assumptions = self
+                .function_entry
+                .as_ref()
+                .map_or(&no_assumptions, |entry| entry.assumptions());
+            let theorem_assumptions =
+                crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
+            reached =
+                crate::kernel::resolve_pending_heap_allocations(&reached, &theorem_assumptions);
+        }
+        Ok(reached)
     }
 
     /// The part of the evidence judgment shared by statement and condition
@@ -2304,7 +2368,7 @@ impl ExecutionProofCore {
         obligations: &[crate::kernel::ProofObligation],
     ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
-        self.check_condition_evidence(
+        let reached = self.check_condition_evidence(
             function,
             arguments,
             &theorem,
@@ -2316,6 +2380,7 @@ impl ExecutionProofCore {
             trace.push(CheckedExecutionEvent::Condition(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
+        self.evidence_state = Some(reached);
         Ok(())
     }
 
@@ -2393,9 +2458,12 @@ impl ExecutionProofCore {
         after_state: &CState,
         after_facts: &ProofFacts,
     ) -> Result<(), &'static str> {
+        if self.evidence_completed {
+            return Err("a resource observation was recorded after the trace completed");
+        }
         let mut observation = CheckedResourceObservation::check(
             function,
-            &self.state,
+            self.reached_state(),
             before_facts,
             observed,
             after_state,
@@ -2416,6 +2484,9 @@ impl ExecutionProofCore {
             )
             .ok_or("resource observation could not bind its successor entry state")?;
         }
+        if self.evidence_state.is_some() {
+            self.evidence_state = Some(observation.after_state.clone());
+        }
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::ResourceObservation(
                 observation.clone(),
@@ -2433,9 +2504,12 @@ impl ExecutionProofCore {
         after_state: &CState,
         after_facts: &ProofFacts,
     ) -> Result<(), &'static str> {
+        if self.evidence_completed {
+            return Err("a resource rewrite was recorded after the trace completed");
+        }
         let mut rewrite = CheckedResourceRewrite::check(
             function,
-            &self.state,
+            self.reached_state(),
             before_facts,
             selected,
             after_state,
@@ -2448,6 +2522,9 @@ impl ExecutionProofCore {
             rewrite.after_state =
                 crate::kernel::c_function_entry_state(&rewrite.after_state, function, arguments)
                     .ok_or("resource rewrite could not bind its successor entry state")?;
+        }
+        if self.evidence_state.is_some() {
+            self.evidence_state = Some(rewrite.after_state.clone());
         }
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::ResourceRewrite(rewrite.clone()));
@@ -2487,9 +2564,12 @@ impl ExecutionProofCore {
             arm_effect_facts,
         )?;
         let interface_effect_facts = branch.interface_effect_facts().to_vec();
+        let joined_state = branch.joined_state().clone();
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
+        self.evidence_state = Some(joined_state);
+        self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
 
@@ -2535,9 +2615,12 @@ impl ExecutionProofCore {
             successor_facts,
         )?;
         let interface_effect_facts = branch.interface_effect_facts().to_vec();
+        let joined_state = branch.joined_state().clone();
         let mut trace = parent_trace.clone();
         trace.push(CheckedExecutionEvent::Branch(branch));
         self.execution_evidence = vec![trace].into();
+        self.evidence_state = Some(joined_state);
+        self.evidence_completed = false;
         Ok(interface_effect_facts)
     }
 

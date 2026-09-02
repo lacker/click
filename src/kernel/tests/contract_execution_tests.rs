@@ -2723,3 +2723,87 @@ fn recording_condition_evidence_checks_it_decides_the_frontier() {
         Err("condition evidence does not decide the frontier's next `if` or `while`")
     );
 }
+
+#[test]
+fn recorded_evidence_reaches_the_theorem_outcome_not_the_driver_state() {
+    // The proof object validates its chain from the theorems alone: the
+    // next theorem must start from the state the recorded evidence
+    // reached, whatever the driver's own copy of the state says.
+    let condition = c_less_than(c_int32_literal(0), c_int32_literal(1));
+    let branch = c_if(condition.clone(), CStatement::Skip, CStatement::Skip);
+    let tail = c_return(c_int32_literal(1));
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch, tail.clone()),
+    );
+    let entry_state = c_function_entry_state(&CState::new(), &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+        CState::new(),
+        crate::kernel::proof::ExecutionFrontier::default(),
+    );
+    core.record_condition_transition(
+        &function,
+        &[],
+        Theorem::new(Proposition::CConditionEvaluates {
+            state: entry_state.clone(),
+            condition,
+            outcome: crate::kernel::CConditionOutcome::Value(true),
+        }),
+        PureFactContext::new(),
+        &[],
+        &[],
+    )
+    .expect("the condition decides the entry `if`");
+    assert_eq!(core.reached_state(), &entry_state);
+    // The driver moves its frontier past the `if` but drifts its own state.
+    core.frontier.position = crate::kernel::proof::FrontierPosition::StatementEntry {
+        remaining: std::sync::Arc::new(tail.clone()),
+    };
+    let drifted = entry_state.clone().with_local("x", int32(1));
+    core.state = drifted.clone().into();
+    let returning = |state: CState| {
+        Theorem::new(Proposition::CStatementVerifies {
+            state: state.clone(),
+            statement: tail.clone(),
+            outcome: CStatementOutcome::Return {
+                value: int32(1),
+                state,
+            },
+        })
+    };
+    assert_eq!(
+        core.record_statement_transition(
+            &function,
+            &[],
+            returning(drifted),
+            PureFactContext::new(),
+            &[],
+            &[],
+        ),
+        Err("evidence does not start from the running state")
+    );
+    core.record_statement_transition(
+        &function,
+        &[],
+        returning(entry_state.clone()),
+        PureFactContext::new(),
+        &[],
+        &[],
+    )
+    .expect("the return from the reached state is accepted");
+    assert_eq!(core.reached_state(), &entry_state);
+    assert_eq!(
+        core.record_statement_transition(
+            &function,
+            &[],
+            returning(entry_state),
+            PureFactContext::new(),
+            &[],
+            &[],
+        ),
+        Err("evidence was recorded after the trace completed")
+    );
+}
