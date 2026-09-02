@@ -14,14 +14,13 @@ post-execution resource folds, nested resource scopes, counted resources, and
 Two fallback mechanisms still execute a function body independently after its
 proof-directed execution:
 
-1. In `finish_ordered_proof`, claim finishing uses retained proof evidence for
-   supported shapes but selects `cached_independent_execution` for three
-   explicit shapes:
-   - an outcome proof with an unfolded predicate;
-   - a quantified resource fold or close after C execution; and
-   - a counted entry whose output resources are closed implicitly rather than
-     by an explicit checked `frame()`.
-2. At the opaque-contract boundary, final certification reuses an exact,
+1. In `finish_ordered_proof` (`src/surface/proof/claim_proofs.rs`), claim
+   finishing calls `checked_c_function_execution_from_proof_evidence`
+   (`src/kernel/api.rs`) and, whenever that sealer returns `None` or one of
+   three explicit guards fires, selects `cached_independent_execution`.
+2. At the opaque-contract boundary
+   (`prove_c_function_contract_execution_paths_with_checked_artifacts`,
+   `src/kernel/api.rs`), final certification reuses an exact,
    resource-rebased, or exhaustive entry-partition checked artifact when it
    can. If none matches, it silently falls back to fresh symbolic execution of
    the function body.
@@ -41,6 +40,42 @@ The arena example verifies through nested `arena_region` and `arena_metadata`
 scopes, but its sidecar does not yet contain the intended explicit
 `arena_write` contract. That contract remains the end-to-end resource-shaped
 acceptance case.
+
+## Where the reruns actually happen
+
+Measured on 2026-09-01 at master `a6652d73` with temporary instrumentation at
+both fallback sites and at every `return None` inside the sealer, over all
+426 mdtests and the 14 example projects.
+
+Claim finishing reran a body 100 times in 83 mdtest fixtures and 36 times in
+the examples. The three guards are the minority; most reruns happen because
+the sealer refuses the retained trace:
+
+| Cause of a claim rerun | mdtests | examples |
+| --- | --- | --- |
+| Loop step theorem carries exit hypotheses (invariant at the fresh head variables, e.g. `V1000000 <= n`) that the path's exact facts do not list, so `proof_evidence_premises_are_retained` fails | 28 | 11 |
+| `return` from a nested statement while body tail remains, or a diverging loop; `seal_proof_evidence_events` refuses any `Return`/`VerificationDiverges` outcome with a tail | 22 | 6 |
+| Proved statement or memory snapshot differs from the running sealed state (7 memory identity on heap fixtures, 3 loop-clause-bound function statements) | 10 | 4 |
+| Proof-case partition or path count differs from the evidence traces (proof `if` cases, outcome forks) | 7 | 12 |
+| Guard: counted entry closed implicitly by outcome `simp()` rather than an explicit `frame()` | 22 | 2 |
+| Guard: outcome proof with an unfolded predicate | 11 | 10 |
+| Guard: quantified resource fold or close after C execution | 4 | 2 |
+
+Contract certification reran a body 40 times in 34 mdtest fixtures and 34
+times in the examples. Every one of those had a same-function artifact from
+claim finishing available. Two causes account for all of them:
+
+- The artifact's assumptions include one premise the reconstructed contract
+  context cannot derive: the opaque `Predicate` identity of a `requires`
+  clause (`valid_pool`, `first_is_seven`, `terminated`, ...) that contract
+  certification lowers operationally into its body, or an entry
+  `CResourceContains` fact of a composite definition.
+- The artifact's entry state differs from the contract entry state only in
+  `resources` and `counted_populations` (the claim proof opened or unfolded a
+  resource at entry) and the resource rebase did not apply.
+
+Fixture lists per row are reproducible from the instrumentation described in
+slice 1; do not keep the fixture lists in this file.
 
 ## Violated invariant
 
@@ -79,54 +114,146 @@ depends on positional alignment. Persistent sharing and output-sized deltas are
 appropriate; cloning or rescanning accumulated path history per operation is
 not.
 
-## Remaining implementation slices
+## The approach
 
-Work from current `master` and remove one fallback shape at a time. Each slice
-must be independently green and must delete the guard or fallback it replaces.
-Do not accumulate a second implementation alongside the old one.
+The sealer builds the certified execution path by path from the proof
+object's own candidates, zipped in order. Where it succeeds, the certified
+execution is a restatement of the proof, and the outcome pairing
+(`outcomes_match`), `certify_c_function_execution_path_resource_representation`,
+and `describe_function_outcome_delta` are alignment between two copies of the
+same thing. Where it fails, exactly one proof-object operation failed to
+retain an output-sized delta, or the sealer is stricter than the operation
+that produced the event.
 
-### 1. Pin each remaining claim fallback
+So the work is not to type all evidence at once and not to build a fact
+database. It is to make sealing total over the corpus one refusal class at a
+time, behind a ratchet, then delete the alignment code, then make the
+contract boundary consume the sealed artifact structurally. At the end the
+trusted theorem for a claim is composed from the proof object's retained
+kernel theorems and its closed outcome goals, and `finish_ordered_proof`
+reduces to sealing plus reading those closures.
 
-Add or identify a focused regression for each of the three guarded shapes in
-`finish_ordered_proof`. Reset the checked whole-function execution counter,
-verify the proof, and assert that claim finishing performs zero whole-body
-executions. Before changing representations, confirm the exact checked
-transition or state delta that the existing proof object lacks.
+Order the slices by cost: slices 2 through 5 are each smaller than any of the
+three guards and remove two thirds of the reruns. Every slice must be
+independently green, must lower at least one ratchet count, and must delete
+the guard or fallback it replaces. Do not accumulate a second implementation
+alongside the old one.
 
-### 2. Remove the claim fallbacks individually
+## Implementation slices
 
-For each guarded shape:
+### 1. Typed refusals and a ratchet
 
-1. Make the proof-object operation that already checks the unfold, resource
-   transition, or implicit closure retain the minimum information needed to
-   seal its successor.
-2. Have sealing consume that checked successor directly.
-3. Delete that shape's fallback guard immediately.
-4. Add a negative test showing that forged, stale, or mismatched state is
-   rejected without executing the body.
-5. Run the focused regression and the existing zero-rerun suite before moving
-   to the next shape.
+Make `checked_c_function_execution_from_proof_evidence` and
+`seal_proof_evidence_events` return `Result<_, SealRefusal>` with one variant
+per refusal site (unretained premise, return with tail, statement mismatch,
+state mismatch, partition mismatch, path count, entry state, plus the three
+guards, which move from claim finishing into the same enum). Count refusals
+per variant in a test-only, session-scoped census alongside
+`take_checked_function_body_execution_count`, and count contract-boundary
+fallbacks with their cause (unauthorized premise kind, entry-state delta).
 
-An implicit counted-resource close should use the same kernel-checked state
-transition as its explicit equivalent; it should not be justified by rerunning
-the function. Outcome predicate unfolding similarly needs a checked
-proof-object successor, not an ambient fact derivation reconstructed during
-sealing.
+Add one corpus test that runs the mdtests and examples and pins each
+variant's count at the numbers in the table above, failing when a count
+rises. Each later slice lowers a pin to its new value. This is mechanical, is
+not a behavior change, and is the only place fixture lists live.
 
-### 3. Remove opaque-contract fallback execution
+### 2. Return with a remaining tail
 
-Once claim finishing always supplies a checked execution artifact, classify
-the remaining reasons exact, resource-rebased, or entry-partition reuse can
-fail. Repair composition at the operation that loses the necessary identity.
-If a supplied artifact is incompatible, final certification must report that
-incompatibility rather than execute the body.
+On a `Return` or `VerificationDiverges` statement outcome the sealer must
+drop the unconsumed tail rather than refuse: the path has ended and the tail
+is unreachable on it. Negative test: a `Normal` outcome with a remaining tail
+that is not consumed by later events still refuses. Clears the second row.
 
-Delete the `(None, None, None)` body-execution fallback and then remove the
-independent-execution cache. Retain the execution counter as regression
-instrumentation if it remains useful for proving that ordinary verification
-performs no hidden body execution.
+### 3. Loop exit hypotheses
 
-### 4. Add the arena acceptance contract
+The verified-loop step's theorem is `hypotheses -> CStatementVerifies(...)`
+whose hypotheses are the invariant at the fresh head variables and the negated
+condition. They are justified by the loop rule and are assumptions of the
+exit path, not facts to derive. Retain them at the loop step as the path's
+exact facts (the candidate's `execution_facts`), so the sealer finds them
+through the existing exact lookup. Do not widen
+`proof_evidence_premises_are_retained` to ambient derivation. Negative test:
+a forged exit fact that is not one of the rule's hypotheses is refused.
+Clears the first row.
+
+### 4. State and statement identity
+
+Two sub-causes. Heap fixtures: the proved statement's entry memory and the
+sealed running memory differ in snapshot identity only; find which side
+canonicalizes and compare canonically at the operation that records the
+theorem, not in the sealer. Loop-clause-bound functions: the frontier
+function differs from the checked function in its `while` statements; seal
+against the frontier function, and keep
+`proof_evidence_function_refines_same_source` as the guard that the two
+functions differ only there. Clears the third row.
+
+### 5. Partitions and path counts
+
+Outcome case splits that fork undecided paths and proof `if` cases leave more
+candidates than evidence traces, or a partition the sealer cannot match. The
+fork or split must record its partition in every trace it creates, at the
+operation, so `proof_case_partitions_match_paths` and the path count agree
+by construction. Clears the fourth row.
+
+### 6. The three guards
+
+In this order, each deleting its guard immediately:
+
+- Implicit close. The implicit closer of a counted entry must publish the same
+  checked frame transition an explicit `frame()` records
+  (`CheckedFrameAuthority`), through one code path. Negative test: a forged
+  exit population is refused without executing the body.
+- Outcome unfold. Outcome `unfold(p)` must apply the sealed unfolding theorem
+  (`prove_c_function_contract_predicate_unfolding`, already used for entry
+  unfolds through `function_entry_derivations`) to the outcome goal's exact
+  facts, instead of pushing a name into `unfolded_predicates` for
+  `unfold_available_predicate_facts` to re-expand ambiently at finishing.
+  Negative test: an unfolding whose body is not the registered one is
+  refused.
+- Quantified fold or close. Extend `CheckedResourceRewrite` (or add a sibling
+  event) with a kernel-checked counted-population delta, using the same rule
+  that certifies contract resource effects at a frame. Negative test: a
+  changed population count without the rule is refused.
+
+### 7. Delete the fallback and the alignment
+
+When every ratchet count is zero: remove `cached_independent_execution`, the
+`certification_cache`, and the three guards; a sealing refusal becomes the
+proof's diagnostic. Then, because sealed paths are zipped with the proof's
+candidates, replace the outcome pairing with index identity and delete
+`outcomes_match`, `certify_c_function_execution_path_resource_representation`
+and its cache, and `describe_function_outcome_delta`. Keep the execution
+counter as regression instrumentation. This is the slice where a completed
+proof object is, by construction, the execution evidence.
+
+The remaining kernel-API-only audit bugs (claim coverage and injected entry
+facts in [contract-rule-trust-boundary.md](contract-rule-trust-boundary.md),
+sequential binder substitution in
+[kernel-binder-hygiene.md](kernel-binder-hygiene.md), and
+[call-havoc-fingerprint-collision.md](call-havoc-fingerprint-collision.md))
+are masked only by the exact checks and re-execution this slice removes. Land
+them before it.
+
+### 8. Contract boundary
+
+With every claim supplying a sealed artifact, make artifact reuse structural:
+
+- A premise that is the registered predicate identity of one of the
+  function's own `requires` clauses is authorized; the kernel already holds
+  the predicate-to-body pairs in `predicate_unfoldings()` and reconstructs the
+  body operationally, so the identity is a renaming of an assumption it has.
+- An entry `CResourceContains` premise derivable from the function's composite
+  definitions at the contract entry state is authorized.
+- An entry state that differs from the contract entry only in `resources` and
+  `counted_populations` is rebased through the artifact's retained
+  `CheckedFunctionEntry`; find why `rebased_reuse` currently declines these
+  and repair that check rather than widening it.
+
+Then delete the `(None, None, None)` body-execution arm: an artifact that
+still cannot be reused is a local evidence error naming the premise or state
+component that blocked it.
+
+### 9. Arena acceptance contract
 
 Add the intended `arena_write` contract to `examples/arena/arena.click`, keeping
 the existing C unchanged and its mutable footprint narrow. Its nested resource
@@ -148,8 +275,10 @@ C, a general proof-object redesign, or removal of search from smart tactics.
 
 ## Acceptance criteria
 
-- `finish_ordered_proof` contains no independent whole-function execution or
-  independent-execution cache.
+- `finish_ordered_proof` contains no independent whole-function execution,
+  independent-execution cache, or outcome pairing; sealing is the only source
+  of the certified execution and its paths correspond to the proof's
+  candidates by index.
 - Opaque-contract certification never executes a supplied proof's function
   body when artifact reuse fails; it reports a local evidence error.
 - A completed proof seals its existing checked proof-object state directly;
@@ -158,7 +287,9 @@ C, a general proof-object redesign, or removal of search from smart tactics.
   ambient case search and remain approximately linear, up to logarithmic
   indexes and output-sized deltas, in selected C, Click, proof state, and
   certificate size.
-- Focused zero-rerun and negative tests cover every removed fallback shape.
+- The ratchet census reads zero for every refusal variant and stays in the
+  test suite; each removed fallback shape has a negative test showing forged
+  or mismatched evidence is rejected without executing the body.
 - The explicit `arena_write` contract verifies without changing its C source,
   weakening resource semantics, or adding proof-only C structure.
 - Documentation describes proof-directed execution as the sole ordinary
