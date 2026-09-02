@@ -125,6 +125,43 @@ impl<'a> Proof<'a> {
         }
     }
 
+    /// Checks the heap, resource, and counted-population components at this
+    /// loop-state join using the Proof-owned state and facts.
+    pub(in crate::surface::proof) fn check_loop_state_join(
+        &self,
+        loop_entry_state: &CState,
+        composite_resource_definitions: &[CCompositeResourceDefinition],
+    ) -> Result<(), ClickError> {
+        if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
+            return Err(self.step_error("loop state join requires an execution proof"));
+        }
+        self.require_execution_frontier("loop state join")?;
+        let execution = self
+            .execution()
+            .ok_or_else(|| self.step_error("loop state join lost its execution state"))?;
+        if execution.core.frontier.region != ExecutionRegionKind::LoopBody {
+            return Err(self.step_error("loop state join requires a loop-region proof"));
+        }
+        let mut closer_facts = self.facts().to_vec();
+        closer_facts.extend(
+            execution
+                .core
+                .effect_facts
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        closer_facts.extend(crate::kernel::certified_store_equations(
+            &execution.core.effect_facts,
+        ));
+        crate::kernel::c_loop_state_components_match_at_back_edge(
+            loop_entry_state,
+            &execution.core.state,
+            &assumptions_from_propositions(&closer_facts),
+            composite_resource_definitions,
+        )
+        .map_err(|message| self.step_error(format!("loop state join: {message}")))
+    }
+
     /// Checks the complete loop-invariant bundle at this back edge and
     /// retains `close_invariants` when the source path has not already
     /// supplied it.
@@ -137,7 +174,9 @@ impl<'a> Proof<'a> {
         &self,
         loop_entry_state: &CState,
         invariant_checks: &[CLoopInvariantCheck],
+        composite_resource_definitions: &[CCompositeResourceDefinition],
     ) -> Result<Self, ClickError> {
+        self.check_loop_state_join(loop_entry_state, composite_resource_definitions)?;
         if !matches!(self.context.as_ref(), ProofContext::Execution(_)) {
             return Err(self.step_error("loop invariant closure requires an execution proof"));
         }

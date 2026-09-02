@@ -147,6 +147,17 @@ loop {
 The arithmetic invariants prove access bounds. The frame clauses summarize what
 memory the loop may write.
 
+Loop frames do not erase semantic lifetime state. A body that frees or
+allocates heap storage, or calls a function whose contract consumes or
+produces a resource, must leave the heap lifetime and resource context
+unchanged at the loop-state join. Click checks this in the kernel alongside
+the ordinary invariant and effect obligations; a state change is rejected
+rather than silently restored from the loop head. This prevents a later
+operation from using a block or ownership permission that a previous
+iteration removed. The current loop frontier has one abstract exit state, so
+path-sensitive changes that occur only on a final iteration are rejected too;
+conditional lifetime joins need a richer exit-state representation.
+
 ## Loop proof tactics
 
 An explicit preservation proof starts at an arbitrary loop-head visit and must

@@ -108,5 +108,15 @@ back edge naming the changed allocation or resource.
   verified with an invariant that states the conditional ownership.
 - `scripts/check.sh` passes.
 
+## Implementation boundary
+
+The first implementation chunk takes the sound conservative route: the
+kernel now rejects heap-lifetime, resource-context, and observable counted-
+population changes at the loop-state join, and the three negative regressions
+are covered by kernel tests and mdtests. The existing proof frontier still
+exports one abstract loop-exit state, so the positive final-iteration case is
+intentionally still open until path-sensitive exit states can carry the
+conditional lifetime to the code after the loop.
+
 Related: `havoc_loop_modified_locals` (pointer locals are havoced since 2026-09-01) fixes
 the third stale component in the same function.

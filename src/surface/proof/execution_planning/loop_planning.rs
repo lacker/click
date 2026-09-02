@@ -1436,15 +1436,29 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         });
         let bundle_checkpoint = leaf.checkpoint();
         let checked = if invariant_checks.is_empty() {
+            leaf.check_loop_state_join(
+                preservation.loop_entry_state(),
+                environment.function.composite_resource_definitions(),
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` (loop {loop_index} state join): {}",
+                    error.message()
+                ))
+            })?;
             leaf.clone()
         } else {
-            leaf.certify_loop_invariant_bundle(preservation.loop_entry_state(), invariant_checks)
-                .map_err(|error| {
-                    ClickError::new(format!(
-                        "`{claim_label}` (loop {loop_index} invariant bundle preservation): {}",
-                        error.message()
-                    ))
-                })?
+            leaf.certify_loop_invariant_bundle(
+                preservation.loop_entry_state(),
+                invariant_checks,
+                environment.function.composite_resource_definitions(),
+            )
+            .map_err(|error| {
+                ClickError::new(format!(
+                    "`{claim_label}` (loop {loop_index} invariant bundle preservation): {}",
+                    error.message()
+                ))
+            })?
         };
         let closer_tactics = if invariant_checks.is_empty() || invariants_already_closed {
             Vec::new()

@@ -8,6 +8,64 @@ fn scalar_local_updates_share_memory_and_resource_state() {
 }
 
 #[test]
+fn loop_back_edge_rejects_heap_and_resource_state_changes() {
+    let allocation = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let memory = CMemory::new()
+        .with_heap_allocation_claim(allocation.clone(), 16)
+        .expect("test allocation claim should be fresh");
+    let top = CState::new().with_memory(memory).with_resource_context(
+        ResourceContext::new()
+            .unchecked_with_fact(CResourceFact::own_allocation(allocation.clone(), 16))
+            .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                allocation,
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(4),
+            ))),
+    );
+    let freed = execute_c_statement_paths(
+        &top,
+        &c_heap_free(CExpression::Value(CValue::Pointer(Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        }))),
+        &PureFactContext::new(),
+        &CExecutionEnvironment::new(),
+        CExecutionSemantics::EXECUTE_BODIES,
+        &mut ExecutionBudget::default(),
+    )
+    .expect("test free should execute");
+    let CStatementOutcome::Normal(freed) = &freed[0].outcome else {
+        panic!("test free should have a normal outcome");
+    };
+    let error =
+        c_loop_state_components_match_at_back_edge(&top, freed, &PureFactContext::new(), &[])
+            .expect_err("a freed allocation must not cross a loop back edge");
+    assert!(error.contains("heap allocation lifetime"));
+
+    let consumed = top.clone().with_resource_context(ResourceContext::new());
+    let error =
+        c_loop_state_components_match_at_back_edge(&top, &consumed, &PureFactContext::new(), &[])
+            .expect_err("consumed resources must not cross a loop back edge");
+    assert!(error.contains("resource ownership"));
+
+    let token = CResourceFact::own_token("can_complete".to_string(), Vec::new());
+    let token_top =
+        CState::new().with_resource_context(ResourceContext::new().unchecked_with_fact(token));
+    let token_consumed = CState::new();
+    let error = c_loop_state_components_match_at_back_edge(
+        &token_top,
+        &token_consumed,
+        &PureFactContext::new(),
+        &[],
+    )
+    .expect_err("an abstract token must not cross a loop back edge");
+    assert!(error.contains("resource ownership"));
+}
+
+#[test]
 fn join_state_forgets_changed_scalars_and_memory() {
     let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
     let pointer = Pointer {

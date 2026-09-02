@@ -439,6 +439,63 @@ pub(super) fn execute_c_while_verification_paths(
     )
 }
 
+/// Checks the state components that a loop back edge cannot silently reset.
+/// Scalar locals and ordinary memory cells are handled by the existing loop
+/// abstraction and effect checks; heap lifetime, resource ownership, and
+/// counted resource populations are separate semantic state and must either
+/// be unchanged at the loop-state join.
+pub(crate) fn c_loop_state_components_match_at_back_edge(
+    top_state: &CState,
+    next_state: &CState,
+    assumptions: &PureFactContext,
+    composite_resource_definitions: &[CCompositeResourceDefinition],
+) -> Result<(), String> {
+    c_loop_state_components_match_at_back_edge_inner(
+        top_state,
+        next_state,
+        composite_resource_definitions,
+        assumptions,
+    )
+}
+
+fn c_loop_state_components_match_at_back_edge_inner(
+    top_state: &CState,
+    next_state: &CState,
+    composite_resource_definitions: &[CCompositeResourceDefinition],
+    assumptions: &PureFactContext,
+) -> Result<(), String> {
+    let mut changed = Vec::new();
+    if top_state.memory().heap != next_state.memory().heap {
+        changed.push("heap allocation lifetime");
+    }
+    if !crate::kernel::api::contract_certification::resource_contexts_definitionally_equal_with_definitions(
+        composite_resource_definitions,
+        top_state.memory(),
+        top_state.resources(),
+        next_state.memory(),
+        next_state.resources(),
+        assumptions,
+    ) {
+        changed.push("resource ownership");
+    }
+    if !crate::kernel::api::counted_populations_definitionally_equal(
+        top_state,
+        next_state,
+        composite_resource_definitions,
+        assumptions,
+    ) {
+        changed.push("counted resource populations");
+    }
+    if changed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "loop state join changes {}; the body path does not reach the loop-head state",
+            changed.join(", ")
+        ))
+    }
+}
+
 pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     state: &CState,
     condition: &CExpression,
@@ -938,6 +995,16 @@ pub(super) fn collect_loop_preservation_summary(
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
     let mut obligations = Vec::new();
+    let composite_resource_definitions = environment
+        .functions
+        .values()
+        .flat_map(|function| function.composite_resource_definitions().iter().cloned())
+        .fold(Vec::new(), |mut definitions, definition| {
+            if !definitions.contains(&definition) {
+                definitions.push(definition);
+            }
+            definitions
+        });
     let whole_loop_effect_facts = whole_loop_effect_summaries
         .iter()
         .cloned()
@@ -983,22 +1050,37 @@ pub(super) fn collect_loop_preservation_summary(
                             assumptions,
                             budget,
                         )?;
+                        let path_assumptions = assumptions_with_path_context(
+                            assumptions,
+                            &body_path.facts,
+                            &body_path.obligations,
+                        );
                         let path_obligations = collect_invariant_check_obligations(
                             &next_state,
                             loop_entry_state,
                             invariant_checks,
                             InvariantPhase::Preservation,
-                            &assumptions_with_path_context(
-                                assumptions,
-                                &body_path.facts,
-                                &body_path.obligations,
-                            ),
+                            &path_assumptions,
                             budget,
                         )?;
+                        let mut state_obligations = body_path.obligations.clone();
+                        if let Err(message) = c_loop_state_components_match_at_back_edge_inner(
+                            top_state,
+                            &next_state,
+                            &composite_resource_definitions,
+                            &path_assumptions,
+                        ) {
+                            state_obligations.push(
+                                ProofObligation::verification_condition(
+                                    false_equals_true_proposition(),
+                                )
+                                .with_context(message),
+                            );
+                        }
                         append_required_proof_obligations(
                             &mut obligations,
                             assumptions,
-                            &body_path.obligations,
+                            &state_obligations,
                         );
                         append_required_proof_obligations_under_path_context(
                             &mut obligations,
