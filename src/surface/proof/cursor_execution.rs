@@ -1609,13 +1609,28 @@ fn execute_step_from_frontier_position_selecting_path(
                 .skip(1)
                 .all(|transition| transition.introduced_facts.contains(fact))
         });
-        execution.core.record_statement_outcomes(
-            transitions
-                .iter()
-                .map(|transition| transition.theorem.clone())
-                .collect(),
-            transitions[0].context.clone(),
-        );
+        execution
+            .core
+            .record_statement_outcomes(
+                function,
+                arguments,
+                &transitions
+                    .iter()
+                    .map(|transition| {
+                        (
+                            transition.theorem.clone(),
+                            transition.execution_facts.as_slice(),
+                            transition.obligations.as_slice(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                transitions[0].context.clone(),
+            )
+            .map_err(|reason| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {reason}"
+                ))
+            })?;
         let mut completed_outcomes = Vec::new();
         for transition in transitions {
             let mut completed_execution_facts = transition.execution_facts;
@@ -1827,7 +1842,19 @@ fn execute_step_from_frontier_position_selecting_path(
     }
     execution
         .core
-        .record_statement_transition(transition.theorem.clone(), transition.context.clone());
+        .record_statement_transition(
+            function,
+            arguments,
+            transition.theorem.clone(),
+            transition.context.clone(),
+            &transition.execution_facts,
+            &transition.obligations,
+        )
+        .map_err(|reason| {
+            ClickError::new(format!(
+                "`{claim_label}` tactic {tactic_index}: `{tactic_name}` recorded statement evidence the proof object rejected: {reason}"
+            ))
+        })?;
     let state: &mut CState = &mut execution.core.state;
     // A direct memory-snapshot transport needs no surface `transport`
     // tactic, but its target still needs a stable source form for a

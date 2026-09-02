@@ -2325,17 +2325,17 @@ fn sealing_accepts_a_case_arm_recorded_after_the_return() {
         CState::new(),
         crate::kernel::proof::ExecutionFrontier::default(),
     );
-    core.record_statement_outcomes(
-        trace
-            .to_vec()
-            .into_iter()
-            .filter_map(|event| match event {
-                crate::kernel::proof::CheckedExecutionEvent::Statement(theorem) => Some(theorem),
-                _ => None,
-            })
-            .collect(),
-        PureFactContext::new(),
-    );
+    let outcomes = trace
+        .to_vec()
+        .into_iter()
+        .filter_map(|event| match event {
+            crate::kernel::proof::CheckedExecutionEvent::Statement(theorem) => Some(theorem),
+            _ => None,
+        })
+        .map(|theorem| (theorem, &[][..], &[][..]))
+        .collect::<Vec<_>>();
+    core.record_statement_outcomes(&function, &[], &outcomes, PureFactContext::new())
+        .expect("the returning branch theorem advances the entry frontier");
     core.fork_outcome_evidence(&[crate::kernel::proof::OutcomeEvidenceFork::Split {
         partition,
         arm_facts: [root.with_fact(then_fact), root.with_fact(else_fact)],
@@ -2536,4 +2536,79 @@ fn sealing_covers_a_loadability_premise_from_the_retained_context() {
         seal_early_return(&candidates, &function, trace).err(),
         Some(crate::instrumentation::SealRefusal::UnretainedPremise)
     );
+}
+
+#[test]
+fn recording_statement_evidence_checks_it_advances_the_frontier() {
+    // The record call itself applies the judgment the end-of-proof walk
+    // applies: the theorem proves the frontier's next source statement
+    // from the running state, under premises the proof retains.
+    let branch = c_if(
+        c_less_than(c_int32_literal(0), c_int32_literal(1)),
+        c_return(c_int32_literal(0)),
+        CStatement::Skip,
+    );
+    let function = c_function(
+        CType::Int32,
+        "early",
+        Vec::new(),
+        c_seq(branch.clone(), c_return(c_int32_literal(1))),
+    );
+    let entry_state = c_function_entry_state(&CState::new(), &function, &[])
+        .expect("a parameterless function binds its entry state");
+    let verifies = |state: CState, statement: CStatement| Proposition::CStatementVerifies {
+        state: state.clone(),
+        statement,
+        outcome: CStatementOutcome::Return {
+            value: int32(0),
+            state,
+        },
+    };
+    let record = |theorem: Theorem, context: PureFactContext| {
+        let mut core = crate::kernel::proof::ExecutionProofCore::at_entry(
+            CState::new(),
+            crate::kernel::proof::ExecutionFrontier::default(),
+        );
+        core.record_statement_transition(&function, &[], theorem, context, &[], &[])
+    };
+    record(
+        Theorem::new(verifies(entry_state.clone(), branch.clone())),
+        PureFactContext::new(),
+    )
+    .expect("the body's first statement from the entry state advances the entry frontier");
+    assert_eq!(
+        record(
+            Theorem::new(verifies(entry_state.clone(), c_return(c_int32_literal(1)))),
+            PureFactContext::new(),
+        ),
+        Err("statement evidence does not prove the frontier's next source statement")
+    );
+    let elsewhere = entry_state.clone().with_local("x", int32(1));
+    assert_eq!(
+        record(
+            Theorem::new(verifies(elsewhere, branch.clone())),
+            PureFactContext::new(),
+        ),
+        Err("statement evidence does not start from the running state")
+    );
+    let premise = Proposition::ConditionIs(
+        ConditionTerm::signed_less_equal(
+            Bitvector32Term::Variable(Variable(1_000_001)),
+            Bitvector32Term::Constant(3),
+        ),
+        true,
+    );
+    let conditional = Theorem::new(Proposition::Implies(
+        Box::new(premise.clone()),
+        Box::new(verifies(entry_state, branch)),
+    ));
+    assert_eq!(
+        record(conditional.clone(), PureFactContext::new()),
+        Err("statement evidence assumes a premise the proof did not retain")
+    );
+    record(
+        conditional,
+        PureFactContext::new().assume_proposition(premise),
+    )
+    .expect("a premise the recorded context retains is accepted");
 }

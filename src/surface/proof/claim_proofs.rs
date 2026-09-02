@@ -349,6 +349,7 @@ pub(in crate::surface) fn prove_claim_by_tactics(
                 .function_entry_state
                 .as_ref()
                 .expect("a function proof has a checked entry state"),
+            assumptions_from_propositions(&pure_facts),
         )
     );
     // The checked drivers are tried in order: the structural driver owns
@@ -529,6 +530,7 @@ pub(in crate::surface) fn prove_claims_by_grouped_tactics(
                 .function_entry_state
                 .as_ref()
                 .expect("a function proof has a checked entry state"),
+            assumptions_from_propositions(&pure_facts),
         )
     );
     // Same order as the single-claim route: structural, then flat.

@@ -555,6 +555,13 @@ pub(crate) struct CheckedFunctionEntry {
     function: CFunction,
     arguments: Vec<CExpression>,
     entry_state: CState,
+    /// The facts the proof assumes at entry: the contract's requirements
+    /// and the caller's facts, before any step. Recorded evidence is
+    /// checked under these, not under each step's full context, so the
+    /// definitional comparisons stay proportional to the entry.
+    assumptions: PureFactContext,
+    /// `resource_relation_assumptions(&self.assumptions)`, computed once.
+    relation_facts: Option<PureFactContext>,
 }
 
 impl CheckedFunctionEntry {
@@ -563,17 +570,33 @@ impl CheckedFunctionEntry {
         function: &CFunction,
         arguments: &[CExpression],
         expected_entry_state: &CState,
+        assumptions: PureFactContext,
     ) -> Option<Arc<Self>> {
         let entry_state = crate::kernel::c_function_entry_state(caller_state, function, arguments)?;
         if &entry_state != expected_entry_state {
             return None;
         }
-        Some(Arc::new(Self {
+        let mut entry = Self {
             caller_state: caller_state.clone(),
             function: function.clone(),
             arguments: arguments.to_vec(),
             entry_state,
-        }))
+            assumptions,
+            relation_facts: None,
+        };
+        entry.relation_facts = entry.resource_relation_assumptions(&entry.assumptions);
+        Some(Arc::new(entry))
+    }
+
+    /// The facts the proof assumed at entry.
+    pub(crate) fn assumptions(&self) -> &PureFactContext {
+        &self.assumptions
+    }
+
+    /// The entry resources' relation facts under the entry assumptions,
+    /// when the entry's composites expand.
+    pub(crate) fn relation_facts(&self) -> Option<&PureFactContext> {
+        self.relation_facts.as_ref()
     }
 
     pub(crate) fn entry_state_for(
@@ -1960,6 +1983,7 @@ impl ExecutionProofCore {
         function: &CFunction,
         arguments: &[CExpression],
         expected_entry_state: &CState,
+        assumptions: PureFactContext,
     ) -> bool {
         if !self.frontier.is_at_function_entry()
             || self.execution_evidence.len() != 1
@@ -1967,9 +1991,13 @@ impl ExecutionProofCore {
         {
             return false;
         }
-        let Some(entry) =
-            CheckedFunctionEntry::check(&self.state, function, arguments, expected_entry_state)
-        else {
+        let Some(entry) = CheckedFunctionEntry::check(
+            &self.state,
+            function,
+            arguments,
+            expected_entry_state,
+            assumptions,
+        ) else {
             return false;
         };
         self.function_entry = Some(entry);
@@ -1977,38 +2005,208 @@ impl ExecutionProofCore {
     }
 
     /// Records one statement theorem and the fact context it was proved
-    /// under on the single open trace.
+    /// under on the single open trace, once the theorem is checked to
+    /// advance this frontier (`check_statement_evidence`).
     pub(crate) fn record_statement_transition(
         &mut self,
+        function: &CFunction,
+        arguments: &[CExpression],
         theorem: Theorem,
         context: PureFactContext,
-    ) {
+        execution_facts: &[ExecutionPureFact],
+        obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
+        self.check_statement_evidence(
+            function,
+            arguments,
+            &theorem,
+            &context,
+            execution_facts,
+            obligations,
+        )?;
         for trace in &mut *self.execution_evidence {
             trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
             trace.push(CheckedExecutionEvent::Context(context.clone()));
         }
+        Ok(())
     }
 
     /// Forks the single open trace into one trace per outcome theorem, each
-    /// recording its theorem and the shared context they were proved under.
+    /// recording its theorem and the shared context they were proved under,
+    /// once every theorem is checked to advance this frontier.
     pub(crate) fn record_statement_outcomes(
         &mut self,
-        theorems: Vec<Theorem>,
+        function: &CFunction,
+        arguments: &[CExpression],
+        outcomes: &[(
+            Theorem,
+            &[ExecutionPureFact],
+            &[crate::kernel::ProofObligation],
+        )],
         context: PureFactContext,
-    ) {
+    ) -> Result<(), &'static str> {
         debug_assert_eq!(self.execution_evidence.len(), 1);
+        for (theorem, execution_facts, obligations) in outcomes {
+            self.check_statement_evidence(
+                function,
+                arguments,
+                theorem,
+                &context,
+                execution_facts,
+                obligations,
+            )?;
+        }
         let prefix = self.execution_evidence.first().cloned().unwrap_or_default();
-        self.execution_evidence = theorems
-            .into_iter()
-            .map(|theorem| {
+        self.execution_evidence = outcomes
+            .iter()
+            .map(|(theorem, _, _)| {
                 let mut trace = prefix.clone();
-                trace.push(CheckedExecutionEvent::Statement(theorem));
+                trace.push(CheckedExecutionEvent::Statement(theorem.clone()));
                 trace.push(CheckedExecutionEvent::Context(context.clone()));
                 trace
             })
             .collect::<Vec<_>>()
             .into();
+        Ok(())
+    }
+
+    /// The frontier's next source statement: the head of the remaining
+    /// source with leading `Skip`s passed over, or the function body at
+    /// entry. `None` at function exit or a region boundary.
+    fn next_source_statement(&self, function: &CFunction) -> Option<CStatement> {
+        let remaining = match &self.frontier.position {
+            FrontierPosition::FunctionEntry => function.body().clone(),
+            FrontierPosition::StatementEntry { remaining } => (**remaining).clone(),
+            FrontierPosition::FunctionExit { .. } | FrontierPosition::RegionBoundary => {
+                return None;
+            }
+        };
+        let (mut head, mut tail) = crate::kernel::api::split_proof_evidence_statement(remaining);
+        while matches!(head, CStatement::Skip) {
+            let Some(rest) = tail else {
+                return Some(head);
+            };
+            (head, tail) = crate::kernel::api::split_proof_evidence_statement(rest);
+        }
+        Some(head)
+    }
+
+    /// The state the frontier's next theorem must start from. At function
+    /// entry the core holds the caller-side state (resource observations
+    /// and rewrites recorded there keep that form, and the trace holds
+    /// their entry-bound states); the theorem starts from binding the
+    /// arguments in it, as the recorded observations were bound.
+    fn running_state(
+        &self,
+        function: &CFunction,
+        arguments: &[CExpression],
+    ) -> Result<std::borrow::Cow<'_, CState>, &'static str> {
+        use std::borrow::Cow;
+        if !matches!(self.frontier.position, FrontierPosition::FunctionEntry) {
+            return Ok(Cow::Borrowed(&self.state));
+        }
+        crate::kernel::c_function_entry_state(&self.state, function, arguments)
+            .map(Cow::Owned)
+            .ok_or("the function's arguments do not bind at entry")
+    }
+
+    /// Checks that a statement theorem advances this frontier: it proves
+    /// the frontier's next source statement (a `Skip` theorem consumes
+    /// nothing) from the running state, modulo definitionally equal
+    /// resource representation (and, before the first C operation of a
+    /// checked entry, the representation-only change resource scopes
+    /// make), and every premise it assumes is retained by the context it
+    /// was proved under, the step's execution facts and obligations, the
+    /// effect facts recorded so far, the running resources, or the checked
+    /// entry's relation facts. Definitional comparisons run under the
+    /// entry assumptions plus the theorem's own premises, as the
+    /// end-of-proof walk runs them. This is that walk's judgment, made at
+    /// the step.
+    fn check_statement_evidence(
+        &self,
+        function: &CFunction,
+        arguments: &[CExpression],
+        theorem: &Theorem,
+        context: &PureFactContext,
+        execution_facts: &[ExecutionPureFact],
+        obligations: &[crate::kernel::ProofObligation],
+    ) -> Result<(), &'static str> {
+        let running_state = self.running_state(function, arguments)?;
+        let (proved_state, proved_statement) =
+            match crate::kernel::api::proof_evidence_conclusion(theorem) {
+                Proposition::CStatementVerifies {
+                    state, statement, ..
+                } => (state, statement),
+                _ => return Err("retained statement evidence has a non-statement conclusion"),
+            };
+        if !matches!(proved_statement, CStatement::Skip) {
+            let Some(next) = self.next_source_statement(function) else {
+                return Err("statement evidence was recorded with no source statement remaining");
+            };
+            if &next != proved_statement {
+                return Err(
+                    "statement evidence does not prove the frontier's next source statement",
+                );
+            }
+        }
+        let no_assumptions = PureFactContext::new();
+        let entry_assumptions = self
+            .function_entry
+            .as_ref()
+            .map_or(&no_assumptions, |entry| entry.assumptions());
+        // The representation-only change before the first operation is
+        // allowed against the checked entry state itself: once the trace
+        // holds an observation or rewrite, the theorem follows its state.
+        let at_checked_entry = matches!(self.frontier.position, FrontierPosition::FunctionEntry)
+            && self.function_entry.is_some()
+            && self.execution_evidence.iter().all(|trace| trace.is_empty());
+        // A theorem lists the whole context it executed under as premises,
+        // so the assumption set it needs for a definitional comparison is
+        // built only when the states are not identical.
+        let states_match = *running_state == *proved_state
+            || if at_checked_entry {
+                crate::kernel::api::function_entry_representation_states_match(
+                    function,
+                    &running_state,
+                    proved_state,
+                    entry_assumptions,
+                )
+            } else {
+                let theorem_assumptions =
+                    crate::kernel::api::proof_evidence_assumptions(theorem, entry_assumptions);
+                crate::kernel::api::execution_evidence_states_match(
+                    function,
+                    &running_state,
+                    proved_state,
+                    &theorem_assumptions,
+                )
+            };
+        if !states_match {
+            return Err("statement evidence does not start from the running state");
+        }
+        let mut retained_execution_facts = execution_facts.to_vec();
+        for fact in self.effect_facts.iter() {
+            if !retained_execution_facts.contains(fact) {
+                retained_execution_facts.push(fact.clone());
+            }
+        }
+        let entry_relation_facts = self
+            .function_entry
+            .as_ref()
+            .and_then(|entry| entry.relation_facts());
+        if !crate::kernel::api::proof_evidence_premises_are_retained(
+            theorem,
+            entry_assumptions,
+            Some(context),
+            &retained_execution_facts,
+            obligations,
+            &running_state,
+            entry_relation_facts,
+        ) {
+            return Err("statement evidence assumes a premise the proof did not retain");
+        }
+        Ok(())
     }
 
     pub(crate) fn record_condition_transition(
@@ -2347,8 +2545,14 @@ mod tests {
             .with_counted_population("item", Vec::new(), Bitvector32Term::Constant(1));
         let entry_state = crate::kernel::c_function_entry_state(&caller, &function, &[])
             .expect("the empty argument list should bind");
-        let checked = CheckedFunctionEntry::check(&caller, &function, &[], &entry_state)
-            .expect("the exact kernel-computed entry should check");
+        let checked = CheckedFunctionEntry::check(
+            &caller,
+            &function,
+            &[],
+            &entry_state,
+            PureFactContext::new(),
+        )
+        .expect("the exact kernel-computed entry should check");
         let assumptions = PureFactContext::new();
 
         assert_eq!(

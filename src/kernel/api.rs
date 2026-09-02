@@ -1874,7 +1874,7 @@ pub fn prove_checked_c_function_execution_with_environment(
     }
 }
 
-fn proof_evidence_conclusion(theorem: &Theorem) -> &Proposition {
+pub(in crate::kernel) fn proof_evidence_conclusion(theorem: &Theorem) -> &Proposition {
     let mut conclusion = theorem.proposition();
     while let Proposition::Implies(_, body) = conclusion {
         conclusion = body;
@@ -1882,7 +1882,10 @@ fn proof_evidence_conclusion(theorem: &Theorem) -> &Proposition {
     conclusion
 }
 
-fn proof_evidence_assumptions(theorem: &Theorem, base: &PureFactContext) -> PureFactContext {
+pub(in crate::kernel) fn proof_evidence_assumptions(
+    theorem: &Theorem,
+    base: &PureFactContext,
+) -> PureFactContext {
     let mut assumptions = base.clone();
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
@@ -1914,15 +1917,15 @@ fn retained_fact_contains(fact: &Proposition, premise: &Proposition) -> bool {
 /// wider range of the same block (a callee's requirement inside the caller's
 /// `loadable(p[0..n])`), which is the one range rule the executor
 /// discharged it with. Nothing else is derived.
-fn proof_evidence_premises_are_retained(
+pub(in crate::kernel) fn proof_evidence_premises_are_retained(
     theorem: &Theorem,
     assumptions: &PureFactContext,
     executed_under: Option<&PureFactContext>,
-    candidate: &CFunctionExecutionCandidate,
+    execution_facts: &[ExecutionPureFact],
+    obligations: &[ProofObligation],
     state: &CState,
     function_entry_resource_facts: Option<&PureFactContext>,
 ) -> bool {
-    let execution_facts = candidate.execution_facts();
     let mut proposition = theorem.proposition();
     while let Proposition::Implies(premise, body) = proposition {
         if !assumptions.proves_exact(premise)
@@ -1930,8 +1933,7 @@ fn proof_evidence_premises_are_retained(
             && !execution_facts
                 .iter()
                 .any(|fact| retained_fact_contains(fact.proposition(), premise))
-            && !candidate
-                .obligations
+            && !obligations
                 .iter()
                 .any(|obligation| obligation.proposition() == premise.as_ref())
             && !resources_certify_loadability(state, state.resources(), premise, assumptions)
@@ -2025,7 +2027,9 @@ fn proof_evidence_function_refines_same_source(original: &CFunction, checked: &C
         && original.predicate_unfoldings() == checked.predicate_unfoldings()
 }
 
-fn split_proof_evidence_statement(statement: CStatement) -> (CStatement, Option<CStatement>) {
+pub(in crate::kernel) fn split_proof_evidence_statement(
+    statement: CStatement,
+) -> (CStatement, Option<CStatement>) {
     match statement {
         CStatement::Seq(first, second) => {
             let (head, first_tail) = split_proof_evidence_statement(Arc::unwrap_or_clone(first));
@@ -2194,19 +2198,34 @@ mod proof_case_evidence_tests {
         let (partition, then_fact, else_fact) = case_partition(&root);
         let mut core = ExecutionProofCore::at_entry(CState::new(), ExecutionFrontier::default());
         // Two candidate paths with one trace each; the second is forked.
+        let function = c_function(
+            CType::Int32,
+            "fork",
+            Vec::new(),
+            c_return(c_int32_literal(0)),
+        );
+        let entry_state =
+            c_function_entry_state(&CState::new(), &function, &[]).expect("entry state");
+        let skip_return = |value: u32| {
+            Theorem::new(Proposition::CStatementVerifies {
+                state: entry_state.clone(),
+                statement: CStatement::Skip,
+                outcome: CStatementOutcome::Return {
+                    value: int32(value),
+                    state: entry_state.clone(),
+                },
+            })
+        };
         core.record_statement_outcomes(
-            vec![
-                Theorem::new(Proposition::ConditionIs(
-                    ConditionTerm::Constant(true),
-                    true,
-                )),
-                Theorem::new(Proposition::ConditionIs(
-                    ConditionTerm::Constant(false),
-                    false,
-                )),
+            &function,
+            &[],
+            &[
+                (skip_return(0), &[][..], &[][..]),
+                (skip_return(1), &[][..], &[][..]),
             ],
             PureFactContext::new(),
-        );
+        )
+        .expect("skip outcomes advance the entry frontier");
         assert_eq!(core.execution_evidence.len(), 2);
 
         // A plan must cover every trace.
@@ -2371,7 +2390,8 @@ fn seal_proof_evidence_events(
                     theorem,
                     &current_assumptions,
                     executed_under,
-                    candidate,
+                    &candidate.execution_facts(),
+                    &candidate.obligations,
                     &state,
                     function_entry_resource_facts,
                 ) {
@@ -2429,7 +2449,8 @@ fn seal_proof_evidence_events(
                     theorem,
                     &current_assumptions,
                     executed_under,
-                    candidate,
+                    &candidate.execution_facts(),
+                    &candidate.obligations,
                     &state,
                     function_entry_resource_facts,
                 ) {

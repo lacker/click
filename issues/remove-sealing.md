@@ -2,10 +2,14 @@
 
 ## Status
 
-Filed 2026-09-02 after the double-execution work landed. Nothing here is
-started. Slices are listed in landing order; each lands green on its own
-with the current end-of-proof check still in place as a backstop, and the
-last slice deletes that check.
+Filed 2026-09-02 after the double-execution work landed. Slices are listed
+in landing order; each lands green on its own with the current end-of-proof
+check still in place as a backstop, and the last slice deletes that check.
+
+Slice 1 turned out to be unnecessary and was dropped: the frontier already
+holds each trace's running state and remaining source, and traces only
+fork after the forking step's theorems are checked. Slice 2 landed on
+2026-09-02.
 
 ## Violated invariant
 
@@ -60,24 +64,23 @@ The sealer stays in place and must keep refusing nothing through slice 6,
 so every slice is checked by the harnesses against the walk it is
 replacing.
 
-1. **Per-trace progress.** Give each retained trace a kernel-owned progress
-   record: running state, remaining source, completed outcome, current
-   assumptions, retained interface facts. Initialize it at the checked
-   function entry (or the bound entry state) with the function body as the
-   source. Copy or split it wherever traces fork (`record_statement_outcomes`,
-   `fork_outcome_evidence`) and derive it at joins. No checks yet; the
-   sealer is untouched. This is bookkeeping only and lands first so the
-   later slices are small.
-2. **Statement steps.** `record_statement_transition` and
-   `record_statement_outcomes` check the theorem against the trace's
-   progress the way the sealer does (source statement with `Skip` handling,
-   state continuity modulo definitionally equal resource representation,
-   premise retention against the recorded context and candidate facts) and
-   advance the progress from the theorem's outcome. A failing record call
-   returns an error the driver reports at that step. Move the helpers the
-   sealer uses (`split_proof_evidence_statement`,
-   `proof_evidence_premises_are_retained`, the state match) into the proof
-   module; the sealer calls the moved code.
+1. **Per-trace progress.** Dropped; see Status.
+2. **Statement steps.** Done. `record_statement_transition` and
+   `record_statement_outcomes` check the theorem against the frontier the
+   way the sealer does (the frontier's next source statement with `Skip`
+   handling, state continuity modulo definitionally equal resource
+   representation and the representation-only change allowed before the
+   first operation of a checked entry, premise retention against the
+   recorded context, the step's execution facts and obligations, the
+   effect facts recorded so far, the running resources, and the checked
+   entry's relation facts). A failing record call returns an error the
+   driver reports at that step. The checked function entry carries the
+   facts the proof assumes at entry and its relation facts, computed once;
+   definitional comparisons run under those, as the sealer runs them, not
+   under a step's full context (which made one tree-resource entry
+   comparison exhaust the tactic's work budget). The driver still advances
+   the frontier itself; the sealer's helpers stay in `src/kernel/api.rs`
+   and are shared with the proof module until slice 7 moves them.
 3. **Condition steps.** The same for `record_condition_transition`: `if`
    and `while` selection, loop-head re-entry, pending heap allocation
    resolution.
