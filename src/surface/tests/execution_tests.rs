@@ -288,6 +288,44 @@ fn symbolic_loop_bound_invariant_seals_without_a_body_rerun() {
 }
 
 #[test]
+fn malloc_null_check_seals_without_a_body_rerun() {
+    let c_source = r#"
+            struct item {
+                int32 value;
+            };
+
+            int32 alloc_then_free() {
+                struct item* item = malloc(sizeof(struct item));
+                if (item == 0) {
+                    return -1;
+                }
+                item->value = 7;
+                free(item);
+                return 0;
+            }
+        "#;
+    let click_source = r#"
+            verifying "alloc_then_free.c";
+
+            int32 alloc_then_free() {
+                ensures result == -1 or result == 0;
+            } by {
+                execute();
+                simp();
+            }
+        "#;
+
+    let _ = crate::kernel::take_checked_function_body_execution_count();
+    verify_c0_sources(click_source, &[("alloc_then_free.c", c_source)])
+        .expect("a null-checked allocation that is freed should verify");
+    assert_eq!(
+        crate::kernel::take_checked_function_body_execution_count(),
+        0,
+        "the null check resolves the pending allocation in the sealed state as it does in execution"
+    );
+}
+
+#[test]
 fn verified_loop_summary_seals_without_a_body_rerun() {
     let c_source = r#"
             int32 count_to_three() {

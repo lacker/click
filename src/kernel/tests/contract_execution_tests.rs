@@ -2171,3 +2171,103 @@ fn sealing_finds_a_theorem_premise_inside_a_retained_conjunction() {
         Some(crate::instrumentation::SealRefusal::UnretainedPremise)
     );
 }
+
+/// `int32 skipping() { ; return 1; }`: a body whose first statement is the
+/// `Skip` an empty `if` arm leaves behind, with the given retained trace.
+fn skip_sealing_inputs(
+    events: Vec<crate::kernel::proof::CheckedExecutionEvent>,
+) -> (
+    CFunctionExecutionCandidates,
+    CFunction,
+    crate::kernel::proof::PersistentSequence<crate::kernel::proof::CheckedExecutionEvent>,
+) {
+    let function = c_function(
+        CType::Int32,
+        "skipping",
+        Vec::new(),
+        c_seq(CStatement::Skip, c_return(c_int32_literal(1))),
+    );
+    let caller_state = CState::new();
+    let outcome = CStatementOutcome::Return {
+        value: int32(1),
+        state: caller_state.clone(),
+    };
+    let (function_outcome, obligations) = c_function_outcome_from_statement_outcome(
+        &caller_state,
+        &function,
+        outcome,
+        Vec::new(),
+        &PureFactContext::new(),
+    );
+    let candidates = c_function_execution_candidates_from_outcomes(
+        caller_state,
+        function.clone(),
+        Vec::new(),
+        vec![(function_outcome, Vec::new(), obligations)],
+    );
+    let mut trace = crate::kernel::proof::PersistentSequence::default();
+    for event in events {
+        trace.push(event);
+    }
+    (candidates, function, trace)
+}
+
+fn skip_theorem(state: CState) -> crate::kernel::proof::CheckedExecutionEvent {
+    crate::kernel::proof::CheckedExecutionEvent::Statement(Theorem::new(
+        Proposition::CStatementVerifies {
+            state: state.clone(),
+            statement: CStatement::Skip,
+            outcome: CStatementOutcome::Normal(state),
+        },
+    ))
+}
+
+fn return_one_theorem(state: CState) -> crate::kernel::proof::CheckedExecutionEvent {
+    crate::kernel::proof::CheckedExecutionEvent::Statement(Theorem::new(
+        Proposition::CStatementVerifies {
+            state: state.clone(),
+            statement: c_return(c_int32_literal(1)),
+            outcome: CStatementOutcome::Return {
+                value: int32(1),
+                state,
+            },
+        },
+    ))
+}
+
+#[test]
+fn sealing_passes_over_skip_on_either_side() {
+    let entry = CState::new();
+    // The driver stepped through the `Skip`: it consumes the source's `Skip`.
+    let (candidates, function, trace) = skip_sealing_inputs(vec![
+        skip_theorem(entry.clone()),
+        return_one_theorem(entry.clone()),
+    ]);
+    seal_early_return(&candidates, &function, trace)
+        .expect("a `Skip` theorem consumes the `Skip` at the head of the source");
+    // The driver completed the empty arm in place: the source's `Skip` is
+    // passed over before the real statement is matched.
+    let (candidates, function, trace) =
+        skip_sealing_inputs(vec![return_one_theorem(entry.clone())]);
+    seal_early_return(&candidates, &function, trace)
+        .expect("a `Skip` left in the source is passed over");
+    // An extra `Skip` theorem touches nothing.
+    let (candidates, function, trace) = skip_sealing_inputs(vec![
+        skip_theorem(entry.clone()),
+        skip_theorem(entry.clone()),
+        return_one_theorem(entry.clone()),
+    ]);
+    seal_early_return(&candidates, &function, trace).expect("a second `Skip` theorem is a no-op");
+    // A `Skip` theorem must still describe the sealed state. (The first
+    // event names the trace's entry state, so the mismatch is placed second.)
+    let elsewhere = CState::new().with_local("x", int32(1));
+    let (candidates, function, trace) = skip_sealing_inputs(vec![
+        skip_theorem(entry.clone()),
+        skip_theorem(elsewhere),
+        return_one_theorem(entry),
+    ]);
+    assert_eq!(
+        seal_early_return(&candidates, &function, trace).err(),
+        Some(crate::instrumentation::SealRefusal::StateMismatch)
+    );
+}

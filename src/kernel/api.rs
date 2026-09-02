@@ -2267,7 +2267,37 @@ fn seal_proof_evidence_events(
             | CheckedExecutionEvent::Branch(_) => {}
         }
         let source = remaining.take().ok_or(SealRefusal::IncompleteTrace)?;
-        let (next_statement, tail) = split_proof_evidence_statement(source);
+        let (mut next_statement, mut tail) = split_proof_evidence_statement(source);
+        // `Skip` is the empty arm of an `if`. A driver that steps into it
+        // records a `Skip` theorem; one that completes the region in place
+        // records nothing. Neither changes the state, so a `Skip` theorem
+        // consumes a `Skip` at the head of the source when there is one and
+        // otherwise touches nothing, and a real theorem passes over `Skip`s
+        // the source still carries.
+        let proved_skip = matches!(
+            event,
+            CheckedExecutionEvent::Statement(theorem)
+                if matches!(
+                    proof_evidence_conclusion(theorem),
+                    Proposition::CStatementVerifies {
+                        statement: CStatement::Skip,
+                        ..
+                    }
+                )
+        );
+        if proved_skip {
+            if !matches!(next_statement, CStatement::Skip) {
+                tail = Some(prepend_proof_evidence_statement(next_statement, tail));
+                next_statement = CStatement::Skip;
+            }
+        } else {
+            while matches!(next_statement, CStatement::Skip) {
+                let Some(rest) = tail else {
+                    break;
+                };
+                (next_statement, tail) = split_proof_evidence_statement(rest);
+            }
+        }
         match event {
             CheckedExecutionEvent::Statement(theorem) => {
                 if !proof_evidence_premises_are_retained(
@@ -2388,6 +2418,17 @@ fn seal_proof_evidence_events(
                     Some(prepend_proof_evidence_statement(selected, tail))
                 };
                 state = proved_state.clone();
+                // A condition on a pending `malloc` result decides that
+                // allocation's outcome. Execution resolves the pending
+                // allocation from the decided facts right after the
+                // condition; the sealed state applies the same kernel rule
+                // to the same facts.
+                if state.memory().has_pending_heap_allocation() {
+                    state = crate::kernel::resolve_pending_heap_allocations(
+                        &state,
+                        &theorem_assumptions,
+                    );
+                }
             }
             CheckedExecutionEvent::Branch(branch) => {
                 if !branch.matches_interface_resource_definitions(function)

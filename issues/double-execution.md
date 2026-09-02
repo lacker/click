@@ -190,16 +190,28 @@ derive but the path did not retain exactly). Diagnose each with the
 before choosing where to retain it; do not widen the sealer to ambient
 derivation.
 
-### 4. State and statement identity
+### 4. State and statement identity (landed 2026-09-01)
 
-Two sub-causes. Heap fixtures: the proved statement's entry memory and the
-sealed running memory differ in snapshot identity only; find which side
-canonicalizes and compare canonically at the operation that records the
-theorem, not in the sealer. Loop-clause-bound functions: the frontier
-function differs from the checked function in its `while` statements; seal
-against the frontier function, and keep
-`proof_evidence_function_refines_same_source` as the guard that the two
-functions differ only there. Clears the third row.
+Both diagnoses differed from the guesses above. `StateMismatch`: after a
+condition decides a pending `malloc` result (`if (p == 0)`), execution
+resolves the pending allocation from the decided facts
+(`resolve_pending_heap_allocations`) before the next statement, and the
+next theorem's entry state reflects that; the sealer kept the unresolved
+state. It now applies the same kernel rule to the same facts after a
+condition event. `StatementMismatch`: an `if` with an empty arm leaves
+`Skip` in the source; a driver that steps into the empty arm records a
+`Skip` theorem while one that completes the region in place records
+nothing, and the sealer expected the next real statement. It now lets a
+`Skip` theorem consume a `Skip` at the head of the source or touch nothing,
+and passes over a `Skip` the source still carries before matching a real
+theorem; a `Skip` theorem must still describe the sealed state. Kernel test
+`sealing_passes_over_skip_on_either_side`; surface regression
+`malloc_null_check_seals_without_a_body_rerun`. Both counts fell to 0 over
+the mdtests (from 9 and 7) and to 0 and 0 over the
+examples (from 4 and 4), with no other count rising. The loop-clause-bound
+function case never appeared: `proof_evidence_function_refines_same_source`
+already admits it and the frontier function's statements are the ones the
+theorems name.
 
 ### 5. Partitions and path counts
 
