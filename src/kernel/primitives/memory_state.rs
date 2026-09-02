@@ -646,6 +646,15 @@ impl CMemory {
         self.blocks.contains_key(block)
     }
 
+    /// Whether some allocation this snapshot has already freed may contain
+    /// `pointer`. Freed allocations are few, so this scans them directly.
+    pub(in crate::kernel) fn freed_heap_allocation_may_contain(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .deallocated_allocations
+            .keys()
+            .any(|allocation| heap_allocation_may_contain_pointer(allocation, pointer))
+    }
+
     pub(in crate::kernel) fn is_loadable_concretely(
         &self,
         pointer: &Pointer,

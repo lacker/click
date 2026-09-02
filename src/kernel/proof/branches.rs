@@ -68,6 +68,13 @@ impl SplitId {
     pub(crate) fn follows(&self, branch: BranchId) -> bool {
         branch.0 < self.0
     }
+
+    /// Whether `branch` is one of the `arms` identities this split reserved.
+    /// A decided fixed-width split joins its one feasible arm in both
+    /// positions, so this is the per-arm form of [`Self::owns`].
+    pub(crate) fn reserves(&self, branch: BranchId, arms: usize) -> bool {
+        branch.0 > self.0 && branch.0 <= self.0 + arms as u64
+    }
 }
 
 /// Persistent open branches paired with their lineage-local id allocator.
@@ -225,56 +232,58 @@ impl<B: Clone> ProofBranches<B> {
     }
 
     /// Replaces several completed child branches with their parent identity.
+    ///
+    /// `None` when a child is not an open branch of this lineage or the
+    /// parent is not a retired identity of it. These are real checks in
+    /// every build profile: a join is the step that lets one arm's verdict
+    /// stand for the split, so its lineage may not rest on a `debug_assert`.
     pub(crate) fn join_at(
         &self,
         children: impl IntoIterator<Item = BranchId>,
         parent: BranchId,
         branch: B,
-    ) -> Self {
+    ) -> Option<Self> {
         let mut open = self.open.clone();
         for child in children {
-            debug_assert!(
-                open.contains_key(&child),
-                "join requires every child branch"
-            );
+            if !open.contains_key(&child) {
+                return None;
+            }
             open = open.without_key(&child);
         }
-        debug_assert!(
-            !open.contains_key(&parent) && parent.0 < self.next_id,
-            "join must restore a retired parent identity"
-        );
-        Self {
+        if self.open.contains_key(&parent) || !self.has_allocated(parent) {
+            return None;
+        }
+        Some(Self {
             open: open.with_inserted(parent, branch),
             root: self.root.clone(),
             next_id: self.next_id,
-        }
+        })
     }
 
     /// Restores a parent after a fixed-width split whose infeasible reserved
-    /// arms were never installed as open branches.
+    /// arms were never installed as open branches. `None` when a child was
+    /// never allocated by this lineage or the parent is not retired.
     pub(crate) fn join_reserved_at(
         &self,
         children: impl IntoIterator<Item = BranchId>,
         parent: BranchId,
         branch: B,
-    ) -> Self {
+    ) -> Option<Self> {
         let mut open = self.open.clone();
         for child in children {
-            debug_assert!(
-                child.0 < self.next_id,
-                "join requires identities reserved by this lineage"
-            );
+            if !self.has_allocated(child) {
+                return None;
+            }
             open = open.without_key(&child);
         }
-        debug_assert!(
-            !open.contains_key(&parent) && parent.0 < self.next_id,
-            "join must restore a retired parent identity"
-        );
-        Self {
+        if self.open.contains_key(&parent) || !self.has_allocated(parent) {
+            return None;
+        }
+        Some(Self {
             open: open.with_inserted(parent, branch),
             root: self.root.clone(),
             next_id: self.next_id,
-        }
+        })
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -314,8 +323,54 @@ mod tests {
         assert_eq!(branches.get(ids[0]), Some(&"then"));
         assert_eq!(branches.get(ids[1]), None);
 
-        let branches = branches.join_reserved_at(ids, BranchId::ROOT, "joined continuation");
+        let branches = branches
+            .join_reserved_at(ids, BranchId::ROOT, "joined continuation")
+            .expect("reserved arms join back to their retired parent");
         assert_eq!(branches.get(BranchId::ROOT), Some(&"joined continuation"));
         assert_eq!(branches.next_id_for_test(), 5);
+    }
+
+    #[test]
+    fn join_rejects_missing_children_and_open_or_foreign_parents() {
+        let branches = ProofBranches::root("root");
+        let (split, ids, split_branches) = branches.split_at(BranchId::ROOT, ["then", "else"]);
+        assert!(split.owns(ids));
+        assert!(split.follows(BranchId::ROOT));
+        assert!(ids.iter().all(|id| split.reserves(*id, 2)));
+        assert!(!split.reserves(BranchId::ROOT, 2));
+        assert!(!split.reserves(BranchId(ids[1].0 + 1), 2));
+
+        // Both arms are still open: a join with one closed arm and one open
+        // arm, or with an arm this lineage never allocated, is refused.
+        let one_closed = split_branches.close_at(ids[0]);
+        assert!(one_closed.join_at(ids, BranchId::ROOT, "joined").is_none());
+        let unallocated = BranchId(ids[1].0 + 7);
+        assert!(
+            one_closed
+                .join_at([ids[0], unallocated], BranchId::ROOT, "joined")
+                .is_none()
+        );
+        assert!(
+            one_closed
+                .join_reserved_at([ids[0], unallocated], BranchId::ROOT, "joined")
+                .is_none()
+        );
+
+        // The parent must be a retired identity of this lineage: not open,
+        // and not an identity beyond the allocator.
+        assert!(split_branches.join_at(ids, ids[0], "joined").is_none());
+        assert!(
+            split_branches
+                .join_reserved_at(ids, unallocated, "joined")
+                .is_none()
+        );
+
+        // The genuine join succeeds and restores the parent.
+        let joined = split_branches
+            .join_at(ids, BranchId::ROOT, "joined")
+            .expect("both open arms join back to the retired root");
+        assert_eq!(joined.get(BranchId::ROOT), Some(&"joined"));
+        assert_eq!(joined.get(ids[0]), None);
+        assert_eq!(joined.get(ids[1]), None);
     }
 }

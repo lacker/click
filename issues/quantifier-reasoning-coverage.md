@@ -43,5 +43,8 @@ at the ensure and after the fix it verifies.
 - The alpha key handles `RangeFold` by canonicalizing its binders.
 - The tests above pass; `scripts/check.sh` passes.
 
-Related: [finite-forall-vacuity.md](finite-forall-vacuity.md) must land
-first; the same range machinery is involved.
+Related: the finite-forall vacuity fix (landed 2026-09-01) made
+`finite_forall_ranges` in `src/kernel/reasoning/order_reasoning.rs` accept
+only bodies whose leaves are all guarded implications and instantiate the
+hull of their guards; the guarded-instantiation rule above must keep that
+condition.

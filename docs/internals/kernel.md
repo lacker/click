@@ -428,6 +428,16 @@ trivial propositions, condition facts, conjunctions, disjunction cases,
 implications, finite forall instantiation, memory access, equality facts, order
 facts, and selected memory/frame patterns.
 
+Finite forall instantiation proves `forall k, body` by checking `body` at
+every point of a constant box. The box is justified only when the universal
+is vacuously true outside it: below the `forall` chain, `body` must be a tree
+of `and`, `or`, and nested `forall` nodes whose leaves are all implications,
+each leaf's antecedent must bound every quantified variable the leaf
+mentions, and the box is the hull of those bounds per variable. A bare
+conjunct such as `... and k < 3` disqualifies the body. The trusted
+`FiniteForAll` derivation rule recomputes the same box, so a derivation
+cannot supply a narrower instance set than the body requires.
+
 Condition lookup through implication-shaped call facts checks whether the
 conclusion can establish the requested condition before proving the
 antecedent. Sequential path composition also preserves already-generated

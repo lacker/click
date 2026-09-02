@@ -1,5 +1,11 @@
 use super::*;
 
+/// Whether a memory fact about `base` established in `range_memory` still
+/// describes an available region in `current_memory`: the block must be
+/// present in both or absent in both, and no heap allocation that may
+/// contain `base` may have been freed in one snapshot but not the other.
+/// The second condition is what distinguishes the snapshots for an
+/// `ExternalArgument` allocation, whose block survives `free`.
 pub(in crate::kernel) fn memory_range_still_available(
     range_memory: &CMemory,
     current_memory: &CMemory,
@@ -7,6 +13,8 @@ pub(in crate::kernel) fn memory_range_still_available(
 ) -> bool {
     range_memory == current_memory
         || range_memory.has_block(&base.block) == current_memory.has_block(&base.block)
+            && range_memory.freed_heap_allocation_may_contain(base)
+                == current_memory.freed_heap_allocation_may_contain(base)
 }
 
 pub(in crate::kernel) fn forall_int32(var: Variable, body: Proposition) -> Proposition {

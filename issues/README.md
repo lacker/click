@@ -23,16 +23,14 @@ when evidence exposes one.
 - [Eliminate double execution](double-execution.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 11
+## Soundness issues: 8
 
 Reachable from ordinary C plus a sidecar (false "verified" verdict today):
 
 - [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
-- [Require vacuity outside the range in the FiniteForAll derivation rule](finite-forall-vacuity.md)
 - [Make `intro` bind a variable fresh with respect to the available facts](have-binder-capture.md)
 - [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
 - [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
-- [Check the witnessing load's snapshot before certifying loadability](loadability-witness-snapshot.md)
 
 Reachable through the kernel API; the untrusted surface currently masks them
 and [double-execution](double-execution.md) removes that mask:
@@ -40,7 +38,6 @@ and [double-execution](double-execution.md) removes that mask:
 - [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
 - [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)
 - [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
-- [Enforce branch-join lineage and evidence-prefix invariants in release builds](release-build-lineage-checks.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
 ## Functionality gaps: 30

@@ -331,7 +331,12 @@ fn quantified_load_fact_certifies_loadable(
         return false;
     };
     let (goal_premises, conclusion) = implication_parts(body);
-    let Proposition::CMemoryLoadable { base, bytes, .. } = conclusion else {
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = conclusion
+    else {
         return false;
     };
     // A load of any width witnesses its first byte.
@@ -366,34 +371,37 @@ fn quantified_load_fact_certifies_loadable(
         }) {
             return false;
         }
-        condition_fact_mentions_load_of(fact_conclusion, base, assumptions)
+        condition_fact_mentions_load_of(fact_conclusion, memory, base, assumptions)
     })
 }
 
-/// True when a condition fact constrains a load of exactly this pointer, so
-/// the fact witnesses that the pointer's first byte is loadable.
+/// True when a condition fact constrains a load of exactly this pointer in
+/// a snapshot where the pointer's block is still available in `memory`, so
+/// the fact witnesses that the pointer's first byte is loadable in `memory`.
+/// A load taken before the block was freed says nothing about loads after.
 fn condition_fact_mentions_load_of(
     fact: &Proposition,
+    memory: &CMemory,
     base: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    fn collect_load_pointers(term: &Bitvector32Term, pointers: &mut Vec<Pointer>) {
+    fn collect_loads(term: &Bitvector32Term, loads: &mut Vec<(SharedCMemory, Pointer)>) {
         match term {
-            Bitvector32Term::MemoryLoad(_, pointer) => pointers.push(pointer.as_ref().clone()),
+            Bitvector32Term::MemoryLoad(load_memory, pointer) => {
+                loads.push((load_memory.clone(), pointer.as_ref().clone()));
+            }
             // A load variable mentions the load it represents.
             Bitvector32Term::Variable(variable) => {
-                if let Some((_, pointer)) =
-                    crate::kernel::eval::registered_load_for_variable(variable)
-                {
-                    pointers.push(pointer);
+                if let Some(load) = crate::kernel::eval::registered_load_for_variable(variable) {
+                    loads.push(load);
                 }
             }
             Bitvector32Term::Add(left, right)
             | Bitvector32Term::Subtract(left, right)
             | Bitvector32Term::Multiply(left, right)
             | Bitvector32Term::Divide(left, right) => {
-                collect_load_pointers(left, pointers);
-                collect_load_pointers(right, pointers);
+                collect_loads(left, loads);
+                collect_loads(right, loads);
             }
             _ => {}
         }
@@ -401,7 +409,7 @@ fn condition_fact_mentions_load_of(
     let Proposition::ConditionIs(condition, _) = fact else {
         return false;
     };
-    let mut load_pointers = Vec::new();
+    let mut loads = Vec::new();
     match condition {
         ConditionTerm::Bitvector32SignedLessThan(left, right)
         | ConditionTerm::Bitvector32SignedLessEqual(left, right)
@@ -413,20 +421,21 @@ fn condition_fact_mentions_load_of(
         | ConditionTerm::Bitvector32SignedMultiplyOverflows(left, right)
         | ConditionTerm::Bitvector32SignedDivideOverflows(left, right)
         | ConditionTerm::Bitvector32SignedShiftLeftOverflows(left, right) => {
-            collect_load_pointers(left, &mut load_pointers);
-            collect_load_pointers(right, &mut load_pointers);
+            collect_loads(left, &mut loads);
+            collect_loads(right, &mut loads);
         }
         ConditionTerm::PointerOffsetEqual(_, _)
         | ConditionTerm::PointerEqual(_, _)
         | ConditionTerm::Constant(_)
         | ConditionTerm::Variable(_) => {}
     }
-    load_pointers.iter().any(|pointer| {
+    loads.iter().any(|(load_memory, pointer)| {
         if crate::instrumentation::deadline_exceeded() {
             return false;
         }
-        canonicalize_pointer_loads(pointer, 0) == canonicalize_pointer_loads(base, 0)
-            || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions)
+        crate::kernel::reasoning::memory_range_still_available(load_memory, memory, pointer)
+            && (canonicalize_pointer_loads(pointer, 0) == canonicalize_pointer_loads(base, 0)
+                || pointers_proven_equal_for_memory_resolution(pointer, base, assumptions))
     })
 }
 
@@ -434,7 +443,12 @@ fn condition_fact_mentions_load_of(
 /// certified by any assumed condition fact constraining a load of the same
 /// pointer.
 fn load_fact_certifies_loadable(assumptions: &PureFactContext, goal: &Proposition) -> bool {
-    let Proposition::CMemoryLoadable { base, bytes, .. } = goal else {
+    let Proposition::CMemoryLoadable {
+        memory,
+        base,
+        bytes,
+    } = goal
+    else {
         return false;
     };
     if bytes.as_const() != Some(1) {
@@ -443,7 +457,7 @@ fn load_fact_certifies_loadable(assumptions: &PureFactContext, goal: &Propositio
     assumptions
         .pure_facts()
         .iter()
-        .any(|fact| condition_fact_mentions_load_of(fact, base, assumptions))
+        .any(|fact| condition_fact_mentions_load_of(fact, memory, base, assumptions))
 }
 
 /// An instantiated int32 load from an already-certified quantified fact is
@@ -617,7 +631,12 @@ pub(in crate::kernel) fn quantified_int32_fact_certifies_loadable_cell(
                                             assumptions,
                                         ))
                             }
-                            _ => condition_fact_mentions_load_of(conclusion, base, assumptions),
+                            _ => condition_fact_mentions_load_of(
+                                conclusion,
+                                memory,
+                                base,
+                                assumptions,
+                            ),
                         }
                 })
         })

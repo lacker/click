@@ -803,6 +803,7 @@ impl<'a> Proof<'a> {
         let state = self
             .state
             .publish_checked_frontier_join(
+                record.split,
                 record.arm_branches,
                 parent_goal,
                 EffectGoalSelection::None,

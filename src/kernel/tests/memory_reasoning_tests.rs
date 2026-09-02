@@ -3389,3 +3389,119 @@ fn wrapped_index_sum_does_not_decide_pointer_offsets_equal() {
         Some(true)
     );
 }
+
+#[test]
+fn quantified_load_witness_does_not_certify_loadability_in_a_freed_snapshot() {
+    // A universal fact about `load(live, p + k)` witnesses that `p + j` is
+    // loadable in `live` (its guard covers `j`), but not in a snapshot where
+    // the block is gone.
+    let block: PointerBlock = "heap:witness".into();
+    let live = CMemory::new().with_block(block.clone(), 4);
+    let freed = CMemory::new();
+    let base = Pointer {
+        block,
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let k = Variable(93_501);
+    let j = Bitvector32Term::Variable(Variable(93_502));
+    let witness = forall_int32(
+        k,
+        Proposition::Implies(
+            Box::new(Proposition::And(
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_greater_equal(
+                        Bitvector32Term::Variable(k),
+                        Bitvector32Term::Constant(0),
+                    ),
+                    true,
+                )),
+                Box::new(Proposition::ConditionIs(
+                    ConditionTerm::signed_less_than(
+                        Bitvector32Term::Variable(k),
+                        Bitvector32Term::Constant(1),
+                    ),
+                    true,
+                )),
+            )),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::equal(
+                    Bitvector32Term::MemoryLoad(
+                        crate::kernel::intern_c_memory(live.clone()),
+                        Box::new(base.offset_by_int32_elements(Bitvector32Term::Variable(k))),
+                    ),
+                    Bitvector32Term::Constant(0),
+                ),
+                true,
+            )),
+        ),
+    );
+    let assumptions = PureFactContext::new()
+        .assume_proposition(witness)
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(j.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(j.clone(), Bitvector32Term::Constant(1)),
+            true,
+        );
+    let cell = base.offset_by_int32_elements(j);
+
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: live,
+        base: cell.clone(),
+        bytes: Bitvector32Term::Constant(4),
+    }));
+    assert!(!assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: freed,
+        base: cell,
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}
+
+#[test]
+fn freed_external_allocation_is_not_still_available() {
+    // `free` keeps the `ExternalArgument` block, so availability must also
+    // compare which allocations each snapshot has freed.
+    let base = Pointer {
+        block: PointerBlock::ExternalArgument,
+        offset: PointerOffsetTerm::Int32Scaled {
+            value: Box::new(Bitvector32Term::Variable(Variable(93_503))),
+            byte_width: 4,
+        },
+    };
+    let live = CMemory::new()
+        .with_heap_allocation_claim(base.clone(), Bitvector32Term::Constant(8))
+        .expect("a fresh external allocation claim is accepted");
+    let freed = live
+        .clone()
+        .free_heap_block(&base)
+        .expect("the claimed allocation can be freed");
+    let element = base.offset_by_int32_elements(Bitvector32Term::Constant(1));
+
+    assert!(crate::kernel::reasoning::memory_range_still_available(
+        &live, &live, &base
+    ));
+    assert!(!crate::kernel::reasoning::memory_range_still_available(
+        &live, &freed, &base
+    ));
+    assert!(!crate::kernel::reasoning::memory_range_still_available(
+        &live, &freed, &element
+    ));
+
+    let assumptions = PureFactContext::new().assume_proposition(Proposition::CMemoryLoadable {
+        memory: live.clone(),
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(8),
+    });
+    assert!(assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: live,
+        base: base.clone(),
+        bytes: Bitvector32Term::Constant(4),
+    }));
+    assert!(!assumptions.proves(&Proposition::CMemoryLoadable {
+        memory: freed,
+        base,
+        bytes: Bitvector32Term::Constant(4),
+    }));
+}

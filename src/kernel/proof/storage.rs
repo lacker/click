@@ -47,21 +47,23 @@ impl<'a, T> IntoIterator for &'a SharedVec<T> {
 }
 
 impl<T: Clone> SharedVec<T> {
-    /// The entries appended after `ancestor`, by length suffix. Effect
-    /// histories only append within one execution lineage; the debug build
-    /// verifies the shared prefix element-wise, and `None` reports a
-    /// shorter-than-ancestor history (not a descendant).
+    /// The entries appended after `ancestor`. `None` when this history is
+    /// not a descendant of `ancestor`: shorter than it, or diverging from it
+    /// within the shared prefix. Effect histories only append within one
+    /// execution lineage, so a descendant that still shares the ancestor's
+    /// storage is recognized without a scan; otherwise the prefix is
+    /// compared element-wise in every build profile, because the suffix is
+    /// what a join publishes as the exact arm delta.
     pub(crate) fn suffix_since(&self, ancestor: &Self) -> Option<&[T]>
     where
-        T: PartialEq + std::fmt::Debug,
+        T: PartialEq,
     {
         if self.0.len() < ancestor.0.len() {
             return None;
         }
-        debug_assert!(
-            self.0[..ancestor.0.len()] == ancestor.0[..],
-            "an effect history diverged from its claimed ancestor"
-        );
+        if !Arc::ptr_eq(&self.0, &ancestor.0) && self.0[..ancestor.0.len()] != ancestor.0[..] {
+            return None;
+        }
         Some(&self.0[ancestor.0.len()..])
     }
 
@@ -338,5 +340,29 @@ impl<'a, T: Clone + Ord> IntoIterator for &'a PersistentOrderedSet<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suffix_since_rejects_a_diverged_prefix() {
+        let ancestor = SharedVec::from(vec![1, 2, 3]);
+        let mut descendant = ancestor.clone();
+        descendant.push(4);
+        assert_eq!(descendant.suffix_since(&ancestor), Some(&[4][..]));
+        assert_eq!(ancestor.suffix_since(&ancestor), Some(&[][..]));
+
+        // Same length as the ancestor, different content: not a descendant.
+        let diverged = SharedVec::from(vec![1, 2, 9]);
+        assert_eq!(diverged.suffix_since(&ancestor), None);
+        // Longer, but diverging inside the shared prefix.
+        let diverged_longer = SharedVec::from(vec![1, 9, 3, 4]);
+        assert_eq!(diverged_longer.suffix_since(&ancestor), None);
+        // Shorter than the ancestor.
+        let shorter = SharedVec::from(vec![1, 2]);
+        assert_eq!(shorter.suffix_since(&ancestor), None);
     }
 }

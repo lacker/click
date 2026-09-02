@@ -77,60 +77,61 @@ pub(in crate::kernel) fn collect_or_cases(proposition: &Proposition, cases: &mut
     }
 }
 
+/// The constant box outside which `forall variables. body` is vacuously
+/// true, when one can be established, so that checking `body` at every point
+/// of the box proves the universal.
+///
+/// The body, below its `forall` chain, must be a tree of `And`, `Or`, and
+/// nested `ForAll` nodes whose leaves are all implications. Every leaf's
+/// antecedent alone must bound, to a constant range, each quantified
+/// variable the leaf mentions; a leaf that mentions a quantified variable
+/// without bounding it, or any other leaf shape, yields `None`. The result
+/// is, per variable, the hull of the ranges of the leaves mentioning it:
+/// outside that hull every such antecedent is false, so every leaf, and
+/// therefore the whole tree, is true without inspection. A bare conjunct
+/// such as `... and (k < 3)` is never vacuous and so never qualifies.
 pub(in crate::kernel) fn finite_forall_ranges(
     variables: &[Variable],
     body: &Proposition,
 ) -> Option<Vec<FiniteForAllRange>> {
     let variable_set = variables.iter().copied().collect::<BTreeSet<_>>();
-    let mut ranges = variables
-        .iter()
-        .copied()
-        .map(|variable| (variable, IntegerRangeFacts::default()))
-        .collect::<BTreeMap<_, _>>();
-    let mut edges = Vec::new();
-    let mut order_facts = Vec::new();
-    collect_implication_antecedent_order_facts(body, &mut order_facts);
-
-    for (left, right, strict) in order_facts {
-        match (bitvector_variable(&left), signed_bitvector_constant(&right)) {
-            (Some(variable), Some(bound)) if variable_set.contains(&variable) => {
-                let upper = if strict { bound.checked_sub(1)? } else { bound };
-                tighten_upper_bound(&mut ranges, variable, upper);
-                continue;
-            }
-            _ => {}
+    let mut leaves = Vec::new();
+    if !collect_guarded_leaves(body, &mut leaves) || leaves.is_empty() {
+        return None;
+    }
+    let mut hull = BTreeMap::<Variable, (i64, i64)>::new();
+    for (antecedent, leaf) in leaves {
+        let mut mentioned = BTreeSet::new();
+        collect_proposition_bitvector_variables(leaf, &mut mentioned);
+        let bounded = mentioned
+            .iter()
+            .filter(|variable| variable_set.contains(variable))
+            .copied()
+            .collect::<Vec<_>>();
+        if bounded.is_empty() {
+            continue;
         }
-        match (signed_bitvector_constant(&left), bitvector_variable(&right)) {
-            (Some(bound), Some(variable)) if variable_set.contains(&variable) => {
-                let lower = if strict { bound.checked_add(1)? } else { bound };
-                tighten_lower_bound(&mut ranges, variable, lower);
-                continue;
-            }
-            _ => {}
-        }
-        match (bitvector_variable(&left), bitvector_variable(&right)) {
-            (Some(lower), Some(upper))
-                if variable_set.contains(&lower) && variable_set.contains(&upper) =>
-            {
-                edges.push(VariableOrderEdge {
-                    lower,
-                    upper,
-                    strict,
-                });
-            }
-            _ => {}
+        let mut order_facts = Vec::new();
+        collect_order_facts_from_assumed_proposition(antecedent, &mut order_facts);
+        let ranges = antecedent_ranges(&variable_set, &order_facts)?;
+        for variable in bounded {
+            let range = ranges.get(&variable)?;
+            let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
+                return None;
+            };
+            hull.entry(variable)
+                .and_modify(|(hull_lower, hull_upper)| {
+                    *hull_lower = (*hull_lower).min(lower);
+                    *hull_upper = (*hull_upper).max(upper);
+                })
+                .or_insert((lower, upper));
         }
     }
-
-    propagate_variable_order_bounds(&mut ranges, &edges)?;
 
     variables
         .iter()
         .map(|variable| {
-            let range = ranges.get(variable)?;
-            let (Some(lower), Some(upper)) = (range.lower, range.upper) else {
-                return None;
-            };
+            let (lower, upper) = *hull.get(variable)?;
             if lower > upper || upper - lower > 32 {
                 return None;
             }
@@ -139,42 +140,78 @@ pub(in crate::kernel) fn finite_forall_ranges(
         .collect()
 }
 
-pub(in crate::kernel) fn collect_implication_antecedent_order_facts(
-    proposition: &Proposition,
-    facts: &mut Vec<(Bitvector32Term, Bitvector32Term, bool)>,
-) {
+/// Collects `(antecedent, leaf)` for every implication leaf of the body's
+/// `And`/`Or`/`ForAll` tree. `false` when some leaf is not an implication,
+/// since such a leaf is not vacuous anywhere.
+fn collect_guarded_leaves<'a>(
+    proposition: &'a Proposition,
+    leaves: &mut Vec<(&'a Proposition, &'a Proposition)>,
+) -> bool {
     match proposition {
-        Proposition::Implies(left, _) => collect_order_facts_from_assumed_proposition(left, facts),
-        Proposition::And(left, right) | Proposition::Or(left, right) => {
-            collect_implication_antecedent_order_facts(left, facts);
-            collect_implication_antecedent_order_facts(right, facts);
+        Proposition::Implies(antecedent, _) => {
+            leaves.push((antecedent, proposition));
+            true
         }
-        Proposition::ForAll { body, .. } => collect_implication_antecedent_order_facts(body, facts),
-        Proposition::Exists { .. } => {}
-        Proposition::Not(_)
-        | Proposition::ConditionIs(_, _)
-        | Proposition::Equal(_, _)
-        | Proposition::Predicate { .. }
-        | Proposition::CExpressionEvaluates { .. }
-        | Proposition::CConditionEvaluates { .. }
-        | Proposition::CStatementExecutes { .. }
-        | Proposition::CStatementVerifies { .. }
-        | Proposition::CFunctionExecutes { .. }
-        | Proposition::CFunctionVerifies { .. }
-        | Proposition::CFunctionSatisfiesSpecification { .. }
-        | Proposition::CFunctionPartiallySatisfiesSpecification { .. }
-        | Proposition::CMemoryLoads { .. }
-        | Proposition::CMemoryLoadable { .. }
-        | Proposition::CMemoryCanStore { .. }
-        | Proposition::CMemoryDisjoint { .. }
-        | Proposition::CResourceSeparate { .. }
-        | Proposition::CResourceComposition(_)
-        | Proposition::CResourceContains { .. }
-        | Proposition::CMemoryMutatesOnly { .. }
-        | Proposition::CMemoryEffectSummary { .. }
-        | Proposition::CHeapAllocationFreed { .. }
-        | Proposition::CWhileInvariantRule { .. } => {}
+        Proposition::And(left, right) | Proposition::Or(left, right) => {
+            collect_guarded_leaves(left, leaves) && collect_guarded_leaves(right, leaves)
+        }
+        Proposition::ForAll { body, .. } => collect_guarded_leaves(body, leaves),
+        _ => false,
     }
+}
+
+/// The constant ranges one antecedent's order facts impose on the quantified
+/// variables, after propagating variable-to-variable order edges.
+fn antecedent_ranges(
+    variable_set: &BTreeSet<Variable>,
+    order_facts: &[(Bitvector32Term, Bitvector32Term, bool)],
+) -> Option<BTreeMap<Variable, IntegerRangeFacts>> {
+    let mut ranges = variable_set
+        .iter()
+        .copied()
+        .map(|variable| (variable, IntegerRangeFacts::default()))
+        .collect::<BTreeMap<_, _>>();
+    let mut edges = Vec::new();
+    for (left, right, strict) in order_facts {
+        match (bitvector_variable(left), signed_bitvector_constant(right)) {
+            (Some(variable), Some(bound)) if variable_set.contains(&variable) => {
+                let upper = if *strict {
+                    bound.checked_sub(1)?
+                } else {
+                    bound
+                };
+                tighten_upper_bound(&mut ranges, variable, upper);
+                continue;
+            }
+            _ => {}
+        }
+        match (signed_bitvector_constant(left), bitvector_variable(right)) {
+            (Some(bound), Some(variable)) if variable_set.contains(&variable) => {
+                let lower = if *strict {
+                    bound.checked_add(1)?
+                } else {
+                    bound
+                };
+                tighten_lower_bound(&mut ranges, variable, lower);
+                continue;
+            }
+            _ => {}
+        }
+        match (bitvector_variable(left), bitvector_variable(right)) {
+            (Some(lower), Some(upper))
+                if variable_set.contains(&lower) && variable_set.contains(&upper) =>
+            {
+                edges.push(VariableOrderEdge {
+                    lower,
+                    upper,
+                    strict: *strict,
+                });
+            }
+            _ => {}
+        }
+    }
+    propagate_variable_order_bounds(&mut ranges, &edges)?;
+    Some(ranges)
 }
 
 pub(in crate::kernel) fn collect_order_facts_from_assumed_proposition(

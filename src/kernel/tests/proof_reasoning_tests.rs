@@ -3572,6 +3572,78 @@ fn loadability_transports_to_snapshot_with_symbolic_index_bounds() {
     }));
 }
 
+/// `lower <= term and term < upper`.
+fn int32_half_open_bound(term: &Bitvector32Term, lower: i64, upper: i64) -> Proposition {
+    Proposition::And(
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(term.clone(), signed_i64_bitvector_constant(lower)),
+            true,
+        )),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_less_than(term.clone(), signed_i64_bitvector_constant(upper)),
+            true,
+        )),
+    )
+}
+
+#[test]
+fn finite_forall_rejects_a_bare_conjunct_beside_a_guarded_one() {
+    // `forall k. ((0 <= k and k < 3) implies 0 <= k) and (k < 3)` is false at
+    // k = 5: the guard bounds only its own implication, and the bare
+    // conjunct is not vacuous anywhere, so no finite range justifies it.
+    let k = Variable(92_100);
+    let k_bits = Bitvector32Term::Variable(k);
+    let guarded = Proposition::Implies(
+        Box::new(int32_half_open_bound(&k_bits, 0, 3)),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )),
+    );
+    let bare = Proposition::ConditionIs(
+        ConditionTerm::signed_less_than(k_bits.clone(), Bitvector32Term::Constant(3)),
+        true,
+    );
+    let body = Proposition::And(Box::new(guarded.clone()), Box::new(bare));
+
+    assert!(finite_forall_ranges(&[k], &body).is_none());
+    assert!(!PureFactContext::new().proves(&forall_int32(k, body)));
+    // The guarded conjunct alone still derives by instantiation.
+    assert!(PureFactContext::new().proves(&forall_int32(k, guarded)));
+}
+
+#[test]
+fn finite_forall_instantiates_the_hull_of_every_guard() {
+    // Two guards of different widths: the universal is vacuous only outside
+    // the wider one, so instances must cover 0..=9, where `k < 5` fails at
+    // k = 5 while `k < 10` holds throughout.
+    let k = Variable(92_101);
+    let k_bits = Bitvector32Term::Variable(k);
+    let narrow = Proposition::Implies(
+        Box::new(int32_half_open_bound(&k_bits, 0, 3)),
+        Box::new(Proposition::ConditionIs(
+            ConditionTerm::signed_greater_equal(k_bits.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )),
+    );
+    let wide = |upper: u32| {
+        Proposition::Implies(
+            Box::new(int32_half_open_bound(&k_bits, 0, 10)),
+            Box::new(Proposition::ConditionIs(
+                ConditionTerm::signed_less_than(k_bits.clone(), Bitvector32Term::Constant(upper)),
+                true,
+            )),
+        )
+    };
+    let false_at_five = Proposition::And(Box::new(narrow.clone()), Box::new(wide(5)));
+    let ranges = finite_forall_ranges(&[k], &false_at_five).expect("both leaves are guarded");
+    assert_eq!((ranges[0].lower, ranges[0].upper), (0, 9));
+    assert!(!PureFactContext::new().proves(&forall_int32(k, false_at_five)));
+
+    let true_throughout = Proposition::And(Box::new(narrow), Box::new(wide(10)));
+    assert!(PureFactContext::new().proves(&forall_int32(k, true_throughout)));
+}
+
 #[test]
 fn assumptions_prove_finite_forall_int32_by_instantiation() {
     let i = Variable(92);

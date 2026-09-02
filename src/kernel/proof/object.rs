@@ -1283,6 +1283,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
 
     pub(crate) fn publish_checked_frontier_join(
         &self,
+        split: super::SplitId,
         children: [BranchId; 2],
         parent: BranchId,
         selection: EffectGoalSelection,
@@ -1293,6 +1294,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         checked_facts: Vec<Proposition>,
     ) -> Result<Self, ProofJoinError> {
         self.publish_checked_frontier_join_inner(
+            split,
             children,
             parent,
             selection,
@@ -1307,6 +1309,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
 
     pub(crate) fn publish_reserved_checked_frontier_join(
         &self,
+        split: super::SplitId,
         children: [BranchId; 2],
         parent: BranchId,
         selection: EffectGoalSelection,
@@ -1317,6 +1320,7 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         checked_facts: Vec<Proposition>,
     ) -> Result<Self, ProofJoinError> {
         self.publish_checked_frontier_join_inner(
+            split,
             children,
             parent,
             selection,
@@ -1329,9 +1333,16 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         )
     }
 
+    /// Closes `split` by replacing its arms with the joined parent branch.
+    /// Every child must be an arm identity reserved by exactly this split
+    /// (a decided split names its one feasible arm twice), the parent must
+    /// precede the split and be retired, and, unless the arms were only
+    /// reserved, every child must be an open branch. All of this is checked
+    /// here and in the branch store in every build profile.
     #[allow(clippy::too_many_arguments)]
     fn publish_checked_frontier_join_inner(
         &self,
+        split: super::SplitId,
         children: [BranchId; 2],
         parent: BranchId,
         selection: EffectGoalSelection,
@@ -1345,13 +1356,15 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
         let valid_children = if reserved_children {
             children
                 .iter()
-                .all(|child| self.state.open_branches.has_allocated(*child))
+                .all(|child| split.reserves(*child, children.len()))
         } else {
-            children
-                .iter()
-                .all(|child| self.state.open_branches.get(*child).is_some())
+            split.owns(children)
+                && children
+                    .iter()
+                    .all(|child| self.state.open_branches.get(*child).is_some())
         };
         if !valid_children
+            || !split.follows(parent)
             || !self.state.open_branches.has_allocated(parent)
             || self.state.open_branches.get(parent).is_some()
         {
@@ -1371,7 +1384,8 @@ impl<L: Clone, P: Clone, O: Clone, S: Clone>
                 .join_reserved_at(children, parent, branch)
         } else {
             self.state.open_branches.join_at(children, parent, branch)
-        };
+        }
+        .ok_or(ProofJoinError::InvalidSplit)?;
         Ok(Self::new(
             ProofState {
                 locals: self.state.locals.clone(),

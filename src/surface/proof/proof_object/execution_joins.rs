@@ -1689,6 +1689,7 @@ impl<'a> Proof<'a> {
         )?;
         self.resume_parent_after_sibling_join_from_marker(
             &record.marker,
+            record.split,
             record.arm_branches,
             selection,
             parts,
@@ -1970,12 +1971,19 @@ impl<'a> Proof<'a> {
         selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
     ) -> Result<Self, ClickError> {
-        self.resume_parent_after_sibling_join_from_marker(&record.marker, ids, selection, parts)
+        self.resume_parent_after_sibling_join_from_marker(
+            &record.marker,
+            record.split,
+            ids,
+            selection,
+            parts,
+        )
     }
 
     pub(super) fn resume_parent_after_sibling_join_from_marker(
         &self,
         marker: &ProofCheckpoint<'a>,
+        split: SplitId,
         ids: [BranchId; 2],
         selection: EffectGoalSelection,
         parts: CheckedExecutionJoinParts,
@@ -1987,6 +1995,7 @@ impl<'a> Proof<'a> {
         let state = self
             .state
             .publish_reserved_checked_frontier_join(
+                split,
                 ids,
                 parent_goal,
                 selection,
