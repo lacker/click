@@ -200,33 +200,110 @@ pub(in crate::surface) fn requirement_propositions(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Vec<Proposition>, ClickError> {
-    let mut propositions = Vec::new();
-    for requirement in requires {
-        let proposition = match requirement.inner() {
-            Requirement::LoadableSegment { .. } => {
-                loadable_requirement_prop(requirement, parameters, arguments, state.memory())?
+    requirement_propositions_with_assumptions(
+        requires,
+        parameters,
+        arguments,
+        state,
+        predicate_environment,
+        click_function_environment,
+        &PureFactContext::new(),
+    )
+}
+
+pub(in crate::surface) fn requirement_propositions_with_assumptions(
+    requires: &[Requirement],
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    initial_assumptions: &PureFactContext,
+) -> Result<Vec<Proposition>, ClickError> {
+    // A proposition requirement may contain a memory read whose range is
+    // justified by another requirement, such as `1 <= n` before
+    // `a[0] == 7` under `views a[0..n]`. Lower requirements independently
+    // used to make this valid dependency invisible. Retry clauses that need
+    // more facts after successfully lowered clauses have contributed their
+    // propositions to the local assumption context. Keeping the result in
+    // source order preserves the contract-to-kernel mapping.
+    let mut lowered = (0..requires.len())
+        .map(|_| None)
+        .collect::<Vec<Option<Proposition>>>();
+    let mut errors = (0..requires.len())
+        .map(|_| None)
+        .collect::<Vec<Option<ClickError>>>();
+    let mut pending = (0..requires.len()).collect::<Vec<_>>();
+    let mut assumptions = initial_assumptions.clone();
+
+    // Requirements may be written in either order, so use one retry pass
+    // after the first pass has published the facts it could lower. A bounded
+    // retry keeps setup work linear in the explicit requirement list rather
+    // than turning a long dependency chain into repeated whole-list scans.
+    for _ in 0..2 {
+        if pending.is_empty() {
+            break;
+        }
+        let mut next_pending = Vec::new();
+        let mut made_progress = false;
+        for index in std::mem::take(&mut pending) {
+            let requirement = &requires[index];
+            let result = match requirement.inner() {
+                Requirement::LoadableSegment { .. } => {
+                    loadable_requirement_prop(requirement, parameters, arguments, state.memory())
+                        .map(Some)
+                }
+                Requirement::Proposition(proposition) => {
+                    requirement_proposition_prop_with_assumptions(
+                        parameters,
+                        arguments,
+                        state,
+                        proposition,
+                        predicate_environment,
+                        click_function_environment,
+                        &assumptions,
+                    )
+                    .map(Some)
+                }
+                Requirement::Resource(resource) => {
+                    resource_clause_loadable_prop(resource, parameters, arguments, state.memory())
+                }
+                Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
+            };
+            let result = match result {
+                Ok(Some(proposition)) => Ok(proposition),
+                Ok(None) => continue,
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(proposition) => {
+                    assumptions = assumptions.assume_proposition(proposition.clone());
+                    lowered[index] = Some(proposition);
+                    made_progress = true;
+                }
+                Err(error) => {
+                    errors[index] = Some(error);
+                    next_pending.push(index);
+                }
             }
-            Requirement::Proposition(proposition) => requirement_proposition_prop(
-                parameters,
-                arguments,
-                state,
-                proposition,
-                predicate_environment,
-                click_function_environment,
-            )?,
-            Requirement::Resource(resource) => {
-                let Some(proposition) =
-                    resource_clause_loadable_prop(resource, parameters, arguments, state.memory())?
-                else {
-                    continue;
-                };
-                proposition
+        }
+        if !made_progress {
+            if next_pending.is_empty() {
+                break;
             }
-            Requirement::Labeled { .. } => unreachable!("requirement.inner() removes labels"),
-        };
-        propositions.push(proposition);
+            pending = next_pending;
+            break;
+        }
+        pending = next_pending;
     }
-    Ok(propositions)
+
+    if let Some(index) = pending.first() {
+        return Err(errors[*index]
+            .take()
+            .expect("pending requirement always has a lowering error"));
+    }
+
+    Ok(lowered.into_iter().flatten().collect())
 }
 
 /// Checked definedness facts implicit in accepting arithmetic requirements.
@@ -896,6 +973,26 @@ pub(in crate::surface) fn requirement_proposition_prop(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, ClickError> {
+    requirement_proposition_prop_with_assumptions(
+        parameters,
+        arguments,
+        state,
+        proposition,
+        predicate_environment,
+        click_function_environment,
+        &PureFactContext::new(),
+    )
+}
+
+pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
+    parameters: &[syntax::C0Parameter],
+    arguments: &[CExpression],
+    state: &CState,
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    assumptions: &PureFactContext,
+) -> Result<Proposition, ClickError> {
     let parameter_values = parameter_values(parameters, arguments)?;
     let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
     let mut lowerer = KernelPropositionLowerer::new(
@@ -905,7 +1002,8 @@ pub(in crate::surface) fn requirement_proposition_prop(
         predicate_environment,
         click_function_environment,
     )
-    .with_resource_state(state.clone());
+    .with_resource_state(state.clone())
+    .with_assumptions(assumptions.clone());
     lowerer.lower_requirement_proposition(proposition)
 }
 

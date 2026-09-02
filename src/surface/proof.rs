@@ -2168,13 +2168,14 @@ pub(super) fn initial_claim_context(
             )
         })
         .map(|requirement| {
-            requirement_propositions(
+            requirement_propositions_with_assumptions(
                 std::slice::from_ref(requirement),
                 parsed_function.parameters(),
                 &arguments,
                 &state,
                 predicate_environment,
                 click_function_environment,
+                &assumptions_from_propositions(&requirement_pure_facts),
             )
         })
         .collect::<Result<Vec<_>, _>>()?
@@ -2197,13 +2198,14 @@ pub(super) fn initial_claim_context(
         if click_proposition_mentions_defined(&surface) {
             continue;
         }
-        let lowered = requirement_propositions(
+        let lowered = requirement_propositions_with_assumptions(
             std::slice::from_ref(requirement),
             parsed_function.parameters(),
             &arguments,
             &state,
             predicate_environment,
             click_function_environment,
+            &assumptions_from_propositions(&requirement_pure_facts),
         )?;
         if let [kernel] = lowered.as_slice() {
             surface_propositions.record_lowering(&surface, kernel)?;
@@ -2261,13 +2263,14 @@ pub(super) fn initial_claim_context(
         if !click_proposition_mentions_defined(surface) {
             continue;
         }
-        let projected = requirement_propositions(
+        let projected = requirement_propositions_with_assumptions(
             std::slice::from_ref(requirement),
             parsed_function.parameters(),
             &arguments,
             &definedness_state,
             predicate_environment,
             click_function_environment,
+            &assumptions_from_propositions(&requirement_pure_facts),
         )?;
         let [projected] = projected.as_slice() else {
             continue;

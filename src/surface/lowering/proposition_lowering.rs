@@ -7,6 +7,7 @@ pub(in crate::surface) struct KernelPropositionLowerer {
     predicate_environment: PredicateEnvironment,
     click_function_environment: ClickFunctionEnvironment,
     resource_state: Option<CState>,
+    assumptions: PureFactContext,
     active_functions: BTreeSet<String>,
     next_variable: u64,
 }
@@ -26,6 +27,7 @@ impl KernelPropositionLowerer {
             predicate_environment: predicate_environment.clone(),
             click_function_environment: click_function_environment.clone(),
             resource_state: None,
+            assumptions: PureFactContext::new(),
             active_functions: BTreeSet::new(),
             next_variable: 2_000_000,
         }
@@ -33,6 +35,11 @@ impl KernelPropositionLowerer {
 
     pub(in crate::surface) fn with_resource_state(mut self, state: CState) -> Self {
         self.resource_state = Some(state);
+        self
+    }
+
+    pub(in crate::surface) fn with_assumptions(mut self, assumptions: PureFactContext) -> Self {
+        self.assumptions = assumptions;
         self
     }
 
@@ -98,10 +105,14 @@ impl KernelPropositionLowerer {
             ClickProposition::At { .. } => Err(ClickError::new(
                 "`at(...)` propositions are not available in function requirements",
             )),
-            ClickProposition::And(left, right) => Ok(Proposition::And(
-                Box::new(self.lower_requirement_proposition(left)?),
-                Box::new(self.lower_requirement_proposition(right)?),
-            )),
+            ClickProposition::And(left, right) => {
+                let left = self.lower_requirement_proposition(left)?;
+                let outer_assumptions = self.assumptions.clone();
+                self.assumptions = self.assumptions.clone().assume_proposition(left.clone());
+                let right = self.lower_requirement_proposition(right);
+                self.assumptions = outer_assumptions;
+                Ok(Proposition::And(Box::new(left), Box::new(right?)))
+            }
             ClickProposition::Or(left, right) => Ok(Proposition::Or(
                 Box::new(self.lower_requirement_proposition(left)?),
                 Box::new(self.lower_requirement_proposition(right)?),
@@ -109,10 +120,14 @@ impl KernelPropositionLowerer {
             ClickProposition::Not(body) => Ok(Proposition::Not(Box::new(
                 self.lower_requirement_proposition(body)?,
             ))),
-            ClickProposition::Implies(left, right) => Ok(Proposition::Implies(
-                Box::new(self.lower_requirement_proposition(left)?),
-                Box::new(self.lower_requirement_proposition(right)?),
-            )),
+            ClickProposition::Implies(left, right) => {
+                let left = self.lower_requirement_proposition(left)?;
+                let outer_assumptions = self.assumptions.clone();
+                self.assumptions = self.assumptions.clone().assume_proposition(left.clone());
+                let right = self.lower_requirement_proposition(right);
+                self.assumptions = outer_assumptions;
+                Ok(Proposition::Implies(Box::new(left), Box::new(right?)))
+            }
             ClickProposition::ForAll { c_type, name, body } => {
                 if *c_type != C0Type::Int32 {
                     return Err(ClickError::new("only `forall (...: int32)` is supported"));
@@ -180,20 +195,29 @@ impl KernelPropositionLowerer {
                         .map_err(ClickError::new)?;
                 let variable = Variable(self.next_variable);
                 self.next_variable += 1;
-                let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                let item_bits = Bitvector32Term::Variable(variable);
+                let item_value = CValue::Int32(item_bits.clone());
                 let outer_values = self.values.clone();
                 self.values.insert(item.clone(), item_value.clone());
+                let outer_assumptions = self.assumptions.clone();
+                self.assumptions =
+                    self.assumptions
+                        .clone()
+                        .assume_proposition(range_membership_proposition(
+                            start.clone(),
+                            item_bits.clone(),
+                            end.clone(),
+                        ));
                 let body = match self.lower_requirement_proposition(body) {
                     Ok(body) => body,
                     Err(error) => {
+                        self.assumptions = outer_assumptions;
                         self.values = outer_values;
                         return Err(error);
                     }
                 };
+                self.assumptions = outer_assumptions;
                 self.values = outer_values;
-                let CValue::Int32(item_bits) = item_value else {
-                    unreachable!("range `all` item value is always int32")
-                };
                 Ok(bounded_forall_int32(variable, start, item_bits, end, body))
             }
             ClickProposition::RangeAny {
@@ -211,6 +235,9 @@ impl KernelPropositionLowerer {
                     int32_term_value(self.lower_requirement_value(end)?, "range `any` end bound")
                         .map_err(ClickError::new)?;
                 let outer_values = self.values.clone();
+                let outer_assumptions = self.assumptions.clone();
+                let range_start = start.clone();
+                let range_end = end.clone();
                 match (
                     concrete_bound_from_term(&start, "any", "start"),
                     concrete_bound_from_term(&end, "any", "end"),
@@ -223,34 +250,51 @@ impl KernelPropositionLowerer {
                                 item.clone(),
                                 CValue::Int32(Bitvector32Term::Constant(index as u32)),
                             );
+                            self.assumptions = outer_assumptions.clone().assume_proposition(
+                                range_membership_proposition(
+                                    range_start.clone(),
+                                    Bitvector32Term::Constant(index as u32),
+                                    range_end.clone(),
+                                ),
+                            );
                             let body = match self.lower_requirement_proposition(body) {
                                 Ok(body) => body,
                                 Err(error) => {
+                                    self.assumptions = outer_assumptions;
                                     self.values = outer_values;
                                     return Err(error);
                                 }
                             };
+                            self.assumptions = outer_assumptions.clone();
                             proposition = disjunction(proposition, body);
                         }
+                        self.assumptions = outer_assumptions;
                         self.values = outer_values;
                         Ok(proposition)
                     }
                     _ => {
                         let variable = Variable(self.next_variable);
                         self.next_variable += 1;
-                        let item_value = CValue::Int32(Bitvector32Term::Variable(variable));
+                        let item_bits = Bitvector32Term::Variable(variable);
+                        let item_value = CValue::Int32(item_bits.clone());
                         self.values.insert(item.clone(), item_value.clone());
+                        self.assumptions = self.assumptions.clone().assume_proposition(
+                            range_membership_proposition(
+                                start.clone(),
+                                item_bits.clone(),
+                                end.clone(),
+                            ),
+                        );
                         let body = match self.lower_requirement_proposition(body) {
                             Ok(body) => body,
                             Err(error) => {
+                                self.assumptions = outer_assumptions;
                                 self.values = outer_values;
                                 return Err(error);
                             }
                         };
+                        self.assumptions = outer_assumptions;
                         self.values = outer_values;
-                        let CValue::Int32(item_bits) = item_value else {
-                            unreachable!("range `any` item value is always int32")
-                        };
                         Ok(bounded_exists_int32(
                             item.clone(),
                             variable,
@@ -280,7 +324,7 @@ impl KernelPropositionLowerer {
                     &state,
                     &state,
                     None,
-                    &PureFactContext::new(),
+                    &self.assumptions,
                     &self.predicate_environment,
                     &self.click_function_environment,
                     &recorded_snapshots,
@@ -408,9 +452,7 @@ impl KernelPropositionLowerer {
                 let count = self
                     .resource_state
                     .as_ref()
-                    .map(|state| {
-                        state.counted_population_sum(name, &values, &PureFactContext::new())
-                    })
+                    .map(|state| state.counted_population_sum(name, &values, &self.assumptions))
                     .unwrap_or(Bitvector32Term::Constant(0));
                 Ok(CValue::Int32(count))
             }
@@ -477,20 +519,54 @@ impl KernelPropositionLowerer {
                 let value = self.lower_requirement_value(expression)?;
                 lower_contract_bitwise_not(value)
             }
-            ContractExpression::Index(_, _) => Err(ClickError::new(
-                "memory reads are not supported in `requires` propositions yet",
-            )),
+            ContractExpression::Index(base, index) => {
+                let state = self
+                    .resource_state
+                    .clone()
+                    .unwrap_or_else(|| CState::new().with_memory(self.memory.clone()));
+                let recorded_snapshots = RecordedSnapshots::new();
+                let array_ref = evaluate_contract_array_ref_with_environment(
+                    &self.values,
+                    &self.array_refs,
+                    &state,
+                    &state,
+                    None,
+                    &self.assumptions,
+                    base,
+                    &self.predicate_environment,
+                    &self.click_function_environment,
+                    &recorded_snapshots,
+                    &mut self.active_functions,
+                )
+                .map_err(ClickError::new)?;
+                let index = self.lower_requirement_value(index)?;
+                let CValue::Int32(index) = index else {
+                    return Err(ClickError::new(format!(
+                        "array index did not evaluate to int32: `{index:?}`"
+                    )));
+                };
+                let element_type = array_ref.element_type;
+                let pointer =
+                    offset_pointer_by_elements(array_ref.pointer, index, element_type.byte_width());
+                evaluate_contract_memory_load_with_resources(
+                    &array_ref.memory,
+                    self.resource_state.as_ref().map(CState::resources),
+                    pointer,
+                    element_type,
+                    &self.assumptions,
+                )
+                .map_err(ClickError::new)
+            }
             ContractExpression::If {
                 condition,
                 then_branch,
                 else_branch,
             } => {
                 let condition = self.lower_requirement_proposition(condition)?;
-                let assumptions = PureFactContext::new();
-                if assumptions.proves(&condition) {
+                if self.assumptions.proves(&condition) {
                     return self.lower_requirement_value(then_branch);
                 }
-                if assumptions_prove_proposition_false(&assumptions, &condition) {
+                if assumptions_prove_proposition_false(&self.assumptions, &condition) {
                     return self.lower_requirement_value(else_branch);
                 }
 
@@ -590,7 +666,7 @@ impl KernelPropositionLowerer {
                     &state,
                     &state,
                     None,
-                    &PureFactContext::new(),
+                    &self.assumptions,
                     &self.predicate_environment.clone(),
                     &recorded_snapshots,
                     &mut self.active_functions,
@@ -669,7 +745,7 @@ impl KernelPropositionLowerer {
                     &self.memory,
                     pointer,
                     CType::Int32,
-                    &PureFactContext::new(),
+                    &self.assumptions,
                 )
                 .map_err(ClickError::new)
             }
@@ -685,7 +761,7 @@ impl KernelPropositionLowerer {
                     &self.memory,
                     pointer,
                     *value_type,
-                    &PureFactContext::new(),
+                    &self.assumptions,
                 )
                 .map_err(ClickError::new)
             }

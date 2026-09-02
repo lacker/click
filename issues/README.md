@@ -69,7 +69,6 @@ Semantics and reasoning:
 - [Prove a loop invariant that relates a havoced pointer local to the index](pointer-local-loop-invariants.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
 - [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
-- [Allow memory reads in `requires` propositions](memory-reads-in-requires.md)
 - [Join branches that differ in heap deallocation](conditional-deallocation-joins.md)
 - [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
