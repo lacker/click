@@ -1449,17 +1449,21 @@ pub enum SealRefusal {
     IncompleteTrace,
     /// The sealed outcome differs from the outcome the proof published.
     OutcomeMismatch,
+    /// The contract's exit rule hit an execution limit while sealing.
+    ExitRule,
     /// Malformed evidence: an invalid case arm, a resource event that does
     /// not advance the state, an unexpected theorem shape, an erroring
     /// statement outcome, or a branch that does not match its source.
     InvalidEvidence,
-    /// Claim-finishing guard: a counted entry whose output resources close
-    /// implicitly under outcome `simp()` rather than by an explicit `frame()`.
+    /// Retired by slice 6 of `issues/double-execution.md`: the sealed path
+    /// now applies the contract's exit rule, so an implicitly closed counted
+    /// entry seals. The variant stays so older pins still name it, at zero.
     ImplicitCountedClose,
-    /// Claim-finishing guard: the outcome proof unfolded a predicate.
+    /// Retired by slice 6: an outcome proof that unfolded a predicate never
+    /// needed the guard; the unfolded facts belong to the outcome goal.
     OutcomeUnfold,
-    /// Claim-finishing guard: a quantified resource fold or close after C
-    /// execution.
+    /// Retired by slice 6: a quantified fold or close after execution is
+    /// covered by the contract's exit rule on the sealed path.
     QuantifiedResourceClose,
 }
 

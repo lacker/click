@@ -237,25 +237,35 @@ the independent execution that still exists until slice 7. Kernel tests
 0 over the mdtests (from 3 and 4) and `CasePartition` to 0 over
 the examples (from 12), with no other count rising.
 
-### 6. The three guards
+### 6. The three guards (landed 2026-09-01)
 
-In this order, each deleting its guard immediately:
+An experiment that bypassed all three guards showed what they were hiding:
+the outcome-unfold proofs sealed and verified unchanged (the unfolded facts
+belong to the outcome goal, not the trace), and the counted-entry and
+quantified-fold proofs sealed but then failed contract certification,
+because the sealed path ended in the body's raw state while the
+independent execution ended in the contract's. The fix is in the sealer,
+not in the three operations: `contract_exit_outcome` (`functions.rs`) is
+the exit rule the verification execution applies (resource transfer,
+declared-population transition, or the plain outcome, after composing the
+body's exit resources into their canonical representation), and the sealed
+path's theorem now states the function's outcome under that rule. A body
+that violates its contract at exit ends the sealed path in that runtime
+error, as execution would.
 
-- Implicit close. The implicit closer of a counted entry must publish the same
-  checked frame transition an explicit `frame()` records
-  (`CheckedFrameAuthority`), through one code path. Negative test: a forged
-  exit population is refused without executing the body.
-- Outcome unfold. Outcome `unfold(p)` must apply the sealed unfolding theorem
-  (`prove_c_function_contract_predicate_unfolding`, already used for entry
-  unfolds through `function_entry_derivations`) to the outcome goal's exact
-  facts, instead of pushing a name into `unfolded_predicates` for
-  `unfold_available_predicate_facts` to re-expand ambiently at finishing.
-  Negative test: an unfolding whose body is not the registered one is
-  refused.
-- Quantified fold or close. Extend `CheckedResourceRewrite` (or add a sibling
-  event) with a kernel-checked counted-population delta, using the same rule
-  that certifies contract resource effects at a frame. Negative test: a
-  changed population count without the rule is refused.
+Claim finishing now seals once per proof under the contract's own entry
+assumptions and reuses that artifact for every case group; each path
+carries its case facts itself, so the artifact is also the one contract
+certification can reuse without a case premise. The independent execution
+remains only for a refusal. Surface regressions
+`implicitly_closed_counted_entry_seals_without_a_body_rerun` and
+`quantified_fold_after_execution_seals_without_a_body_rerun`; kernel test
+`contract_exit_rule_is_the_plain_outcome_without_resources`. All three
+guard counts fell to 0; three mdtest and four example proofs that were
+guarded now reach the sealer and refuse as `UnretainedPremise` (10 to 13
+and 10 to 14), which the second pass of slice 3 owns. Claim finishing now
+reruns a body 13 times over the mdtests, from 100, and 14 times over the
+examples, from 48.
 
 ### 7. Delete the fallback and the alignment
 

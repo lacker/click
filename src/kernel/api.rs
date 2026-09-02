@@ -1,4 +1,4 @@
-use super::functions::apply_verified_contract_resource_transition;
+use super::functions::{apply_verified_contract_resource_transition, contract_exit_outcome};
 pub(super) use super::memory_provenance::*;
 use super::prelude::*;
 use crate::instrumentation::{ContractFallback, SealRefusal};
@@ -2648,18 +2648,39 @@ pub(crate) fn checked_c_function_execution_from_proof_evidence(
         let (outcome, obligations) = c_function_outcome_from_statement_outcome(
             &candidates.state,
             function,
-            completed,
+            completed.clone(),
             candidate.obligations.clone(),
             &statement_assumptions,
         );
         if outcome != candidate.outcome {
             return Err(SealRefusal::OutcomeMismatch);
         }
+        // The path's published outcome is the body's. The sealed theorem
+        // states the function's outcome: the body's after the contract's
+        // exit rule, the same resource transfer or population transition an
+        // independent execution applies at return. A contract that the body
+        // violates at exit ends the sealed path in that runtime error.
+        let (outcome, obligations) = match contract_exit_outcome(
+            &candidates.state,
+            function,
+            &candidates.arguments,
+            completed,
+            obligations,
+            &statement_assumptions,
+            &mut ExecutionBudget::default(),
+        ) {
+            Ok(Ok(sealed)) => sealed,
+            Ok(Err(error)) => (
+                CFunctionOutcome::RuntimeError(error),
+                candidate.obligations.clone(),
+            ),
+            Err(_) => return Err(SealRefusal::ExitRule),
+        };
         let proposition = Proposition::CFunctionVerifies {
             state: candidates.state.clone(),
             function: function.clone(),
             arguments: candidates.arguments.clone(),
-            outcome: candidate.outcome.clone(),
+            outcome,
         };
         let mut sealed_facts = candidate.facts.clone();
         for fact in progress.interface_execution_facts {

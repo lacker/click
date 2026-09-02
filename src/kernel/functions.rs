@@ -4377,6 +4377,101 @@ fn function_outcome_from_body_with_resource_transfer(
     ))
 }
 
+/// The function-exit rule the verification execution applies to a body
+/// outcome, so that a sealed proof path ends in the same contract-level
+/// state an independent execution would: the contract's resource transfer
+/// when a composite needs one at the outcome, the declared-population
+/// transition when the contract changes counted quantities, and otherwise
+/// the plain outcome. A void fallthrough completes as a return first.
+pub(super) fn contract_exit_outcome(
+    caller_state: &CState,
+    function: &CFunction,
+    arguments: &[CExpression],
+    outcome: CStatementOutcome,
+    obligations: Vec<ProofObligation>,
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Result<(CFunctionOutcome, Vec<ProofObligation>), CRuntimeError>> {
+    let Some(argument_values) = arguments
+        .iter()
+        .map(|argument| match argument {
+            CExpression::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(Err(CRuntimeError::FunctionContract(
+            "contract exit rule requires symbolic value arguments".to_string(),
+        )));
+    };
+    let outcome = complete_void_fallthrough(function, outcome);
+    // A proof may hold the body's exit resources in a split representation
+    // (one owned token twice rather than a quantity of two). Execution
+    // composes its resources as it goes; compose the retained ones the same
+    // way so the sealed outcome is the canonical one certification compares.
+    let outcome = match outcome {
+        CStatementOutcome::Return { value, mut state } => {
+            state.resources = match ResourceContext::new()
+                .try_compose_with_facts(state.resources.facts().iter().cloned(), assumptions)
+            {
+                Ok(resources) => resources,
+                Err(error) => return Ok(Err(resource_context_runtime_error(error))),
+            };
+            CStatementOutcome::Return { value, state }
+        }
+        other => other,
+    };
+    let Some(callee_state) = bind_c_function_arguments(caller_state, function, &argument_values)
+    else {
+        return Ok(Err(CRuntimeError::TypeMismatch));
+    };
+    let transfer = match prepare_function_resource_transfer(
+        caller_state,
+        &callee_state,
+        function,
+        assumptions,
+        budget,
+        true,
+    )? {
+        Ok(transfer) => transfer,
+        Err(error) => return Ok(Err(error)),
+    };
+    if function_needs_outcome_resource_transfer(function) {
+        function_outcome_from_body_with_resource_transfer(
+            caller_state,
+            function,
+            outcome,
+            obligations,
+            assumptions,
+            &transfer,
+            &argument_values,
+            true,
+            budget,
+        )
+        .map(Ok)
+    } else if function_changes_declared_resource_quantities(function) {
+        function_outcome_from_body_with_population_transition(
+            caller_state,
+            function,
+            outcome,
+            obligations,
+            assumptions,
+            &argument_values,
+            budget,
+        )
+        .map(Ok)
+    } else {
+        Ok(Ok(function_outcome_from_body(
+            caller_state,
+            function,
+            outcome,
+            obligations,
+            assumptions,
+            None,
+        )))
+    }
+}
+
 pub(super) fn apply_verified_contract_resource_transition(
     caller_state: &CState,
     function: &CFunction,

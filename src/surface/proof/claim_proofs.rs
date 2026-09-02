@@ -1,5 +1,4 @@
 use super::*;
-use crate::instrumentation::SealRefusal;
 use crate::kernel::apply_c_function_contract_resource_transition;
 use std::sync::Arc;
 
@@ -1047,55 +1046,6 @@ fn cached_independent_execution(
     execution
 }
 
-fn post_execution_has_quantified_resource_close(
-    tactics: &PersistentSequence<DeferredPostExecutionTactic>,
-) -> bool {
-    fn deferred_closes_quantity(deferred: &DeferredPostExecutionTactic) -> bool {
-        match &deferred.tactic {
-            PostExecutionTactic::Fold(ResourceClause::Quantified { .. })
-            | PostExecutionTactic::CloseOpen {
-                resource: ResourceClause::Quantified { .. },
-                ..
-            } => true,
-            PostExecutionTactic::If {
-                then_tactics,
-                else_tactics,
-                ..
-            } => {
-                then_tactics.iter().any(deferred_closes_quantity)
-                    || else_tactics.iter().any(deferred_closes_quantity)
-            }
-            _ => false,
-        }
-    }
-
-    tactics.iter().any(deferred_closes_quantity)
-}
-
-fn post_execution_has_explicit_frame(
-    tactics: &PersistentSequence<DeferredPostExecutionTactic>,
-) -> bool {
-    fn deferred_has_frame(deferred: &DeferredPostExecutionTactic) -> bool {
-        match &deferred.tactic {
-            PostExecutionTactic::Frame
-            | PostExecutionTactic::FrameRegion(_)
-            | PostExecutionTactic::FrameUsing { .. }
-            | PostExecutionTactic::CheckedFrameUsing { .. } => true,
-            PostExecutionTactic::If {
-                then_tactics,
-                else_tactics,
-                ..
-            } => {
-                then_tactics.iter().any(deferred_has_frame)
-                    && else_tactics.iter().any(deferred_has_frame)
-            }
-            _ => false,
-        }
-    }
-
-    tactics.iter().any(deferred_has_frame)
-}
-
 fn proof_case_fact_conflicts(
     fact: &Proposition,
     assumptions: &PureFactContext,
@@ -1311,6 +1261,47 @@ pub(super) fn finish_ordered_proof<'a>(
             case_groups.push((Vec::new(), Vec::new()));
         }
         let base_certification_facts = certification_facts;
+        let execution_semantics = if proof_execution.core.concrete_loop_execution
+            || !proof_execution.core.frontier_loop_rules.is_empty()
+        {
+            CExecutionSemantics::APPLY_VERIFIED_RULES
+        } else {
+            CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
+        };
+        let execution_mode = if proof_execution.core.concrete_loop_execution {
+            CFunctionContractExecutionMode::ExecuteLoops
+        } else {
+            CFunctionContractExecutionMode::VerifyLoops
+        };
+        // Sealing composes the retained kernel theorems into the checked
+        // execution once for the whole proof, under the contract's own
+        // entry assumptions: every path carries its case facts itself, so
+        // the artifact serves every case group and later contract
+        // certification without a case premise. A refusal is counted by
+        // reason and the fixture harnesses pin those counts
+        // (`issues/double-execution.md`); the independent execution below
+        // remains only until every count is zero.
+        let sealed_execution = crate::instrumentation::measure_operation(
+            function_block.signature().name(),
+            &proof_label,
+            "proof evidence sealing",
+            || match crate::kernel::checked_c_function_execution_from_proof_evidence(
+                execution,
+                function,
+                proof_execution.core.function_entry.as_deref(),
+                &proof_execution.core.execution_evidence,
+                assumptions_from_propositions(&base_certification_facts),
+                function_environment.clone(),
+                execution_semantics,
+                execution_mode,
+            ) {
+                Ok(checked) => Some(checked),
+                Err(refusal) => {
+                    crate::instrumentation::record_seal_refusal(refusal);
+                    None
+                }
+            },
+        );
         let mut certified_executions = Vec::with_capacity(case_groups.len());
         let mut certified_outcomes_by_group = Vec::with_capacity(case_groups.len());
         let mut merged_pairing: Vec<Option<(usize, usize)>> = vec![None; execution.paths().len()];
@@ -1326,73 +1317,11 @@ pub(super) fn finish_ordered_proof<'a>(
                 &proof_label,
                 "kernel execution certification",
                 || {
-                    let execution_semantics = if proof_execution.core.concrete_loop_execution
-                        || !proof_execution.core.frontier_loop_rules.is_empty()
-                    {
-                        CExecutionSemantics::APPLY_VERIFIED_RULES
-                    } else {
-                        CExecutionSemantics::APPLY_CALL_RULES_AND_VERIFY_LOOPS
-                    };
-                    let execution_mode = if proof_execution.core.concrete_loop_execution {
-                        CFunctionContractExecutionMode::ExecuteLoops
-                    } else {
-                        CFunctionContractExecutionMode::VerifyLoops
-                    };
+                    if let Some(sealed) = &sealed_execution {
+                        return sealed.clone();
+                    }
                     let execution_start_assumptions =
                         assumptions_from_propositions(&certification_facts);
-                    let entry_has_counted_populations =
-                        crate::kernel::c_function_entry_state(pre_state, function, arguments)
-                            .is_some_and(|state| state.counted_populations().next().is_some());
-                    // Three shapes are not sealed yet and go straight to the
-                    // independent execution; every other refusal comes from
-                    // the sealer itself. Each is counted by reason and the
-                    // fixture harnesses pin those counts
-                    // (`issues/double-execution.md`).
-                    let guard = if !proof_execution.core.unfolded_predicates.is_empty() {
-                        // Outcome predicate unfolding can add checked claim
-                        // authority that is not part of the C transition
-                        // trace.
-                        Some(SealRefusal::OutcomeUnfold)
-                    } else if post_execution_has_quantified_resource_close(
-                        &proof_execution.presentation.post_execution_tactics,
-                    ) {
-                        // Folding an observed resource family after C
-                        // execution also changes the counted population used
-                        // by outcome predicates. Entry population evidence
-                        // does not certify this exit transition.
-                        Some(SealRefusal::QuantifiedResourceClose)
-                    } else if entry_has_counted_populations
-                        && !post_execution_has_explicit_frame(
-                            &proof_execution.presentation.post_execution_tactics,
-                        )
-                    {
-                        // Implicit outcome resource closure does not yet
-                        // retain the checked population/resource transition
-                        // that an explicit frame records.
-                        Some(SealRefusal::ImplicitCountedClose)
-                    } else {
-                        None
-                    };
-                    match guard {
-                        Some(refusal) => crate::instrumentation::record_seal_refusal(refusal),
-                        None => {
-                            match crate::kernel::checked_c_function_execution_from_proof_evidence(
-                                execution,
-                                function,
-                                proof_execution.core.function_entry.as_deref(),
-                                &proof_execution.core.execution_evidence,
-                                execution_start_assumptions.clone(),
-                                function_environment.clone(),
-                                execution_semantics,
-                                execution_mode,
-                            ) {
-                                Ok(checked) => return checked,
-                                Err(refusal) => {
-                                    crate::instrumentation::record_seal_refusal(refusal)
-                                }
-                            }
-                        }
-                    }
                     if proof_execution.core.frontier_loop_rules.is_empty()
                         && let Some((_, _, _, execution)) = certification_cache.iter().find(
                             |(facts, cached_state, concrete_loop_execution, _)| {

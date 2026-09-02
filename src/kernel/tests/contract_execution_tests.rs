@@ -2369,3 +2369,38 @@ fn sealing_accepts_a_case_arm_recorded_after_the_return() {
         Some(crate::instrumentation::SealRefusal::CasePartition)
     );
 }
+
+#[test]
+fn contract_exit_rule_is_the_plain_outcome_without_resources() {
+    let function = c_function(
+        CType::Int32,
+        "plain",
+        Vec::new(),
+        c_return(c_int32_literal(3)),
+    );
+    let caller_state = CState::new();
+    let entry_state = c_function_entry_state(&caller_state, &function, &[]).expect("entry");
+    let returning = CStatementOutcome::Return {
+        value: int32(3),
+        state: entry_state,
+    };
+    let (plain, _) = c_function_outcome_from_statement_outcome(
+        &caller_state,
+        &function,
+        returning.clone(),
+        Vec::new(),
+        &PureFactContext::new(),
+    );
+    let (sealed, _) = crate::kernel::functions::contract_exit_outcome(
+        &caller_state,
+        &function,
+        &[],
+        returning,
+        Vec::new(),
+        &PureFactContext::new(),
+        &mut ExecutionBudget::default(),
+    )
+    .expect("no execution limit")
+    .expect("no runtime error");
+    assert_eq!(sealed, plain);
+}
