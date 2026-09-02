@@ -1660,7 +1660,7 @@ pub(super) fn havoc_loop_modified_locals(
             .bindings
             .keys()
             .filter(|name| state.locals.get(name).is_some())
-            .map(|name| CMemory::local_pointer(name).block)
+            .filter_map(|name| state.locals.slot(name).map(|slot| slot.block.clone()))
             .collect();
         state.memory = state
             .memory
@@ -1742,7 +1742,7 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
 
     let record_pointer = |value: &CValue, escaped: &mut BTreeSet<String>| {
         if let CValue::Pointer(pointer) = value
-            && let Some(name) = local_name_from_pointer(pointer)
+            && let Some(name) = state.locals.name_for_slot(pointer)
         {
             escaped.insert(name.to_string());
         }
@@ -1758,7 +1758,7 @@ pub(super) fn address_escaped_scalar_locals(state: &CState, body: &CStatement) -
     escaped
 }
 
-pub(super) fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
+pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut BTreeSet<String>) {
     match statement {
         CStatement::Skip | CStatement::Declare { .. } => {}
         CStatement::Assign { expression, .. } => {

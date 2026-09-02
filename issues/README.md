@@ -55,7 +55,6 @@ C language coverage:
 - [Evaluate pointer relational comparison and pointer subtraction](pointer-comparison-and-subtraction.md)
 - [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
-- [Support taking the address of a parameter](address-of-parameter.md)
 - [Model floating-point values](floating-point.md)
 - [Model function pointers](function-pointers.md)
 - [Model variadic functions](variadic-functions.md)

@@ -444,7 +444,12 @@ fn abstract_c_state_for_join_across_with_policy(
 
     for (name, binding) in state.locals.bindings.iter() {
         crate::instrumentation::record_deterministic_work(1);
-        let CLocalBinding::Object { value, c_type } = binding else {
+        let CLocalBinding::Object {
+            value,
+            c_type,
+            slot,
+        } = binding
+        else {
             continue;
         };
         let abstract_value = if stable_entry_locals.get(name) == Some(value) {
@@ -462,7 +467,7 @@ fn abstract_c_state_for_join_across_with_policy(
                 }
             }
         };
-        preserved_blocks.insert(CMemory::local_pointer(name).block);
+        preserved_blocks.insert(slot.block.clone());
         abstract_objects.push((name.clone(), abstract_value, *c_type));
     }
 

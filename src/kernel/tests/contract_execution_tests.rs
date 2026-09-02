@@ -155,6 +155,48 @@ fn local_declaration_allocates_stack_object_for_address_of() {
 }
 
 #[test]
+fn addressable_parameter_gets_a_fresh_callee_stack_slot() {
+    let function = c_function(
+        CType::Int32,
+        "addressable_parameter",
+        vec![c_parameter("n", CType::Int32)],
+        c_seq(
+            c_declare("p", CType::Int32Pointer),
+            c_seq(c_assign("p", c_addr_of("n")), c_return(c_variable("n"))),
+        ),
+    );
+    let caller_state = c_function_entry_state(&CState::new(), &function, &[c_int32_literal(3)])
+        .expect("parameter entry state");
+    let caller_slot = caller_state
+        .locals()
+        .slot("n")
+        .expect("parameter slot")
+        .clone();
+    assert!(caller_slot.block.starts_with("local:frame:0:"));
+    assert_eq!(
+        caller_state.memory().cells.get(&caller_slot),
+        Some(&int32(3))
+    );
+
+    let nested_state = c_function_entry_state(&caller_state, &function, &[c_int32_literal(4)])
+        .expect("nested parameter entry state");
+    let nested_slot = nested_state
+        .locals()
+        .slot("n")
+        .expect("nested parameter slot")
+        .clone();
+    assert_ne!(caller_slot, nested_slot);
+    assert_eq!(
+        nested_state.memory().cells.get(&caller_slot),
+        Some(&int32(3))
+    );
+    assert_eq!(
+        nested_state.memory().cells.get(&nested_slot),
+        Some(&int32(4))
+    );
+}
+
+#[test]
 fn symbolic_execution_stops_without_needed_overflow_fact() {
     let left = Variable(20);
     let right = Variable(21);

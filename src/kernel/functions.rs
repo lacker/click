@@ -994,6 +994,7 @@ fn execute_verified_function_rule(
         return_state.memory = post_state.memory;
         return_state.resources = return_resources;
         return_state.counted_populations = post_state.counted_populations;
+        return_state.next_local_frame = post_state.next_local_frame;
         paths.push(CFunctionPath {
             outcome: CFunctionOutcome::Return {
                 value: result,
@@ -1508,15 +1509,56 @@ pub(super) fn bind_c_function_arguments(
     function: &CFunction,
     values: &[CValue],
 ) -> Option<CState> {
+    // Preserve the historical value-only representation for parameters whose
+    // addresses never escape. Besides avoiding unnecessary memory cells, this
+    // keeps ordinary call summaries unchanged. A frame is needed only when
+    // the function body actually contains an address-taking expression for a
+    // parameter.
+    let mut address_taken = BTreeSet::new();
+    crate::kernel::loops::collect_address_taken_locals(function.body(), &mut address_taken);
+    let address_taken_parameters = function
+        .parameters()
+        .iter()
+        // Taking the address of a pointer parameter's pointee (for example
+        // `&p[1]`) mentions `p` while addressing the pointed-to object, not the
+        // parameter object itself. Pointer-to-pointer parameters are outside
+        // the current C type model, so only scalar parameter objects need a
+        // callee stack slot here.
+        .filter(|parameter| {
+            address_taken.contains(parameter.name())
+                && matches!(parameter.c_type(), CType::Int32 | CType::UInt8)
+        })
+        .map(|parameter| parameter.name())
+        .collect::<BTreeSet<_>>();
+    let frame = caller_state.next_local_frame();
     let mut callee_state = CState::new()
         .with_memory(caller_state.memory.clone())
-        .with_resource_context(caller_state.resources.clone());
+        .with_resource_context(caller_state.resources.clone())
+        .with_next_local_frame(if address_taken_parameters.is_empty() {
+            frame
+        } else {
+            frame.saturating_add(1)
+        });
     callee_state.counted_populations = caller_state.counted_populations.clone();
     for (parameter, value) in function.parameters().iter().zip(values) {
         let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
-        callee_state
-            .locals
-            .set_typed(parameter.name().to_string(), value, parameter.c_type());
+        if address_taken_parameters.contains(parameter.name()) {
+            let slot = CMemory::frame_local_pointer(frame, parameter.name());
+            callee_state.memory = callee_state
+                .memory
+                .with_block(slot.block.clone(), value.byte_width())
+                .store(slot.clone(), value.clone());
+            callee_state.locals.set_typed_at(
+                parameter.name().to_string(),
+                value,
+                parameter.c_type(),
+                slot,
+            );
+        } else {
+            callee_state
+                .locals
+                .set_typed(parameter.name().to_string(), value, parameter.c_type());
+        }
     }
     Some(callee_state)
 }
@@ -4337,6 +4379,7 @@ fn function_outcome_from_body_with_resource_transfer(
     return_state.memory = state.memory;
     return_state.resources = return_resources;
     return_state.counted_populations = state.counted_populations;
+    return_state.next_local_frame = state.next_local_frame;
     Ok((
         CFunctionOutcome::Return {
             value,

@@ -672,7 +672,7 @@ impl CLValue {
     pub(in crate::kernel) fn pointer(&self, state: &CState) -> Option<Pointer> {
         match &self.storage {
             CLValueStorage::Local { name } => {
-                let pointer = CMemory::local_pointer(name);
+                let pointer = state.locals.slot(name)?.clone();
                 state.memory.has_block(&pointer.block).then_some(pointer)
             }
             CLValueStorage::Memory { pointer } => Some(pointer.clone()),

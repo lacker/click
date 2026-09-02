@@ -1230,19 +1230,29 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             .iter()
             .map(|(name, binding)| {
                 let binding = match binding {
-                    CLocalBinding::Object { value, c_type } => CLocalBinding::Object {
+                    CLocalBinding::Object {
+                        value,
+                        c_type,
+                        slot,
+                    } => CLocalBinding::Object {
                         value: substitute_bitvector_variable_in_c_value(value, from, to),
                         c_type: *c_type,
+                        slot: slot.clone(),
                     },
-                    CLocalBinding::UninitializedObject { c_type } => {
-                        CLocalBinding::UninitializedObject { c_type: *c_type }
+                    CLocalBinding::UninitializedObject { c_type, slot } => {
+                        CLocalBinding::UninitializedObject {
+                            c_type: *c_type,
+                            slot: slot.clone(),
+                        }
                     }
                     CLocalBinding::ArrayObject {
                         element_type,
                         length,
+                        slot,
                     } => CLocalBinding::ArrayObject {
                         element_type: *element_type,
                         length: *length,
+                        slot: slot.clone(),
                     },
                 };
                 (name.clone(), binding)
@@ -1250,9 +1260,13 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
             .collect(),
     );
     CState {
-        locals: CLocalEnvironment { bindings },
+        locals: CLocalEnvironment {
+            bindings,
+            slots: state.locals.slots.clone(),
+        },
         memory: substitute_bitvector_variable_in_memory(&state.memory, from, to),
         resources: substitute_bitvector_variable_in_resource_context(&state.resources, from, to),
+        next_local_frame: state.next_local_frame,
         counted_populations: std::sync::Arc::new(
             state
                 .counted_populations

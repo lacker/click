@@ -44,13 +44,48 @@ impl CLocalEnvironment {
     }
 
     pub fn set_typed(&mut self, name: impl Into<String>, value: CValue, c_type: CType) {
-        std::sync::Arc::make_mut(&mut self.bindings)
-            .insert(name.into(), CLocalBinding::Object { value, c_type });
+        let name = name.into();
+        let slot = self
+            .bindings
+            .get(&name)
+            .map(CLocalBinding::slot)
+            .cloned()
+            .unwrap_or_else(|| CMemory::local_pointer(&name));
+        self.set_typed_at(name, value, c_type, slot);
+    }
+
+    pub(in crate::kernel) fn set_typed_at(
+        &mut self,
+        name: impl Into<String>,
+        value: CValue,
+        c_type: CType,
+        slot: Pointer,
+    ) {
+        self.insert_binding(
+            name.into(),
+            CLocalBinding::Object {
+                value,
+                c_type,
+                slot,
+            },
+        );
     }
 
     pub(in crate::kernel) fn set_uninitialized(&mut self, name: impl Into<String>, c_type: CType) {
-        std::sync::Arc::make_mut(&mut self.bindings)
-            .insert(name.into(), CLocalBinding::UninitializedObject { c_type });
+        let name = name.into();
+        self.set_uninitialized_at(name.clone(), c_type, CMemory::local_pointer(&name));
+    }
+
+    pub(in crate::kernel) fn set_uninitialized_at(
+        &mut self,
+        name: impl Into<String>,
+        c_type: CType,
+        slot: Pointer,
+    ) {
+        self.insert_binding(
+            name.into(),
+            CLocalBinding::UninitializedObject { c_type, slot },
+        );
     }
 
     pub fn set_int32_array(&mut self, name: impl Into<String>, length: u32) {
@@ -67,11 +102,28 @@ impl CLocalEnvironment {
         element_type: CType,
         length: u32,
     ) {
-        std::sync::Arc::make_mut(&mut self.bindings).insert(
+        let name = name.into();
+        self.set_array_object_at(
+            name.clone(),
+            element_type,
+            length,
+            CMemory::local_pointer(&name),
+        );
+    }
+
+    pub(in crate::kernel) fn set_array_object_at(
+        &mut self,
+        name: impl Into<String>,
+        element_type: CType,
+        length: u32,
+        slot: Pointer,
+    ) {
+        self.insert_binding(
             name.into(),
             CLocalBinding::ArrayObject {
                 element_type,
                 length,
+                slot,
             },
         );
     }
@@ -107,11 +159,9 @@ impl CLocalEnvironment {
         self.bindings
             .iter()
             .filter_map(|(name, binding)| match binding {
-                CLocalBinding::ArrayObject { element_type, .. } => Some((
-                    name.as_str(),
-                    CValue::Pointer(CMemory::local_pointer(name)),
-                    *element_type,
-                )),
+                CLocalBinding::ArrayObject {
+                    element_type, slot, ..
+                } => Some((name.as_str(), CValue::Pointer(slot.clone()), *element_type)),
                 CLocalBinding::Object { .. } | CLocalBinding::UninitializedObject { .. } => None,
             })
     }
@@ -119,7 +169,7 @@ impl CLocalEnvironment {
     pub(in crate::kernel) fn object_type(&self, name: &str) -> Option<CType> {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
-            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
         }
@@ -128,7 +178,7 @@ impl CLocalEnvironment {
     pub(in crate::kernel) fn scalar_object_type(&self, name: &str) -> Option<CType> {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
-            Some(CLocalBinding::UninitializedObject { c_type }) => Some(*c_type),
+            Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { .. }) | None => None,
         }
     }
@@ -137,8 +187,40 @@ impl CLocalEnvironment {
         self.bindings.get(name)
     }
 
+    pub(in crate::kernel) fn slot(&self, name: &str) -> Option<&Pointer> {
+        self.binding(name).map(CLocalBinding::slot)
+    }
+
+    pub(in crate::kernel) fn name_for_slot(&self, pointer: &Pointer) -> Option<&str> {
+        self.slots.get(pointer).map(String::as_str)
+    }
+
     pub(in crate::kernel) fn is_array_object(&self, name: &str) -> bool {
         matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
+    }
+}
+
+impl CLocalBinding {
+    pub(in crate::kernel) fn slot(&self) -> &Pointer {
+        match self {
+            Self::Object { slot, .. }
+            | Self::UninitializedObject { slot, .. }
+            | Self::ArrayObject { slot, .. } => slot,
+        }
+    }
+}
+
+impl CLocalEnvironment {
+    fn insert_binding(&mut self, name: String, binding: CLocalBinding) {
+        let slot = binding.slot().clone();
+        let old_slot = self.bindings.get(&name).map(CLocalBinding::slot).cloned();
+        std::sync::Arc::make_mut(&mut self.bindings).insert(name.clone(), binding);
+        if let Some(old_slot) = old_slot
+            && old_slot != slot
+        {
+            std::sync::Arc::make_mut(&mut self.slots).remove(&old_slot);
+        }
+        std::sync::Arc::make_mut(&mut self.slots).insert(slot, name);
     }
 }
 
@@ -642,6 +724,13 @@ impl CMemory {
         }
     }
 
+    pub(in crate::kernel) fn frame_local_pointer(frame: u64, name: &str) -> Pointer {
+        Pointer {
+            block: format!("local:frame:{frame}:{name}").into(),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
     pub(crate) fn has_block(&self, block: &PointerBlock) -> bool {
         self.blocks.contains_key(block)
     }
@@ -728,6 +817,15 @@ impl CState {
         Self::default()
     }
 
+    pub(in crate::kernel) fn next_local_frame(&self) -> u64 {
+        self.next_local_frame
+    }
+
+    pub(in crate::kernel) fn with_next_local_frame(mut self, next: u64) -> Self {
+        self.next_local_frame = next;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) fn shares_nonlocal_storage_with(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.memory.blocks, &other.memory.blocks)
@@ -769,15 +867,15 @@ impl CState {
         &self.memory
     }
 
-    /// The values held by memory-resident scalar locals: each `local:NAME`
-    /// block's cell at offset zero.
+    /// The values held by memory-resident scalar locals at offset zero.
+    /// Resolve names through the local-slot index so framed parameter blocks
+    /// are exposed with their source name rather than their internal block id.
     pub fn local_cell_values(&self) -> impl Iterator<Item = (&str, &CValue)> {
         self.memory.cells.iter().filter_map(|(pointer, value)| {
-            let PointerBlock::Concrete(block) = &pointer.block else {
+            if pointer.offset != PointerOffsetTerm::Constant(0) {
                 return None;
-            };
-            let name = block.strip_prefix("local:")?;
-            (pointer.offset == PointerOffsetTerm::Constant(0)).then_some((name, value))
+            }
+            self.locals.name_for_slot(pointer).map(|name| (name, value))
         })
     }
 

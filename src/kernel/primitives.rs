@@ -860,13 +860,25 @@ pub enum CFunctionOutcome {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CLocalEnvironment {
     pub(super) bindings: std::sync::Arc<BTreeMap<String, CLocalBinding>>,
+    pub(super) slots: std::sync::Arc<BTreeMap<Pointer, String>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(super) enum CLocalBinding {
-    Object { value: CValue, c_type: CType },
-    UninitializedObject { c_type: CType },
-    ArrayObject { element_type: CType, length: u32 },
+    Object {
+        value: CValue,
+        c_type: CType,
+        slot: Pointer,
+    },
+    UninitializedObject {
+        c_type: CType,
+        slot: Pointer,
+    },
+    ArrayObject {
+        element_type: CType,
+        length: u32,
+        slot: Pointer,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1347,6 +1359,10 @@ pub struct CState {
     pub(super) memory: CMemory,
     pub(super) resources: ResourceContext,
     pub(super) counted_populations: std::sync::Arc<Vec<CCountedPopulation>>,
+    /// Monotonic identity source for stack frames created by nested calls.
+    /// Keeping this in the symbolic state makes frame identities deterministic
+    /// and ensures recursive calls cannot reuse a caller's stack slots.
+    pub(super) next_local_frame: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

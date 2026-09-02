@@ -124,7 +124,11 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             obligations: Vec::new(),
         }],
         CExpression::Variable(name) if state.locals.is_array_object(name) => {
-            let pointer = CMemory::local_pointer(name);
+            let pointer = state
+                .locals
+                .slot(name)
+                .expect("array binding must carry a stack slot")
+                .clone();
             vec![CExpressionPath {
                 outcome: if state.memory.has_block(&pointer.block) {
                     CExpressionOutcome::Value(CValue::Pointer(pointer))
@@ -378,7 +382,7 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
         CExpression::Variable(name) => vec![CLValuePath {
             outcome: match state.locals.binding(name) {
                 Some(CLocalBinding::Object { c_type, .. })
-                | Some(CLocalBinding::UninitializedObject { c_type }) => {
+                | Some(CLocalBinding::UninitializedObject { c_type, .. }) => {
                     CLValueOutcome::LValue(CLValue::local(name.clone(), *c_type))
                 }
                 Some(CLocalBinding::ArrayObject { .. }) => {
@@ -664,7 +668,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
     match expression {
         CExpression::Variable(name) => match state.locals.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
-            Some(CLocalBinding::UninitializedObject { c_type }) => c_type.pointee_type(),
+            Some(CLocalBinding::UninitializedObject { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
         },

@@ -207,7 +207,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
                 value.clone(),
                 authorized_range,
             ));
-            if let Some(name) = local_name_from_pointer(&pointer)
+            if let Some(name) = state.locals.name_for_slot(&pointer)
                 && let Some(c_type) = state.locals.scalar_object_type(name)
             {
                 state.locals.set_typed(name.to_string(), value, c_type);
@@ -219,13 +219,6 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }]
         }
     }
-}
-
-pub(in crate::kernel) fn local_name_from_pointer(pointer: &Pointer) -> Option<&str> {
-    if pointer.offset != PointerOffsetTerm::Constant(0) {
-        return None;
-    }
-    pointer.block.strip_prefix("local:")
 }
 
 fn execute_c_heap_allocate_paths(
@@ -1218,7 +1211,9 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
 }
 
 pub(in crate::kernel) fn sync_stack_local(state: &mut CState, name: &str, value: &CValue) {
-    let pointer = CMemory::local_pointer(name);
+    let Some(pointer) = state.locals.slot(name).cloned() else {
+        return;
+    };
     if state.memory.has_block(&pointer.block) {
         state.memory = state.memory.clone().store(pointer, value.clone());
     }
