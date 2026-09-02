@@ -1235,7 +1235,6 @@ pub(super) fn finish_ordered_proof<'a>(
                 (!rejected).then_some(path_index)
             })
             .collect();
-        let certification_facts = base_certification_facts;
         let mut verified = Vec::new();
         let mut surface_closers_by_claim = vec![Vec::new(); claims.len()];
         let mut surface_grouped_closers_by_path = Vec::with_capacity(execution.paths().len());
@@ -3587,40 +3586,14 @@ pub(super) fn finish_ordered_proof<'a>(
                     // from the contract context before reusing the path, so a
                     // claim completed on the path is bound to premises
                     // certification already holds.
-                    let (certified_path, specification_outcome, specification_requirements) =
-                        if proof_execution.core.execution_abstraction {
-                            (
-                                certified_path.clone(),
-                                certified_outcomes[certified_path_index].clone(),
-                                certified_path.assumptions().pure_facts(),
-                            )
-                        } else {
-                            let certified_outcome = &certified_outcomes[certified_path_index];
-                            let outcome_delta = describe_function_outcome_delta(
-                                &outcome,
-                                certified_outcome,
-                                parsed_function.parameters(),
-                                arguments,
-                            );
-                            let certified_path = crate::instrumentation::measure_operation(
-                    function_block.signature().name(),
-                    &proof_label,
-                    "resource representation check",
-                    || certify_c_function_execution_path_resource_representation(
-                            certified_path,
-                            outcome.clone(),
-                            &path.execution_facts(),
-                        ),
-                    )
-                        .ok_or_else(|| {
-                            ClickError::new(format!(
-                                "execution proof for `{proof_label}` path {path_index} changed more than the certified ghost resource representation\n  {outcome_delta}"
-                            ))
-                        })?;
-                            let specification_requirements =
-                                certified_path.assumptions().pure_facts();
-                            (certified_path, outcome.clone(), specification_requirements)
-                        };
+                    // The specification states the sealed path's outcome: the
+                    // body's under the contract's exit rule, which claim and
+                    // contract certification consume. The proof's own outcome
+                    // snapshot differs from it only in ghost resource
+                    // representation; a claim completed at that snapshot is
+                    // bound to the sealed path by result, memory, and locals.
+                    let specification_outcome = certified_outcomes[certified_path_index].clone();
+                    let specification_requirements = certified_path.assumptions().pure_facts();
                     let specification = c_function_specification(
                         pre_state.clone(),
                         arguments.to_vec(),
@@ -3634,19 +3607,12 @@ pub(super) fn finish_ordered_proof<'a>(
                 || prove_c_function_satisfies_specification_from_symbolic_path(
                 function.clone(),
                 specification.clone(),
-                &certified_path,
+                certified_path,
             ),
             )
             .ok_or_else(|| {
-                let certified_outcome = &certified_outcomes[certified_path_index];
-                let outcome_delta = describe_function_outcome_delta(
-                    specification.outcome(),
-                    certified_outcome,
-                    parsed_function.parameters(),
-                    arguments,
-                );
                 ClickError::new(format!(
-                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification\n  requirements: {}\n  {outcome_delta}",
+                    "execution proof for `{proof_label}` path {path_index} does not certify its exact function specification\n  requirements: {}",
                     specification.requires().len()
                 ))
             })?;

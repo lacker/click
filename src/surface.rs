@@ -32,7 +32,6 @@ use crate::kernel::{
     c_unverified_function_contract_claims_with_checked_propositions,
     c_verified_function_contract_claims_with_checked_propositions, c_verified_function_rule,
     c_verified_function_termination_rules, c_while_with_invariant_and_effect_checks,
-    certify_c_function_execution_path_resource_representation,
     certify_int32_above_one_predecessor_is_at_least_one,
     certify_int32_move_one_from_right_to_left_preserves_sum,
     checked_c_function_execution_with_entry_derivations, int32,

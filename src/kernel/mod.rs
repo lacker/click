@@ -123,7 +123,6 @@ impl VerificationSession {
             assumptions::clear_assumption_memos();
             assumptions::clear_context_inconsistency_memos();
             assumptions::clear_frame_expansion_memo();
-            api::clear_representation_certificate_cache();
             api::clear_context_free_forall_cache();
         }
         Self { fresh: outermost }

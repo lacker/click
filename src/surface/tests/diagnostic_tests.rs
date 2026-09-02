@@ -435,7 +435,7 @@ fn condition_certificate_search_is_not_sensitive_to_a_fact_prefix() {
 }
 
 #[test]
-fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
+fn verifier_diagnostics_bound_fact_items() {
     let facts = (0..20)
         .map(|index| {
             Proposition::ConditionIs(
@@ -449,71 +449,6 @@ fn verifier_diagnostics_bound_fact_items_and_show_resource_deltas() {
         .collect::<Vec<_>>();
     let rendered = super::diagnostics::describe_pure_facts(&facts);
     assert!(rendered.contains("8 more omitted"), "{rendered}");
-
-    let desired_resource = CResourceFact::own_composite(
-        "owned_vector".to_string(),
-        vec![CValue::Pointer(Pointer::null())],
-    );
-    let certified_resource = CResourceFact::own_composite(
-        "allocation".to_string(),
-        vec![CValue::Pointer(Pointer::null())],
-    );
-    let desired = CFunctionOutcome::Return {
-        value: int32(0),
-        state: CState::new()
-            .with_resource_context(ResourceContext::new().unchecked_with_fact(desired_resource)),
-    };
-    let certified = CFunctionOutcome::Return {
-        value: int32(0),
-        state: CState::new()
-            .with_resource_context(ResourceContext::new().unchecked_with_fact(certified_resource)),
-    };
-    let delta = super::diagnostics::describe_function_outcome_delta(&desired, &certified, &[], &[]);
-    assert!(delta.contains("missing certified resources"), "{delta}");
-    assert!(delta.contains("owned_vector"), "{delta}");
-    assert!(delta.contains("extra certified resources"), "{delta}");
-    assert!(delta.contains("allocation"), "{delta}");
-    assert!(!delta.contains("CFunctionOutcome"), "{delta}");
-}
-
-#[test]
-fn resource_delta_explains_identical_surface_forms() {
-    let pointer = Pointer {
-        block: PointerBlock::ExternalArgument,
-        offset: PointerOffsetTerm::Constant(0),
-    };
-    let first_snapshot = CMemory::new();
-    let second_snapshot = CMemory::new().with_block("hidden-snapshot-marker", 4);
-    let resource_with_snapshot = |memory: CMemory| {
-        CResourceFact::view_composite(
-            "tree".to_string(),
-            vec![CValue::Int32(Bitvector32Term::MemoryLoad(
-                memory.into(),
-                Box::new(pointer.clone()),
-            ))],
-        )
-    };
-    let desired = CFunctionOutcome::Return {
-        value: int32(0),
-        state: CState::new().with_resource_context(
-            ResourceContext::new().unchecked_with_fact(resource_with_snapshot(first_snapshot)),
-        ),
-    };
-    let certified = CFunctionOutcome::Return {
-        value: int32(0),
-        state: CState::new().with_resource_context(
-            ResourceContext::new().unchecked_with_fact(resource_with_snapshot(second_snapshot)),
-        ),
-    };
-
-    let delta = super::diagnostics::describe_function_outcome_delta(&desired, &certified, &[], &[]);
-    assert!(
-        delta.contains("identical surface forms")
-            && delta.contains("hidden memory snapshots or internal identities"),
-        "{delta}"
-    );
-    assert!(!delta.contains("missing certified resources"), "{delta}");
-    assert!(!delta.contains("extra certified resources"), "{delta}");
 }
 
 #[test]

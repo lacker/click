@@ -3687,37 +3687,6 @@ pub(super) fn resource_context_definitionally_contains(
     true
 }
 
-/// Checks definitional containment while requiring every unconsumed resource
-/// to be duplicable. This recognizes two folded names for the same owned body
-/// without permitting a execution state to add unrelated ghost ownership.
-pub(super) fn resource_context_definitionally_contains_without_owned_residue(
-    available: &ResourceContext,
-    required: &ResourceContext,
-    definitions: &[CCompositeResourceDefinition],
-    memory: &CMemory,
-    assumptions: &PureFactContext,
-) -> bool {
-    let mut remaining = available.clone();
-    let mut required = required.facts().to_vec();
-    required.sort_by_key(resource_fact_transfer_priority);
-    for fact in &required {
-        let Some(next) = consume_resource_fact_definitionally(
-            &remaining,
-            fact,
-            definitions,
-            memory,
-            assumptions,
-        ) else {
-            return false;
-        };
-        remaining = next;
-    }
-    remaining
-        .facts()
-        .iter()
-        .all(|fact| matches!(fact, CResourceFact::View(_)))
-}
-
 pub(super) fn resource_contexts_definitionally_equivalent_by_consumption(
     left: &ResourceContext,
     right: &ResourceContext,
