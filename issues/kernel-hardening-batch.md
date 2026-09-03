@@ -11,14 +11,11 @@ with its own test; split this file if any of them grows.
 2. **Free-variable collection misses symbolic block sizes.** Resolved by
    visiting block sizes in both free-variable and binder-variable collection;
    the regression also checks the existing substitution path.
-3. **Interface joins accept uncertified effect facts.**
-   `src/kernel/proof/execution.rs:1156` and `:1177` accept
-   `CMemoryMutatesOnly` and `CMemoryEffectSummary` arm facts without
-   `is_certified()` and without checking the declared ranges cover the
-   before-to-after diff, unlike the catch-all at `:1203`. Unreachable because
-   `ExecutionProofCore.effect_facts` is `pub(crate)`. The asymmetry is
-   unexplained; require certification or document why it is safe.
-   Test: an uncertified `CMemoryMutatesOnly` arm fact is rejected at the join.
+3. **Interface joins accept uncertified effect facts.** Resolved by requiring
+   certification for pointer and range memory effects, checking endpoint
+   coverage, and validating conservative erased-cell endpoints against the
+   kernel's call-havoc producer. The regressions cover uncertified effects,
+   uncovered writes, and arbitrary erased cells.
 4. **Premise-free ghost-invariant theorems.** The two owned-resource
    ghost-invariant axioms (`src/kernel/api.rs:2701-2757`) mint a `Theorem`
    with no premises whose conclusion is justified partly by

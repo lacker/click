@@ -819,13 +819,14 @@ fn execute_verified_function_rule(
             )
         };
         if !mutable_ranges.is_empty() {
-            facts.push(ExecutionPureFact::internal(
-                Proposition::CMemoryEffectSummary {
+            facts.push(
+                ExecutionPureFact::internal(Proposition::CMemoryEffectSummary {
                     before: entry_state.memory.clone(),
                     after: memory.clone(),
                     mutable_ranges: mutable_ranges.clone(),
-                },
-            ));
+                })
+                .into_certified(),
+            );
         }
         let result = symbolic_call_result(function.return_type(), result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);

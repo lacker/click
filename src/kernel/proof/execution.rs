@@ -7,8 +7,8 @@
 use super::{PersistentOrderedSet, PersistentSequence, ProofFacts, SharedValue, SharedVec};
 use crate::kernel::{
     Bitvector32Term, CCompositeResourceDefinition, CConditionOutcome, CExpression, CFunction,
-    CFunctionExecutionCandidates, CLoopEffectCheck, CMemoryRange, CResource, CResourceFact,
-    CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
+    CFunctionExecutionCandidates, CLoopEffectCheck, CMemory, CMemoryRange, CResource,
+    CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome, CValue, CVerifiedLoopRule,
     ExecutionBudget, ExecutionLimit, ExecutionPureFact, Pointer, Proposition, PureFactContext,
     ResourceContext, SpecProposition, Theorem,
 };
@@ -1197,6 +1197,74 @@ fn arm_effect_deltas_are_exact(
     })
 }
 
+fn memory_diff_is_covered_by_pointers(
+    before: &CMemory,
+    after: &CMemory,
+    changed: &[Pointer],
+    assumptions: &PureFactContext,
+    fact: &ExecutionPureFact,
+) -> bool {
+    let erased_cells_are_certified_store_bookkeeping =
+        fact.certified_store_data().is_some_and(|store| {
+            store.before == *before
+                && store.after == *after
+                && changed
+                    .iter()
+                    .any(|changed_pointer| changed_pointer == &store.pointer)
+        });
+    if erased_cells_are_certified_store_bookkeeping {
+        return true;
+    }
+    before
+        .differing_cell_pointers(after)
+        .into_iter()
+        .filter(|pointer| !pointer.block.starts_with("local:"))
+        .all(|diff_pointer| {
+            if !after.cells.contains_key(&diff_pointer) {
+                return false;
+            }
+            changed.iter().any(|changed_pointer| {
+                !crate::kernel::reasoning::pointers_proven_distinct_for_memory_resolution(
+                    &diff_pointer,
+                    changed_pointer,
+                    assumptions,
+                )
+            })
+        })
+}
+
+fn memory_diff_is_covered_by_ranges(
+    before: &CMemory,
+    after: &CMemory,
+    mutable_ranges: &[CMemoryRange],
+    assumptions: &PureFactContext,
+) -> bool {
+    let erased_cells_are_call_havoc_bookkeeping =
+        after.matches_call_memory_havoc_result(before, mutable_ranges, assumptions);
+    if erased_cells_are_call_havoc_bookkeeping {
+        return true;
+    }
+    before
+        .differing_cell_pointers(after)
+        .into_iter()
+        .filter(|pointer| !pointer.block.starts_with("local:"))
+        .all(|diff_pointer| {
+            if !after.cells.contains_key(&diff_pointer) {
+                return false;
+            }
+            mutable_ranges.iter().any(|range| {
+                assumptions.pointer_access_in_range(
+                    &diff_pointer,
+                    range.element_width(),
+                    range.base(),
+                    range.start(),
+                    range.end(),
+                    range.element_width(),
+                )
+            })
+        })
+}
+
 fn checked_interface_effect_facts(
     split_state: &CState,
     joined_state: &CState,
@@ -1217,6 +1285,9 @@ fn checked_interface_effect_facts(
                     after,
                     pointers: changed,
                 } => {
+                    if !fact.is_certified() {
+                        return Err("an interface arm contains an uncertified memory effect");
+                    }
                     if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                         &memory,
                         before,
@@ -1224,6 +1295,17 @@ fn checked_interface_effect_facts(
                     ) {
                         return Err(
                             "an interface arm effect chain does not start at its current memory",
+                        );
+                    }
+                    if !memory_diff_is_covered_by_pointers(
+                        before,
+                        after,
+                        changed,
+                        assumptions,
+                        fact,
+                    ) {
+                        return Err(
+                            "an interface arm memory effect does not cover its memory diff",
                         );
                     }
                     memory = after.clone();
@@ -1238,6 +1320,9 @@ fn checked_interface_effect_facts(
                     after,
                     mutable_ranges,
                 } => {
+                    if !fact.is_certified() {
+                        return Err("an interface arm contains an uncertified memory effect");
+                    }
                     if !crate::kernel::api::contract_certification::c_memories_definitionally_equal(
                         &memory,
                         before,
@@ -1245,6 +1330,12 @@ fn checked_interface_effect_facts(
                     ) {
                         return Err(
                             "an interface arm effect summary does not start at its current memory",
+                        );
+                    }
+                    if !memory_diff_is_covered_by_ranges(before, after, mutable_ranges, assumptions)
+                    {
+                        return Err(
+                            "an interface arm memory effect does not cover its memory diff",
                         );
                     }
                     memory = after.clone();
@@ -3718,6 +3809,133 @@ mod tests {
                         && pointers == &vec![left_pointer, right_pointer]
             )
         ));
+    }
+
+    #[test]
+    fn checked_interface_effects_reject_uncertified_memory_effects() {
+        let before = CState::new();
+        let pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let after = before
+            .clone()
+            .with_memory(before.memory().clone().store(pointer.clone(), int32(1)));
+        let effect = ExecutionPureFact::new(Proposition::CMemoryMutatesOnly {
+            before: before.memory().clone(),
+            after: after.memory().clone(),
+            pointers: vec![pointer],
+        });
+        let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
+        let mut changed_core = parent.clone();
+        changed_core.state = after.clone().into();
+        changed_core.effect_facts.push(effect.clone());
+
+        assert_eq!(
+            checked_interface_effect_facts(
+                &before,
+                &after,
+                [&changed_core, &parent],
+                [&ProofFacts::default(), &ProofFacts::default()],
+                [std::slice::from_ref(&effect), &[]],
+            ),
+            Err("an interface arm contains an uncertified memory effect")
+        );
+    }
+
+    #[test]
+    fn checked_interface_effects_require_memory_diff_coverage() {
+        let before = CState::new();
+        let changed_pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(4),
+        };
+        let declared_pointer = Pointer {
+            block: PointerBlock::ExternalArgument,
+            offset: PointerOffsetTerm::Constant(0),
+        };
+        let after = before.clone().with_memory(
+            before
+                .memory()
+                .clone()
+                .store(changed_pointer.clone(), int32(1)),
+        );
+        let parent = ExecutionProofCore::at_entry(before.clone(), ExecutionFrontier::default());
+
+        let mutation = ExecutionPureFact::certified(Proposition::CMemoryMutatesOnly {
+            before: before.memory().clone(),
+            after: after.memory().clone(),
+            pointers: vec![declared_pointer.clone()],
+        });
+        let mut mutation_core = parent.clone();
+        mutation_core.state = after.clone().into();
+        mutation_core.effect_facts.push(mutation.clone());
+        assert_eq!(
+            checked_interface_effect_facts(
+                &before,
+                &after,
+                [&mutation_core, &parent],
+                [&ProofFacts::default(), &ProofFacts::default()],
+                [std::slice::from_ref(&mutation), &[]],
+            ),
+            Err("an interface arm memory effect does not cover its memory diff")
+        );
+
+        let summary = ExecutionPureFact::certified(Proposition::CMemoryEffectSummary {
+            before: before.memory().clone(),
+            after: after.memory().clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                declared_pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
+        let mut summary_core = parent.clone();
+        summary_core.state = after.clone().into();
+        summary_core.effect_facts.push(summary.clone());
+        assert_eq!(
+            checked_interface_effect_facts(
+                &before,
+                &after,
+                [&summary_core, &parent],
+                [&ProofFacts::default(), &ProofFacts::default()],
+                [std::slice::from_ref(&summary), &[]],
+            ),
+            Err("an interface arm memory effect does not cover its memory diff")
+        );
+
+        let erased_before =
+            CState::new().with_memory(CMemory::new().store(changed_pointer.clone(), int32(1)));
+        let erased_after = erased_before.clone().with_memory(
+            erased_before
+                .memory()
+                .clone()
+                .without_cell(&changed_pointer),
+        );
+        let erased_parent =
+            ExecutionProofCore::at_entry(erased_before.clone(), ExecutionFrontier::default());
+        let erased_summary = ExecutionPureFact::certified(Proposition::CMemoryEffectSummary {
+            before: erased_before.memory().clone(),
+            after: erased_after.memory().clone(),
+            mutable_ranges: vec![CMemoryRange::new(
+                declared_pointer.clone(),
+                Bitvector32Term::Constant(0),
+                Bitvector32Term::Constant(1),
+            )],
+        });
+        let mut erased_core = erased_parent.clone();
+        erased_core.state = erased_after.clone().into();
+        erased_core.effect_facts.push(erased_summary.clone());
+        assert_eq!(
+            checked_interface_effect_facts(
+                &erased_before,
+                &erased_after,
+                [&erased_core, &erased_parent],
+                [&ProofFacts::default(), &ProofFacts::default()],
+                [std::slice::from_ref(&erased_summary), &[]],
+            ),
+            Err("an interface arm memory effect does not cover its memory diff")
+        );
     }
 
     #[test]

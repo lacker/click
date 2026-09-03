@@ -1179,6 +1179,50 @@ impl CMemory {
         self
     }
 
+    /// Checks that `self` is exactly the cell-and-marker result produced by a
+    /// call havoc from `before`. This is deliberately a structural producer
+    /// check rather than a second alias approximation: erased cells are
+    /// accepted only when the endpoint has the call-havoc shape and the same
+    /// conservative retention rule as [`Self::with_call_memory_havoc`].
+    pub(in crate::kernel) fn matches_call_memory_havoc_result(
+        &self,
+        before: &Self,
+        mutable_ranges: &[CMemoryRange],
+        assumptions: &PureFactContext,
+    ) -> bool {
+        if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 1 {
+            return false;
+        }
+        if !before
+            .blocks
+            .iter()
+            .all(|(block, value)| self.blocks.get(block) == Some(value))
+        {
+            return false;
+        }
+        let added_blocks = self
+            .blocks
+            .iter()
+            .filter(|(block, _)| !before.blocks.contains_key(*block))
+            .collect::<Vec<_>>();
+        let Some((marker, marker_block)) = added_blocks.first() else {
+            return false;
+        };
+        if added_blocks.len() != 1
+            || !marker.starts_with("call-havoc:")
+            || **marker_block != CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges))
+        {
+            return false;
+        }
+
+        let mut expected_cells = before.cells.as_ref().clone();
+        expected_cells.retain(|pointer, _| {
+            pointer.block.starts_with("local:")
+                || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
+        });
+        self.cells.as_ref() == &expected_cells
+    }
+
     pub fn store(self, pointer: Pointer, value: CValue) -> Self {
         self.store_with_context(pointer, value, &PureFactContext::new())
     }
