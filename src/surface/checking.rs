@@ -11,13 +11,6 @@ pub(super) use effects::*;
 pub(super) use predicates::*;
 pub(super) use simp::*;
 
-fn negate_lowered_proposition(proposition: Proposition) -> Proposition {
-    match proposition {
-        Proposition::ConditionIs(condition, value) => Proposition::ConditionIs(condition, !value),
-        proposition => Proposition::Not(Box::new(proposition)),
-    }
-}
-
 pub(super) fn prove_ensure_resource(
     claim_label: &str,
     path_index: usize,

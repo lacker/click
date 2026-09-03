@@ -530,15 +530,17 @@ Click-shaped rather than C-fragment-shaped, so it can carry pure function
 bodies such as `.fold` and is evaluated at the concrete symbolic state where
 the loop VC needs the invariant.
 
-`SpecElaborationContext` in `src/surface.rs` is the current bridge from
-Surface Click into Kernel Click. It records scalar spec bindings, Click
-array refs, and the memory used for C-fragment reads. Surface contract
-evaluation also uses `ClickArrayRef { memory, pointer, element_type }` so
-`uint8[]` indexing scales by one byte and returns `uint8`. Loop-invariant spec
-lowering mirrors this with typed `SpecArrayRef`, typed `SpecExpression::MemoryLoad`,
-and byte-width `SpecExpression::PointerOffset`. In loop invariants, `old(expr)`
-derives a new context with function-entry memory and entry scalar values, then
-elaborates `expr` normally.
+`SpecElaborationContext` in `src/surface.rs` is the bridge from Surface
+Click into Kernel Click. It records scalar spec bindings, Click array refs,
+and the memory used for C-fragment reads. The surface's contract environment
+carries array refs as `ClickArrayRef { memory, pointer, element_type }`, and
+elaboration types indexing by them so `uint8[]` indexing scales by one byte
+and returns `uint8`; spec lowering mirrors this with typed `SpecArrayRef`,
+typed `SpecExpression::MemoryLoad`, and byte-width
+`SpecExpression::PointerOffset`. `old(expr)` derives a new context with
+function-entry memory and entry scalar values, then elaborates `expr`
+normally. The surface evaluates no expression itself: every C fragment,
+wherever it is stated, is elaborated this way and evaluated by the kernel.
 
 Memory access obligations carry the operation byte width. Do not infer load or
 store width only from pointer syntax; the operation type is what determines

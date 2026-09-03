@@ -246,7 +246,17 @@ environment (`SpecPureFunctionDefinitions`), carried by the fact context,
 and bounded by the call budget. A function's requirements at the proof's
 entry, an applied theorem's requires and conclusion, and a pure theorem's
 goal are elaborated and lowered the same way, so a declared standard
-theorem matches its kernel axiom by spelling. A count named at a recorded state
+theorem matches its kernel axiom by spelling. So are the C fragments stated
+outside proofs: a resource clause's quantity, arguments, and segment bounds,
+an effect footprint, a resource definition's reads
+(`evaluate_c_fragment_through_kernel`), and a predicate body unfolded on a
+kernel proposition, which is elaborated with the parameters bound to the
+decoded arguments and lowered at the decoded state. A C fragment stated at
+a state that does not justify a load it makes is refused there, unless the
+clause allows symbolic contract loads (a resource segment, an effect
+footprint inside a folded composite), in which case the load stays the
+symbolic term kernel execution spells it as and certification discharges
+its loadability. The surface has no evaluator of its own. A count named at a recorded state
 is that state's population. A negated condition is the condition with the
 other value, as an execution spells the branch it did not take, and
 loadability terms are canonical, so a proposition lowered anywhere is

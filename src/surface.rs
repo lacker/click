@@ -23,11 +23,10 @@ use crate::kernel::{
     SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
     SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
     c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
-    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks,
-    c_expression_definedness_proposition, c_function, c_function_contract_entry_state,
-    c_function_entry_state, c_function_execution_candidates_from_outcomes,
-    c_function_outcome_from_statement_outcome, c_function_specification,
-    c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
+    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks, c_function,
+    c_function_contract_entry_state, c_function_entry_state,
+    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
+    c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_resources_directly_match, c_seq,
@@ -93,10 +92,9 @@ use proof::*;
 use validation::{
     combined_click_function_definitions, combined_predicate_definitions,
     combined_resource_definitions, combined_theorem_definitions,
-    combined_theorem_definitions_with_stdlib_ensure_count, contains_at_expression,
-    contains_old_expression, describe_c0_type, describe_resource_clause,
-    proposition_contains_at_expression, proposition_contains_old_expression,
-    proposition_contains_resource_count,
+    combined_theorem_definitions_with_stdlib_ensure_count, contains_old_expression,
+    describe_c0_type, describe_resource_clause, proposition_contains_at_expression,
+    proposition_contains_old_expression, proposition_contains_resource_count,
 };
 pub(in crate::surface) use verification::*;
 pub use verification::{
@@ -106,7 +104,6 @@ pub use verification::{
 
 const POINTER_ARGUMENT_VARIABLE_BASE: u64 = 100_000;
 const COUNTED_POPULATION_VARIABLE_BASE: u64 = 200_000;
-const MAX_CONCRETE_RANGE_FOLD_STEPS: i64 = 1024;
 /// Maximum UTF-8 bytes in an ordinary verifier error message. Set
 /// `CLICK_FULL_DIAGNOSTICS=1` when an engine investigation needs unbounded
 /// internal state.

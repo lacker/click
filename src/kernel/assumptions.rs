@@ -1530,29 +1530,6 @@ impl PureFactContext {
             })
     }
 
-    pub(crate) fn fallback_memory_load_condition_candidates(
-        &self,
-        pointer: &Pointer,
-    ) -> impl Iterator<Item = (&ConditionTerm, bool)> {
-        let exact_key = (
-            pointer.block.clone(),
-            memory_blind_pointer_fingerprint(pointer),
-        );
-        self.memory_load_condition_index()
-            .range((
-                std::ops::Bound::Included((pointer.block.clone(), 0)),
-                std::ops::Bound::Included((pointer.block.clone(), u64::MAX)),
-            ))
-            .filter(move |(key, _)| **key != exact_key)
-            .flat_map(|(_, conditions)| conditions.iter())
-            .filter_map(|condition| {
-                self.condition_facts
-                    .get(condition)
-                    .copied()
-                    .map(|value| (condition, value))
-            })
-    }
-
     pub(super) fn clear_proposition_facts(&mut self) {
         self.prop_facts = std::sync::Arc::new(BTreeSet::new());
         self.disjunction_facts = std::sync::Arc::new(BTreeSet::new());

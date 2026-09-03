@@ -8,6 +8,7 @@ mod claim_proofs;
 #[cfg(test)]
 pub(in crate::surface) use claim_proofs::count_flat_proof_units;
 pub(in crate::surface) use fixed_state_proofs::{
+    evaluate_c_fragment_through_kernel, evaluate_fixed_state_array_ref_through_kernel,
     evaluate_fixed_state_expression_through_kernel, lower_fixed_state_proposition_through_kernel,
     lower_fixed_state_proposition_through_kernel_with_opaque_calls,
 };

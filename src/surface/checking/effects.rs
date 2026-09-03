@@ -826,46 +826,16 @@ pub(in crate::surface) fn evaluate_effect_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, entry_state.memory());
     let evaluate = |assumptions: &PureFactContext| {
-        let base = evaluate_c_contract_expression(
-            &parameter_values,
-            entry_state,
-            None,
+        evaluate_segment_bounds(
+            segment,
             assumptions,
-            &segment.base,
-        )?;
-        let CValue::Pointer(base) = base else {
-            return Err("segment base did not evaluate to a pointer".to_string());
-        };
-        let base = base.into_pointer();
-        let start = evaluate_c_contract_expression(
             &parameter_values,
+            &array_refs,
             entry_state,
-            None,
-            assumptions,
-            &segment.start,
-        )?;
-        let CValue::Int32(start) = start else {
-            return Err("segment start did not evaluate to int32".to_string());
-        };
-        let end = evaluate_c_contract_expression(
-            &parameter_values,
-            entry_state,
-            None,
-            assumptions,
-            &segment.end,
-        )?;
-        let CValue::Int32(end) = end else {
-            return Err("segment end did not evaluate to int32".to_string());
-        };
-
-        Ok(EvaluatedContractSegment {
-            source: segment.clone(),
-            base,
-            start,
-            end,
-            element_width: contract_segment_element_width(parameters, segment),
-        })
+            contract_segment_element_width(parameters, segment),
+        )
     };
 
     // Most effect clauses are direct entry-state places. Evaluate those
@@ -905,45 +875,52 @@ pub(in crate::surface) fn evaluate_requirement_segment(
     }
     let parameter_values =
         parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let assumptions = PureFactContext::new();
-    let base = evaluate_c_contract_expression(
+    let array_refs = array_refs_for_parameters(parameters, &parameter_values, entry_state.memory());
+    evaluate_segment_bounds(
+        segment,
+        &PureFactContext::new(),
         &parameter_values,
+        &array_refs,
         entry_state,
-        None,
-        &assumptions,
-        &segment.base,
-    )?;
-    let CValue::Pointer(base) = base else {
+        contract_segment_element_width(parameters, segment),
+    )
+}
+
+/// A segment's base, start, and end, each evaluated by the kernel at
+/// `state` as the C fragment it is.
+fn evaluate_segment_bounds(
+    segment: &ContractSegment,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    state: &CState,
+    element_width: u32,
+) -> Result<EvaluatedContractSegment, String> {
+    let evaluate = |expression: &CExpression| {
+        crate::surface::proof::evaluate_c_fragment_through_kernel(
+            expression,
+            assumptions,
+            values,
+            array_refs,
+            state,
+            None,
+        )
+    };
+    let CValue::Pointer(base) = evaluate(&segment.base)? else {
         return Err("segment base did not evaluate to a pointer".to_string());
     };
-    let base = base.into_pointer();
-    let start = evaluate_c_contract_expression(
-        &parameter_values,
-        entry_state,
-        None,
-        &assumptions,
-        &segment.start,
-    )?;
-    let CValue::Int32(start) = start else {
+    let CValue::Int32(start) = evaluate(&segment.start)? else {
         return Err("segment start did not evaluate to int32".to_string());
     };
-    let end = evaluate_c_contract_expression(
-        &parameter_values,
-        entry_state,
-        None,
-        &assumptions,
-        &segment.end,
-    )?;
-    let CValue::Int32(end) = end else {
+    let CValue::Int32(end) = evaluate(&segment.end)? else {
         return Err("segment end did not evaluate to int32".to_string());
     };
-
     Ok(EvaluatedContractSegment {
         source: segment.clone(),
-        base,
+        base: base.into_pointer(),
         start,
         end,
-        element_width: contract_segment_element_width(parameters, segment),
+        element_width,
     })
 }
 

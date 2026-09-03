@@ -211,6 +211,123 @@ pub(in crate::surface) fn evaluate_fixed_state_expression_through_kernel(
     Ok(value)
 }
 
+/// The one evaluation of a C fragment stated outside a proof: a resource
+/// clause's quantity, argument, or segment bound, an effect footprint, a
+/// resource definition's read. The fragment is elaborated like any contract
+/// expression and evaluated by the kernel at `state`, with `values` bound
+/// where the state does not bind the name. A load the state does not
+/// justify is refused unless `assumptions` allow symbolic contract loads, in
+/// which case the load stays the symbolic term kernel execution spells it
+/// as, and certification discharges its loadability from the path's facts.
+pub(in crate::surface) fn evaluate_c_fragment_through_kernel(
+    expression: &CExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    state: &CState,
+    result: Option<&CValue>,
+) -> Result<CValue, String> {
+    let states = FixedStateLowering::new(values, array_refs, state, state, result);
+    let spec = crate::surface::lowering::elaborate_fixed_state_expression(
+        &ContractExpression::CFragment(expression.clone()),
+        states.element_types,
+        &states.entry_state,
+        states.entry_values,
+        states.current_values,
+        result,
+        &RecordedSnapshots::new(),
+        assumptions,
+        &PredicateEnvironment::new(&[]),
+        &ClickFunctionEnvironment::new(&[]),
+        std::collections::BTreeSet::new(),
+    )?;
+    let (value, obligations) = crate::kernel::c_evaluate_spec_expression_at_state(
+        &states.lowering_state,
+        &spec,
+        Some(&states.entry_state),
+        assumptions,
+    )?;
+    refuse_impossible_loads(&obligations)?;
+    if !assumptions.should_allow_symbolic_contract_loads()
+        && let Some(obligation) = obligations.iter().find(|obligation| {
+            !crate::kernel::c_state_justifies_loadability_obligation(
+                &states.lowering_state,
+                obligation,
+                assumptions,
+            )
+        })
+    {
+        return Err(crate::surface::diagnostics::describe_missing_pure_fact(
+            obligation,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        ));
+    }
+    Ok(value)
+}
+
+/// The array reference a proof-side expression names: a parameter's own
+/// reference when the expression is that name, otherwise the pointer the
+/// kernel evaluates the expression to, in the memory of the state the
+/// expression reads (`old(...)` the entry, `at(...)` its snapshot), with the
+/// element type the expression's array reference declares.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::surface) fn evaluate_fixed_state_array_ref_through_kernel(
+    expression: &ContractExpression,
+    assumptions: &PureFactContext,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    pre_state: &CState,
+    state: &CState,
+    result: Option<&CValue>,
+    recorded_snapshots: &RecordedSnapshots,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<ClickArrayRef, String> {
+    if let ContractExpression::CFragment(CExpression::Variable(name))
+    | ContractExpression::CBinding(name) = expression
+        && let Some(array_ref) = array_refs.get(name)
+    {
+        return Ok(array_ref.clone());
+    }
+    let value = evaluate_fixed_state_expression_through_kernel(
+        expression,
+        assumptions,
+        values,
+        array_refs,
+        pre_state,
+        state,
+        result,
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+        &std::collections::BTreeSet::new(),
+    )?;
+    let CValue::Pointer(pointer) = value else {
+        return Err(format!(
+            "array reference expression did not evaluate to a pointer: `{value:?}`"
+        ));
+    };
+    let memory = match expression {
+        ContractExpression::Old(_) => pre_state.memory().clone(),
+        ContractExpression::At { selector, .. } => {
+            selected_snapshot_state(selector, pre_state, recorded_snapshots)?
+                .memory()
+                .clone()
+        }
+        _ => state.memory().clone(),
+    };
+    Ok(ClickArrayRef {
+        memory,
+        pointer: pointer.into_pointer(),
+        element_type: contract_array_ref_element_type(array_refs, expression)
+            .unwrap_or(CType::Int32),
+    })
+}
+
 /// A proposition or expression that reads memory the state shows freed is
 /// not stated at this state; every other load obligation is certification's
 /// to discharge from the path's facts.

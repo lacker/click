@@ -48,8 +48,8 @@ In `src/surface.rs`, invariant elaboration is driven by
 `SpecElaborationContext`. That context carries:
 
 - scalar bindings already elaborated to `SpecExpression`
-- array-ref bindings as explicit `{ memory, pointer }` pairs in Kernel Click
-  elaboration and typed `ClickArrayRef` values in surface contract evaluation
+- array-ref bindings as explicit `{ memory, pointer }` pairs, which the
+  surface's contract environment supplies as typed `ClickArrayRef` values
 - the memory that current C-fragment reads should use
 
 `old(expr)` is not a separate expression language. In loop invariants it

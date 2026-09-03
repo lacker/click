@@ -595,13 +595,20 @@ fn lower_resource_clause_with_values(
         ResourceClause::Quantified { quantity, resource } => {
             let quantity = resource_argument_to_c_expression(quantity)?;
             let assumptions = PureFactContext::new();
-            let quantity =
-                evaluate_c_contract_expression(values, state, result, &assumptions, &quantity)
-                    .map_err(|message| {
-                        ClickError::new(format!(
-                            "could not lower declared resource quantity: {message}"
-                        ))
-                    })?;
+            let array_refs = array_refs_for_parameters(parameters, values, state.memory());
+            let quantity = crate::surface::proof::evaluate_c_fragment_through_kernel(
+                &quantity,
+                &assumptions,
+                values,
+                &array_refs,
+                state,
+                result,
+            )
+            .map_err(|message| {
+                ClickError::new(format!(
+                    "could not lower declared resource quantity: {message}"
+                ))
+            })?;
             let CValue::Int32(quantity) = quantity else {
                 return Err(ClickError::new(
                     "declared resource quantity must evaluate to int32",
@@ -621,6 +628,7 @@ fn lower_resource_clause_with_values(
                 "read",
                 segment,
                 values,
+                &array_refs_for_parameters(parameters, values, state.memory()),
                 state,
                 result,
                 contract_segment_element_width(parameters, segment),
@@ -632,6 +640,7 @@ fn lower_resource_clause_with_values(
                 "write",
                 segment,
                 values,
+                &array_refs_for_parameters(parameters, values, state.memory()),
                 state,
                 result,
                 contract_segment_element_width(parameters, segment),
@@ -646,6 +655,7 @@ fn lower_resource_clause_with_values(
             parameter_types,
         } => {
             let assumptions = PureFactContext::new();
+            let array_refs = array_refs_for_parameters(parameters, values, state.memory());
             let mut resource_values = Vec::new();
             if resource_arguments.len() != parameter_types.len() {
                 return Err(ClickError::new(format!(
@@ -656,13 +666,19 @@ fn lower_resource_clause_with_values(
                 resource_arguments.iter().zip(parameter_types).enumerate()
             {
                 let argument = resource_argument_to_c_expression(argument)?;
-                let value =
-                    evaluate_c_contract_expression(values, state, result, &assumptions, &argument)
-                        .map_err(|message| {
-                            ClickError::new(format!(
-                                "could not lower resource `{name}` argument {index}: {message}"
-                            ))
-                        })?;
+                let value = crate::surface::proof::evaluate_c_fragment_through_kernel(
+                    &argument,
+                    &assumptions,
+                    values,
+                    &array_refs,
+                    state,
+                    result,
+                )
+                .map_err(|message| {
+                    ClickError::new(format!(
+                        "could not lower resource `{name}` argument {index}: {message}"
+                    ))
+                })?;
                 if !c_value_matches_click_type(&value, *parameter_type) {
                     return Err(ClickError::new(format!(
                         "resource `{name}` argument {index} evaluated to {value:?}, which does not match {:?}",
@@ -760,6 +776,7 @@ fn lower_resource_segment_with_values(
     resource_name: &str,
     segment: &ContractSegment,
     values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     state: &CState,
     result: Option<&CValue>,
     element_width: u32,
@@ -775,8 +792,17 @@ fn lower_resource_segment_with_values(
     let assumptions = PureFactContext::new()
         .allow_symbolic_contract_loads()
         .prefer_symbolic_external_loads();
-    let base = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.base)
-        .map_err(|message| {
+    let evaluate = |expression: &CExpression| {
+        crate::surface::proof::evaluate_c_fragment_through_kernel(
+            expression,
+            &assumptions,
+            values,
+            array_refs,
+            state,
+            result,
+        )
+    };
+    let base = evaluate(&segment.base).map_err(|message| {
         ClickError::new(format!(
             "could not lower `{resource_name}` resource: {message}"
         ))
@@ -787,23 +813,21 @@ fn lower_resource_segment_with_values(
         )));
     };
     let base = base.into_pointer();
-    let start = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.start)
-        .map_err(|message| {
-            ClickError::new(format!(
-                "could not lower `{resource_name}` resource: {message}"
-            ))
-        })?;
+    let start = evaluate(&segment.start).map_err(|message| {
+        ClickError::new(format!(
+            "could not lower `{resource_name}` resource: {message}"
+        ))
+    })?;
     let CValue::Int32(start) = start else {
         return Err(ClickError::new(format!(
             "could not lower `{resource_name}` resource: segment start did not evaluate to int32"
         )));
     };
-    let end = evaluate_c_contract_expression(values, state, result, &assumptions, &segment.end)
-        .map_err(|message| {
-            ClickError::new(format!(
-                "could not lower `{resource_name}` resource: {message}"
-            ))
-        })?;
+    let end = evaluate(&segment.end).map_err(|message| {
+        ClickError::new(format!(
+            "could not lower `{resource_name}` resource: {message}"
+        ))
+    })?;
     let CValue::Int32(end) = end else {
         return Err(ClickError::new(format!(
             "could not lower `{resource_name}` resource: segment end did not evaluate to int32"
@@ -1002,30 +1026,6 @@ pub(in crate::surface) fn loadable_base_and_bytes(
     }
 }
 
-pub(in crate::surface) fn loadable_segment_prop(
-    memory: &CMemory,
-    segment: EvaluatedContractSegment,
-) -> Result<Proposition, ClickError> {
-    if let (Bitvector32Term::Constant(start), Bitvector32Term::Constant(end)) =
-        (&segment.start, &segment.end)
-        && end < start
-    {
-        return Err(ClickError::new(format!(
-            "`loadable` segment has an end before its start: {start}..{end}"
-        )));
-    }
-    let element_count = bitvector32_subtract(segment.end.clone(), segment.start.clone());
-    let bytes = bitvector32_multiply(
-        element_count,
-        Bitvector32Term::Constant(segment.element_width),
-    );
-    Ok(Proposition::CMemoryLoadable {
-        memory: memory.clone(),
-        base: offset_pointer_by_elements(segment.base, segment.start, segment.element_width),
-        bytes,
-    })
-}
-
 pub(in crate::surface) fn contract_segment_element_width(
     parameters: &[syntax::C0Parameter],
     segment: &ContractSegment,
@@ -1126,38 +1126,6 @@ pub(in crate::surface) fn contract_expression_element_width(
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
-        CExpression::TypedLoad { value_type, .. } => match value_type {
-            c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
-            CType::Int32Array(_) => Some(4),
-            CType::UInt8Array(_) => Some(1),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-pub(in crate::surface) fn contract_segment_element_width_from_array_refs(
-    array_refs: &ClickArrayRefs,
-    segment: &ContractSegment,
-) -> Option<u32> {
-    contract_expression_element_width_from_array_refs(array_refs, &segment.base)
-}
-
-pub(in crate::surface) fn contract_expression_element_width_from_array_refs(
-    array_refs: &ClickArrayRefs,
-    expression: &CExpression,
-) -> Option<u32> {
-    match expression {
-        CExpression::Variable(name) => array_refs
-            .get(name)
-            .map(|array_ref| array_ref.element_type.byte_width()),
-        CExpression::Add(left, right) => {
-            contract_expression_element_width_from_array_refs(array_refs, left)
-                .or_else(|| contract_expression_element_width_from_array_refs(array_refs, right))
-        }
-        CExpression::Subtract(left, _) => {
-            contract_expression_element_width_from_array_refs(array_refs, left)
-        }
         CExpression::TypedLoad { value_type, .. } => match value_type {
             c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
             CType::Int32Array(_) => Some(4),

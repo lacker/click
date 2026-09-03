@@ -296,18 +296,17 @@ pub(super) fn theorem_application_bindings(
     let mut array_refs = BTreeMap::new();
     for (parameter, argument) in theorem.parameters().iter().zip(&application.arguments) {
         if parameter_is_click_array_ref(parameter) {
-            let array_ref = evaluate_contract_array_ref_with_environment(
+            let array_ref = evaluate_fixed_state_array_ref_through_kernel(
+                argument,
+                assumptions,
                 context.values,
                 context.array_refs,
                 context.pre_state,
                 context.post_state,
                 context.result,
-                assumptions,
-                argument,
+                context.recorded_snapshots,
                 predicate_environment,
                 click_function_environment,
-                context.recorded_snapshots,
-                &mut active_functions,
             )?;
             let expected_element_type =
                 click_array_element_type(parameter.c_type()).ok_or_else(|| {

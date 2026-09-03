@@ -63,14 +63,6 @@ pub(crate) fn c_memory_holds_live_heap_allocation_at(
         })
 }
 
-pub(crate) fn c_pointers_proven_equal_for_memory_resolution(
-    left: &Pointer,
-    right: &Pointer,
-    assumptions: &PureFactContext,
-) -> bool {
-    super::reasoning::pointers_proven_equal_for_memory_resolution(left, right, assumptions)
-}
-
 /// Recognizes two condition-fact forms as the same fact under the given
 /// assumptions, with the exact matching rule the atomic prover applies when
 /// it consumes a context fact: memory-resolution load equality and

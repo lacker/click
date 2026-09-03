@@ -1483,7 +1483,14 @@ fn analyze_resource_fact_read_ownership(
             ));
             continue;
         }
-        if evaluated_segment_covers_resource_fact_read(segment, read, assumptions, values, memory) {
+        if evaluated_segment_covers_resource_fact_read(
+            segment,
+            read,
+            assumptions,
+            values,
+            array_refs,
+            memory,
+        ) {
             return ResourceFactReadOwnershipAnalysis {
                 covered: true,
                 notes,
@@ -1539,32 +1546,33 @@ fn evaluated_segment_covers_resource_fact_read(
     read: &ResourceFactRead,
     assumptions: &PureFactContext,
     values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
     memory: &CMemory,
 ) -> bool {
     let state = CState::new().with_memory(memory.clone());
-    let Ok(CValue::Pointer(base)) =
-        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.base)
-    else {
+    let evaluate = |expression: &CExpression| {
+        crate::surface::proof::evaluate_c_fragment_through_kernel(
+            expression,
+            assumptions,
+            values,
+            array_refs,
+            &state,
+            None,
+        )
+    };
+    let Ok(CValue::Pointer(base)) = evaluate(&segment.base) else {
         return false;
     };
-    let Ok(CValue::Int32(start)) =
-        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.start)
-    else {
+    let Ok(CValue::Int32(start)) = evaluate(&segment.start) else {
         return false;
     };
-    let Ok(CValue::Int32(end)) =
-        evaluate_c_contract_expression(values, &state, None, assumptions, &segment.end)
-    else {
+    let Ok(CValue::Int32(end)) = evaluate(&segment.end) else {
         return false;
     };
-    let Ok(CValue::Pointer(read_base)) =
-        evaluate_c_contract_expression(values, &state, None, assumptions, &read.base)
-    else {
+    let Ok(CValue::Pointer(read_base)) = evaluate(&read.base) else {
         return false;
     };
-    let Ok(CValue::Int32(index)) =
-        evaluate_c_contract_expression(values, &state, None, assumptions, &read.index)
-    else {
+    let Ok(CValue::Int32(index)) = evaluate(&read.index) else {
         return false;
     };
     let segment = EvaluatedContractSegment {

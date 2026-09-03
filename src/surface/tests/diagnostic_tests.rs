@@ -260,29 +260,6 @@ fn execution_effect_diagnostics_omit_raw_memory_snapshots() {
 }
 
 #[test]
-fn missing_contract_load_diagnostic_omits_raw_memory_snapshots() {
-    let error = super::checking::evaluate_contract_memory_load_from_memory(
-        &CMemory::new(),
-        Pointer {
-            block: PointerBlock::ExternalArgument,
-            offset: PointerOffsetTerm::Int32Scaled {
-                value: Box::new(Bitvector32Term::Variable(Variable(100000))),
-                byte_width: 4,
-            },
-        },
-        CType::Int32,
-        &PureFactContext::new(),
-    )
-    .expect_err("an unowned external load should require loadability");
-
-    assert!(error.contains("missing pure fact: loadable"), "{error}");
-    assert!(error.contains("could not be read as Int32"), "{error}");
-    assert!(!error.contains("CMemory"), "{error}");
-    assert!(!error.contains("Pointer {"), "{error}");
-    assert!(error.len() < 1_000, "{error}");
-}
-
-#[test]
 fn certificate_reconstruction_diagnostics_summarize_internal_snapshots() {
     let memory = CMemory::new().with_block("hidden-snapshot", 4);
     let fact = Proposition::ConditionIs(

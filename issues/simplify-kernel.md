@@ -38,10 +38,14 @@ path its proof published rather than against another proof's per-arm
 paths; and a rewritten claim goal stays on the retained outcome proof, so
 the closer after a `rewrite` records the claim goal, not the rewritten
 form. The kernel-API tests that certified an ensure from a bounded
-universal without a completion are deleted with the route. What remains
-of slice 2: the C-fragment evaluator the resource lowering still uses
-(`evaluate_c_contract_expression` and its load and pointer helpers in
-`contract_evaluation`).
+universal without a completion are deleted with the route. The C-fragment
+evaluator (`evaluate_c_contract_expression`, its load, arithmetic, and
+pointer helpers, the Click-function and predicate-argument evaluators of
+`contract_evaluation`, and the predicate module's own body lowering and
+expression evaluator) is deleted: resource clauses, effect footprints,
+resource-definition reads, and unfolded predicate bodies are elaborated
+and evaluated or lowered by the kernel like everything else. Slice 2 is
+complete.
 
 ## Violated invariant
 
