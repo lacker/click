@@ -243,7 +243,10 @@ the same way (`elaborate_fixed_state_expression`,
 stays an application, and the kernel evaluates an application of a pure
 function to constants by the function's definition, elaborated once per
 environment (`SpecPureFunctionDefinitions`), carried by the fact context,
-and bounded by the call budget. A count named at a recorded state
+and bounded by the call budget. A function's requirements at the proof's
+entry, an applied theorem's requires and conclusion, and a pure theorem's
+goal are elaborated and lowered the same way, so a declared standard
+theorem matches its kernel axiom by spelling. A count named at a recorded state
 is that state's population. A negated condition is the condition with the
 other value, as an execution spells the branch it did not take, and
 loadability terms are canonical, so a proposition lowered anywhere is

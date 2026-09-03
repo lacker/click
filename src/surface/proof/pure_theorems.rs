@@ -2344,20 +2344,47 @@ pub(super) fn lower_pure_theorem_proposition(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let mut lowerer = KernelPropositionLowerer::new(
-        values.clone(),
-        array_refs.clone(),
-        memory.clone(),
+    lower_pure_theorem_proposition_with_opaque_calls(
+        theorem_name,
+        proposition,
+        values,
+        array_refs,
+        memory,
         predicate_environment,
         click_function_environment,
-    );
-    lowerer
-        .lower_requirement_proposition(proposition)
-        .map_err(|error| {
-            error
-                .message()
-                .replace("`requires`", &format!("pure theorem `{theorem_name}`"))
-        })
+        &BTreeSet::new(),
+    )
+}
+
+/// A pure theorem's proposition lowered at its parameter state by the
+/// kernel, with the calls named in `opaque_click_functions` kept as
+/// applications.
+#[allow(clippy::too_many_arguments)]
+fn lower_pure_theorem_proposition_with_opaque_calls(
+    theorem_name: &str,
+    proposition: &ClickProposition,
+    values: &BTreeMap<String, CValue>,
+    array_refs: &ClickArrayRefs,
+    memory: &CMemory,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+    opaque_click_functions: &BTreeSet<String>,
+) -> Result<Proposition, String> {
+    let state = CState::new().with_memory(memory.clone());
+    lower_fixed_state_proposition_through_kernel_with_opaque_calls(
+        proposition,
+        &PureFactContext::new(),
+        values,
+        array_refs,
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
+        predicate_environment,
+        click_function_environment,
+        opaque_click_functions,
+    )
+    .map_err(|error| format!("pure theorem `{theorem_name}`: {error}"))
 }
 
 fn lower_pure_theorem_proposition_opaque(
@@ -2369,26 +2396,21 @@ fn lower_pure_theorem_proposition_opaque(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> Result<Proposition, String> {
-    let active = click_function_environment
+    let opaque = click_function_environment
         .definitions
         .keys()
         .cloned()
-        .collect::<Vec<_>>();
-    let mut lowerer = KernelPropositionLowerer::new(
-        values.clone(),
-        array_refs.clone(),
-        memory.clone(),
+        .collect::<BTreeSet<_>>();
+    lower_pure_theorem_proposition_with_opaque_calls(
+        theorem_name,
+        proposition,
+        values,
+        array_refs,
+        memory,
         predicate_environment,
         click_function_environment,
+        &opaque,
     )
-    .with_active_functions(active);
-    lowerer
-        .lower_requirement_proposition(proposition)
-        .map_err(|error| {
-            error
-                .message()
-                .replace("`requires`", &format!("pure theorem `{theorem_name}`"))
-        })
 }
 
 #[allow(clippy::too_many_arguments)]

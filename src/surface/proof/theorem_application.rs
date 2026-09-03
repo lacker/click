@@ -174,13 +174,32 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
         click_function_environment,
     )
     .map_err(|message| theorem_application_error(claim_label, path_index, tactic_index, message))?;
-    let mut lowerer = KernelPropositionLowerer::new(
-        values,
-        array_refs,
-        context.post_state.memory().clone(),
-        predicate_environment,
-        click_function_environment,
-    );
+    // A theorem's clauses are lowered at the application's state exactly as
+    // any proof-side proposition is: elaborated with the theorem's
+    // parameters bound and lowered by the kernel.
+    // The theorem's parameters shadow any C local of the same name: the
+    // application binds them, not the state.
+    let bind = |state: &CState| {
+        values.iter().fold(state.clone(), |state, (name, value)| {
+            state.with_local(name.clone(), value.clone())
+        })
+    };
+    let pre_state = bind(context.pre_state);
+    let post_state = bind(context.post_state);
+    let lower = |proposition: &ClickProposition| {
+        lower_fixed_state_proposition_through_kernel(
+            proposition,
+            lowering_assumptions,
+            &values,
+            &array_refs,
+            &pre_state,
+            &post_state,
+            None,
+            context.recorded_snapshots,
+            predicate_environment,
+            click_function_environment,
+        )
+    };
 
     for requirement in theorem.requires() {
         let Some(requirement) = requirement.proposition() else {
@@ -194,20 +213,17 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 ),
             ));
         };
-        let mut lowered = lowerer
-            .lower_requirement_proposition(requirement)
-            .map_err(|error| {
-                theorem_application_error(
-                    claim_label,
-                    path_index,
-                    tactic_index,
-                    format!(
-                        "could not lower theorem `{}` requirement: {}",
-                        theorem.name(),
-                        error.message()
-                    ),
-                )
-            })?;
+        let mut lowered = lower(requirement).map_err(|error| {
+            theorem_application_error(
+                claim_label,
+                path_index,
+                tactic_index,
+                format!(
+                    "could not lower theorem `{}` requirement: {error}",
+                    theorem.name()
+                ),
+            )
+        })?;
         lowered = unfold_predicates_in_proposition(
             predicate_environment,
             click_function_environment,
@@ -250,20 +266,18 @@ pub(super) fn instantiate_theorem_application_with_assumptions(
                 ),
             ));
         };
-        let conclusion = lowerer
-            .lower_requirement_proposition(conclusion)
-            .map_err(|error| {
-                theorem_application_error(
-                    claim_label,
-                    path_index,
-                    tactic_index,
-                    format!(
-                        "could not lower theorem `{}` conclusion: {}",
-                        theorem.name(),
-                        error.message()
-                    ),
-                )
-            })?;
+        let conclusion = lower(conclusion).map_err(|error| {
+            theorem_application_error(
+                claim_label,
+                path_index,
+                tactic_index,
+                format!(
+                    "could not lower theorem `{}` conclusion: {}",
+                    theorem.name(),
+                    error
+                ),
+            )
+        })?;
         conclusions.push(conclusion.clone());
     }
     Ok(conclusions)

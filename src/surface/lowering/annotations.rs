@@ -483,6 +483,50 @@ pub(in crate::surface) fn elaborate_pure_function_definitions(
     definitions
 }
 
+/// Elaborates one `requires` proposition into the kernel's spec form, exactly
+/// as `function_contract_summary` elaborates the contract's clauses; the
+/// kernel then lowers it at the function's entry state. A predicate call
+/// stays a predicate.
+pub(in crate::surface) fn elaborate_requirement_proposition(
+    parameters: &[syntax::C0Parameter],
+    proposition: &ClickProposition,
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<SpecProposition, String> {
+    let entry_state = CState::new();
+    let mut lowerer = AnnotationLowerer {
+        structural_clauses: &[],
+        function_effects: &[],
+        implicit_contract_mutable_segments: &[],
+        predicate_environment,
+        click_function_environment,
+        entry_state: &entry_state,
+        entry_values: BTreeMap::new(),
+        parameter_array_element_types: parameters
+            .iter()
+            .filter_map(|parameter| {
+                Some((
+                    parameter.name().to_string(),
+                    click_array_element_type(parameter.c_type())?,
+                ))
+            })
+            .collect(),
+        quantified_values: BTreeMap::new(),
+        active_click_functions: BTreeSet::new(),
+        loop_index: 0,
+        statement_index: 0,
+        next_quantifier_variable: 3_100_000,
+        branch_join_target: None,
+        snapshots: None,
+        opaque_click_functions: BTreeSet::new(),
+        count_assumptions: None,
+    };
+    lowerer.click_proposition_to_spec_proposition(
+        proposition,
+        &SpecElaborationContext::for_function_contract(),
+    )
+}
+
 pub(in crate::surface) fn function_contract_summary(
     function_block: &FunctionBlock,
     parsed_function: &syntax::C0Function,
@@ -1280,14 +1324,57 @@ impl AnnotationLowerer<'_> {
                 selector,
                 expression,
             } => self.lower_at_expression_to_spec(selector, expression, environment),
-            ContractExpression::Add(left, right) => Ok(SpecExpression::Add(
-                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
-                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
-            )),
-            ContractExpression::Subtract(left, right) => Ok(SpecExpression::Subtract(
-                Box::new(self.lower_contract_expression_to_spec(left, environment)?),
-                Box::new(self.lower_contract_expression_to_spec(right, environment)?),
-            )),
+            // Arithmetic on a pointer offsets it by whole elements, as C does.
+            ContractExpression::Add(left, right) => {
+                if let Some(element_type) = self.contract_pointer_element_type(left, environment) {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(
+                            self.lower_contract_expression_to_spec(left, environment)?,
+                        ),
+                        elements: Box::new(
+                            self.lower_contract_expression_to_spec(right, environment)?,
+                        ),
+                        byte_width: element_type.byte_width(),
+                    });
+                }
+                if let Some(element_type) = self.contract_pointer_element_type(right, environment) {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(
+                            self.lower_contract_expression_to_spec(right, environment)?,
+                        ),
+                        elements: Box::new(
+                            self.lower_contract_expression_to_spec(left, environment)?,
+                        ),
+                        byte_width: element_type.byte_width(),
+                    });
+                }
+                Ok(SpecExpression::Add(
+                    Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                    Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+                ))
+            }
+            ContractExpression::Subtract(left, right) => {
+                if let Some(element_type) = self.contract_pointer_element_type(left, environment)
+                    && self
+                        .contract_pointer_element_type(right, environment)
+                        .is_none()
+                {
+                    return Ok(SpecExpression::PointerOffset {
+                        pointer: Box::new(
+                            self.lower_contract_expression_to_spec(left, environment)?,
+                        ),
+                        elements: Box::new(SpecExpression::Subtract(
+                            Box::new(SpecExpression::Value(int32(0))),
+                            Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+                        )),
+                        byte_width: element_type.byte_width(),
+                    });
+                }
+                Ok(SpecExpression::Subtract(
+                    Box::new(self.lower_contract_expression_to_spec(left, environment)?),
+                    Box::new(self.lower_contract_expression_to_spec(right, environment)?),
+                ))
+            }
             ContractExpression::Multiply(left, right) => Ok(SpecExpression::Multiply(
                 Box::new(self.lower_contract_expression_to_spec(left, environment)?),
                 Box::new(self.lower_contract_expression_to_spec(right, environment)?),
@@ -2020,6 +2107,44 @@ impl AnnotationLowerer<'_> {
                 self.contract_array_element_type(left, environment)
             }
             _ => CType::Int32,
+        }
+    }
+
+    /// The element type a contract expression steps by when it is a pointer:
+    /// an array reference or a pointer-valued binding in scope, a pointer
+    /// fragment, or pointer arithmetic on one. `None` for a scalar.
+    fn contract_pointer_element_type(
+        &self,
+        expression: &ContractExpression,
+        environment: &SpecElaborationContext,
+    ) -> Option<CType> {
+        match expression {
+            ContractExpression::CBinding(name) => environment
+                .array_refs
+                .get(name)
+                .map(|array_ref| array_ref.element_type)
+                .or_else(|| {
+                    matches!(
+                        environment.values.get(name),
+                        Some(SpecExpression::Value(CValue::Pointer(_)))
+                    )
+                    .then(|| self.array_ref_element_type_for_name(name))
+                }),
+            ContractExpression::CFragment(expression)
+            | ContractExpression::Field {
+                lowered: expression,
+                ..
+            } => self.c_expression_array_element_type(expression, environment),
+            ContractExpression::Old(expression) | ContractExpression::At { expression, .. } => {
+                self.contract_pointer_element_type(expression, environment)
+            }
+            ContractExpression::Add(left, right) => self
+                .contract_pointer_element_type(left, environment)
+                .or_else(|| self.contract_pointer_element_type(right, environment)),
+            ContractExpression::Subtract(left, _) => {
+                self.contract_pointer_element_type(left, environment)
+            }
+            _ => None,
         }
     }
 

@@ -4022,10 +4022,10 @@ pub fn prove_int32_le_and_not_lt_implies_eq(
         ConditionTerm::signed_less_equal(left.clone(), right.clone()),
         true,
     );
-    let not_lt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let not_lt_premise = Proposition::ConditionIs(
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
         true,
@@ -4071,10 +4071,10 @@ pub fn prove_int32_ge_and_not_gt_implies_eq(
         ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
         true,
     );
-    let not_gt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let not_gt_premise = Proposition::ConditionIs(
         ConditionTerm::signed_greater_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
         true,
@@ -4119,10 +4119,10 @@ pub fn prove_int32_lt_implies_le(left: Bitvector32Term, right: Bitvector32Term) 
 
 /// The negation of signed strict order implies the reverse non-strict order.
 pub fn prove_int32_not_lt_implies_ge(left: Bitvector32Term, right: Bitvector32Term) -> Theorem {
-    let premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let premise = Proposition::ConditionIs(
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion =
         Proposition::ConditionIs(ConditionTerm::signed_greater_equal(left, right), true);
     Theorem::new(Proposition::Implies(

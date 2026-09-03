@@ -19,14 +19,16 @@ its own symbols, while certification lowers the contract ensure through
 the kernel, so some completions read `true` or name a surface symbol where
 the kernel's lowering keeps the term. Closing the route needs one lowering
 for both: the proof's claim goal as the kernel's lowering of the contract
-ensure at the outcome state. Steps 1 to 4 of the redefined slice 2 are
-built and the evaluator is deleted: claim goals are the kernel's lowering
-of the contract ensure, and every proof-side proposition and expression is
-elaborated and lowered or evaluated by the kernel, with no fallback. Step
-5 and the rest of step 6 remain: the requirement lowering
-(`KernelPropositionLowerer` and the `contract_evaluation` helpers it and
-the resource lowering still use), the legacy claim checker, the second
-proof, and the excluded-middle arm are still present.
+ensure at the outcome state. Steps 1 to 5 of the redefined slice 2 are
+built: claim goals are the kernel's lowering of the contract ensure;
+every proof-side proposition and expression is elaborated and lowered or
+evaluated by the kernel, with no fallback; the evaluator and the
+requirement lowerer are deleted, so function requirements at proof entry,
+an applied theorem's clauses, and a pure theorem's goal take the same
+route. What remains of step 6: the C-fragment evaluator the resource
+lowering still uses (`evaluate_c_contract_expression` and its load and
+pointer helpers in `contract_evaluation`), the legacy claim checker, the
+second proof, and the excluded-middle arm.
 
 ## Violated invariant
 

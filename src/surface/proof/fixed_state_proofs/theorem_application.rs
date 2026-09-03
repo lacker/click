@@ -157,13 +157,15 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
         predicate_environment,
         click_function_environment,
     )?;
-    let mut lowerer = KernelPropositionLowerer::new(
-        values,
-        array_refs,
-        context.post_state.memory().clone(),
-        predicate_environment,
-        click_function_environment,
-    );
+    // The theorem's parameters shadow any C local of the same name: the
+    // application binds them, not the state.
+    let bind = |state: &CState| {
+        values.iter().fold(state.clone(), |state, (name, value)| {
+            state.with_local(name.clone(), value.clone())
+        })
+    };
+    let pre_state = bind(context.pre_state);
+    let post_state = bind(context.post_state);
     theorem
         .requires()
         .iter()
@@ -174,9 +176,18 @@ pub(in crate::surface::proof) fn lower_theorem_application_requirements_with_ass
                     theorem.name()
                 )
             })?;
-            let lowered = lowerer
-                .lower_requirement_proposition(requirement)
-                .map_err(|error| error.message().to_string())?;
+            let lowered = lower_fixed_state_proposition_through_kernel(
+                requirement,
+                assumptions,
+                &values,
+                &array_refs,
+                &pre_state,
+                &post_state,
+                None,
+                context.recorded_snapshots,
+                predicate_environment,
+                click_function_environment,
+            )?;
             unfold_predicates_in_proposition(
                 predicate_environment,
                 click_function_environment,

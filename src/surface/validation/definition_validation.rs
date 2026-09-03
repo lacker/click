@@ -702,14 +702,21 @@ fn collect_resource_fact_scalar_assumptions_from_proposition(
         | ClickProposition::Loadable { .. }
         | ClickProposition::Defined { .. } => {
             let source = describe_click_proposition(proposition);
-            let mut lowerer = KernelPropositionLowerer::new(
-                values.clone(),
-                array_refs.clone(),
-                memory.clone(),
-                predicate_environment,
-                click_function_environment,
-            );
-            if let Ok(proposition) = lowerer.lower_requirement_proposition(proposition) {
+            let state = CState::new().with_memory(memory.clone());
+            if let Ok(proposition) =
+                crate::surface::proof::lower_fixed_state_proposition_through_kernel(
+                    proposition,
+                    &PureFactContext::new(),
+                    values,
+                    array_refs,
+                    &state,
+                    &state,
+                    None,
+                    &RecordedSnapshots::new(),
+                    predicate_environment,
+                    click_function_environment,
+                )
+            {
                 assumptions.push(ResourceFactScalarAssumption {
                     source,
                     proposition,
@@ -1582,20 +1589,29 @@ fn symbolic_segment_covers_index(
     predicate_environment: &PredicateEnvironment,
     click_function_environment: &ClickFunctionEnvironment,
 ) -> bool {
-    let lowerer = KernelPropositionLowerer::new(
-        values.clone(),
-        array_refs.clone(),
-        memory.clone(),
-        predicate_environment,
-        click_function_environment,
-    );
-    let Ok(start) = lowerer.lower_requirement_c_expression(start) else {
+    let state = CState::new().with_memory(memory.clone());
+    let evaluate = |expression: &CExpression| {
+        crate::surface::proof::evaluate_fixed_state_expression_through_kernel(
+            &ContractExpression::CFragment(expression.clone()),
+            &PureFactContext::new(),
+            values,
+            array_refs,
+            &state,
+            &state,
+            None,
+            &RecordedSnapshots::new(),
+            predicate_environment,
+            click_function_environment,
+            &BTreeSet::new(),
+        )
+    };
+    let Ok(start) = evaluate(start) else {
         return false;
     };
-    let Ok(end) = lowerer.lower_requirement_c_expression(end) else {
+    let Ok(end) = evaluate(end) else {
         return false;
     };
-    let Ok(index) = lowerer.lower_requirement_c_expression(index) else {
+    let Ok(index) = evaluate(index) else {
         return false;
     };
     let Ok(lower_bound) =

@@ -1220,18 +1220,47 @@ pub(in crate::surface) fn requirement_proposition_prop_with_assumptions(
     click_function_environment: &ClickFunctionEnvironment,
     assumptions: &PureFactContext,
 ) -> Result<Proposition, ClickError> {
-    let parameter_values = parameter_values(parameters, arguments)?;
-    let array_refs = array_refs_for_parameters(parameters, &parameter_values, state.memory());
-    let mut lowerer = KernelPropositionLowerer::new(
-        parameter_values,
-        array_refs,
-        state.memory().clone(),
+    // The requirement is elaborated as the contract elaborates it and
+    // lowered by the kernel at the entry state, with the parameters bound
+    // to their argument values where the state does not bind them.
+    let spec = crate::surface::lowering::elaborate_requirement_proposition(
+        parameters,
+        proposition,
         predicate_environment,
         click_function_environment,
     )
-    .with_resource_state(state.clone())
-    .with_assumptions(assumptions.clone());
-    lowerer.lower_requirement_proposition(proposition)
+    .map_err(ClickError::new)?;
+    let mut lowering_state = state.clone();
+    for (name, value) in parameter_values(parameters, arguments)? {
+        if lowering_state.locals().get(&name).is_none() {
+            lowering_state = lowering_state.with_local(name, value);
+        }
+    }
+    let (lowered, _, obligations) =
+        crate::kernel::c_lower_spec_proposition_at_state(&lowering_state, &spec, None, assumptions)
+            .map_err(ClickError::new)?;
+    // A requirement may read only memory the function's entry justifies:
+    // cells the entry holds, a resource it views or owns, or a loadability
+    // the requirements state.
+    if let Some(obligation) = obligations.iter().find(|obligation| {
+        !crate::kernel::c_state_justifies_loadability_obligation(
+            &lowering_state,
+            obligation,
+            assumptions,
+        )
+    }) {
+        return Err(ClickError::new(
+            crate::surface::diagnostics::describe_missing_pure_fact(
+                obligation,
+                &[],
+                &[],
+                parameters,
+                arguments,
+                &[],
+            ),
+        ));
+    }
+    Ok(lowered)
 }
 
 pub(in crate::surface) fn parameter_values(

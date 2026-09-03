@@ -559,9 +559,9 @@ fn verifies_explicit_structural_logic_tactics() {
             }
         }
 
-        theorem double_negation_rule(x: int32) {
+        theorem negated_conjunction_rule(x: int32) {
             requires x == x;
-            ensures not (not (x == x)) by {
+            ensures not (x != x and x == x) by {
                 intro();
                 contradiction(x == x);
             }
@@ -663,16 +663,20 @@ fn records_checked_surface_forms_for_lowered_propositions() {
     )]);
     let predicates = PredicateEnvironment::new(&[]);
     let functions = ClickFunctionEnvironment::new(&[]);
-    let mut lowerer = KernelPropositionLowerer::new(
-        values,
-        BTreeMap::new(),
-        CMemory::new(),
+    let state = CState::new();
+    let kernel = crate::surface::proof::lower_fixed_state_proposition_through_kernel(
+        &surface,
+        &PureFactContext::new(),
+        &values,
+        &BTreeMap::new(),
+        &state,
+        &state,
+        None,
+        &RecordedSnapshots::new(),
         &predicates,
         &functions,
-    );
-    let kernel = lowerer
-        .lower_requirement_proposition(&surface)
-        .expect("surface proposition should lower");
+    )
+    .expect("surface proposition should lower");
     let Proposition::And(kernel_left, kernel_right) = &kernel else {
         panic!("expected conjunction lowering");
     };

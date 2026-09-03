@@ -199,6 +199,53 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// proposition at this state. Every other obligation is left to claim
 /// certification, which discharges it from the path's facts; this is one
 /// lookup in the memory, not a fact search.
+/// Whether `state` justifies a load obligation a lowering left open: the
+/// assumptions state the loadability exactly, the memory holds the cells, or
+/// the resources permit the read. A load under a premise is judged with the
+/// premise assumed; a quantified load is left to certification.
+pub fn c_state_justifies_loadability_obligation(
+    state: &CState,
+    obligation: &Proposition,
+    assumptions: &PureFactContext,
+) -> bool {
+    match obligation {
+        Proposition::Implies(premise, body) => {
+            let assumptions = assumptions
+                .clone()
+                .assume_proposition(premise.as_ref().clone());
+            c_state_justifies_loadability_obligation(state, body, &assumptions)
+        }
+        Proposition::And(left, right) => {
+            c_state_justifies_loadability_obligation(state, left, assumptions)
+                && c_state_justifies_loadability_obligation(state, right, assumptions)
+        }
+        Proposition::CMemoryLoadable {
+            memory,
+            base,
+            bytes,
+        } => {
+            assumptions.proves_exact(obligation)
+                || matches!(memory.load(base), CExpressionOutcome::Value(_))
+                || match bytes.as_const() {
+                    Some(width) => {
+                        memory.is_loadable_concretely(base, width)
+                            || state
+                                .resources()
+                                .permits_memory_read(base, width, assumptions)
+                    }
+                    None => crate::kernel::resource_context_has_symbolic_int32_range_read(
+                        state.resources(),
+                        base,
+                        bytes,
+                        assumptions,
+                    ),
+                }
+                || assumptions.proves_memory_loadable_for_memory_resolution(memory, base, bytes)
+        }
+        _ => true,
+    }
+}
+
 pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
     match obligation {
         Proposition::Implies(premise, body) => match premise.as_ref() {

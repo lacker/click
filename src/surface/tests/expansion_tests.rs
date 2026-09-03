@@ -3138,10 +3138,9 @@ fn post_execution_simp_composes_negated_successor_bound() {
         column,
     )
     .expect("post-execution successor lower bound should expand");
-    assert!(
-        expanded.contains("apply(int32_not_lt_implies_ge("),
-        "{expanded}"
-    );
+    // The negated bound is the kernel's condition with the other value, so
+    // the successor bound is an available fact and the chain needs only the
+    // transitive step.
     assert!(
         expanded.contains("apply(int32_ge_transitive("),
         "{expanded}"

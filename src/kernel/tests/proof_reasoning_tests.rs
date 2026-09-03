@@ -698,10 +698,10 @@ fn int32_not_lt_implies_ge_axiom_has_the_exact_implication() {
     let left = Bitvector32Term::Variable(Variable(90_029));
     let right = Bitvector32Term::Variable(Variable(90_030));
     let theorem = prove_int32_not_lt_implies_ge(left.clone(), right.clone());
-    let premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let premise = Proposition::ConditionIs(
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion =
         Proposition::ConditionIs(ConditionTerm::signed_greater_equal(left, right), true);
 
@@ -720,10 +720,10 @@ fn int32_ge_and_not_gt_implies_eq_axiom_has_exact_implications() {
         ConditionTerm::signed_greater_equal(left.clone(), right.clone()),
         true,
     );
-    let not_gt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let not_gt_premise = Proposition::ConditionIs(
         ConditionTerm::signed_greater_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
         true,
@@ -1046,10 +1046,10 @@ fn int32_le_and_not_lt_implies_eq_axiom_has_the_exact_implications() {
         ConditionTerm::signed_less_equal(left.clone(), right.clone()),
         true,
     );
-    let not_lt_premise = Proposition::Not(Box::new(Proposition::ConditionIs(
+    let not_lt_premise = Proposition::ConditionIs(
         ConditionTerm::signed_less_than(left.clone(), right.clone()),
-        true,
-    )));
+        false,
+    );
     let conclusion = Proposition::ConditionIs(
         ConditionTerm::Bitvector32Equal(Box::new(left), Box::new(right)),
         true,
