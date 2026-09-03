@@ -734,11 +734,20 @@ impl<L: Clone, P: Clone, S: Clone, E: Clone>
             return Err(PropositionCloseError::ExpectedFiniteUniversal);
         };
         for (_, instance) in instances {
-            if !super::fact_reasoning::normalizes_context_free(&instance)
-                && !facts.contains(&instance)
+            if super::fact_reasoning::normalizes_context_free(&instance)
+                || facts.contains(&instance)
             {
-                return Err(PropositionCloseError::MissingFiniteInstance);
+                continue;
             }
+            // An instance whose guard is constant true is held as its
+            // conclusion, the form a proof states it in.
+            if let Proposition::Implies(guard, conclusion) = &instance
+                && super::fact_reasoning::normalizes_context_free(guard)
+                && facts.contains(conclusion)
+            {
+                continue;
+            }
+            return Err(PropositionCloseError::MissingFiniteInstance);
         }
         Ok(self.closed_focused())
     }

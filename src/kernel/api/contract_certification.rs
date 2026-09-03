@@ -2528,29 +2528,6 @@ pub(super) fn certification_proves_proposition(
         Proposition::Or(left, right) => {
             certification_proves_proposition(assumptions, left)
                 || certification_proves_proposition(assumptions, right)
-                // Excluded middle over decidable conditions: `L or R` holds
-                // when assuming `not L` certifies `R` (and symmetrically).
-                // Kept until claim certification matches an `or`-shaped
-                // ensure closed by `assumption()` (issues/simplify-kernel.md,
-                // slice 2); no corpus proof needs it.
-                || match left.as_ref() {
-                    Proposition::ConditionIs(condition, value) => {
-                        let negated = assumptions.clone().assume_proposition(
-                            Proposition::ConditionIs(condition.clone(), !value),
-                        );
-                        certification_proves_proposition(&negated, right)
-                    }
-                    _ => false,
-                }
-                || match right.as_ref() {
-                    Proposition::ConditionIs(condition, value) => {
-                        let negated = assumptions.clone().assume_proposition(
-                            Proposition::ConditionIs(condition.clone(), !value),
-                        );
-                        certification_proves_proposition(&negated, left)
-                    }
-                    _ => false,
-                }
         }
         Proposition::Exists {
             var,

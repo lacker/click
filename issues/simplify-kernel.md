@@ -25,10 +25,18 @@ every proof-side proposition and expression is elaborated and lowered or
 evaluated by the kernel, with no fallback; the evaluator and the
 requirement lowerer are deleted, so function requirements at proof entry,
 an applied theorem's clauses, and a pure theorem's goal take the same
-route. What remains of step 6: the C-fragment evaluator the resource
+route. Of step 6, the legacy claim checker and the excluded-middle arm
+are deleted: a claim with no closer is closed by the direct logical
+closure or the smart `simp` certificate, both recording a completion.
+What remains: the second-proof route (`certification_proves_post_proposition`),
+which a census still finds deciding where a completion made after a
+proof-level join names the proof's join variable while certification
+lowers the ensure over the kernel's path variable
+(`proof_branch_continuation.md`, `witness_and_choose.md`), and where the
+kernel-API tests certify claims without completions
+(`contract_execution_tests.rs`); the C-fragment evaluator the resource
 lowering still uses (`evaluate_c_contract_expression` and its load and
-pointer helpers in `contract_evaluation`), the legacy claim checker, the
-second proof, and the excluded-middle arm.
+pointer helpers in `contract_evaluation`).
 
 ## Violated invariant
 

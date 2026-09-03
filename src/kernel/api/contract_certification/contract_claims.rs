@@ -1635,6 +1635,15 @@ pub fn c_function_ensure_goals(
         &mut budget,
     )
     .ok()?;
+    // An ensure that reads memory the outcome shows freed is not stated at
+    // this outcome: no goal, so the claim's own lowering reports the load.
+    if paths.iter().any(|path| {
+        path.obligations
+            .iter()
+            .any(|obligation| super::c_loadability_obligation_impossible(obligation.proposition()))
+    }) {
+        return None;
+    }
     Some(
         paths
             .into_iter()

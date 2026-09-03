@@ -123,6 +123,9 @@ impl<'a> Proof<'a> {
         let Some(surface_goal) = self.surface_goal().cloned() else {
             return Ok(None);
         };
+        if let Some(enumerated) = self.try_finite_forall_enumeration(&surface_goal)? {
+            return Ok(Some(enumerated));
+        }
         self.try_structural_simp_closure(&surface_goal)
     }
 
@@ -475,11 +478,37 @@ impl<'a> Proof<'a> {
         let Some(goal) = self.goal() else {
             return Ok(None);
         };
-        let Some(instances) = crate::kernel::finite_forall_goal_instances(goal) else {
+        let Some(mut instances) = crate::kernel::finite_forall_goal_instances(goal) else {
             return Ok(None);
         };
+        // Instances over two indices are proved nearest pair first: a chain
+        // fact between neighbours is what a wider span's proof cites, and an
+        // earlier `have` is an available fact for a later one.
+        instances.sort_by_key(|(values, _)| match values.as_slice() {
+            [first, second] => ((second - first).abs(), *first, *second),
+            _ => (0, 0, 0),
+        });
+        // A goal stated as a predicate call binds through the predicate's
+        // body; unfold it at the surface to name the binders.
+        let predicate_environment = match self.context.as_ref() {
+            ProofContext::Pure(context) => context.predicate_environment,
+            ProofContext::FixedState(context) => context.predicate_environment,
+            ProofContext::Execution(context) => context.predicate_environment,
+        };
+        let all_predicates = predicate_environment
+            .definitions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let unfolded = unfold_click_predicates_in_proposition_with_active(
+            predicate_environment,
+            &all_predicates,
+            surface_goal,
+            &mut BTreeSet::new(),
+        )
+        .unwrap_or_else(|_| surface_goal.clone());
         let mut binder_names = Vec::new();
-        let mut surface_body = surface_goal;
+        let mut surface_body = &unfolded;
         while let ClickProposition::ForAll { name, body, .. } = surface_body {
             binder_names.push(name.clone());
             surface_body = body;
@@ -516,6 +545,17 @@ impl<'a> Proof<'a> {
             let Ok(surface_instance) = substitute_click_proposition(surface_body, &substitutions)
             else {
                 return Ok(None);
+            };
+            // An instance whose guard is constant true is stated as its
+            // conclusion: that is the fact a later instance's proof cites, and
+            // `enumerate()` reads the table through the same normalization.
+            let surface_instance = match (&instance, &surface_instance) {
+                (Proposition::Implies(guard, _), ClickProposition::Implies(_, conclusion))
+                    if matches!(normalize_proposition(guard), SimpProposition::True) =>
+                {
+                    conclusion.as_ref().clone()
+                }
+                _ => surface_instance,
             };
             let Some(scope) = attempt::candidate_outcome(proof.begin_have(surface_instance))?
             else {

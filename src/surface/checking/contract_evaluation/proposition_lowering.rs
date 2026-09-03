@@ -1,38 +1,6 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::surface) fn evaluate_contract_expression_with_recorded_snapshots(
-    parameters: &[syntax::C0Parameter],
-    arguments: &[CExpression],
-    pre_state: &CState,
-    post_state: &CState,
-    result: &CValue,
-    available_pure_facts: &[Proposition],
-    expression: &ContractExpression,
-    predicate_environment: &PredicateEnvironment,
-    click_function_environment: &ClickFunctionEnvironment,
-    recorded_snapshots: &RecordedSnapshots,
-) -> Result<CValue, String> {
-    let parameter_values =
-        parameter_values(parameters, arguments).map_err(|error| error.message)?;
-    let array_refs = array_refs_for_parameters(parameters, &parameter_values, post_state.memory());
-    let assumptions = assumptions_from_propositions(available_pure_facts);
-    let mut active_functions = BTreeSet::new();
-    evaluate_contract_expression_with_environment(
-        &parameter_values,
-        &array_refs,
-        pre_state,
-        post_state,
-        Some(result),
-        &assumptions,
-        expression,
-        predicate_environment,
-        click_function_environment,
-        recorded_snapshots,
-        &mut active_functions,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(in crate::surface) fn lower_outcome_proposition(
     parameters: &[syntax::C0Parameter],

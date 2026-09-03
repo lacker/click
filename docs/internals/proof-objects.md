@@ -257,10 +257,16 @@ from the path's facts. The two sides are compared in one canonical form
 for the folds that remain (a term compared with itself, a constant premise
 or conjunct, a negated condition), and a completion recorded at the
 artifact's own caller state also certifies a path rebased from that state.
-A claim with no `by` block is closed by the direct logical closure from
-the outcome Proof, which records its completion like any other closer.
-Only a claim with no matching completion is proved from the path's facts,
-the second-proof route that goes with the legacy claim checker.
+A claim with no `by` block has one implicit closer: the direct logical
+closure of the kernel's claim goal from the outcome Proof or, when that does
+not apply, the smart `simp` search, whose certificate is checked like an
+explicit one; either records the completion like any other closer. A
+resource ensure or an effect claim is an exact check against the outcome.
+When nothing closes a claim, the diagnostic names the reason: the goal's
+lowering, a rewrite that did not apply, or the unclosed goal with the sides
+its comparison evaluated to. Only a claim with no matching completion is
+proved from the path's facts, the second-proof route that remains until a
+completion made after a proof-level join names the kernel's path variable.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A

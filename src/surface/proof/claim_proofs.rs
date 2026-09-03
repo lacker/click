@@ -1070,6 +1070,15 @@ fn begin_outcome_existence_proof<'a>(
 /// active unfolds are applied as an explicit claim body would apply them. A
 /// goal the fixed-state lowering cannot express, or that the closure does not
 /// reach, is a miss; only a deadline is an error.
+/// The implicit closer of a proposition claim: the claim goal is the
+/// kernel's lowering of the contract ensure at the outcome, closed by the
+/// direct logical closure or, when that does not apply, by the smart `simp`
+/// search whose certificate is checked like an explicit one. Either way the
+/// completion is what claim certification matches. When neither closes the
+/// claim the reason names what stood in the way: the goal's lowering, a
+/// rewrite that did not apply, or the goal left unclosed with the sides it
+/// evaluated to.
+#[allow(clippy::too_many_arguments)]
 fn close_claim_directly_from_outcome<'a>(
     outcome_root: &Proof<'a>,
     function: &CFunction,
@@ -1081,7 +1090,21 @@ fn close_claim_directly_from_outcome<'a>(
     surface_goal: &ClickProposition,
     rewrite_equalities: &[ClickProposition],
     unfolded_predicates: &[String],
-) -> Result<Option<Proof<'a>>, ClickError> {
+    claim_label: &str,
+    path_index: usize,
+    parameters: &[syntax::C0Parameter],
+    predicate_environment: &PredicateEnvironment,
+    click_function_environment: &ClickFunctionEnvironment,
+) -> Result<Result<Proof<'a>, String>, ClickError> {
+    let surface = describe_click_proposition(surface_goal);
+    let failure = |reason: String| {
+        Ok(Err(format!(
+            "`ensures {surface}` failed for `{claim_label}` path {path_index}: {reason}"
+        )))
+    };
+    if !matches!(outcome, CFunctionOutcome::Return { .. }) {
+        return failure(describe_function_outcome(outcome, parameters, arguments));
+    }
     let root = outcome_root
         .with_outcome_snapshot(outcome)?
         .with_checked_outcome_facts(path_requirements)?;
@@ -1096,17 +1119,24 @@ fn close_claim_directly_from_outcome<'a>(
     );
     let mut proof = match focus_claim_goal(&root, path_requirements, kernel_goal, surface_goal) {
         Ok(proof) => proof,
-        Err(_) => {
+        Err(error) => {
             check_verification_deadline()?;
-            return Ok(None);
+            return failure(format!(
+                "could not lower the claim goal: {}",
+                error.message()
+            ));
         }
     };
     for equality in rewrite_equalities {
         proof = match proof.apply_step(ProofStep::Rewrite(equality.clone())) {
             Ok(next) => next,
-            Err(_) => {
+            Err(error) => {
                 check_verification_deadline()?;
-                return Ok(None);
+                return failure(format!(
+                    "rewrite `{}` did not apply: {}",
+                    describe_click_proposition(equality),
+                    error.message()
+                ));
             }
         };
     }
@@ -1116,10 +1146,63 @@ fn close_claim_directly_from_outcome<'a>(
             Err(_) => check_verification_deadline()?,
         }
     }
-    match proof.try_direct_logical_closure()? {
-        Some(completed) if completed.is_complete() => Ok(Some(completed)),
-        _ => Ok(None),
+    if let Some(completed) = proof.try_direct_logical_closure()?
+        && completed.is_complete()
+    {
+        return Ok(Ok(completed));
     }
+    if let Some(completed) = proof.try_simp_closure()?
+        && completed.is_complete()
+    {
+        return Ok(Ok(completed));
+    }
+    check_verification_deadline()?;
+    // A comparison reports what each side evaluates to at the outcome, by
+    // the same kernel evaluation every proof-side expression gets.
+    let evaluated_sides = match (surface_goal, outcome) {
+        (
+            ClickProposition::Comparison { left, right, .. },
+            CFunctionOutcome::Return { value, state },
+        ) => {
+            let values = parameter_values(parameters, arguments).unwrap_or_default();
+            let array_refs = array_refs_for_parameters(parameters, &values, state.memory());
+            let evaluate = |expression: &ContractExpression| {
+                evaluate_fixed_state_expression_through_kernel(
+                    expression,
+                    root.facts().assumptions(),
+                    &values,
+                    &array_refs,
+                    pre_state,
+                    state,
+                    Some(value),
+                    &RecordedSnapshots::new(),
+                    predicate_environment,
+                    click_function_environment,
+                    &BTreeSet::new(),
+                )
+                .ok()
+            };
+            match (evaluate(left), evaluate(right)) {
+                (Some(left), Some(right)) => format!(
+                    "; left side evaluated to {}, right side evaluated to {}",
+                    describe_c_value(&left, parameters, arguments),
+                    describe_c_value(&right, parameters, arguments)
+                ),
+                _ => String::new(),
+            }
+        }
+        _ => String::new(),
+    };
+    let resource_facts = match outcome {
+        CFunctionOutcome::Return { state, .. } => state.resources().facts().to_vec(),
+        _ => Vec::new(),
+    };
+    let pure_facts = root.facts().assumptions().pure_facts();
+    failure(format!(
+        "unclosed goal: {surface}{evaluated_sides}
+  {}",
+        describe_available_facts(&pure_facts, &resource_facts, parameters, arguments, &[])
+    ))
 }
 
 /// Serializes a completed existential claim Proof in the established
@@ -3280,8 +3363,16 @@ pub(super) fn finish_ordered_proof<'a>(
                                         surface_goal,
                                         &completed,
                                     );
-                                    closures[claim_index] =
-                                        ClaimClosure::by_checked_certificate(&certificate);
+                                    closures[claim_index] = match completed.completed_proposition()
+                                    {
+                                        Ok(checked) => ClaimClosure::by_checked_proposition(
+                                            &certificate,
+                                            checked,
+                                        ),
+                                        Err(_) => {
+                                            ClaimClosure::by_checked_certificate(&certificate)
+                                        }
+                                    };
                                     if capturing_this_tactic {
                                         path_deferred_capture_tactics
                                             .extend(certificate.to_proof_tactics());
@@ -3611,25 +3702,31 @@ pub(super) fn finish_ordered_proof<'a>(
                                                     function_block.signature().name(),
                                                     &claims[claim_index],
                                                 );
-                                                if let Err(error) = check_function_claim_by_simp(
-                                                    &claim_label,
-                                                    path_index,
-                                                    &path.execution_facts(),
-                                                    &direct_available,
-                                                    &claims[claim_index],
-                                                    parsed_function.parameters(),
-                                                    arguments,
-                                                    pre_state,
-                                                    &outcome,
-                                                    predicate_environment,
-                                                    click_function_environment,
-                                                    &proof_execution.presentation.recorded_snapshots,
-                                                    &unfolded_predicates,
-                                                ) {
-                                                    return Err(error);
-                                                }
+                                                let detail = match outcome_proof.as_ref() {
+                                                    Some(root) => close_claim_directly_from_outcome(
+                                                        root,
+                                                        function,
+                                                        &claims[claim_index],
+                                                        pre_state,
+                                                        arguments,
+                                                        &outcome,
+                                                        &path_requirements,
+                                                        surface_goal,
+                                                        equalities,
+                                                        &unfolded_predicates,
+                                                        &claim_label,
+                                                        path_index,
+                                                        parsed_function.parameters(),
+                                                        predicate_environment,
+                                                        click_function_environment,
+                                                    )?
+                                                    .err()
+                                                    .map(|reason| format!("\n{reason}"))
+                                                    .unwrap_or_default(),
+                                                    None => String::new(),
+                                                };
                                                 return Err(ClickError::new(format!(
-                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` search did not retain a complete proof for `{claim_label}`",
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` search did not retain a complete proof for `{claim_label}`{detail}",
                                                 )));
                                             };
                                             let joined = scope.join()?;
@@ -3791,40 +3888,51 @@ pub(super) fn finish_ordered_proof<'a>(
                                 if !require_explicit_closers {
                                     continue;
                                 }
-                                // Preserve the authoritative semantic
-                                // diagnostic when the claim itself is
-                                // invalid. This is a read-only check, not a
-                                // certificate fallback: a semantically valid
-                                // claim still fails below unless the retained
-                                // Proof transition was complete.
+                                let mut reasons = Vec::new();
                                 for (claim_index, claim) in claims.iter().enumerate() {
                                     if closures[claim_index].is_closed() {
                                         continue;
                                     }
+                                    let (Some(root), FunctionClaimRef::Ensure(_, ensure_clause)) =
+                                        (outcome_proof.as_ref(), claim)
+                                    else {
+                                        continue;
+                                    };
+                                    let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
+                                    else {
+                                        continue;
+                                    };
                                     let claim_label = function_claim_label(
                                         function_block.signature().name(),
                                         claim,
                                     );
-                                    if let Err(error) = check_function_claim_by_simp(
+                                    if let Err(reason) = close_claim_directly_from_outcome(
+                                        root,
+                                        function,
+                                        claim,
+                                        pre_state,
+                                        arguments,
+                                        &outcome,
+                                        &path_requirements,
+                                        surface_goal,
+                                        &rewrite_claim_equalities[claim_index],
+                                        &unfolded_predicates,
                                         &claim_label,
                                         path_index,
-                                        &path.execution_facts(),
-                                        &path_requirements,
-                                        claim,
                                         parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        &outcome,
                                         predicate_environment,
                                         click_function_environment,
-                                        &proof_execution.presentation.recorded_snapshots,
-                                        &unfolded_predicates,
-                                    ) {
-                                        return Err(error);
+                                    )? {
+                                        reasons.push(reason);
                                     }
                                 }
+                                let detail = if reasons.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("\n{}", reasons.join("\n"))
+                                };
                                 return Err(ClickError::new(format!(
-                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` did not retain a complete transition for every pending claim",
+                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: checked outcome `simp` did not retain a complete transition for every pending claim{detail}",
                                 )));
                             }
                         }
@@ -3923,10 +4031,13 @@ pub(super) fn finish_ordered_proof<'a>(
                             // the completion claim certification matches. The
                             // exact surface checker below remains for claims
                             // that closure does not reach.
+                            let claim_label =
+                                function_claim_label(function_block.signature().name(), claim);
                             if let (Some(root), FunctionClaimRef::Ensure(_, ensure_clause)) =
                                 (outcome_proof.as_ref(), claim)
                                 && let Ensure::Proposition(surface_goal) = ensure_clause.ensure()
-                                && let Some(completed) = close_claim_directly_from_outcome(
+                            {
+                                match close_claim_directly_from_outcome(
                                     root,
                                     function,
                                     claim,
@@ -3937,34 +4048,74 @@ pub(super) fn finish_ordered_proof<'a>(
                                     surface_goal,
                                     &rewrite_claim_equalities[claim_index],
                                     &unfolded_predicates,
-                                )?
-                            {
-                                closures[claim_index] = ClaimClosure::by_exact_check_completing(
-                                    completed.completed_proposition().ok(),
-                                );
+                                    &claim_label,
+                                    path_index,
+                                    parsed_function.parameters(),
+                                    predicate_environment,
+                                    click_function_environment,
+                                )? {
+                                    Ok(completed) => {
+                                        closures[claim_index] =
+                                            ClaimClosure::by_exact_check_completing(
+                                                completed.completed_proposition().ok(),
+                                            );
+                                    }
+                                    Err(reason) => closures[claim_index].record_failure(reason),
+                                }
                                 continue;
                             }
-                            let claim_label =
-                                function_claim_label(function_block.signature().name(), claim);
-                            let result = check_function_claim(
-                                &claim_label,
-                                path_index,
-                                &path.execution_facts(),
-                                &path_requirements,
-                                claim,
-                                parsed_function.parameters(),
-                                arguments,
-                                pre_state,
-                                &outcome,
-                                predicate_environment,
-                                click_function_environment,
-                                &proof_execution.presentation.recorded_snapshots,
-                                &unfolded_predicates,
-                            );
-                            match result {
-                                Ok(()) => closures[claim_index] = ClaimClosure::by_exact_check(),
-                                Err(error) => closures[claim_index]
+                            // A resource ensure or an effect claim is an exact
+                            // check against the path's outcome, not a proof.
+                            let exact = match claim {
+                                FunctionClaimRef::Ensure(_, ensure_clause) => {
+                                    match ensure_clause.ensure() {
+                                        Ensure::Resource(resource) => Some(prove_ensure_resource(
+                                            &claim_label,
+                                            path_index,
+                                            &path.execution_facts(),
+                                            &path_requirements,
+                                            resource,
+                                            parsed_function.parameters(),
+                                            arguments,
+                                            pre_state,
+                                            &outcome,
+                                        )),
+                                        Ensure::Proposition(_) => None,
+                                    }
+                                }
+                                FunctionClaimRef::Effect(_, effect_clause) => {
+                                    Some(prove_effect_clause(
+                                        &claim_label,
+                                        path_index,
+                                        &path.execution_facts(),
+                                        &path_requirements,
+                                        effect_clause.effect(),
+                                        parsed_function.parameters(),
+                                        arguments,
+                                        pre_state,
+                                        &outcome,
+                                    ))
+                                }
+                            };
+                            match exact {
+                                Some(Ok(())) => {
+                                    closures[claim_index] = ClaimClosure::by_exact_check()
+                                }
+                                Some(Err(error)) => closures[claim_index]
                                     .record_failure(error.message().to_string()),
+                                None if !matches!(outcome, CFunctionOutcome::Return { .. }) => {
+                                    closures[claim_index].record_failure(format!(
+                                        "`{claim_label}` failed on path {path_index}: {}",
+                                        describe_function_outcome(
+                                            &outcome,
+                                            parsed_function.parameters(),
+                                            arguments
+                                        )
+                                    ))
+                                }
+                                None => closures[claim_index].record_failure(format!(
+                                    "`{claim_label}` has no outcome Proof to close it from"
+                                )),
                             }
                         }
                     }
@@ -4076,32 +4227,20 @@ pub(super) fn finish_ordered_proof<'a>(
                     surface_post_tactics_by_path.push(path_surface_post_tactics);
                     let implicitly_closable = path_deferred_capture_tactics.is_empty()
                         || (!require_explicit_closers
-                            && claims.iter().all(|claim| match claim {
-                                FunctionClaimRef::Ensure(_, ensure_clause)
-                                    if matches!(ensure_clause.ensure(), Ensure::Proposition(_)) =>
-                                {
-                                    check_function_claim(
-                                        &function_claim_label(
-                                            function_block.signature().name(),
-                                            claim,
-                                        ),
-                                        path_index,
-                                        &path.execution_facts(),
-                                        &path_requirements,
-                                        claim,
-                                        parsed_function.parameters(),
-                                        arguments,
-                                        pre_state,
-                                        &outcome,
-                                        predicate_environment,
-                                        click_function_environment,
-                                        &proof_execution.presentation.recorded_snapshots,
-                                        &unfolded_predicates,
-                                    )
-                                    .is_ok()
-                                }
-                                _ => true,
-                            }));
+                            && claims
+                                .iter()
+                                .enumerate()
+                                .all(|(claim_index, claim)| match claim {
+                                    FunctionClaimRef::Ensure(_, ensure_clause)
+                                        if matches!(
+                                            ensure_clause.ensure(),
+                                            Ensure::Proposition(_)
+                                        ) =>
+                                    {
+                                        closures[claim_index].is_closed()
+                                    }
+                                    _ => true,
+                                }));
                     implicit_closure_by_path.push(implicitly_closable);
                     deferred_capture_tactics_by_path.push(path_deferred_capture_tactics);
                     deferred_capture_branches_by_path.push(deferred_capture_branch_path);
