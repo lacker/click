@@ -141,7 +141,8 @@ Likely additions:
   arbitrary model variables beyond resources.
 - Broader allocation beyond exact structs and runtime-sized `int32` arrays:
   arbitrary byte layouts, compatible external allocator declarations, and
-  eventually general `realloc`; the current heap slice includes the supported
+  the remaining `realloc` cases; the current heap slice includes bounded
+  `int32` `realloc`, including preserved zeroed prefixes, plus the supported
   `calloc` forms.
 - Richer initialization predicates when examples need to package partially
   initialized heap storage instead of storing every field before folding an

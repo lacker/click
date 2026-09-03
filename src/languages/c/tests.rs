@@ -635,6 +635,41 @@ fn c0_syntax_accepts_runtime_sized_int32_allocation() {
 }
 
 #[test]
+fn c0_syntax_accepts_realloc_with_two_arguments() {
+    let function = syntax::parse_function(
+        r#"
+        int32* resize(int32* data, int32 bytes) {
+            int32* result = realloc(data, bytes);
+            return result;
+        }
+        "#,
+    )
+    .expect("realloc should parse as a two-argument pointer call");
+
+    fn find_realloc(statement: &syntax::C0Statement) -> Option<usize> {
+        match statement {
+            syntax::C0Statement::CallAssign {
+                function_name,
+                arguments,
+                ..
+            } if function_name == "realloc" => Some(arguments.len()),
+            syntax::C0Statement::Seq(first, second) => {
+                find_realloc(first).or_else(|| find_realloc(second))
+            }
+            _ => None,
+        }
+    }
+
+    assert_eq!(find_realloc(function.body()), Some(2));
+
+    let error = syntax::parse_function(
+        "int32* bad(int32* data) { int32* result = realloc(data); return result; }",
+    )
+    .expect_err("realloc must have two arguments");
+    assert!(error.message().contains("`realloc` expects two arguments"));
+}
+
+#[test]
 fn c0_syntax_lowers_calloc_to_zeroed_runtime_allocation() {
     fn find_allocation(
         statement: &syntax::C0Statement,

@@ -118,6 +118,10 @@ id = "c0.statement.calloc"
 path = "reference/language/c0.md#heap-allocation"
 
 [[item]]
+id = "c0.statement.realloc"
+path = "reference/language/c0.md#heap-allocation"
+
+[[item]]
 id = "c0.statement.free"
 path = "reference/language/c0.md#heap-allocation"
 

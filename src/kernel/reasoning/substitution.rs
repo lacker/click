@@ -2565,11 +2565,56 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
                 .iter()
                 .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
                 .collect(),
+            zeroed_prefix_allocations: memory
+                .heap
+                .zeroed_prefix_allocations
+                .iter()
+                .map(|(base, prefix)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        substitute_bitvector_variable(prefix, from, to),
+                    )
+                })
+                .collect(),
             zeroed_pending_allocations: memory
                 .heap
                 .zeroed_pending_allocations
                 .iter()
                 .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
+                .collect(),
+            pending_reallocations: memory
+                .heap
+                .pending_reallocations
+                .iter()
+                .map(|(base, pending)| {
+                    (
+                        substitute_bitvector_variable_in_pointer(base, from, to),
+                        CPendingReallocation {
+                            old_pointer: substitute_bitvector_variable_in_pointer(
+                                &pending.old_pointer,
+                                from,
+                                to,
+                            ),
+                            old_bytes: substitute_bitvector_variable(&pending.old_bytes, from, to),
+                            zeroed_prefix: pending
+                                .zeroed_prefix
+                                .as_ref()
+                                .map(|prefix| substitute_bitvector_variable(prefix, from, to)),
+                            copied_cells: pending
+                                .copied_cells
+                                .iter()
+                                .map(|(offset, value)| {
+                                    (
+                                        substitute_bitvector_variable_in_pointer_offset(
+                                            offset, from, to,
+                                        ),
+                                        substitute_bitvector_variable_in_c_value(value, from, to),
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
                 .collect(),
         }),
     }

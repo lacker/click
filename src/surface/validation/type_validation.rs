@@ -172,6 +172,7 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::Enumerate
             | ProofTactic::Contradiction(_)
             | ProofTactic::Rewrite(_)
+            | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::Simp
             | ProofTactic::SimpUsing(_) => {}
             ProofTactic::If(proof_if) => {
@@ -204,7 +205,6 @@ fn validate_pure_theorem_tactics(
             | ProofTactic::ObserveResource(_)
             | ProofTactic::Transport { .. }
             | ProofTactic::TransportUsing { .. }
-            | ProofTactic::InstantiateUsing { .. }
             | ProofTactic::UnfoldResource(_)
             | ProofTactic::FoldResource(_)
             | ProofTactic::Witness(_)

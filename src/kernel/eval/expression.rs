@@ -531,6 +531,21 @@ pub(in crate::kernel) fn read_c_lvalue_paths(
                 obligations,
             }],
             CLValueStorage::Memory { pointer } => {
+                if state
+                    .memory
+                    .heap
+                    .pending_reallocations
+                    .values()
+                    .any(|pending| pending.old_pointer.block == pointer.block)
+                {
+                    return vec![CExpressionPath {
+                        outcome: CExpressionOutcome::RuntimeError(
+                            CRuntimeError::UnresolvedAllocationOutcome,
+                        ),
+                        facts,
+                        obligations,
+                    }];
+                }
                 if state.memory.is_deallocated_heap_address(pointer) {
                     return vec![CExpressionPath {
                         outcome: CExpressionOutcome::UndefinedBehavior(

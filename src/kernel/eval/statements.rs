@@ -145,6 +145,21 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
             }]
         }
         CLValueStorage::Memory { pointer } => {
+            if state
+                .memory
+                .heap
+                .pending_reallocations
+                .values()
+                .any(|pending| pending.old_pointer.block == pointer.block)
+            {
+                return vec![CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(
+                        CRuntimeError::UnresolvedAllocationOutcome,
+                    ),
+                    facts,
+                    obligations,
+                }];
+            }
             if state.memory.is_deallocated_heap_address(&pointer) {
                 return vec![CStatementExecutionPath {
                     outcome: CStatementOutcome::UndefinedBehavior(
@@ -221,7 +236,7 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
     }
 }
 
-fn execute_c_heap_allocate_paths(
+pub(super) fn execute_c_heap_allocate_paths(
     state: &CState,
     target: &str,
     bytes_expression: &CExpression,
@@ -358,6 +373,393 @@ fn execute_c_heap_allocate_paths(
     Ok(paths)
 }
 
+pub(crate) fn execute_c_realloc_assign_paths(
+    state: &CState,
+    target: &str,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let [old_expression, size_expression] = arguments else {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::WrongArity {
+                expected: 2,
+                actual: arguments.len(),
+            }),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    };
+    if state.local_object_type(target) != Some(CType::Int32Pointer) {
+        return Ok(vec![CStatementExecutionPath {
+            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }]);
+    }
+
+    let mut paths = Vec::new();
+    for old_path in evaluate_c_expression_paths(state, old_expression, assumptions, budget)? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = old_path;
+        let CExpressionOutcome::Value(old_value) = outcome else {
+            let outcome = match outcome {
+                CExpressionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CExpressionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+                CExpressionOutcome::Value(_) => unreachable!(),
+            };
+            paths.push(CStatementExecutionPath {
+                outcome,
+                facts,
+                obligations,
+            });
+            continue;
+        };
+
+        let effective_assumptions =
+            assumptions_with_path_context(assumptions, &facts, &obligations);
+        let old_pointer = match old_value {
+            CValue::Pointer(pointer) => pointer,
+            CValue::Int32(bits) if bits.as_const() == Some(0) => Pointer::null(),
+            _ => {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+
+        // C specifies realloc(NULL, size) as an allocation. Reuse the
+        // existing pending-allocation machinery so a later null check can
+        // resolve this branch just like malloc/calloc.
+        if old_pointer == Pointer::null() {
+            for allocation_path in execute_c_heap_allocate_paths(
+                state,
+                target,
+                size_expression,
+                false,
+                &effective_assumptions,
+                budget,
+            )? {
+                let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &allocation_path.facts,
+                        &allocation_path.obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome: allocation_path.outcome,
+                    facts: merged_facts,
+                    obligations: merged_obligations,
+                });
+            }
+            continue;
+        }
+
+        let Some(old_bytes) = state.memory.live_heap_block_size(&old_pointer).cloned() else {
+            let error = if state.memory.is_deallocated_heap_address(&old_pointer) {
+                CInvalidFree::DoubleFree
+            } else if state.memory.is_live_heap_address(&old_pointer) {
+                CInvalidFree::InteriorPointer
+            } else {
+                CInvalidFree::NonHeapPointer
+            };
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::InvalidFree(error)),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        let Some(old_count) = int32_element_count_from_bytes(&old_bytes) else {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                facts,
+                obligations,
+            });
+            continue;
+        };
+        for new_size_path in
+            evaluate_c_expression_paths(state, size_expression, &effective_assumptions, budget)?
+        {
+            let CExpressionPath {
+                outcome: new_size_outcome,
+                facts: size_facts,
+                obligations: size_obligations,
+            } = new_size_path;
+            let CExpressionOutcome::Value(CValue::Int32(new_bytes)) = new_size_outcome else {
+                let outcome = match new_size_outcome {
+                    CExpressionOutcome::UndefinedBehavior(error) => {
+                        CStatementOutcome::UndefinedBehavior(error)
+                    }
+                    CExpressionOutcome::RuntimeError(error) => {
+                        CStatementOutcome::RuntimeError(error)
+                    }
+                    CExpressionOutcome::Value(_) => {
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    }
+                };
+                let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &size_facts,
+                        &size_obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome,
+                    facts: merged_facts,
+                    obligations: merged_obligations,
+                });
+                continue;
+            };
+            let Some(new_count) = int32_element_count_from_bytes(&new_bytes) else {
+                let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &facts,
+                        &obligations,
+                        &size_facts,
+                        &size_obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts: merged_facts,
+                    obligations: merged_obligations,
+                });
+                continue;
+            };
+            let all_facts = merge_facts(&facts, &size_facts, assumptions);
+            let Some(all_facts) = all_facts else {
+                continue;
+            };
+            let Some(all_obligations) =
+                merge_obligations(&obligations, &size_obligations, &effective_assumptions)
+            else {
+                continue;
+            };
+            let effective_assumptions =
+                assumptions_with_path_context(assumptions, &all_facts, &all_obligations);
+            if effective_assumptions.decide(&ConditionTerm::signed_greater_than(
+                new_count,
+                Bitvector32Term::Constant(0),
+            )) != Some(true)
+            {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts: all_facts,
+                    obligations: all_obligations,
+                });
+                continue;
+            }
+            let zeroed_source = if state.memory.heap.zeroed_allocations.contains(&old_pointer) {
+                Some(old_bytes.clone())
+            } else {
+                state
+                    .memory
+                    .heap
+                    .zeroed_prefix_allocations
+                    .get(&old_pointer)
+                    .cloned()
+            };
+            let zeroed_prefix = match zeroed_source {
+                None => None,
+                Some(old_prefix) => {
+                    let (Some(old_prefix), Some(new_bytes)) =
+                        (old_prefix.as_const(), new_bytes.as_const())
+                    else {
+                        paths.push(CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: all_facts,
+                            obligations: all_obligations,
+                        });
+                        continue;
+                    };
+                    Some(Bitvector32Term::Constant(old_prefix.min(new_bytes)))
+                }
+            };
+
+            let allocation = CResourceFact::own_allocation(old_pointer.clone(), old_bytes.clone());
+            let Some(resources) = state
+                .resources
+                .clone()
+                .without_fact(&allocation, &effective_assumptions)
+            else {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource: allocation,
+                    }),
+                    facts: all_facts,
+                    obligations: all_obligations,
+                });
+                continue;
+            };
+            let complete_access = CResourceFact::own_memory(CMemoryRange::new(
+                old_pointer.clone(),
+                Bitvector32Term::Constant(0),
+                old_count.clone(),
+            ));
+            let Some(resources) = resources.without_fact(&complete_access, &effective_assumptions)
+            else {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::MissingResource {
+                        resource: complete_access,
+                    }),
+                    facts: all_facts,
+                    obligations: all_obligations,
+                });
+                continue;
+            };
+            let resource_assumptions = state
+                .resources()
+                .observable_facts_assuming_valid(&effective_assumptions)
+                .into_iter()
+                .fold(effective_assumptions.clone(), |assumptions, fact| {
+                    assumptions.assume_proposition(fact)
+                });
+            if let Some(stale) = resources.facts().iter().find(|resource| {
+                resource.may_refer_to_memory_block(&old_pointer.block)
+                    && !resource.is_proven_separate_from_allocation(
+                        &old_pointer,
+                        &old_bytes,
+                        &resource_assumptions,
+                    )
+            }) {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(
+                        CRuntimeError::StaleResourceAfterFree {
+                            resource: stale.clone(),
+                        },
+                    ),
+                    facts: all_facts,
+                    obligations: all_obligations,
+                });
+                continue;
+            }
+
+            let old_cells = state
+                .memory
+                .cells
+                .iter()
+                .filter(|(pointer, _)| pointer.block == old_pointer.block)
+                .map(|(pointer, value)| (pointer.offset.clone(), value.clone()))
+                .collect::<Vec<_>>();
+            let mut copied_cells = Vec::new();
+            let mut copy_is_unsupported = false;
+            for (offset, value) in old_cells {
+                let Some(offset) = offset
+                    .as_const()
+                    .and_then(|offset| u32::try_from(offset).ok())
+                else {
+                    copy_is_unsupported = true;
+                    break;
+                };
+                let Some(end) = offset.checked_add(value.byte_width()) else {
+                    continue;
+                };
+                let fits = effective_assumptions.decide(&ConditionTerm::signed_less_equal(
+                    Bitvector32Term::Constant(end),
+                    new_bytes.clone(),
+                ));
+                if fits == Some(true) {
+                    copied_cells.push((offset, value));
+                } else if fits == Some(false)
+                    || effective_assumptions.decide(&ConditionTerm::signed_less_than(
+                        new_bytes.clone(),
+                        Bitvector32Term::Constant(end),
+                    )) == Some(true)
+                {
+                    // The initialized cell lies in the truncated tail and is
+                    // intentionally not copied.
+                } else {
+                    copy_is_unsupported = true;
+                    break;
+                }
+            }
+            if copy_is_unsupported {
+                paths.push(CStatementExecutionPath {
+                    outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts: all_facts,
+                    obligations: all_obligations,
+                });
+                continue;
+            }
+
+            while state
+                .memory
+                .heap_identity_in_use(budget.next_kernel_variable)
+            {
+                budget.next_kernel_variable += 1;
+            }
+            let pending_pointer = Pointer::symbolic(Variable(budget.next_kernel_variable));
+            budget.next_kernel_variable += 1;
+            let pending_memory = state
+                .memory
+                .clone()
+                .with_pending_heap_allocation(pending_pointer.clone(), new_bytes.clone(), false)
+                .with_pending_heap_reallocation(
+                    pending_pointer.clone(),
+                    old_pointer.clone(),
+                    old_bytes.clone(),
+                    zeroed_prefix,
+                    copied_cells
+                        .into_iter()
+                        .map(|(offset, value)| {
+                            (PointerOffsetTerm::Constant(i64::from(offset)), value)
+                        })
+                        .collect(),
+                );
+            let pending_state = state.clone().with_memory(pending_memory);
+            let assigned = execute_c_lvalue_assignment_paths(
+                &pending_state,
+                &c_variable(target.to_string()),
+                &CExpression::Value(CValue::Pointer(pending_pointer)),
+                &effective_assumptions,
+                budget,
+            )?;
+            for assigned_path in assigned {
+                let Some((merged_facts, merged_obligations)) =
+                    merge_execution_pure_facts_and_obligations(
+                        &all_facts,
+                        &all_obligations,
+                        &assigned_path.facts,
+                        &assigned_path.obligations,
+                        assumptions,
+                    )
+                else {
+                    continue;
+                };
+                paths.push(CStatementExecutionPath {
+                    outcome: assigned_path.outcome,
+                    facts: merged_facts,
+                    obligations: merged_obligations,
+                });
+            }
+        }
+    }
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
 fn execute_c_heap_free_paths(
     state: &CState,
     expression: &CExpression,
@@ -403,6 +805,23 @@ fn execute_c_heap_free_paths(
         {
             paths.push(CStatementExecutionPath {
                 outcome: CStatementOutcome::Normal(state.clone()),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+
+        if state
+            .memory
+            .heap
+            .pending_reallocations
+            .values()
+            .any(|pending| pending.old_pointer.block == pointer.block)
+        {
+            paths.push(CStatementExecutionPath {
+                outcome: CStatementOutcome::RuntimeError(
+                    CRuntimeError::UnresolvedAllocationOutcome,
+                ),
                 facts,
                 obligations,
             });
@@ -559,6 +978,60 @@ pub(crate) fn resolve_pending_heap_allocations(
         let Some(is_null) = assumptions.decide(&pointer_is_null_condition(base.clone())) else {
             continue;
         };
+        if let Some(pending_reallocation) =
+            state.memory.heap.pending_reallocations.get(&base).cloned()
+        {
+            let (memory, bytes, resolved_base, _) = state
+                .memory
+                .clone()
+                .resolve_pending_heap_reallocation(&base, !is_null)
+                .expect("collected pending reallocation should still exist");
+            state.memory = memory;
+            for binding in std::sync::Arc::make_mut(&mut state.locals.bindings).values_mut() {
+                if let CLocalBinding::Object {
+                    value: CValue::Pointer(pointer),
+                    ..
+                } = binding
+                    && pointer == &base
+                {
+                    *pointer = resolved_base.clone();
+                }
+            }
+            if !is_null {
+                let old_allocation = CResourceFact::own_allocation(
+                    pending_reallocation.old_pointer,
+                    pending_reallocation.old_bytes.clone(),
+                );
+                let old_count = int32_element_count_from_bytes(&pending_reallocation.old_bytes)
+                    .expect("supported reallocations have an exact int32 element count");
+                let old_memory = CResourceFact::own_memory(CMemoryRange::new(
+                    match old_allocation.allocation() {
+                        Some((pointer, _)) => pointer.clone(),
+                        None => unreachable!("allocation resource was just constructed"),
+                    },
+                    Bitvector32Term::Constant(0),
+                    old_count,
+                ));
+                state.resources = state
+                    .resources
+                    .clone()
+                    .without_fact(&old_allocation, assumptions)
+                    .expect("validated realloc allocation resource should remain available")
+                    .without_fact(&old_memory, assumptions)
+                    .expect("validated realloc memory resource should remain available")
+                    .unchecked_with_fact(CResourceFact::own_allocation(
+                        resolved_base.clone(),
+                        bytes.clone(),
+                    ))
+                    .unchecked_with_fact(CResourceFact::own_memory(CMemoryRange::new(
+                        resolved_base,
+                        Bitvector32Term::Constant(0),
+                        int32_element_count_from_bytes(&bytes)
+                            .expect("supported allocations have an exact int32 element count"),
+                    )));
+            }
+            continue;
+        }
         let (memory, bytes, resolved_base) = state
             .memory
             .clone()

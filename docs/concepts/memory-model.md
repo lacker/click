@@ -23,13 +23,21 @@ nonzero integers still cannot be used as pointers.
 
 ## Heap blocks and lifetimes
 
-The supported `malloc` and `calloc` forms have a null outcome and a successful
-outcome. Success creates a fresh block identity at offset zero, with either
+The supported `malloc`, `calloc`, and `realloc` forms have a null outcome and a
+successful outcome. Success creates a fresh block identity at offset zero, with either
 the exact LP64 size of `struct T` or a verified runtime extent such as
 `count * 4` or `count * sizeof(struct T)`. Heap identities are not reused
 within a proof. Fresh `malloc` bytes are uninitialized, so ownership permits
 stores but does not make an unstored cell readable; successful `calloc` cells
 read as zero or null until overwritten.
+
+A pending `realloc` keeps its old live block and resources in place until the
+result is refined. Failure removes only the pending result. Success records a
+free edge for the old block, allocates a fresh block, copies the initialized
+prefix cells that fit, and transfers the complete allocation and memory
+resources to the fresh block. For a bounded zeroed `calloc` source, the
+successful result also records the preserved zeroed prefix; any grown tail is
+uninitialized and is not treated as zero.
 
 Click tracks two different facts on the successful branch:
 

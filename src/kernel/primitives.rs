@@ -903,7 +903,18 @@ pub struct CMemory {
     pub(super) heap: std::sync::Arc<CHeapMemory>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub(super) struct CPendingReallocation {
+    pub(super) old_pointer: Pointer,
+    pub(super) old_bytes: Bitvector32Term,
+    /// Bytes at the start of the new block that retain calloc's guaranteed
+    /// zero value. A prefix equal to the new allocation size means the whole
+    /// block is zeroed; a shorter prefix leaves the grown tail uninitialized.
+    pub(super) zeroed_prefix: Option<Bitvector32Term>,
+    pub(super) copied_cells: Vec<(PointerOffsetTerm, CValue)>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct CHeapMemory {
     /// Live heap blocks are also present in `blocks`; this set distinguishes
     /// them from automatic storage and memory-havoc markers.
@@ -923,9 +934,40 @@ pub(super) struct CHeapMemory {
     /// written. The set is separate from `uninitialized_allocations` so the
     /// same heap-lifetime machinery can represent both APIs.
     pub(super) zeroed_allocations: BTreeSet<Pointer>,
+    /// Successful reallocations of zeroed storage may preserve only a prefix
+    /// of the old block. The remainder of a grown block is uninitialized.
+    pub(super) zeroed_prefix_allocations: BTreeMap<Pointer, Bitvector32Term>,
     /// Pending calloc results whose null/success outcome has not yet been
     /// refined.
     pub(super) zeroed_pending_allocations: BTreeSet<Pointer>,
+    /// Pending reallocations retain the old live block until their result is
+    /// refined. Success then retires it and installs the copied prefix;
+    /// failure simply resolves the new result to null.
+    pub(super) pending_reallocations: BTreeMap<Pointer, CPendingReallocation>,
+}
+
+impl std::hash::Hash for CHeapMemory {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Keep the hash of states without new heap-shape bookkeeping identical
+        // to the pre-realloc heap shape. CMemory is used as a cache key by
+        // proof search, and empty bookkeeping fields must not perturb the
+        // search order for unrelated programs. Nonempty new state remains
+        // part of the key and is tagged so it cannot alias the legacy shape.
+        std::hash::Hash::hash(&self.live_allocations, state);
+        std::hash::Hash::hash(&self.deallocated_allocations, state);
+        std::hash::Hash::hash(&self.pending_allocations, state);
+        std::hash::Hash::hash(&self.uninitialized_allocations, state);
+        std::hash::Hash::hash(&self.zeroed_allocations, state);
+        std::hash::Hash::hash(&self.zeroed_pending_allocations, state);
+        if !self.pending_reallocations.is_empty() {
+            std::hash::Hash::hash(&1u8, state);
+            std::hash::Hash::hash(&self.pending_reallocations, state);
+        }
+        if !self.zeroed_prefix_allocations.is_empty() {
+            std::hash::Hash::hash(&2u8, state);
+            std::hash::Hash::hash(&self.zeroed_prefix_allocations, state);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1292,7 +1334,9 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
             + memory.heap.pending_allocations.len()
             + memory.heap.uninitialized_allocations.len()
             + memory.heap.zeroed_allocations.len()
-            + memory.heap.zeroed_pending_allocations.len(),
+            + memory.heap.zeroed_prefix_allocations.len()
+            + memory.heap.zeroed_pending_allocations.len()
+            + memory.heap.pending_reallocations.len(),
     );
 }
 

@@ -369,6 +369,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.heap)
             .zeroed_allocations
             .remove(pointer);
+        std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_prefix_allocations
+            .remove(pointer);
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
@@ -402,18 +405,60 @@ impl CMemory {
         self.heap.live_allocations.keys()
     }
 
-    pub(in crate::kernel) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(in crate::kernel) fn is_uninitialized_heap_address(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
         self.heap
             .uninitialized_allocations
             .iter()
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            || self
+                .heap
+                .zeroed_prefix_allocations
+                .iter()
+                .any(|(base, prefix)| {
+                    let Some(offset) = pointer.offset.as_const() else {
+                        return false;
+                    };
+                    let Ok(offset) = u32::try_from(offset) else {
+                        return false;
+                    };
+                    let Some(end) = offset.checked_add(byte_width) else {
+                        return false;
+                    };
+                    heap_allocation_may_contain_pointer(base, pointer)
+                        && prefix.as_const().is_some_and(|prefix| end > prefix)
+                })
     }
 
-    pub(in crate::kernel) fn is_zeroed_heap_address(&self, pointer: &Pointer) -> bool {
+    pub(in crate::kernel) fn is_zeroed_heap_address(
+        &self,
+        pointer: &Pointer,
+        byte_width: u32,
+    ) -> bool {
         self.heap
             .zeroed_allocations
             .iter()
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+            || self
+                .heap
+                .zeroed_prefix_allocations
+                .iter()
+                .any(|(base, prefix)| {
+                    let Some(offset) = pointer.offset.as_const() else {
+                        return false;
+                    };
+                    let Ok(offset) = u32::try_from(offset) else {
+                        return false;
+                    };
+                    let Some(end) = offset.checked_add(byte_width) else {
+                        return false;
+                    };
+                    heap_allocation_may_contain_pointer(base, pointer)
+                        && prefix.as_const().is_some_and(|prefix| end <= prefix)
+                })
     }
 
     pub(in crate::kernel) fn is_deallocated_heap_address(&self, pointer: &Pointer) -> bool {
@@ -473,7 +518,13 @@ impl CMemory {
         let removed_uninitialized = std::sync::Arc::make_mut(&mut self.heap)
             .uninitialized_allocations
             .remove(base);
-        if (removed_live.is_some() || removed_uninitialized) && prior.is_some() {
+        let removed_zeroed_prefix = std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_prefix_allocations
+            .remove(base)
+            .is_some();
+        if (removed_live.is_some() || removed_uninitialized || removed_zeroed_prefix)
+            && prior.is_some()
+        {
             record_c_memory_derivation(
                 &self,
                 CMemoryDerivation::ContractAllocationClaimsChanged {
@@ -509,6 +560,28 @@ impl CMemory {
                 },
             );
         }
+        self
+    }
+
+    pub(in crate::kernel) fn with_pending_heap_reallocation(
+        mut self,
+        base: Pointer,
+        old_pointer: Pointer,
+        old_bytes: Bitvector32Term,
+        zeroed_prefix: Option<Bitvector32Term>,
+        copied_cells: Vec<(PointerOffsetTerm, CValue)>,
+    ) -> Self {
+        std::sync::Arc::make_mut(&mut self.heap)
+            .pending_reallocations
+            .insert(
+                base,
+                CPendingReallocation {
+                    old_pointer,
+                    old_bytes,
+                    zeroed_prefix,
+                    copied_cells,
+                },
+            );
         self
     }
 
@@ -585,6 +658,52 @@ impl CMemory {
             }
         }
         Some((self, bytes, resolved_base))
+    }
+
+    pub(in crate::kernel) fn resolve_pending_heap_reallocation(
+        mut self,
+        base: &Pointer,
+        succeeds: bool,
+    ) -> Option<(Self, Bitvector32Term, Pointer, CPendingReallocation)> {
+        let pending = std::sync::Arc::make_mut(&mut self.heap)
+            .pending_reallocations
+            .remove(base)?;
+        let (mut memory, bytes, resolved_base) = if succeeds {
+            self = self.free_heap_block(&pending.old_pointer).ok()?;
+            self.resolve_pending_heap_allocation(base, true)?
+        } else {
+            self.resolve_pending_heap_allocation(base, false)?
+        };
+        if succeeds {
+            if let Some(zeroed_prefix) = &pending.zeroed_prefix {
+                std::sync::Arc::make_mut(&mut memory.heap)
+                    .uninitialized_allocations
+                    .remove(&resolved_base);
+                if zeroed_prefix
+                    .as_const()
+                    .zip(bytes.as_const())
+                    .is_some_and(|(prefix, bytes)| prefix == bytes)
+                {
+                    std::sync::Arc::make_mut(&mut memory.heap)
+                        .zeroed_allocations
+                        .insert(resolved_base.clone());
+                } else {
+                    std::sync::Arc::make_mut(&mut memory.heap)
+                        .zeroed_prefix_allocations
+                        .insert(resolved_base.clone(), zeroed_prefix.clone());
+                }
+            }
+            for (offset, value) in &pending.copied_cells {
+                memory = memory.store(
+                    Pointer {
+                        block: resolved_base.block.clone(),
+                        offset: offset.clone(),
+                    },
+                    value.clone(),
+                );
+            }
+        }
+        Some((memory, bytes, resolved_base, pending))
     }
 
     pub(in crate::kernel) fn with_loop_memory_havoc(
@@ -682,15 +801,62 @@ impl CMemory {
         {
             return Err("interface arms disagree on pending heap allocations".to_string());
         }
+        let pending_reallocations = first.heap.pending_reallocations.clone();
+        if sibling_memories
+            .iter()
+            .any(|memory| memory.heap.pending_reallocations != pending_reallocations)
+        {
+            return Err("interface arms disagree on pending heap reallocations".to_string());
+        }
 
         let mut uninitialized_allocations = first.heap.uninitialized_allocations.clone();
         for memory in sibling_memories {
             uninitialized_allocations.extend(memory.heap.uninitialized_allocations.iter().cloned());
         }
 
+        // A zero marker is a value guarantee, so it is retained only when
+        // every arm provides it. (The uninitialized marker above is instead
+        // unioned because a possibly-uninitialized read must remain unsafe.)
         let mut zeroed_allocations = first.heap.zeroed_allocations.clone();
-        for memory in sibling_memories {
-            zeroed_allocations.extend(memory.heap.zeroed_allocations.iter().cloned());
+        zeroed_allocations.retain(|base| {
+            sibling_memories
+                .iter()
+                .all(|memory| memory.heap.zeroed_allocations.contains(base))
+        });
+        let mut zeroed_prefix_allocations = BTreeMap::new();
+        for base in live_allocations.keys() {
+            let prefixes = sibling_memories
+                .iter()
+                .map(|memory| {
+                    if memory.heap.zeroed_allocations.contains(base) {
+                        memory.heap.live_allocations.get(base).cloned()
+                    } else {
+                        memory.heap.zeroed_prefix_allocations.get(base).cloned()
+                    }
+                })
+                .collect::<Option<Vec<_>>>();
+            let Some(prefixes) = prefixes else {
+                continue;
+            };
+            let Some(prefixes) = prefixes
+                .iter()
+                .map(Bitvector32Term::as_const)
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if sibling_memories
+                .iter()
+                .any(|memory| !memory.heap.zeroed_allocations.contains(base))
+            {
+                zeroed_allocations.remove(base);
+                zeroed_prefix_allocations.insert(
+                    base.clone(),
+                    Bitvector32Term::Constant(
+                        prefixes.into_iter().min().expect("nonempty interface arms"),
+                    ),
+                );
+            }
         }
         let zeroed_pending_allocations = first.heap.zeroed_pending_allocations.clone();
         if sibling_memories
@@ -710,7 +876,9 @@ impl CMemory {
             pending_allocations,
             uninitialized_allocations,
             zeroed_allocations,
+            zeroed_prefix_allocations,
             zeroed_pending_allocations,
+            pending_reallocations,
         });
         Ok(self)
     }
