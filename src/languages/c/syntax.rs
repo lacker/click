@@ -45,6 +45,9 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.xor-assign",
     "expression.variable",
     "expression.int-literal",
+    "expression.hex-literal",
+    "expression.octal-literal",
+    "expression.integer-literal-suffix",
     "expression.char-literal",
     "expression.null-pointer",
     "expression.address-of",
@@ -1322,7 +1325,10 @@ impl Parser {
             self.position += 1;
             let length = match self.next() {
                 Some(Token::Number(number)) => {
-                    let length = number.parse::<u32>().map_err(|_| {
+                    let length = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                        self.error_here(format!("invalid array length `{number}`: {reason}"))
+                    })?;
+                    let length = u32::try_from(length).map_err(|_| {
                         self.error_here(format!("array length `{number}` is out of range"))
                     })?;
                     if length == 0 {
@@ -2127,10 +2133,8 @@ impl Parser {
             self.position += 1;
             if let Some(Token::Number(number)) = self.peek().cloned() {
                 self.position += 1;
-                let magnitude = number.parse::<u64>().map_err(|_| {
-                    self.error_here(format!(
-                        "negative int32 literal `-{number}` is out of range"
-                    ))
+                let magnitude = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    self.error_here(format!("invalid integer literal `{number}`: {reason}"))
                 })?;
                 if magnitude > (i32::MAX as u64) + 1 {
                     return Err(self.error_here(format!(
@@ -2377,13 +2381,13 @@ impl Parser {
         match self.next() {
             Some(Token::Ident(name)) => Ok(C0Expression::Variable(name)),
             Some(Token::Number(number)) => {
-                let value = number
-                    .parse::<u32>()
-                    .map_err(|_| at.error(format!("int32 literal `{number}` is out of range")))?;
-                if value > i32::MAX as u32 {
+                let value = parse_integer_literal_magnitude(&number).map_err(|reason| {
+                    at.error(format!("invalid integer literal `{number}`: {reason}"))
+                })?;
+                if value > i32::MAX as u64 {
                     return Err(at.error(format!("int32 literal `{number}` is out of range")));
                 }
-                Ok(C0Expression::Int32Literal(value))
+                Ok(C0Expression::Int32Literal(value as u32))
             }
             Some(Token::CharLiteral(value)) => Ok(C0Expression::UInt8Literal(value)),
             Some(Token::LParen) => {
@@ -2516,6 +2520,44 @@ fn flatten_array_indices(indexes: Vec<C0Expression>, dimensions: &[u32]) -> C0Ex
     offset
 }
 
+fn parse_integer_literal_magnitude(literal: &str) -> Result<u64, &'static str> {
+    let suffix_start = if literal.starts_with("0x") || literal.starts_with("0X") {
+        literal[2..]
+            .find(|character: char| !character.is_ascii_hexdigit())
+            .map_or(literal.len(), |offset| offset + 2)
+    } else {
+        literal
+            .find(|character: char| character.is_ascii_alphabetic())
+            .unwrap_or(literal.len())
+    };
+    let (digits, suffix) = literal.split_at(suffix_start);
+
+    let (digits, radix) = if let Some(hex_digits) = digits.strip_prefix("0x") {
+        (hex_digits, 16)
+    } else if let Some(hex_digits) = digits.strip_prefix("0X") {
+        (hex_digits, 16)
+    } else if digits.starts_with('0') && digits.len() > 1 {
+        (&digits[1..], 8)
+    } else {
+        (digits, 10)
+    };
+    if digits.is_empty() {
+        return Err("missing digits");
+    }
+    let normalized_suffix = suffix.to_ascii_lowercase();
+    if !matches!(
+        normalized_suffix.as_str(),
+        "" | "u" | "l" | "ll" | "ul" | "lu" | "ull" | "llu"
+    ) {
+        return Err("unsupported integer-literal suffix");
+    }
+    u64::from_str_radix(digits, radix).map_err(|_| match radix {
+        8 => "digits are not valid for an octal literal or the value is too large",
+        16 => "digits are not valid for a hexadecimal literal or the value is too large",
+        _ => "the value is too large",
+    })
+}
+
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
     let chars = source.chars().collect::<Vec<_>>();
     let char_positions = character_positions(source);
@@ -2571,8 +2613,18 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
 
         if ch.is_ascii_digit() {
             let start = index;
-            index += 1;
-            while index < chars.len() && chars[index].is_ascii_digit() {
+            if ch == '0' && matches!(chars.get(index + 1), Some('x') | Some('X')) {
+                index += 2;
+                while index < chars.len() && chars[index].is_ascii_hexdigit() {
+                    index += 1;
+                }
+            } else {
+                index += 1;
+                while index < chars.len() && chars[index].is_ascii_digit() {
+                    index += 1;
+                }
+            }
+            while index < chars.len() && chars[index].is_ascii_alphabetic() {
                 index += 1;
             }
             tokens.push(Token::Number(chars[start..index].iter().collect()));

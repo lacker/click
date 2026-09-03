@@ -150,6 +150,18 @@ id = "c0.expression.int-literal"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.expression.hex-literal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.octal-literal"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.expression.integer-literal-suffix"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.char-literal"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 

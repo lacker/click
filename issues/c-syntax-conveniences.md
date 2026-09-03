@@ -4,11 +4,10 @@ Found by the 2026-09-01 kernel audit at cb034b21. Each item is a parser or
 lowering change whose semantics the kernel already has or can express with
 existing terms; none needs new kernel state.
 
-- **`else if` and unbraced bodies.** `if`/`else`/`while`/`for` bodies must be
-  `{...}` blocks (`src/languages/c/syntax.rs:1066-1067`), and the `else` arm
-  calls `parse_block_statement` directly (`:1186-1191`), so `else if (...)`
-  fails with "expected `{`, got identifier `if`" and `if (x) return 0;`
-  fails. Else-if ladders are ubiquitous and cannot be fixed by adding braces.
+- **`else if` and unbraced bodies (implemented).** `if`, `else`, `while`, and
+  `for` now accept one controlled statement, including nested `else if`
+  chains, while still requiring declarations to be enclosed in braces. The
+  parser and mdtest regression landed in `2d524a83`.
 - **Ternary.** `?` and `:` are unexpected characters (`:1945-1972`). The
   kernel has `Bitvector32Term::If` for value selection.
 - **Casts.** There is no `(type) expr` production (`:1592-1637`, `:1752-1756`

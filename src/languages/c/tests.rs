@@ -407,6 +407,54 @@ fn c0_syntax_parses_negative_literals_and_unary_minus() {
 }
 
 #[test]
+fn c0_syntax_parses_c_integer_literal_radices_and_suffixes() {
+    let literals = syntax::parse_function(
+        r#"
+        int32 literals() {
+            return 0x0Fu | 010U;
+        }
+        "#,
+    )
+    .expect("C integer literal radices and suffixes should parse");
+    assert!(matches!(
+        literals.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::BitwiseOr(left, right))
+            if matches!(left.as_ref(), syntax::C0Expression::Int32Literal(15))
+                && matches!(right.as_ref(), syntax::C0Expression::Int32Literal(8))
+    ));
+
+    let minimum = syntax::parse_function(
+        r#"
+        int32 minimum() {
+            return -0x80000000L;
+        }
+        "#,
+    )
+    .expect("negative hexadecimal literals should preserve int32 minimum");
+    assert!(matches!(
+        minimum.body(),
+        syntax::C0Statement::Return(syntax::C0Expression::Int32Literal(0x8000_0000))
+    ));
+}
+
+#[test]
+fn c0_syntax_rejects_invalid_octal_literals() {
+    let error = syntax::parse_function(
+        r#"
+        int32 invalid() {
+            return 08;
+        }
+        "#,
+    )
+    .expect_err("digits outside the octal range must not silently become decimal");
+    assert!(
+        error.message().contains("octal literal"),
+        "{}",
+        error.message()
+    );
+}
+
+#[test]
 fn c0_unary_minus_preserves_signed_overflow_semantics() {
     let function = syntax::parse_function(
         r#"
