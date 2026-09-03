@@ -58,6 +58,50 @@ pub(super) fn execute_c_call_assign_paths(
                         obligations: path.obligations,
                     };
                 }
+                if let Some(layout) = function.return_aggregate_layout() {
+                    let Some(target_layout) = state.locals.aggregate_layout(target) else {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    };
+                    if target_layout != layout {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    }
+                    let CValue::Pointer(pointer) = &value else {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    };
+                    if pointer.is_null() {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    }
+                    let Some(slot) = state.locals.slot(target).cloned() else {
+                        return CStatementExecutionPath {
+                            outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                            facts: path.facts,
+                            obligations: path.obligations,
+                        };
+                    };
+                    state.memory =
+                        copy_aggregate_fields(state.memory, pointer.pointer(), &slot, layout);
+                    return CStatementExecutionPath {
+                        outcome: CStatementOutcome::Normal(state),
+                        facts: path.facts,
+                        obligations: path.obligations,
+                    };
+                }
                 if state.locals.is_array_object(target) {
                     return CStatementExecutionPath {
                         outcome: CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch),
@@ -570,6 +614,7 @@ pub(super) fn execute_c_statement_verification_paths(
                     "verification statement: continue with for step"
                 }
                 CStatement::Declare { .. } => "verification statement: declare",
+                CStatement::DeclareAggregate { .. } => "verification statement: declare aggregate",
                 CStatement::Assign { .. } => "verification statement: assign",
                 CStatement::CallAssign { .. } => "verification statement: call assign",
                 CStatement::Call { .. } => "verification statement: call",
@@ -2326,6 +2371,7 @@ pub(super) fn statement_may_write_memory(statement: &CStatement) -> bool {
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_) => false,
@@ -2358,6 +2404,7 @@ pub(super) fn collect_loop_modified_locals(statement: &CStatement, names: &mut B
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
         | CStatement::Return(_)
         | CStatement::Store { .. }
@@ -2436,7 +2483,8 @@ pub(crate) fn collect_address_taken_locals(statement: &CStatement, names: &mut B
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => {}
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
         CStatement::Assign { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
         }

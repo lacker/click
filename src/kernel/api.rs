@@ -807,6 +807,13 @@ pub fn c_declare(name: impl Into<String>, c_type: CType) -> CStatement {
     }
 }
 
+pub fn c_declare_aggregate(name: impl Into<String>, layout: CAggregateLayout) -> CStatement {
+    CStatement::DeclareAggregate {
+        name: name.into(),
+        layout,
+    }
+}
+
 pub fn c_assert(condition: CExpression) -> CStatement {
     CStatement::Assert {
         condition,
@@ -994,6 +1001,14 @@ pub fn c_for_body_with_step(body: CStatement, step: CStatement) -> CStatement {
 
 pub fn c_parameter(name: impl Into<String>, c_type: CType) -> CParameter {
     CParameter::new(name, c_type)
+}
+
+pub fn c_parameter_with_aggregate_layout(
+    name: impl Into<String>,
+    c_type: CType,
+    layout: CAggregateLayout,
+) -> CParameter {
+    CParameter::new(name, c_type).with_aggregate_layout(layout)
 }
 
 pub fn c_function(

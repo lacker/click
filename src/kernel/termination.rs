@@ -367,6 +367,13 @@ fn structural_recursion_paths(
                 path
             })
             .collect()),
+        CStatement::DeclareAggregate { name, .. } => Ok(paths
+            .into_iter()
+            .map(|mut path| {
+                path.aliases.remove(name);
+                path
+            })
+            .collect()),
         CStatement::Assign { name, expression } => Ok(paths
             .into_iter()
             .map(|mut path| {
@@ -721,7 +728,8 @@ fn statement_takes_address_of(statement: &CStatement, name: &str) -> bool {
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => false,
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => false,
         CStatement::ContinueWithStep { step } => statement_takes_address_of(step, name),
         CStatement::Assign { expression, .. } | CStatement::Return(expression) => {
             escapes(expression)
@@ -827,6 +835,7 @@ fn statement_assigned_variables(statement: &CStatement, names: &mut BTreeSet<Str
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Call { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Assert { .. }
@@ -867,6 +876,7 @@ fn statement_calls(statement: &CStatement, calls: &mut BTreeSet<String>) {
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::HeapAllocate { .. }
         | CStatement::HeapFree { .. }
@@ -889,6 +899,7 @@ fn recursion_paths(
         CStatement::Skip
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
@@ -1052,12 +1063,13 @@ fn loop_paths(
 ) -> Result<Vec<LoopRankingPath>, CTerminationError> {
     match statement {
         CStatement::Skip
+        | CStatement::Continue
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assert { .. }
         | CStatement::HeapFree { .. }
         | CStatement::Store { .. }
         | CStatement::TypedStore { .. }
         | CStatement::Call { .. } => Ok(paths),
-        CStatement::Continue => Ok(paths),
         CStatement::ContinueWithStep { step } => loop_paths(step, measure_variables, paths),
         CStatement::Return(_) | CStatement::Break => Ok(Vec::new()),
         CStatement::Declare { name, .. } => Ok(paths
@@ -1506,6 +1518,7 @@ fn collect_loop_invariants(
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Call { .. }
@@ -1776,6 +1789,7 @@ fn check_loops(
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Call { .. }

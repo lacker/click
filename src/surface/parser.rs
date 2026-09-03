@@ -961,10 +961,15 @@ impl Parser {
 
     fn parse_function_signature(&mut self) -> Result<ParsedFunctionSignature, ClickError> {
         let parsed_return_type = self.parse_type()?;
-        if parsed_return_type.struct_name.is_some() && !parsed_return_type.struct_pointer {
-            return Err(self.error("only pointer-to-struct types are supported"));
-        }
-        let return_type = parsed_return_type.c_type;
+        let return_type = if let Some(struct_name) = parsed_return_type
+            .struct_name
+            .as_deref()
+            .filter(|_| !parsed_return_type.struct_pointer)
+        {
+            self.scalar_struct_value_type(struct_name)?
+        } else {
+            parsed_return_type.c_type
+        };
         let name = self.expect_ident("function name")?;
         self.expect(Token::LParen)?;
         let parsed_parameters = self.parse_parameters()?;
@@ -1136,6 +1141,23 @@ impl Parser {
         })
     }
 
+    fn scalar_struct_value_type(&self, struct_name: &str) -> Result<C0Type, ClickError> {
+        let layout = self
+            .struct_layouts
+            .get(struct_name)
+            .ok_or_else(|| self.error(format!("unknown struct declaration `{struct_name}`")))?;
+        if layout.fields().values().any(|field| {
+            field.struct_name().is_some()
+                || field.enum_name().is_some()
+                || !matches!(field.c_type(), C0Type::Int32 | C0Type::UInt8)
+        }) {
+            return Err(self.error(format!(
+                "struct-by-value currently supports only int32 and uint8 fields; `struct {struct_name}` contains a pointer, array, embedded struct, or enum field"
+            )));
+        }
+        Ok(C0Type::UInt8Array(layout.size_bytes()))
+    }
+
     fn parse_function_pointer_declarator(
         &mut self,
         return_type: C0Type,
@@ -1215,12 +1237,16 @@ impl Parser {
         }
         if self.peek() != Some(&Token::LBracket) {
             let struct_name = parsed_type.struct_name;
-            if struct_name.is_some() && !parsed_type.struct_pointer {
-                return Err(self.error("only pointer-to-struct types are supported"));
-            }
+            let c_type = if let Some(struct_name) = struct_name.as_deref()
+                && !parsed_type.struct_pointer
+            {
+                self.scalar_struct_value_type(struct_name)?
+            } else {
+                parsed_type.c_type
+            };
             return Ok(ParsedParameter {
                 parameter: FunctionParameter {
-                    c_type: parsed_type.c_type,
+                    c_type,
                     name,
                     struct_name: struct_name.clone(),
                 },

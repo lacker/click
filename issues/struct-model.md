@@ -5,10 +5,12 @@ Found by the 2026-09-01 kernel audit at cb034b21.
 Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
-`docs/internals/kernel.md` "C ABI and memory layout"). The model stops there.
+`docs/internals/kernel.md` "C ABI and memory layout"). The first by-value
+slice now extends this with scalar-only copies.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
-arrays, embedded structs, named enum fields, and pointers; struct values cannot be parameters, locals, or returns
-(`syntax.rs:961` "only pointer-to-struct types are supported"). Local arrays of
+arrays, embedded structs, named enum fields, and pointers. Structs whose fields
+are only `int32` or `uint8` can be parameters, locals, assignments, and returns
+by value; each operation uses fresh address-backed storage. Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
 of those supported structs use the same stride; the kernel represents the
@@ -18,15 +20,15 @@ are preserved as inline field shapes and indexed through their element-width
 pointer arithmetic. Embedded fields are represented as aggregate places during
 C0 parsing and are lowered to scalar leaf accesses; direct aggregate loads,
 copies, and aggregate resource segments remain unsupported. Unions, bitfields,
-and broader struct-value support remain. Enum fields use an explicit four-byte
+and broader struct-value shapes remain. Enum fields use an explicit four-byte
 `int32` ABI representation, with enumerator values retained in C0 metadata and
 lowered as scalar constants in C expressions.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; the surface aggregate-place node is lowered away and everything
 rides on pointer offsets. `docs/internals/roadmap.md:89-96`
-lists struct values, embedded structs, multidimensional struct arrays, and
-unions as remaining. The pilot target json-c's `json_object` uses unions,
+lists broader struct values, embedded struct arrays, multidimensional struct
+arrays, and unions as remaining. The pilot target json-c's `json_object` uses unions,
 enums, and function pointers.
 
 ## Violated invariant
@@ -49,7 +51,10 @@ Staged mdtests, each with an unchanged C file:
    and `mdtests/struct_array_parameter_fields.md`.
 3. ~~An `enum` used as a field type and in a comparison.~~ Covered by
    `mdtests/struct_enum_field.md` and the C0 enum metadata and lowering tests.
-4. A struct passed and returned by value (copy semantics, no aliasing).
+4. ~~A scalar-only struct passed and returned by value (copy semantics, no
+   aliasing).~~ Covered by `mdtests/struct_by_value_scalar_copy.md` and the
+   C0/kernel aggregate-layout metadata test. Broader by-value field shapes
+   remain open.
 5. A union of `int32` and `int32*` with a tag field, read only through the
    active member.
 
@@ -58,8 +63,9 @@ Staged mdtests, each with an unchanged C file:
 - Field types extend to every supported scalar and to fixed arrays, embedded
   structs, and enums; layout follows the documented LP64 rules and is tested
   against `repr(C)`.
-- Struct-by-value parameters, locals, and returns are modeled as copies with
-  their own local blocks.
+- Scalar-only struct-by-value parameters, locals, assignments, and returns are
+  modeled as copies with their own local blocks; field names, offsets, and
+  scalar types remain in aggregate metadata.
 - Unions and bitfields are either modeled with explicit rules or rejected with
   a diagnostic that names the unsupported construct; no silent approximation.
 - Resource clauses (`owns object(p)`, field ranges) cover the new shapes.

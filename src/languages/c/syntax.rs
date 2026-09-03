@@ -19,6 +19,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.array-parameter",
     "type.local-array",
     "type.struct-array-parameter",
+    "type.struct-value",
     "type.function-pointer",
     "type.struct-pointer",
     "declaration.function",
@@ -26,6 +27,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "declaration.struct-field-list",
     "declaration.enum",
     "declaration.local",
+    "statement.struct-value-declaration",
     "statement.empty",
     "statement.block",
     "statement.assignment",
@@ -110,6 +112,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct C0Function {
     return_type: C0Type,
+    return_struct_name: Option<String>,
     name: String,
     parameters: Vec<C0Parameter>,
     body: C0Statement,
@@ -232,6 +235,10 @@ pub enum C0Statement {
     Declare {
         c_type: C0Type,
         name: String,
+    },
+    DeclareStructValue {
+        name: String,
+        layout: C0StructLayout,
     },
     Assign {
         name: String,
@@ -390,6 +397,10 @@ impl C0Function {
         self.return_type
     }
 
+    pub fn return_struct_name(&self) -> Option<&str> {
+        self.return_struct_name.as_deref()
+    }
+
     pub fn body(&self) -> &C0Statement {
         &self.body
     }
@@ -407,15 +418,28 @@ impl C0Function {
     }
 
     pub fn to_kernel_function(&self) -> crate::kernel::CFunction {
-        crate::kernel::c_function(
-            self.return_type.to_kernel_type(),
+        let mut function = crate::kernel::c_function(
+            if self.return_struct_name.is_some() {
+                crate::kernel::CType::UInt8Pointer
+            } else {
+                self.return_type.to_kernel_type()
+            },
             self.name.clone(),
             self.parameters
                 .iter()
                 .map(C0Parameter::to_kernel_parameter)
                 .collect(),
             self.body.to_kernel_statement(),
-        )
+        );
+        if let Some(name) = &self.return_struct_name {
+            let layout = self
+                .structs
+                .get(name)
+                .expect("struct return has a parsed layout")
+                .to_kernel_aggregate_layout();
+            function = function.with_return_aggregate_layout(layout);
+        }
+        function
     }
 }
 
@@ -434,6 +458,22 @@ impl C0StructLayout {
 
     pub fn alignment_bytes(&self) -> u32 {
         self.alignment_bytes
+    }
+
+    pub(crate) fn to_kernel_aggregate_layout(&self) -> crate::kernel::CAggregateLayout {
+        crate::kernel::CAggregateLayout::new(
+            self.size_bytes,
+            self.fields
+                .iter()
+                .map(|(field_name, field)| {
+                    crate::kernel::CAggregateField::new(
+                        field_name,
+                        field.offset_bytes,
+                        field.c_type.to_kernel_type(),
+                    )
+                })
+                .collect(),
+        )
     }
 }
 
@@ -500,7 +540,23 @@ impl C0Parameter {
         self.array_element_width
     }
 
+    pub fn is_struct_value(&self) -> bool {
+        self.struct_name.is_some() && matches!(self.c_type, C0Type::UInt8Array(_))
+    }
+
     pub fn to_kernel_parameter(&self) -> crate::kernel::CParameter {
+        if self.is_struct_value() {
+            let layout = self
+                .struct_layout
+                .as_ref()
+                .expect("struct value parameter has a parsed layout")
+                .to_kernel_aggregate_layout();
+            return crate::kernel::c_parameter_with_aggregate_layout(
+                self.name.clone(),
+                crate::kernel::CType::UInt8Pointer,
+                layout,
+            );
+        }
         let c_type = self
             .array_element_width
             .map(|_| crate::kernel::CType::UInt8Pointer)
@@ -556,6 +612,10 @@ impl C0Statement {
             Self::Declare { c_type, name } => {
                 crate::kernel::c_declare(name.clone(), c_type.to_kernel_type())
             }
+            Self::DeclareStructValue { name, layout } => crate::kernel::c_declare_aggregate(
+                name.clone(),
+                layout.to_kernel_aggregate_layout(),
+            ),
             Self::Assign { name, expression } => {
                 crate::kernel::c_assign(name.clone(), expression.to_kernel_expression())
             }
@@ -879,6 +939,7 @@ fn validate_function_returns(
         | C0Statement::Break
         | C0Statement::Continue
         | C0Statement::Declare { .. }
+        | C0Statement::DeclareStructValue { .. }
         | C0Statement::Assign { .. }
         | C0Statement::CallAssign { .. }
         | C0Statement::Call { .. }
@@ -909,6 +970,10 @@ fn offset_field_pointer(base: C0Expression, offset_bytes: u32) -> C0Expression {
 
 fn is_plain_struct_type(parsed_type: &ParsedType) -> bool {
     parsed_type.struct_name.is_some() && parsed_type.c_type == C0Type::Int32
+}
+
+fn struct_value_type(layout: &C0StructLayout) -> C0Type {
+    C0Type::UInt8Array(layout.size_bytes)
 }
 
 fn field_expression(
@@ -1176,6 +1241,7 @@ struct Parser {
     enum_constants: BTreeMap<String, i32>,
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
+    variable_struct_values: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
     variable_types: BTreeMap<String, C0Type>,
     /// The names declared in each open lexical scope, innermost last:
@@ -1209,6 +1275,7 @@ impl Parser {
             enum_constants: BTreeMap::new(),
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            variable_struct_values: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
             variable_types: BTreeMap::new(),
             scopes: Vec::new(),
@@ -1226,6 +1293,7 @@ impl Parser {
     fn pop_scope(&mut self) {
         for name in self.scopes.pop().unwrap_or_default() {
             self.variable_structs.remove(&name);
+            self.variable_struct_values.remove(&name);
             self.variable_array_shapes.remove(&name);
             self.variable_types.remove(&name);
         }
@@ -1255,6 +1323,25 @@ impl Parser {
             None => self.scopes.push(vec![name.to_string()]),
         }
         Ok(())
+    }
+
+    fn scalar_struct_value_layout(
+        &self,
+        struct_name: &str,
+    ) -> Result<C0StructLayout, C0SyntaxError> {
+        let layout = self.structs.get(struct_name).cloned().ok_or_else(|| {
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        if layout.fields.values().any(|field| {
+            field.struct_name.is_some()
+                || field.enum_name.is_some()
+                || !matches!(field.c_type, C0Type::Int32 | C0Type::UInt8)
+        }) {
+            return Err(self.error_here(format!(
+                "struct-by-value currently supports only int32 and uint8 fields; `struct {struct_name}` contains a pointer, array, embedded struct, or enum field"
+            )));
+        }
+        Ok(layout)
     }
 
     fn is_type_start(&self) -> bool {
@@ -1297,10 +1384,25 @@ impl Parser {
                 "enum return types are not supported; use enum values in struct fields",
             ));
         }
-        if is_plain_struct_type(&parsed_return_type) {
-            return Err(self.error_here("only pointer-to-struct types are supported"));
-        }
-        let return_type = parsed_return_type.c_type;
+        let return_struct_name = if is_plain_struct_type(&parsed_return_type) {
+            let name = parsed_return_type
+                .struct_name
+                .as_deref()
+                .expect("plain struct return carries its name");
+            self.scalar_struct_value_layout(name)?;
+            Some(name.to_string())
+        } else {
+            None
+        };
+        let return_type = if let Some(name) = &return_struct_name {
+            struct_value_type(
+                self.structs
+                    .get(name)
+                    .expect("validated struct return has a layout"),
+            )
+        } else {
+            parsed_return_type.c_type
+        };
         if self.peek() == Some(&Token::LParen) {
             return Err(self.error_here("function-pointer declarations are not supported in C0"));
         }
@@ -1322,6 +1424,7 @@ impl Parser {
 
         Ok(C0Function {
             return_type,
+            return_struct_name,
             name,
             parameters,
             body,
@@ -1674,14 +1777,27 @@ impl Parser {
             self.declare_name(&name)?;
             let struct_array =
                 parsed_type.struct_name.is_some() && self.peek() == Some(&Token::LBracket);
-            if is_plain_struct_type(&parsed_type) && !struct_array {
-                return Err(self.error_here("only pointer-to-struct types are supported"));
-            }
-            let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
+            let struct_value = is_plain_struct_type(&parsed_type) && !struct_array;
+            let struct_value_layout = if struct_value {
+                Some(
+                    self.scalar_struct_value_layout(
+                        parsed_type
+                            .struct_name
+                            .as_deref()
+                            .expect("plain struct parameter carries its name"),
+                    )?,
+                )
+            } else {
+                None
+            };
+            let c_type = struct_value_layout
+                .as_ref()
+                .map(struct_value_type)
+                .unwrap_or(self.parse_parameter_array_suffix(parsed_type.c_type)?);
             self.variable_types.insert(name.clone(), c_type);
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
-                if c_type != parsed_type.c_type && !struct_array {
+                if c_type != parsed_type.c_type && !struct_array && !struct_value {
                     return Err(
                         self.error_here("array parameters of struct type are not supported")
                     );
@@ -1689,6 +1805,22 @@ impl Parser {
                 let struct_name_value = struct_name.clone().expect("struct_name checked above");
                 self.variable_structs
                     .insert(name.clone(), struct_name_value.clone());
+                if struct_value {
+                    self.variable_struct_values
+                        .insert(name.clone(), struct_name_value.clone());
+                    parameters.push(C0Parameter {
+                        c_type,
+                        name,
+                        struct_layout: struct_value_layout,
+                        struct_name,
+                        array_element_width: None,
+                    });
+                    if self.peek() != Some(&Token::Comma) {
+                        return Ok(parameters);
+                    }
+                    self.position += 1;
+                    continue;
+                }
                 if struct_array {
                     let element_width = self
                         .structs
@@ -2227,6 +2359,11 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
+            Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Dot) => {
+                let statement = self.parse_memory_lvalue_statement("statement", None)?;
+                self.expect(Token::Semicolon)?;
+                Ok(statement)
+            }
             Some(Token::Ident(_)) if self.peek_next().is_some_and(Token::is_scalar_update) => {
                 let statement = self.parse_scalar_update_statement("statement")?;
                 self.expect(Token::Semicolon)?;
@@ -2518,10 +2655,64 @@ impl Parser {
             return Ok(statement);
         }
 
+        let struct_value_candidate = is_plain_struct_type(&parsed_type);
         let mut declarations = Vec::new();
         loop {
             let name = self.expect_ident("local name")?;
             self.declare_name(&name)?;
+            let struct_value_layout =
+                if struct_value_candidate && self.peek() != Some(&Token::LBracket) {
+                    Some(
+                        self.scalar_struct_value_layout(
+                            parsed_type
+                                .struct_name
+                                .as_deref()
+                                .expect("plain struct local carries its name"),
+                        )?,
+                    )
+                } else {
+                    None
+                };
+            if let Some(layout) = &struct_value_layout {
+                let c_type = struct_value_type(layout);
+                let struct_name = parsed_type
+                    .struct_name
+                    .clone()
+                    .expect("plain struct local carries its name");
+                self.variable_types.insert(name.clone(), c_type);
+                self.variable_structs
+                    .insert(name.clone(), struct_name.clone());
+                self.variable_struct_values
+                    .insert(name.clone(), struct_name);
+                let declaration = C0Statement::DeclareStructValue {
+                    name: name.clone(),
+                    layout: layout.clone(),
+                };
+                let statement = if self.peek() == Some(&Token::Equal) {
+                    self.position += 1;
+                    if matches!(self.peek(), Some(Token::Ident(_)))
+                        && self.peek_next() == Some(&Token::LParen)
+                    {
+                        let function_name = self.expect_ident("function name")?;
+                        let arguments = self.parse_call_arguments()?;
+                        let call =
+                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                        C0Statement::Seq(Box::new(declaration), Box::new(call))
+                    } else {
+                        let expression = self.parse_expression()?;
+                        let copy = self.struct_value_copy_statement(&name, expression)?;
+                        C0Statement::Seq(Box::new(declaration), Box::new(copy))
+                    }
+                } else {
+                    declaration
+                };
+                declarations.push(statement);
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
+                continue;
+            }
             let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
             self.variable_types.insert(name.clone(), c_type);
             if let Some(shape) = array_shape.clone() {
@@ -2583,6 +2774,62 @@ impl Parser {
         }
         self.expect(Token::Semicolon)?;
         Ok(balanced_statement_sequence(declarations).unwrap_or(C0Statement::Skip))
+    }
+
+    fn struct_value_copy_statement(
+        &self,
+        target: &str,
+        expression: C0Expression,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let source = match expression {
+            C0Expression::Variable(name) => name,
+            _ => {
+                return Err(self.error_here(
+                    "struct value initialization and assignment require another struct value",
+                ));
+            }
+        };
+        let target_struct = self
+            .variable_struct_values
+            .get(target)
+            .ok_or_else(|| self.error_here(format!("`{target}` is not a struct value")))?;
+        let source_struct = self
+            .variable_struct_values
+            .get(&source)
+            .ok_or_else(|| self.error_here("struct value copies require a struct value source"))?;
+        if target_struct != source_struct {
+            return Err(self.error_here(format!(
+                "cannot copy `struct {source_struct}` into `struct {target_struct}`"
+            )));
+        }
+        let layout = self
+            .structs
+            .get(target_struct)
+            .expect("validated struct value has a layout");
+        let stores = layout
+            .fields
+            .values()
+            .map(|field| {
+                let target_pointer = offset_field_pointer(
+                    C0Expression::Variable(target.to_string()),
+                    field.offset_bytes,
+                );
+                let source_pointer = offset_field_pointer(
+                    C0Expression::Variable(source.clone()),
+                    field.offset_bytes,
+                );
+                C0Statement::Store {
+                    pointer: target_pointer,
+                    value: C0Expression::Field {
+                        pointer: Box::new(source_pointer),
+                        field_type: field.c_type,
+                        field_struct_name: None,
+                    },
+                    value_type: Some(field.c_type),
+                }
+            })
+            .collect::<Vec<_>>();
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -2684,6 +2931,22 @@ impl Parser {
                 ))
             })?,
         };
+        if self.variable_struct_values.contains_key(&name) {
+            if operator != Token::Equal {
+                return Err(self.error_here(format!(
+                    "struct value `{name}` only supports whole-value assignment"
+                )));
+            }
+            if matches!(self.peek(), Some(Token::Ident(_)))
+                && self.peek_next() == Some(&Token::LParen)
+            {
+                let function_name = self.expect_ident("function name")?;
+                let arguments = self.parse_call_arguments()?;
+                return self.call_assignment_statement(name, function_name, arguments);
+            }
+            let expression = self.parse_expression()?;
+            return self.struct_value_copy_statement(&name, expression);
+        }
         let expression = match operator {
             Token::Equal => {
                 if matches!(self.peek(), Some(Token::Ident(_)))
@@ -2756,7 +3019,10 @@ impl Parser {
     fn parse_update_statement(&mut self, context: &str) -> Result<C0Statement, C0SyntaxError> {
         if self.peek() == Some(&Token::Star)
             || matches!(self.peek(), Some(Token::Ident(_)))
-                && matches!(self.peek_next(), Some(Token::LBracket | Token::Arrow))
+                && matches!(
+                    self.peek_next(),
+                    Some(Token::LBracket | Token::Dot | Token::Arrow)
+                )
         {
             return self.parse_memory_lvalue_statement(context, None);
         }
@@ -3328,7 +3594,16 @@ impl Parser {
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
                     let (pointer, field_type, field_struct_name) = if dot {
-                        self.resolve_array_struct_field_access(&expression, &field_name)?
+                        let struct_value = matches!(
+                            &expression,
+                            C0Expression::Variable(name)
+                                if self.variable_struct_values.contains_key(name)
+                        );
+                        if struct_value {
+                            self.resolve_field_access(&expression, &field_name)?
+                        } else {
+                            self.resolve_array_struct_field_access(&expression, &field_name)?
+                        }
                     } else {
                         self.resolve_field_access(&expression, &field_name)?
                     };

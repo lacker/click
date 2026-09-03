@@ -129,6 +129,7 @@ pub(in crate::surface::proof) fn kernel_loop_by_index<'a>(
         | CStatement::Break
         | CStatement::Continue
         | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. }
         | CStatement::Assign { .. }
         | CStatement::CallAssign { .. }
         | CStatement::Call { .. }

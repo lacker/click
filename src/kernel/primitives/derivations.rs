@@ -955,7 +955,8 @@ fn c_statement_source_cost(statement: &CStatement) -> CSourceCost {
             CStatement::Skip
             | CStatement::Break
             | CStatement::Continue
-            | CStatement::Declare { .. } => {}
+            | CStatement::Declare { .. }
+            | CStatement::DeclareAggregate { .. } => {}
             CStatement::ContinueWithStep { step } => pending.push(step),
             CStatement::Assign { expression, .. } => {
                 cost.add_expression(1); // assignment target lvalue

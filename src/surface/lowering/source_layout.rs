@@ -317,6 +317,7 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
         | syntax::C0Statement::Break
         | syntax::C0Statement::Continue
         | syntax::C0Statement::Declare { .. }
+        | syntax::C0Statement::DeclareStructValue { .. }
         | syntax::C0Statement::Return(_)
         | syntax::C0Statement::Store { .. } => {}
         syntax::C0Statement::Update { target, .. } => {

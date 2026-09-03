@@ -1144,7 +1144,7 @@ pub(super) fn append_proof_step_for_operation(
                     {
                         continue;
                     }
-                    let Ok(lowered) = lower_surface_candidate_in_state(
+                    let lowered = lower_surface_candidate_in_state(
                         construction.view(construction.context),
                         &surface,
                         &evidence.transition.pure_facts,
@@ -1153,7 +1153,8 @@ pub(super) fn append_proof_step_for_operation(
                         post_state,
                         predicate_environment,
                         click_function_environment,
-                    ) else {
+                    );
+                    let Ok(lowered) = lowered else {
                         continue;
                     };
                     if !exact_fact_is_available(&lowered, &evidence.transition.pure_facts) {

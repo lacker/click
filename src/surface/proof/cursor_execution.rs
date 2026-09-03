@@ -2993,6 +2993,7 @@ fn describe_statement_head(statement: &CStatement) -> String {
         CStatement::Continue => "continue".to_string(),
         CStatement::ContinueWithStep { .. } => "continue".to_string(),
         CStatement::Declare { name, .. } => format!("declare {name}"),
+        CStatement::DeclareAggregate { name, .. } => format!("declare aggregate {name}"),
         CStatement::Assign { name, expression } => {
             format!("{name} = {}", describe_c_expression(expression))
         }

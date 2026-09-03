@@ -758,7 +758,8 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => {}
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => {
             collect_c_statement_bound_variables(step, variables);
         }
@@ -1403,6 +1404,10 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
         CStatement::Declare { name, c_type } => CStatement::Declare {
             name: name.clone(),
             c_type: *c_type,
+        },
+        CStatement::DeclareAggregate { name, layout } => CStatement::DeclareAggregate {
+            name: name.clone(),
+            layout: layout.clone(),
         },
         CStatement::Assign { name, expression } => CStatement::Assign {
             name: name.clone(),
@@ -2055,6 +2060,12 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_state(
                         length: *length,
                         slot: slot.clone(),
                     },
+                    CLocalBinding::AggregateObject { layout, slot } => {
+                        CLocalBinding::AggregateObject {
+                            layout: layout.clone(),
+                            slot: slot.clone(),
+                        }
+                    }
                 };
                 (name.clone(), binding)
             })
@@ -2162,6 +2173,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_function(
         parameters: function.parameters.clone(),
         body: substitute_bitvector_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_bitvector_variable_in_c_statement(function.source_body(), from, to),
+        return_aggregate_layout: function.return_aggregate_layout.clone(),
         resource_requires: function
             .resource_requires()
             .iter()
@@ -3300,7 +3312,8 @@ fn substitute_pointer_variable_in_c_statement(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => statement.clone(),
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => statement.clone(),
         CStatement::ContinueWithStep { step } => CStatement::ContinueWithStep {
             step: Box::new(substitute_pointer_variable_in_c_statement(step, from, to)),
         },
@@ -3562,6 +3575,12 @@ fn substitute_pointer_variable_in_c_state(state: &CState, from: Variable, to: &P
                         length: *length,
                         slot: substitute_pointer_variable_in_pointer(slot, from, to),
                     },
+                    CLocalBinding::AggregateObject { layout, slot } => {
+                        CLocalBinding::AggregateObject {
+                            layout: layout.clone(),
+                            slot: substitute_pointer_variable_in_pointer(slot, from, to),
+                        }
+                    }
                 };
                 (name.clone(), binding)
             })
@@ -4160,6 +4179,7 @@ fn substitute_pointer_variable_in_c_function(
         parameters: function.parameters.clone(),
         body: substitute_pointer_variable_in_c_statement(function.body(), from, to),
         source_body: substitute_pointer_variable_in_c_statement(function.source_body(), from, to),
+        return_aggregate_layout: function.return_aggregate_layout.clone(),
         resource_requires: function
             .resource_requires()
             .iter()

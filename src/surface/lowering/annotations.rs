@@ -196,6 +196,9 @@ pub(in crate::surface) fn annotated_function(
             .parameters()
             .iter()
             .filter_map(|parameter| {
+                if parameter.is_struct_value() {
+                    return Some((parameter.name().to_string(), CType::Int32));
+                }
                 Some((
                     parameter.name().to_string(),
                     click_array_element_type(parameter.c_type())?,
@@ -214,8 +217,12 @@ pub(in crate::surface) fn annotated_function(
     };
     let body = lowerer.lower_statement(parsed_function.body())?;
     let source_body = parsed_function.to_kernel_function().body().clone();
-    let function = c_function(
-        parsed_function.return_type().to_kernel_type(),
+    let mut function = c_function(
+        if parsed_function.return_struct_name().is_some() {
+            CType::UInt8Pointer
+        } else {
+            parsed_function.return_type().to_kernel_type()
+        },
         parsed_function.name().to_string(),
         parsed_function
             .parameters()
@@ -224,22 +231,31 @@ pub(in crate::surface) fn annotated_function(
             .collect(),
         body,
     )
-    .with_source_body(source_body)
-    .with_resource_summary(resource_requires, resource_ensures)
-    .with_resource_constructors(resource_constructors)
-    .with_composite_resource_definitions(composite_resource_definitions(
-        resource_environment,
-        predicate_environment,
-        click_function_environment,
-    )?)
-    .with_predicate_unfoldings(predicate_unfoldings)
-    .with_contract(
-        contract_requires,
-        contract_ensures,
-        contract_mutable,
-        contract_claims,
-        opaque_contract_supported,
-    );
+    .with_source_body(source_body);
+    if let Some(struct_name) = parsed_function.return_struct_name() {
+        let layout = parsed_function
+            .structs()
+            .get(struct_name)
+            .expect("struct return has a parsed layout")
+            .to_kernel_aggregate_layout();
+        function = function.with_return_aggregate_layout(layout);
+    }
+    let function = function
+        .with_resource_summary(resource_requires, resource_ensures)
+        .with_resource_constructors(resource_constructors)
+        .with_composite_resource_definitions(composite_resource_definitions(
+            resource_environment,
+            predicate_environment,
+            click_function_environment,
+        )?)
+        .with_predicate_unfoldings(predicate_unfoldings)
+        .with_contract(
+            contract_requires,
+            contract_ensures,
+            contract_mutable,
+            contract_claims,
+            opaque_contract_supported,
+        );
     Ok(if function_block.effects().is_empty() {
         function.with_resource_derived_mutable_frame()
     } else {

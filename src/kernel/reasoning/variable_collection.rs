@@ -315,7 +315,8 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => {}
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => {
             collect_c_statement_bitvector_variables(step, variables);
         }
@@ -648,6 +649,7 @@ pub(in crate::kernel) fn collect_c_state_bitvector_variables(
             }
             CLocalBinding::UninitializedObject { .. } => {}
             CLocalBinding::ArrayObject { .. } => {}
+            CLocalBinding::AggregateObject { .. } => {}
         }
     }
     collect_memory_bitvector_variables(&state.memory, variables);

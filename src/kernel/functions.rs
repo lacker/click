@@ -53,11 +53,7 @@ pub(super) fn construct_c_function_resource(
         )));
     };
     if function.return_type() != CType::Void {
-        evaluation_state.locals.set_typed(
-            "result".to_string(),
-            result.clone(),
-            function.return_type(),
-        );
+        set_function_result(&mut evaluation_state, function, result.clone());
     }
     let mut budget = ExecutionBudget::default();
     let mut authorized = false;
@@ -917,11 +913,7 @@ fn execute_verified_function_rule(
         let result = symbolic_call_result(function.return_type(), result_identity);
         let mut post_state = entry_state.clone().with_memory(memory);
         if function.return_type() != CType::Void {
-            post_state.locals.set_typed(
-                "result".to_string(),
-                result.clone(),
-                function.return_type(),
-            );
+            set_function_result(&mut post_state, function, result.clone());
         }
         let mut transition_state = post_state
             .clone()
@@ -1466,6 +1458,14 @@ fn apply_verified_heap_allocation_delta(
 fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[CValue]) -> CState {
     let mut state = state.clone();
     for (parameter, value) in function.parameters().iter().zip(values) {
+        if parameter.aggregate_layout().is_some() {
+            // Aggregate parameters are already represented by the copied
+            // address-backed object installed by argument binding. Keeping
+            // that binding lets contract field accesses inspect the copy
+            // rather than accidentally replacing it with the caller's source
+            // pointer.
+            continue;
+        }
         // Keep the contract view identical to the typed parameter binding.
         // In particular, a C null-pointer constant arrives here as the
         // caller's int32 `0`, but the callee parameter is a pointer.  Using
@@ -1497,6 +1497,57 @@ fn with_contract_argument_views(state: &CState, function: &CFunction, values: &[
         }
     }
     state
+}
+
+fn set_function_result(state: &mut CState, function: &CFunction, value: CValue) {
+    if let Some(layout) = function.return_aggregate_layout()
+        && let CValue::Pointer(pointer) = &value
+    {
+        state.memory = if matches!(pointer.block, PointerBlock::Symbolic(_)) {
+            state
+                .memory
+                .clone()
+                .with_block_without_derivation(pointer.block.clone(), layout.size_bytes())
+        } else {
+            state
+                .memory
+                .clone()
+                .with_block(pointer.block.clone(), layout.size_bytes())
+        };
+        state.locals.set_aggregate_object_at(
+            "result".to_string(),
+            layout.clone(),
+            pointer.pointer().clone(),
+        );
+        return;
+    }
+    state
+        .locals
+        .set_typed("result".to_string(), value, function.return_type());
+}
+
+fn materialize_aggregate_return(
+    state: &mut CState,
+    function: &CFunction,
+    value: CValue,
+) -> Option<CValue> {
+    let layout = function.return_aggregate_layout()?;
+    let CValue::Pointer(pointer) = value else {
+        return None;
+    };
+    if pointer.is_null() {
+        return None;
+    }
+    let source = pointer.pointer().clone();
+    let frame = state.next_local_frame;
+    let destination = CMemory::frame_local_pointer(frame, "__return");
+    state.memory = state
+        .memory
+        .clone()
+        .with_block(destination.block.clone(), layout.size_bytes());
+    state.memory = copy_aggregate_fields(state.memory.clone(), &source, &destination, layout);
+    state.next_local_frame = frame.saturating_add(1);
+    Some(CValue::typed_pointer(destination, function.return_type()))
 }
 
 fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
@@ -1688,16 +1739,47 @@ pub(super) fn bind_c_function_arguments(
         .map(|parameter| parameter.name())
         .collect::<BTreeSet<_>>();
     let frame = caller_state.next_local_frame();
+    let has_aggregate_parameters = function
+        .parameters()
+        .iter()
+        .any(|parameter| parameter.aggregate_layout().is_some());
     let mut callee_state = CState::new()
         .with_memory(caller_state.memory.clone())
         .with_resource_context(caller_state.resources.clone())
-        .with_next_local_frame(if address_taken_parameters.is_empty() {
-            frame
-        } else {
-            frame.saturating_add(1)
-        });
+        .with_next_local_frame(
+            if address_taken_parameters.is_empty() && !has_aggregate_parameters {
+                frame
+            } else {
+                frame.saturating_add(1)
+            },
+        );
     callee_state.counted_populations = caller_state.counted_populations.clone();
     for (parameter, value) in function.parameters().iter().zip(values) {
+        if let Some(layout) = parameter.aggregate_layout() {
+            let CValue::Pointer(pointer) = value else {
+                return None;
+            };
+            if pointer.is_null() {
+                return None;
+            }
+            let source = pointer.pointer().clone();
+            let slot = CMemory::frame_local_pointer(frame, parameter.name());
+            // Preserve the caller's memory snapshot for symbolic source
+            // loads. Declaring the destination first would make an unknown
+            // external field load depend on the callee's fresh block and
+            // prevent entry facts from relating it to the caller's value.
+            callee_state.memory =
+                copy_aggregate_fields(callee_state.memory, &source, &slot, layout);
+            callee_state.memory = callee_state
+                .memory
+                .with_block(slot.block.clone(), layout.size_bytes());
+            callee_state.locals.set_aggregate_object_at(
+                parameter.name().to_string(),
+                layout.clone(),
+                slot,
+            );
+            continue;
+        }
         let value = coerce_c_null_pointer_constant(value.clone(), parameter.c_type())?;
         if address_taken_parameters.contains(parameter.name()) {
             let slot = CMemory::frame_local_pointer(frame, parameter.name());
@@ -1718,6 +1800,52 @@ pub(super) fn bind_c_function_arguments(
         }
     }
     Some(callee_state)
+}
+
+/// Copy the modeled scalar fields of an address-backed aggregate into a
+/// distinct destination block. Missing cells in automatic storage remain
+/// missing so an uninitialized source field stays uninitialized in the copy;
+/// opaque/external source cells are represented by typed symbolic loads.
+pub(super) fn copy_aggregate_fields(
+    mut memory: CMemory,
+    source: &Pointer,
+    destination: &Pointer,
+    layout: &CAggregateLayout,
+) -> CMemory {
+    for field in layout.fields() {
+        let source_field = source.offset_by_bytes(field.offset_bytes());
+        let destination_field = destination.offset_by_bytes(field.offset_bytes());
+        let value = memory.known_value(&source_field).or_else(|| {
+            if memory.is_zeroed_heap_address(&source_field, field.c_type().byte_width()) {
+                return match field.c_type() {
+                    CType::Int32 => Some(int32(0)),
+                    CType::UInt8 => Some(uint8(0)),
+                    _ => None,
+                };
+            }
+            if memory.has_block(&source_field.block)
+                && !matches!(source_field.block, PointerBlock::Symbolic(_))
+                && memory.access_in_bounds(&source_field, field.c_type().byte_width())
+            {
+                return None;
+            }
+            match field.c_type() {
+                CType::Int32 => Some(CValue::Int32(crate::kernel::canonical_form_of_load(
+                    crate::kernel::intern_c_memory(memory.clone()),
+                    source_field,
+                ))),
+                CType::UInt8 => Some(CValue::UInt8(crate::kernel::canonical_form_of_load(
+                    crate::kernel::intern_c_memory(memory.clone()),
+                    source_field,
+                ))),
+                _ => None,
+            }
+        });
+        if let Some(value) = value {
+            memory = memory.store(destination_field, value);
+        }
+    }
+    memory
 }
 
 fn evaluate_resource_population_body_resources(
@@ -4430,9 +4558,7 @@ pub(crate) fn unreturned_allocation_at_function_exit(
     };
     let mut output_state = with_contract_argument_views(state, function, &argument_values);
     if function.return_type() != CType::Void {
-        output_state
-            .locals
-            .set_typed("result".to_string(), value.clone(), function.return_type());
+        set_function_result(&mut output_state, function, value.clone());
     }
     let returned_resources = match evaluate_function_resource_context(
         &output_state,
@@ -4483,9 +4609,7 @@ fn function_outcome_from_body_with_population_transition(
         ));
     };
     if function.return_type() != CType::Void {
-        state
-            .locals
-            .set_typed("result".to_string(), value.clone(), function.return_type());
+        set_function_result(&mut state, function, value.clone());
     }
     let population_transition = match apply_counted_population_transitions(
         caller_state,
@@ -4546,9 +4670,7 @@ fn function_outcome_from_body_with_resource_transfer(
     };
 
     if function.return_type() != CType::Void {
-        state
-            .locals
-            .set_typed("result".to_string(), value.clone(), function.return_type());
+        set_function_result(&mut state, function, value.clone());
     }
     let population_transition = match crate::instrumentation::measure_operation(
         function.name(),
@@ -4821,7 +4943,7 @@ pub(super) fn function_outcome_from_body(
     return_resources: Option<&ResourceContext>,
 ) -> (CFunctionOutcome, Vec<ProofObligation>) {
     match outcome {
-        CStatementOutcome::Return { value, state } => {
+        CStatementOutcome::Return { value, mut state } => {
             let Some(value) = coerce_c_value_to_type(
                 value,
                 function.return_type(),
@@ -4835,6 +4957,20 @@ pub(super) fn function_outcome_from_body(
                     ))),
                     obligations,
                 );
+            };
+            let value = if function.return_aggregate_layout().is_some() {
+                let Some(value) = materialize_aggregate_return(&mut state, function, value) else {
+                    return (
+                        CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                            "{} returned an invalid struct value",
+                            function.name()
+                        ))),
+                        obligations,
+                    );
+                };
+                value
+            } else {
+                value
             };
 
             let mut caller_state = caller_state.clone();

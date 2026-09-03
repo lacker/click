@@ -5,6 +5,7 @@ impl CParameter {
         Self {
             name: name.into(),
             c_type,
+            aggregate_layout: None,
         }
     }
 
@@ -14,6 +15,15 @@ impl CParameter {
 
     pub fn c_type(&self) -> CType {
         self.c_type
+    }
+
+    pub fn aggregate_layout(&self) -> Option<&CAggregateLayout> {
+        self.aggregate_layout.as_ref()
+    }
+
+    pub fn with_aggregate_layout(mut self, layout: CAggregateLayout) -> Self {
+        self.aggregate_layout = Some(layout);
+        self
     }
 }
 
@@ -26,6 +36,7 @@ impl CFunction {
     ) -> Self {
         Self {
             return_type,
+            return_aggregate_layout: None,
             name: name.into(),
             parameters,
             source_body: body.clone(),
@@ -106,6 +117,15 @@ impl CFunction {
 
     pub fn return_type(&self) -> CType {
         self.return_type
+    }
+
+    pub fn return_aggregate_layout(&self) -> Option<&CAggregateLayout> {
+        self.return_aggregate_layout.as_ref()
+    }
+
+    pub fn with_return_aggregate_layout(mut self, layout: CAggregateLayout) -> Self {
+        self.return_aggregate_layout = Some(layout);
+        self
     }
 
     pub fn name(&self) -> &str {

@@ -845,6 +845,9 @@ fn synthesize_surface_bitvector(
             ContractExpression::CFragment(CExpression::Variable(name))
         });
     }
+    if let Some(field) = synthesize_local_aggregate_field(term, state) {
+        return Some(field);
+    }
     let binary = |left: &Bitvector32Term, right: &Bitvector32Term| {
         Some((
             Box::new(synthesize_surface_bitvector(
@@ -1059,6 +1062,58 @@ fn synthesize_parameter_field_indexed_int32_load(
         PointerOffsetTerm::Constant(_) | PointerOffsetTerm::Variable(_) => return None,
     };
     Some(ContractExpression::Index(Box::new(field), Box::new(index)))
+}
+
+fn synthesize_local_aggregate_field(
+    term: &Bitvector32Term,
+    state: &CState,
+) -> Option<ContractExpression> {
+    state
+        .locals()
+        .aggregate_object_values()
+        .find_map(|(name, layout, slot)| {
+            layout.fields().iter().find_map(|field| {
+                let pointer = if field.offset_bytes() == 0 {
+                    slot.clone()
+                } else {
+                    Pointer {
+                        block: slot.block.clone(),
+                        offset: crate::kernel::PointerOffsetTerm::add(
+                            slot.offset.clone(),
+                            crate::kernel::PointerOffsetTerm::constant(i64::from(
+                                field.offset_bytes(),
+                            )),
+                        ),
+                    }
+                };
+                let CExpressionOutcome::Value(value) = state.memory().load(&pointer) else {
+                    return None;
+                };
+                let value_term = match value {
+                    CValue::Int32(value) | CValue::UInt8(value) => value,
+                    CValue::Pointer(_) | CValue::Void => return None,
+                };
+                (value_term == *term).then(|| {
+                    let base = CExpression::Variable(name.to_string());
+                    let lowered_pointer = if field.offset_bytes() == 0 {
+                        base.clone()
+                    } else {
+                        CExpression::PointerOffsetBytes {
+                            pointer: Box::new(base.clone()),
+                            bytes: field.offset_bytes(),
+                        }
+                    };
+                    ContractExpression::Field {
+                        base: Box::new(ContractExpression::CFragment(base)),
+                        field: field.name().to_string(),
+                        lowered: CExpression::TypedLoad {
+                            pointer: Box::new(lowered_pointer),
+                            value_type: field.c_type(),
+                        },
+                    }
+                })
+            })
+        })
 }
 
 pub(super) fn bitvector_term_is_load_free(term: &Bitvector32Term) -> bool {

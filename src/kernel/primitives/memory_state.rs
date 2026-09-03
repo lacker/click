@@ -420,11 +420,21 @@ impl CLocalEnvironment {
         );
     }
 
+    pub(in crate::kernel) fn set_aggregate_object_at(
+        &mut self,
+        name: impl Into<String>,
+        layout: CAggregateLayout,
+        slot: Pointer,
+    ) {
+        self.insert_binding(name.into(), CLocalBinding::AggregateObject { layout, slot });
+    }
+
     pub fn get(&self, name: &str) -> Option<&CValue> {
         match self.bindings.get(name) {
             Some(CLocalBinding::Object { value, .. }) => Some(value),
             Some(CLocalBinding::UninitializedObject { .. })
             | Some(CLocalBinding::ArrayObject { .. })
+            | Some(CLocalBinding::AggregateObject { .. })
             | None => None,
         }
     }
@@ -441,9 +451,24 @@ impl CLocalEnvironment {
             .iter()
             .filter_map(|(name, binding)| match binding {
                 CLocalBinding::Object { value, .. } => Some((name.as_str(), value)),
-                CLocalBinding::UninitializedObject { .. } | CLocalBinding::ArrayObject { .. } => {
-                    None
+                CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::ArrayObject { .. }
+                | CLocalBinding::AggregateObject { .. } => None,
+            })
+    }
+
+    pub fn aggregate_object_values(
+        &self,
+    ) -> impl Iterator<Item = (&str, &CAggregateLayout, &Pointer)> + '_ {
+        self.bindings
+            .iter()
+            .filter_map(|(name, binding)| match binding {
+                CLocalBinding::AggregateObject { layout, slot } => {
+                    Some((name.as_str(), layout, slot))
                 }
+                CLocalBinding::Object { .. }
+                | CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::ArrayObject { .. } => None,
             })
     }
 
@@ -463,7 +488,9 @@ impl CLocalEnvironment {
                     ),
                     *element_type,
                 )),
-                CLocalBinding::Object { .. } | CLocalBinding::UninitializedObject { .. } => None,
+                CLocalBinding::Object { .. }
+                | CLocalBinding::UninitializedObject { .. }
+                | CLocalBinding::AggregateObject { .. } => None,
             })
     }
 
@@ -473,6 +500,7 @@ impl CLocalEnvironment {
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
             None => None,
+            Some(CLocalBinding::AggregateObject { .. }) => None,
         }
     }
 
@@ -480,7 +508,9 @@ impl CLocalEnvironment {
         match self.binding(name) {
             Some(CLocalBinding::Object { c_type, .. }) => Some(*c_type),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => Some(*c_type),
-            Some(CLocalBinding::ArrayObject { .. }) | None => None,
+            Some(CLocalBinding::ArrayObject { .. })
+            | Some(CLocalBinding::AggregateObject { .. })
+            | None => None,
         }
     }
 
@@ -499,6 +529,20 @@ impl CLocalEnvironment {
     pub(in crate::kernel) fn is_array_object(&self, name: &str) -> bool {
         matches!(self.binding(name), Some(CLocalBinding::ArrayObject { .. }))
     }
+
+    pub(in crate::kernel) fn is_aggregate_object(&self, name: &str) -> bool {
+        matches!(
+            self.binding(name),
+            Some(CLocalBinding::AggregateObject { .. })
+        )
+    }
+
+    pub(in crate::kernel) fn aggregate_layout(&self, name: &str) -> Option<&CAggregateLayout> {
+        match self.binding(name) {
+            Some(CLocalBinding::AggregateObject { layout, .. }) => Some(layout),
+            _ => None,
+        }
+    }
 }
 
 impl CLocalBinding {
@@ -506,7 +550,8 @@ impl CLocalBinding {
         match self {
             Self::Object { slot, .. }
             | Self::UninitializedObject { slot, .. }
-            | Self::ArrayObject { slot, .. } => slot,
+            | Self::ArrayObject { slot, .. }
+            | Self::AggregateObject { slot, .. } => slot,
         }
     }
 }
@@ -596,6 +641,19 @@ impl CMemory {
         let base = intern_c_memory_ref(&self);
         std::sync::Arc::make_mut(&mut self.blocks).insert(block.clone(), CBlock::new(size));
         record_c_memory_derivation(&self, CMemoryDerivation::BlockDeclared { base, block });
+        self
+    }
+
+    /// Adds a synthetic block without claiming that it was declared by a
+    /// program transition. Symbolic aggregate return values use this to make
+    /// their known layout available for bounds checks while keeping the
+    /// symbolic load identity independent of the caller's memory snapshot.
+    pub(in crate::kernel) fn with_block_without_derivation(
+        mut self,
+        block: impl Into<PointerBlock>,
+        size: u32,
+    ) -> Self {
+        std::sync::Arc::make_mut(&mut self.blocks).insert(block.into(), CBlock::new(size));
         self
     }
 

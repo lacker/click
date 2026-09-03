@@ -1454,6 +1454,7 @@ pub(in crate::surface) fn c0_statement_calls(
             | syntax::C0Statement::Break
             | syntax::C0Statement::Continue
             | syntax::C0Statement::Declare { .. }
+            | syntax::C0Statement::DeclareStructValue { .. }
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::CallAssign { .. }
             | syntax::C0Statement::Call { .. }
@@ -1615,7 +1616,8 @@ pub(in crate::surface) fn c0_statement_calls(
                 }
                 calls.push(dependencies);
             }
-            syntax::C0Statement::Declare { .. } => calls.push(BTreeSet::new()),
+            syntax::C0Statement::Declare { .. }
+            | syntax::C0Statement::DeclareStructValue { .. } => calls.push(BTreeSet::new()),
             syntax::C0Statement::Assign { expression, .. }
             | syntax::C0Statement::HeapAllocate {
                 bytes: expression, ..
@@ -2330,6 +2332,7 @@ pub(in crate::surface) fn describe_parameter_type(
     struct_name: Option<&str>,
 ) -> String {
     match struct_name {
+        Some(name) if matches!(c_type, C0Type::UInt8Array(_)) => format!("struct {name}"),
         Some(name) => format!("struct {name}*"),
         None => format!("{c_type:?}"),
     }

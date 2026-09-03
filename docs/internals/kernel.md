@@ -281,6 +281,15 @@ the kernel's scalar load or store. Direct aggregate loads and copies remain
 unsupported; resource clauses currently name nested leaf fields rather than
 the aggregate itself.
 
+Scalar-only by-value structs are the first exception to that address-first
+boundary. C0 retains each field name, byte offset, and kernel scalar type in a
+`CAggregateLayout`; the kernel binds a value to an `AggregateObject` with its
+own local block. Parameter binding, local assignment, and aggregate return
+materialization allocate fresh blocks and copy only the modeled scalar fields.
+The aggregate still has no runtime `CValue`: expressions decay to its address
+for field loads and stores, and pointers, arrays, embedded structs, and enums
+remain outside this by-value slice.
+
 Field lowering retains these byte offsets as `CExpression::PointerOffsetBytes`;
 it must not encode a struct offset by pretending that a struct pointer is an
 `int32*`. Tests compare mixed scalar/pointer layouts against Rust `repr(C)` on

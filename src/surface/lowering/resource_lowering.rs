@@ -19,6 +19,21 @@ pub(in crate::surface) fn initial_call_state(
     let mut arguments = Vec::new();
 
     for (index, parameter) in parameters.iter().enumerate() {
+        if parameter.is_struct_value() {
+            arguments.push(c_typed_pointer_value(
+                Pointer {
+                    block: PointerBlock::ExternalArgument,
+                    offset: scale_int32_offset(
+                        Bitvector32Term::Variable(Variable(
+                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                        )),
+                        1,
+                    ),
+                },
+                parameter.to_kernel_parameter().c_type(),
+            ));
+            continue;
+        }
         match parameter.c_type() {
             C0Type::Void => {
                 return Err(ClickError::new(format!(
@@ -1067,9 +1082,7 @@ fn contract_expression_struct_layout<'a>(
             .iter()
             .find(|parameter| parameter.name() == name)
             .and_then(|parameter| {
-                parameter
-                    .array_element_width()
-                    .is_some()
+                (parameter.array_element_width().is_some() || parameter.is_struct_value())
                     .then(|| parameter.struct_layout())
                     .flatten()
             }),
@@ -1111,17 +1124,21 @@ pub(in crate::surface) fn contract_expression_element_width(
             .iter()
             .find(|parameter| parameter.name() == name)
             .and_then(|parameter| {
-                parameter
-                    .array_element_width()
-                    .or_else(|| match parameter.c_type() {
-                        c_type if c_type.is_pointer() => c_type
-                            .pointee_type()
-                            .map(C0Type::to_kernel_type)
-                            .map(CType::byte_width),
-                        C0Type::Int32Array(_) => Some(4),
-                        C0Type::UInt8Array(_) => Some(1),
-                        _ => None,
-                    })
+                if parameter.is_struct_value() {
+                    Some(4)
+                } else {
+                    parameter
+                        .array_element_width()
+                        .or_else(|| match parameter.c_type() {
+                            c_type if c_type.is_pointer() => c_type
+                                .pointee_type()
+                                .map(C0Type::to_kernel_type)
+                                .map(CType::byte_width),
+                            C0Type::Int32Array(_) => Some(4),
+                            C0Type::UInt8Array(_) => Some(1),
+                            _ => None,
+                        })
+                }
             }),
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),

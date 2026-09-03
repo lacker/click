@@ -869,6 +869,7 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
             syntax::C0Statement::Break
             | syntax::C0Statement::Continue
             | syntax::C0Statement::Declare { .. }
+            | syntax::C0Statement::DeclareStructValue { .. }
             | syntax::C0Statement::Assign { .. }
             | syntax::C0Statement::Call { .. }
             | syntax::C0Statement::CallAssign { .. }
@@ -3158,6 +3159,73 @@ fn c0_struct_layout_uses_lp64_alignment_and_tail_padding() {
     assert_eq!(layout.field("length").unwrap().offset_bytes(), 16);
     assert_eq!(layout.alignment_bytes(), 8);
     assert_eq!(layout.size_bytes(), 24);
+}
+
+#[test]
+fn c0_scalar_struct_values_preserve_named_kernel_layout_metadata() {
+    let function = syntax::parse_function(
+        r#"
+        struct pair {
+            int32 first;
+            uint8 tag;
+        };
+
+        struct pair identity(struct pair value) {
+            return value;
+        }
+        "#,
+    )
+    .expect("scalar-only struct values should parse");
+
+    assert_eq!(function.return_type(), syntax::C0Type::UInt8Array(8));
+    assert_eq!(function.return_struct_name(), Some("pair"));
+    let parameter = &function.parameters()[0];
+    assert!(parameter.is_struct_value());
+    assert_eq!(parameter.struct_name(), Some("pair"));
+    assert_eq!(parameter.struct_layout().unwrap().size_bytes(), 8);
+
+    let kernel = function.to_kernel_function();
+    assert_eq!(kernel.return_type(), crate::kernel::CType::UInt8Pointer);
+    let return_layout = kernel
+        .return_aggregate_layout()
+        .expect("struct return should retain aggregate metadata");
+    assert_eq!(return_layout.size_bytes(), 8);
+    assert_eq!(return_layout.fields()[0].name(), "first");
+    assert_eq!(return_layout.fields()[0].offset_bytes(), 0);
+    assert_eq!(
+        return_layout.fields()[0].c_type(),
+        crate::kernel::CType::Int32
+    );
+    assert_eq!(return_layout.fields()[1].name(), "tag");
+    assert_eq!(return_layout.fields()[1].offset_bytes(), 4);
+    assert_eq!(
+        return_layout.fields()[1].c_type(),
+        crate::kernel::CType::UInt8
+    );
+
+    let parameter_layout = kernel.parameters()[0]
+        .aggregate_layout()
+        .expect("struct parameter should retain aggregate metadata");
+    assert_eq!(parameter_layout, return_layout);
+}
+
+#[test]
+fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
+    let error = syntax::parse_function(
+        r#"
+        struct packet {
+            int32* data;
+        };
+
+        struct packet invalid(struct packet value) {
+            return value;
+        }
+        "#,
+    )
+    .expect_err("pointer-bearing struct values should remain outside this slice");
+
+    assert!(error.message().contains("only int32 and uint8 fields"));
+    assert!(error.message().contains("contains a pointer"));
 }
 
 #[test]

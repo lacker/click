@@ -141,7 +141,9 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
             facts: Vec::new(),
             obligations: Vec::new(),
         }],
-        CExpression::Variable(name) if state.locals.is_array_object(name) => {
+        CExpression::Variable(name)
+            if state.locals.is_array_object(name) || state.locals.is_aggregate_object(name) =>
+        {
             let pointer = state
                 .locals
                 .slot(name)
@@ -151,11 +153,15 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
                 outcome: if state.memory.has_block(&pointer.block) {
                     CExpressionOutcome::Value(CValue::typed_pointer(
                         pointer,
-                        state
-                            .locals
-                            .object_type(name)
-                            .and_then(CType::pointer_to)
-                            .unwrap_or(CType::Int32Pointer),
+                        if state.locals.is_aggregate_object(name) {
+                            CType::UInt8Pointer
+                        } else {
+                            state
+                                .locals
+                                .object_type(name)
+                                .and_then(CType::pointer_to)
+                                .unwrap_or(CType::Int32Pointer)
+                        },
                     ))
                 } else {
                     CExpressionOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone()))
@@ -537,6 +543,9 @@ pub(in crate::kernel) fn evaluate_c_lvalue_paths(
                 Some(CLocalBinding::ArrayObject { .. }) => {
                     CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
                 }
+                Some(CLocalBinding::AggregateObject { .. }) => {
+                    CLValueOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                }
                 None => CLValueOutcome::RuntimeError(CRuntimeError::UnboundVariable(name.clone())),
             },
             facts: Vec::new(),
@@ -849,6 +858,7 @@ pub(in crate::kernel) fn c_expression_pointee_type(
             Some(CLocalBinding::Object { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::UninitializedObject { c_type, .. }) => c_type.pointee_type(),
             Some(CLocalBinding::ArrayObject { element_type, .. }) => Some(*element_type),
+            Some(CLocalBinding::AggregateObject { .. }) => Some(CType::UInt8),
             None => None,
         },
         CExpression::AddressOf(target) => c_expression_lvalue_type(state, target),

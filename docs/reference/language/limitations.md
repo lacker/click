@@ -12,7 +12,7 @@ contract expressions, calls, and the other parenthesized surface forms.
 ## C0 is small
 
 Click does not parse general C. See [Supported C0](c0.md). Missing
-features include full structs, unsigned integers beyond the narrow `uint8` byte
+features include broader structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, general allocator compatibility, and many operators. The
 supported `switch` slice is intentionally narrow: labels must be direct integer
 or character literals in one compound body, with no `goto` or arbitrary
@@ -41,10 +41,14 @@ structs are also accepted for indexed `items[i].field` loads and stores, using
 the ABI-sized struct stride.
 One-dimensional function parameters declared as arrays of those structs are
 supported with the same stride; their declarator length is syntax metadata and
-does not change the pointer ABI. It still has no struct values, aggregate
-copies, arrays of embedded structs, multidimensional inline arrays, unions,
-bitfields, packed layout, or general field-address expressions. Named enums use
-the four-byte scalar ABI representation; their enumerators are resolved to
+does not change the pointer ABI. Scalar-only struct values are also supported
+when every field is `int32` or `uint8`: parameters, locals, assignments, and
+returns use fresh address-backed copies. Struct values containing pointers,
+arrays, embedded structs, or enums remain unsupported, as do direct aggregate
+loads, aggregate resource segments, arrays of embedded structs,
+multidimensional inline arrays, unions, bitfields, packed layout, or general
+field-address expressions. Named enums use the four-byte scalar ABI
+representation; their enumerators are resolved to
 int32 values in C expressions, while enum parameters, returns, locals, arrays,
 and anonymous declarations remain unsupported. Aggregate fields are not
 resource segments; resource clauses must name a leaf field.

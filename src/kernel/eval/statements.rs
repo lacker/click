@@ -1463,6 +1463,14 @@ pub(in crate::kernel) fn execute_c_statement_paths(
                 obligations: Vec::new(),
             }]
         }
+        CStatement::DeclareAggregate { name, layout } => {
+            let outcome = CStatementOutcome::Normal(declare_aggregate_local(state, name, layout));
+            vec![CStatementExecutionPath {
+                outcome,
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
+        }
         CStatement::Assign { name, expression } => execute_c_lvalue_assignment_paths(
             state,
             &c_variable(name.clone()),
@@ -2208,6 +2216,22 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
     let pointer = CMemory::local_pointer(name);
     state.memory = state.memory.with_block(pointer.block, byte_width);
     state.locals.set_uninitialized(name.to_string(), c_type);
+    state
+}
+
+pub(in crate::kernel) fn declare_aggregate_local(
+    state: &CState,
+    name: &str,
+    layout: &CAggregateLayout,
+) -> CState {
+    let mut state = state.clone();
+    let pointer = CMemory::local_pointer(name);
+    state.memory = state
+        .memory
+        .with_block(pointer.block.clone(), layout.size_bytes());
+    state
+        .locals
+        .set_aggregate_object_at(name.to_string(), layout.clone(), pointer);
     state
 }
 

@@ -46,6 +46,10 @@ id = "c0.type.struct-array-parameter"
 path = "reference/language/c0.md#struct-subset"
 
 [[item]]
+id = "c0.type.struct-value"
+path = "reference/language/c0.md#struct-subset"
+
+[[item]]
 id = "c0.type.function-pointer"
 path = "reference/language/c0.md#supported-types"
 
@@ -72,6 +76,10 @@ path = "reference/language/c0.md#struct-subset"
 [[item]]
 id = "c0.declaration.local"
 path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.struct-value-declaration"
+path = "reference/language/c0.md#struct-subset"
 
 [[item]]
 id = "c0.statement.empty"

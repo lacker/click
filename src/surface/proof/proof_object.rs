@@ -523,7 +523,8 @@ fn collect_statement_variable_names(statement: &CStatement, names: &mut BTreeSet
         CStatement::Skip
         | CStatement::Break
         | CStatement::Continue
-        | CStatement::Declare { .. } => {}
+        | CStatement::Declare { .. }
+        | CStatement::DeclareAggregate { .. } => {}
         CStatement::ContinueWithStep { step } => {
             collect_statement_variable_names(step, names);
         }

@@ -576,6 +576,13 @@ pub enum CStatement {
         name: String,
         c_type: CType,
     },
+    /// Declare an address-backed scalar-only aggregate. Aggregate values are
+    /// not runtime `CValue`s; their local binding exposes the block base so
+    /// field lowering can continue to use typed memory accesses.
+    DeclareAggregate {
+        name: String,
+        layout: CAggregateLayout,
+    },
     Assign {
         name: String,
         expression: CExpression,
@@ -702,11 +709,62 @@ pub struct CMemoryRange {
 pub struct CParameter {
     pub(super) name: String,
     pub(super) c_type: CType,
+    pub(super) aggregate_layout: Option<CAggregateLayout>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateField {
+    pub(super) name: String,
+    pub(super) offset_bytes: u32,
+    pub(super) c_type: CType,
+}
+
+impl CAggregateField {
+    pub fn new(name: impl Into<String>, offset_bytes: u32, c_type: CType) -> Self {
+        Self {
+            name: name.into(),
+            offset_bytes,
+            c_type,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn offset_bytes(&self) -> u32 {
+        self.offset_bytes
+    }
+
+    pub fn c_type(&self) -> CType {
+        self.c_type
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct CAggregateLayout {
+    pub(super) size_bytes: u32,
+    pub(super) fields: Vec<CAggregateField>,
+}
+
+impl CAggregateLayout {
+    pub fn new(size_bytes: u32, fields: Vec<CAggregateField>) -> Self {
+        Self { size_bytes, fields }
+    }
+
+    pub fn size_bytes(&self) -> u32 {
+        self.size_bytes
+    }
+
+    pub fn fields(&self) -> &[CAggregateField] {
+        &self.fields
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CFunction {
     pub(super) return_type: CType,
+    pub(super) return_aggregate_layout: Option<CAggregateLayout>,
     pub(super) name: String,
     pub(super) parameters: Vec<CParameter>,
     pub(super) body: CStatement,
@@ -1077,6 +1135,10 @@ pub(super) enum CLocalBinding {
     ArrayObject {
         element_type: CType,
         length: u32,
+        slot: Pointer,
+    },
+    AggregateObject {
+        layout: CAggregateLayout,
         slot: Pointer,
     },
 }

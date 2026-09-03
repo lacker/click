@@ -90,9 +90,11 @@ Likely additions:
   declarations, alignment/tail padding, chained pointer-field loads/stores,
   field resource places, and nested leaf-field access through embedded
   aggregate places. One-dimensional function parameters declared as arrays of
-  the supported structs now retain their ABI stride. Remaining work includes
-  struct values, arrays of embedded structs, multidimensional struct arrays,
-  unions/bitfields, and broader address-taking. Named enum fields and constants
+  the supported structs now retain their ABI stride. Scalar-only by-value
+  structs with `int32`/`uint8` fields now have explicit fresh-copy semantics
+  for parameters, locals, assignments, and returns. Remaining work includes
+  broader struct values, arrays of embedded structs, multidimensional struct
+  arrays, unions/bitfields, and broader address-taking. Named enum fields and constants
   are supported, but enum parameters, returns, locals, arrays, and anonymous
   declarations remain outside the slice.
 - Globals:
@@ -325,7 +327,7 @@ Good next tasks from the current state:
    already exist.
 2. Broaden the struct/field memory model beyond compact C0 field lowering:
    whole-object resources, field-dependent composite resources, field
-   frames, and eventually ABI layout details.
+   frames, and eventually broader by-value shapes and ABI layout details.
 3. Add more fold/range theorems beyond alpha-equivalent folds and the current
    count-shaped split rules, especially when the pilot or sorting/string tests
    expose a reusable proof pattern.
