@@ -2411,6 +2411,45 @@ pub(super) fn finish_ordered_proof<'a>(
                                     ProofTactic::Witness(witness.clone()),
                                 );
                             }
+                            PostExecutionTactic::Intro => {
+                                let (claim_index, surface_goal, proof) =
+                                    match existence_proof.take() {
+                                        Some(active) => active,
+                                        None => begin_outcome_existence_proof(
+                                            outcome_proof.as_ref().ok_or_else(|| {
+                                                ClickError::new(format!(
+                                                    "`{proof_label}` path {path_index}, tactic {tactic_index}: the typed outcome goal for `intro` is unavailable"
+                                                ))
+                                            })?,
+                                            function,
+                                            pre_state,
+                                            arguments,
+                                            &outcome,
+                                            &path_requirements,
+                                            claims,
+                                            &closures,
+                                            &rewrite_claim_equalities,
+                                            &unfolded_predicates,
+                                        )?,
+                                    };
+                                let proof = proof
+                                    .with_outcome_snapshot(&outcome)?
+                                    .apply_step(ProofStep::Intro)?;
+                                existence_proof = Some((claim_index, surface_goal, proof));
+                                record_post_execution_surface_tactic(
+                                    deferred.surface_recorded,
+                                    &mut path_surface_post_tactics,
+                                    &mut path_deferred_capture_tactics,
+                                    proof_execution
+                                        .presentation
+                                        .expansion
+                                        .deferred_tactic_capture
+                                        .as_ref(),
+                                    post_execution_index,
+                                    *tactic_index,
+                                    ProofTactic::Intro,
+                                );
+                            }
                             PostExecutionTactic::Assumption => {
                                 let mut closed_any = false;
                                 let transition_facts = path.execution_facts();

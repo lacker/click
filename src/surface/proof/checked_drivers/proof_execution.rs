@@ -444,6 +444,7 @@ fn flat_post_execution_tactic(tactic: &ProofTactic) -> Option<PostExecutionTacti
         }),
         ProofTactic::Choose(choice) => Some(PostExecutionTactic::Choose(choice.clone())),
         ProofTactic::Witness(witness) => Some(PostExecutionTactic::Witness(witness.clone())),
+        ProofTactic::Intro => Some(PostExecutionTactic::Intro),
         ProofTactic::Assumption => Some(PostExecutionTactic::Assumption),
         ProofTactic::Normalize => Some(PostExecutionTactic::Normalize),
         ProofTactic::Rewrite(equality) => Some(PostExecutionTactic::Rewrite(equality.clone())),
