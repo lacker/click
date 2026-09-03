@@ -378,6 +378,36 @@ fn c0_syntax_accepts_prefix_scalar_updates() {
 }
 
 #[test]
+fn c0_syntax_accepts_a_local_declaration_list() {
+    syntax::parse_function(
+        r#"
+        int32 count() {
+            int32 i = 0, j = 1, k = 2;
+            return i + j + k;
+        }
+        "#,
+    )
+    .expect("a local declaration may contain multiple initialized declarators");
+}
+
+#[test]
+fn c0_syntax_accepts_a_struct_field_declaration_list() {
+    syntax::parse_function(
+        r#"
+        struct pair {
+            int32 first, second;
+            uint8 low, high;
+        };
+
+        int32 sum_pair(struct pair* value) {
+            return value->first + value->second;
+        }
+        "#,
+    )
+    .expect("a struct declaration may contain multiple fields");
+}
+
+#[test]
 fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
     syntax::parse_function(
         r#"

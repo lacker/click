@@ -20,11 +20,13 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.struct-pointer",
     "declaration.function",
     "declaration.struct",
+    "declaration.struct-field-list",
     "declaration.local",
     "statement.empty",
     "statement.block",
     "statement.assignment",
     "statement.initializer",
+    "statement.declaration-list",
     "statement.call",
     "statement.call-assignment",
     "statement.return",
@@ -1069,30 +1071,36 @@ impl Parser {
                     "struct fields currently support int32, uint8, and pointer fields",
                 ));
             }
-            let field_name = self.expect_ident("struct field name")?;
-            self.expect(Token::Semicolon)?;
             let (field_size, field_alignment) = self.abi.size_and_alignment(field_type.c_type);
-            offset_bytes = align_up(offset_bytes, field_alignment)
-                .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
-            if fields
-                .insert(
-                    field_name.clone(),
-                    C0StructField {
-                        c_type: field_type.c_type,
-                        struct_name: field_type.struct_name,
-                        offset_bytes,
-                    },
-                )
-                .is_some()
-            {
-                return Err(
-                    self.error_here(format!("duplicate field `{field_name}` in struct `{name}`"))
-                );
+            loop {
+                let field_name = self.expect_ident("struct field name")?;
+                offset_bytes = align_up(offset_bytes, field_alignment).ok_or_else(|| {
+                    self.error_here(format!("struct `{name}` layout is too large"))
+                })?;
+                if fields
+                    .insert(
+                        field_name.clone(),
+                        C0StructField {
+                            c_type: field_type.c_type,
+                            struct_name: field_type.struct_name.clone(),
+                            offset_bytes,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(self
+                        .error_here(format!("duplicate field `{field_name}` in struct `{name}`")));
+                }
+                offset_bytes = offset_bytes.checked_add(field_size).ok_or_else(|| {
+                    self.error_here(format!("struct `{name}` layout is too large"))
+                })?;
+                struct_alignment = struct_alignment.max(field_alignment);
+                if self.peek() != Some(&Token::Comma) {
+                    break;
+                }
+                self.position += 1;
             }
-            offset_bytes = offset_bytes
-                .checked_add(field_size)
-                .ok_or_else(|| self.error_here(format!("struct `{name}` layout is too large")))?;
-            struct_alignment = struct_alignment.max(field_alignment);
+            self.expect(Token::Semicolon)?;
         }
 
         self.expect(Token::RBrace)?;
@@ -1489,83 +1497,7 @@ impl Parser {
                 self.expect(Token::Semicolon)?;
                 Ok(statement)
             }
-            Some(Token::Ident(_)) if self.is_type_start() => {
-                let parsed_type = self.parse_type()?;
-                if parsed_type.c_type == C0Type::Void {
-                    return Err(self.error_here("void local declarations are not supported"));
-                }
-                if self.peek() == Some(&Token::LParen) {
-                    return Err(
-                        self.error_here("function-pointer declarations are not supported in C0")
-                    );
-                }
-                let name = self.expect_ident("local name")?;
-                self.declare_name(&name)?;
-                let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
-                if let Some(shape) = array_shape.clone() {
-                    self.variable_array_shapes.insert(name.clone(), shape);
-                }
-                if parsed_type.struct_name.is_some() {
-                    if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
-                        return Err(self.error_here("only pointer-to-struct types are supported"));
-                    }
-                    if c_type != parsed_type.c_type && !matches!(c_type, C0Type::UInt8Array(_)) {
-                        return Err(
-                            self.error_here("local arrays of struct type are not supported")
-                        );
-                    }
-                    self.variable_structs.insert(
-                        name.clone(),
-                        parsed_type
-                            .struct_name
-                            .clone()
-                            .expect("struct_name checked above"),
-                    );
-                }
-                let declaration = C0Statement::Declare {
-                    c_type,
-                    name: name.clone(),
-                };
-                if self.peek() == Some(&Token::Equal) {
-                    if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
-                        if parsed_type.struct_name.is_some() {
-                            return Err(self.error_here(
-                                "local array initializers for struct arrays are not supported",
-                            ));
-                        }
-                        self.position += 1;
-                        let initializer = self.parse_local_array_initializer(
-                            &name,
-                            c_type,
-                            array_shape.as_deref(),
-                        )?;
-                        self.expect(Token::Semicolon)?;
-                        return Ok(C0Statement::Seq(
-                            Box::new(declaration),
-                            Box::new(initializer),
-                        ));
-                    }
-                    self.position += 1;
-                    if matches!(self.peek(), Some(Token::Ident(_)))
-                        && self.peek_next() == Some(&Token::LParen)
-                    {
-                        let function_name = self.expect_ident("function name")?;
-                        let arguments = self.parse_call_arguments()?;
-                        let call =
-                            self.call_assignment_statement(name.clone(), function_name, arguments)?;
-                        self.expect(Token::Semicolon)?;
-                        return Ok(C0Statement::Seq(Box::new(declaration), Box::new(call)));
-                    }
-                    let expression = self.parse_expression()?;
-                    self.expect(Token::Semicolon)?;
-                    return Ok(C0Statement::Seq(
-                        Box::new(declaration),
-                        Box::new(C0Statement::Assign { name, expression }),
-                    ));
-                }
-                self.expect(Token::Semicolon)?;
-                Ok(declaration)
-            }
+            Some(Token::Ident(_)) if self.is_type_start() => self.parse_local_declaration(),
             Some(Token::Ident(_)) => match self.peek_ident() {
                 Some("return") => {
                     self.position += 1;
@@ -1790,6 +1722,81 @@ impl Parser {
             values.push(C0Expression::Int32Literal(0));
         }
         Ok(())
+    }
+
+    fn parse_local_declaration(&mut self) -> Result<C0Statement, C0SyntaxError> {
+        let parsed_type = self.parse_type()?;
+        if parsed_type.c_type == C0Type::Void {
+            return Err(self.error_here("void local declarations are not supported"));
+        }
+        if self.peek() == Some(&Token::LParen) {
+            return Err(self.error_here("function-pointer declarations are not supported in C0"));
+        }
+
+        let mut declarations = Vec::new();
+        loop {
+            let name = self.expect_ident("local name")?;
+            self.declare_name(&name)?;
+            let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+            if let Some(shape) = array_shape.clone() {
+                self.variable_array_shapes.insert(name.clone(), shape);
+            }
+            if parsed_type.struct_name.is_some() {
+                if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
+                    return Err(self.error_here("only pointer-to-struct types are supported"));
+                }
+                if c_type != parsed_type.c_type && !matches!(c_type, C0Type::UInt8Array(_)) {
+                    return Err(self.error_here("local arrays of struct type are not supported"));
+                }
+                self.variable_structs.insert(
+                    name.clone(),
+                    parsed_type
+                        .struct_name
+                        .clone()
+                        .expect("struct_name checked above"),
+                );
+            }
+            let declaration = C0Statement::Declare {
+                c_type,
+                name: name.clone(),
+            };
+            let statement = if self.peek() == Some(&Token::Equal) {
+                self.position += 1;
+                if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
+                    if parsed_type.struct_name.is_some() {
+                        return Err(self.error_here(
+                            "local array initializers for struct arrays are not supported",
+                        ));
+                    }
+                    let initializer =
+                        self.parse_local_array_initializer(&name, c_type, array_shape.as_deref())?;
+                    C0Statement::Seq(Box::new(declaration), Box::new(initializer))
+                } else if matches!(self.peek(), Some(Token::Ident(_)))
+                    && self.peek_next() == Some(&Token::LParen)
+                {
+                    let function_name = self.expect_ident("function name")?;
+                    let arguments = self.parse_call_arguments()?;
+                    let call =
+                        self.call_assignment_statement(name.clone(), function_name, arguments)?;
+                    C0Statement::Seq(Box::new(declaration), Box::new(call))
+                } else {
+                    let expression = self.parse_expression()?;
+                    C0Statement::Seq(
+                        Box::new(declaration),
+                        Box::new(C0Statement::Assign { name, expression }),
+                    )
+                }
+            } else {
+                declaration
+            };
+            declarations.push(statement);
+            if self.peek() != Some(&Token::Comma) {
+                break;
+            }
+            self.position += 1;
+        }
+        self.expect(Token::Semicolon)?;
+        Ok(balanced_statement_sequence(declarations).unwrap_or(C0Statement::Skip))
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {

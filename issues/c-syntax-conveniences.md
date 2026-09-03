@@ -13,10 +13,9 @@ existing terms; none needs new kernel state.
 - **Casts.** There is no `(type) expr` production (`:1592-1637`, `:1752-1756`
   treats `(` as grouping only). `(int32) c` and `(uint8) x` should map to the
   existing promotion and checked narrowing; pointer casts need a decision.
-- **Integer literals.** Number tokens are decimal digit runs only
-  (`:1898-1906`): `0xFF` lexes as `0` then `xFF`; suffixes `U`/`L` are
-  rejected; a leading-zero literal silently parses as decimal, a divergence
-  from C's octal.
+- **Integer literals (implemented).** Decimal, octal, and hexadecimal literals
+  with the conventional `U`/`L` suffix combinations now lower to the existing
+  int32 literal form; invalid octal and out-of-range forms remain rejected.
 - **Increment and compound assignment.** Scalar compound assignment now
   supports the arithmetic, shift, and bitwise forms `++ -- += -= *= /= %= <<=
   >>= &= |= ^=`; both prefix and postfix increment/decrement are accepted. It
@@ -31,9 +30,12 @@ existing terms; none needs new kernel state.
   condition remains required. Scalar assignment initializers and same-type
   declaration initializers may be comma-separated; every declaration
   declarator requires its own initializer.
-- **Do-while loops.** There is no `do ... while` production. A post-tested
-  loop should lower to one initial body execution followed by the existing
-  `while` form, including the mandatory trailing semicolon.
+- **Do-while loops (implemented).** `do ... while` lowers to one initial body
+  execution followed by the existing `while` form, including the mandatory
+  trailing semicolon.
+- **Declaration lists (implemented).** Same-type local and struct-field
+  declarators such as `int32 i = 0, j = 1;` and `int32 first, second;` lower in
+  source order, including the existing supported array and call initializers.
 
 ## Violated invariant
 
