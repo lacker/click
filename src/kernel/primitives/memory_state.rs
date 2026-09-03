@@ -1190,7 +1190,7 @@ impl CMemory {
         mutable_ranges: &[CMemoryRange],
         assumptions: &PureFactContext,
     ) -> bool {
-        if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 1 {
+        if self.heap != before.heap || self.blocks.len() != before.blocks.len() + 2 {
             return false;
         }
         if !before
@@ -1205,12 +1205,26 @@ impl CMemory {
             .iter()
             .filter(|(block, _)| !before.blocks.contains_key(*block))
             .collect::<Vec<_>>();
-        let Some((marker, marker_block)) = added_blocks.first() else {
+        let Some((marker, marker_block)) = added_blocks
+            .iter()
+            .find(|(block, _)| block.starts_with("call-havoc:"))
+        else {
             return false;
         };
-        if added_blocks.len() != 1
-            || !marker.starts_with("call-havoc:")
+        let Some(variable) = marker
+            .strip_prefix("call-havoc:")
+            .and_then(|variable| variable.parse::<u64>().ok())
+        else {
+            return false;
+        };
+        let write_set_marker: PointerBlock = format!(
+            "call-write-set:{variable}:{}",
+            memory_havoc_write_set_identity(mutable_ranges).join("|")
+        )
+        .into();
+        if added_blocks.len() != 2
             || **marker_block != CBlock::new(memory_havoc_write_set_fingerprint(mutable_ranges))
+            || self.blocks.get(&write_set_marker) != Some(&CBlock::new(0))
         {
             return false;
         }
