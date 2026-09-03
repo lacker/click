@@ -194,6 +194,36 @@ fn split_additive_constant(term: &Bitvector32Term) -> (Bitvector32Term, u32) {
 /// Certifies a loadability goal from an assumed wider loadable fact over the
 /// same memory snapshot: the goal's base must sit at a provably in-bounds
 /// byte offset within the fact's span.
+/// Whether a lowering's loadability obligation names memory the state
+/// itself shows cannot be loaded: a freed heap address. Such a load is not a
+/// proposition at this state. Every other obligation is left to claim
+/// certification, which discharges it from the path's facts; this is one
+/// lookup in the memory, not a fact search.
+pub fn c_loadability_obligation_impossible(obligation: &Proposition) -> bool {
+    match obligation {
+        Proposition::Implies(premise, body) => match premise.as_ref() {
+            // A load under a premise that is false is never performed.
+            Proposition::ConditionIs(ConditionTerm::Constant(constant), value)
+                if constant != value =>
+            {
+                false
+            }
+            _ => c_loadability_obligation_impossible(body),
+        },
+        Proposition::ForAll { body, .. } | Proposition::Exists { body, .. } => {
+            c_loadability_obligation_impossible(body)
+        }
+        Proposition::And(left, right) => {
+            c_loadability_obligation_impossible(left) || c_loadability_obligation_impossible(right)
+        }
+        Proposition::CMemoryLoadable { memory, base, .. } => {
+            memory.is_deallocated_heap_address(base)
+                || memory.freed_heap_allocation_may_contain(base)
+        }
+        _ => false,
+    }
+}
+
 pub fn loadable_covered_by_fact(assumptions: &PureFactContext, goal: &Proposition) -> bool {
     let Proposition::CMemoryLoadable {
         memory,

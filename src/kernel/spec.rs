@@ -97,7 +97,14 @@ pub(super) fn lower_spec_proposition_at_state_with_loop_entry(
         )?
         .into_iter()
         .map(|path| SpecPropositionPath {
-            proposition: Proposition::Not(Box::new(path.proposition)),
+            // A negated condition is the condition with the other value,
+            // as an execution spells the branch it did not take.
+            proposition: match path.proposition {
+                Proposition::ConditionIs(condition, value) => {
+                    Proposition::ConditionIs(condition, !value)
+                }
+                proposition => Proposition::Not(Box::new(proposition)),
+            },
             facts: path.facts,
             obligations: path.obligations,
         })
@@ -517,26 +524,24 @@ fn lower_spec_memory_loadable_at_state(
             CValue::Int32(start),
             CValue::Int32(end),
         ] => {
-            let elements =
-                Bitvector32Term::Subtract(Box::new(end.clone()), Box::new(start.clone()));
+            // Terms are canonical at creation: the same segment lowered
+            // anywhere is one proposition.
+            let elements = canonical_subtract(end.clone(), start.clone());
+            let mut discarded_facts = Vec::new();
+            let start =
+                crate::kernel::canonicalized_offset_index_term(start.clone(), &mut discarded_facts);
             let base = Pointer {
                 block: base.block.clone(),
-                offset: PointerOffsetTerm::Add(
-                    Box::new(base.offset.clone()),
-                    Box::new(PointerOffsetTerm::Int32Scaled {
-                        value: Box::new(start.clone()),
-                        byte_width: i64::from(element_width),
-                    }),
+                offset: canonical_offset_sum(
+                    base.offset.clone(),
+                    canonical_scaled_offset(start, i64::from(element_width)),
                 ),
             };
             Some(SpecPropositionPath {
                 proposition: Proposition::CMemoryLoadable {
                     memory: memory.clone(),
                     base,
-                    bytes: Bitvector32Term::Multiply(
-                        Box::new(elements),
-                        Box::new(Bitvector32Term::Constant(element_width)),
-                    ),
+                    bytes: canonical_multiply(elements, Bitvector32Term::Constant(element_width)),
                 },
                 facts: path.facts,
                 obligations: path.obligations,
@@ -545,6 +550,65 @@ fn lower_spec_memory_loadable_at_state(
         _ => None,
     })
     .collect())
+}
+
+/// `left - right` with constants folded, a zero subtrahend dropped, equal
+/// terms cancelled, and shared addends of two sums cancelled.
+fn canonical_subtract(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_sub(*right))
+        }
+        (_, Bitvector32Term::Constant(0)) => left,
+        _ if left == right => Bitvector32Term::Constant(0),
+        (
+            Bitvector32Term::Add(left_base, left_addend),
+            Bitvector32Term::Add(right_base, right_addend),
+        ) if left_base == right_base => {
+            canonical_subtract(left_addend.as_ref().clone(), right_addend.as_ref().clone())
+        }
+        _ => Bitvector32Term::Subtract(Box::new(left), Box::new(right)),
+    }
+}
+
+/// `left * right` with constants folded and unit and zero factors applied.
+fn canonical_multiply(left: Bitvector32Term, right: Bitvector32Term) -> Bitvector32Term {
+    match (&left, &right) {
+        (Bitvector32Term::Constant(left), Bitvector32Term::Constant(right)) => {
+            Bitvector32Term::Constant(left.wrapping_mul(*right))
+        }
+        (_, Bitvector32Term::Constant(1)) => left,
+        (Bitvector32Term::Constant(1), _) => right,
+        (_, Bitvector32Term::Constant(0)) | (Bitvector32Term::Constant(0), _) => {
+            Bitvector32Term::Constant(0)
+        }
+        _ => Bitvector32Term::Multiply(Box::new(left), Box::new(right)),
+    }
+}
+
+/// An element index scaled to bytes, folded when the index is a constant.
+fn canonical_scaled_offset(value: Bitvector32Term, byte_width: i64) -> PointerOffsetTerm {
+    match value {
+        Bitvector32Term::Constant(value) => {
+            PointerOffsetTerm::Constant((value as i32 as i64) * byte_width)
+        }
+        value => PointerOffsetTerm::Int32Scaled {
+            value: Box::new(value),
+            byte_width,
+        },
+    }
+}
+
+/// `left + right` on offsets with constants folded and zero addends dropped.
+fn canonical_offset_sum(left: PointerOffsetTerm, right: PointerOffsetTerm) -> PointerOffsetTerm {
+    match (&left, &right) {
+        (PointerOffsetTerm::Constant(left), PointerOffsetTerm::Constant(right)) => {
+            PointerOffsetTerm::Constant(left + right)
+        }
+        (PointerOffsetTerm::Constant(0), _) => right,
+        (_, PointerOffsetTerm::Constant(0)) => left,
+        _ => PointerOffsetTerm::Add(Box::new(left), Box::new(right)),
+    }
 }
 
 pub(super) fn lower_spec_binary_proposition_at_state(

@@ -219,18 +219,33 @@ certification lowers each ensure at the certified post-state (under the
 binders of a
 recorded completion when the ensure is quantified, since the loads minted
 under a binder carry its identity) and accepts the claim when the lowering
-equals a recorded completion whose premises the contract context holds. The
-two are compared in one canonical form, since the proof folds the trivial
-conditions the contract lowering keeps: a term compared with itself, a
-constant premise, conjunct, or quantifier body, a negated condition. A
-completion recorded at
-the artifact's own caller state also certifies a path rebased from that
-state, the rebase having checked the two entries definitionally equal. An
-ensure stated as a registered predicate is also compared as that predicate's
-identity at the post-state, the form a proof completes it in. A claim with
-no `by` block is closed by the direct logical closure from the outcome
-Proof, which records its completion like any other closer. Only a claim with
-no matching completion is proved from the path's facts.
+equals a recorded completion whose premises the contract context holds.
+
+There is one lowering. A claim goal is the contract's elaborated ensure
+lowered by the kernel at the path's outcome (`c_function_ensure_goals`); a
+registered predicate ensure is the predicate identity, which the proof
+unfolds on the goal, and an explicit closer also tries the unfolded body
+when the proof unfolded that predicate. Every proposition a proof states,
+a `have`, a `rewrite` equality, a `frame using` premise, a resource witness,
+goes the same way: elaborated into the kernel's spec form exactly as a
+contract clause is (`elaborate_fixed_state_proposition`, with the proof's
+recorded snapshots, `old(...)` as the function entry, `result`, and the
+proof's current locals as fixed values) and lowered by the kernel
+(`c_lower_spec_proposition_at_state`). A count named at a recorded state
+is that state's population. A negated condition is the condition with the
+other value, as an execution spells the branch it did not take, and
+loadability terms are canonical, so a proposition lowered anywhere is
+spelled as the execution's facts are. The kernel lowering leaves a load's
+loadability as an obligation; the proof-side lowering refuses only a load
+of memory the state shows freed, and certification discharges the rest
+from the path's facts. The two sides are compared in one canonical form
+for the folds that remain (a term compared with itself, a constant premise
+or conjunct, a negated condition), and a completion recorded at the
+artifact's own caller state also certifies a path rebased from that state.
+A claim with no `by` block is closed by the direct logical closure from
+the outcome Proof, which records its completion like any other closer.
+Only a claim with no matching completion is proved from the path's facts,
+a route that goes with the surface evaluator it served.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A

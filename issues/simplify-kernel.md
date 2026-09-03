@@ -19,7 +19,13 @@ its own symbols, while certification lowers the contract ensure through
 the kernel, so some completions read `true` or name a surface symbol where
 the kernel's lowering keeps the term. Closing the route needs one lowering
 for both: the proof's claim goal as the kernel's lowering of the contract
-ensure at the outcome state.
+ensure at the outcome state. Steps 1 and 2 of the redefined slice 2 are
+built: claim goals are the kernel's lowering of the contract ensure, and
+every proof-side proposition is elaborated and lowered by the kernel with
+the surface evaluator as the fallback it no longer needs for the corpus
+(both harnesses and the unit suite pass on it). Steps 3 to 6 remain: the
+evaluator, the legacy claim checker, the requirement lowering, the second
+proof, and the excluded-middle arm are still present.
 
 ## Violated invariant
 
@@ -160,12 +166,46 @@ depends on a count.
    only to exercise them. Where a route is the only caller of a helper,
    delete the helper. Done for eight of the nine; excluded middle waits
    for slice 2 (see Status).
-2. **Every closer records a completion.** Extend `ClaimClosure::by_exact_check_completing`
-   to `simp`, `frame`, and the default closers, so claim certification
-   matches every claim. Drive the "proved by prover 2" count to zero with a
-   temporary census, then delete the second-proof route
-   (`certification_proves_post_proposition` and the ensure re-lowering
-   around it).
+2. **One lowering.** Every surface proposition is elaborated once into the
+   kernel's spec form and lowered by the kernel; the surface's fixed-state
+   evaluator (`lower_outcome_proposition_with_environment` and the
+   `contract_evaluation` modules), the legacy claim checker
+   (`check_function_claim`), and the resource lowering's requirement facts
+   go. Then every closer's completion is the kernel's lowering of the
+   contract ensure, claim certification matches by construction, and the
+   second-proof route (`certification_proves_post_proposition`, the ensure
+   re-lowering around it, and the excluded-middle arm) is deleted. Steps,
+   each landing green:
+   1. Claim goals are the contract's elaborated ensure lowered by the
+      kernel at the outcome (`c_function_ensure_goals`); a registered
+      predicate ensure is closed as the predicate identity.
+   2. The proof-side lowering (`lower_fixed_state_proposition_with_values_and_assumptions`,
+      the one function every `have`, `rewrite`, `instantiate`, `cases`,
+      `frame using`, and closer site calls) elaborates with
+      `elaborate_fixed_state_proposition` and lowers with
+      `c_lower_spec_proposition_at_state`; the evaluator remains the
+      counted fallback until the count is zero. The elaborator resolves
+      recorded snapshots (`at(statement(n).entry, ...)`, marks),
+      `at(function.entry, ...)`, `result`, and carries binders into
+      snapshot contexts.
+   3. Close the elaboration gaps the census names: binders free in an
+      `old(...)` context, loads at a fixed memory the kernel lowers to no
+      path, snapshots not recorded at the point of use.
+   4. Proofs and expansion tests that relied on the evaluator resolving
+      terms through facts (an `assumption()` whose goal is a load chain,
+      a certificate pinned to the evaluator's spelling) get the explicit
+      step they always needed; the kernel's fact spelling is the one the
+      execution records.
+   5. Requirement facts come from the kernel's contract assumptions.
+   6. Delete the evaluator, the legacy checker, the second proof, and the
+      excluded-middle arm.
+
+   Two shortcuts were tried and rejected (2026-09-02): canonicalizing the
+   lowered proposition (or only loaded values) through the fact context's
+   equality classes, which breaks matches with the structurally spelled
+   facts execution records; and reading spec-level memory loads through
+   the C evaluator, which changes which loadability obligations
+   certification records.
 3. **Delete artifact-less body execution** from
    `prove_c_function_contract_execution_paths_with_checked_artifacts` and
    `ContractFallback::NoArtifact`; a caller with no artifact gets no paths

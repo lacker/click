@@ -78,6 +78,22 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
 ) -> Result<Proposition, String> {
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
+    let recorded_snapshots = RecordedSnapshots::new();
+    match crate::surface::proof::lower_fixed_state_proposition_through_kernel(
+        proposition,
+        assumptions,
+        &values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        &recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        Ok(lowered) => return Ok(lowered),
+        Err(_) => {}
+    }
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
@@ -91,7 +107,7 @@ pub(in crate::surface) fn lower_outcome_proposition_with_assumptions(
         &mut next_variable,
         predicate_environment,
         click_function_environment,
-        &RecordedSnapshots::new(),
+        &recorded_snapshots,
         &mut active_functions,
     )
 }
@@ -112,6 +128,21 @@ pub(in crate::surface) fn lower_outcome_proposition_with_recorded_snapshots(
     let mut values = parameter_values(parameters, arguments).map_err(|error| error.message)?;
     let array_refs = array_refs_for_parameters(parameters, &values, post_state.memory());
     let assumptions = assumptions_from_propositions(available_pure_facts);
+    match crate::surface::proof::lower_fixed_state_proposition_through_kernel(
+        proposition,
+        &assumptions,
+        &values,
+        &array_refs,
+        pre_state,
+        post_state,
+        Some(result),
+        recorded_snapshots,
+        predicate_environment,
+        click_function_environment,
+    ) {
+        Ok(lowered) => return Ok(lowered),
+        Err(_) => {}
+    }
     let mut next_variable = 2_000_000;
     let mut active_functions = BTreeSet::new();
     lower_outcome_proposition_with_environment(
