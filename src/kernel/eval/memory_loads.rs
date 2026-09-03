@@ -163,7 +163,7 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
     // of failing the load.
     let pointer_cell_defers_to_symbolic = |value: &CValue| {
         matches!(value, CValue::Int32(_))
-            && matches!(value_type, CType::Int32Pointer | CType::UInt8Pointer)
+            && value_type.is_pointer()
             && has_external_read_resource
             && assumptions.should_prefer_symbolic_external_loads()
     };
@@ -392,6 +392,26 @@ fn evaluate_c_memory_load_paths_with_alias_cache(
         return paths;
     }
 
+    if memory.is_zeroed_heap_address(&pointer) {
+        let value = match value_type {
+            CType::Int32 => int32(Bitvector32Term::Constant(0)),
+            CType::UInt8 => uint8(Bitvector32Term::Constant(0)),
+            _ if value_type.is_pointer() => CValue::Pointer(Pointer::null()),
+            _ => {
+                return vec![CExpressionPath {
+                    outcome: CExpressionOutcome::RuntimeError(CRuntimeError::TypeMismatch),
+                    facts,
+                    obligations,
+                }];
+            }
+        };
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(value),
+            facts,
+            obligations,
+        }];
+    }
+
     if memory.is_loadable_concretely(&pointer, value_type.byte_width()) {
         let Some(value) = canonicalized_symbolic_load_value(
             &memory,
@@ -487,11 +507,7 @@ pub(in crate::kernel) fn canonicalized_pointer_value_from_int_cell(
     facts: &mut Vec<ExecutionPureFact>,
     assumptions: &PureFactContext,
 ) -> Option<CValue> {
-    let pointee_byte_width = match value_type {
-        CType::Int32Pointer => 4,
-        CType::UInt8Pointer => 1,
-        _ => return None,
-    };
+    let pointee_byte_width = value_type.pointee_type()?.byte_width();
     let fresh = match value {
         CValue::Int32(bits @ Bitvector32Term::MemoryLoad(_, _)) => {
             mint_load_variable(bits, next_kernel_variable, facts, assumptions)?
@@ -1448,8 +1464,12 @@ pub(in crate::kernel) fn symbolic_load_value(
         CType::Void => None,
         CType::Int32 => Some(memory.symbolic_int32_load(pointer)),
         CType::UInt8 => Some(memory.symbolic_uint8_load(pointer)),
-        CType::Int32Pointer => Some(memory.symbolic_pointer_load(pointer, 4)),
-        CType::UInt8Pointer => Some(memory.symbolic_pointer_load(pointer, 1)),
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer => {
+            Some(memory.symbolic_pointer_load(pointer, value_type.pointee_type()?.byte_width()))
+        }
         CType::Int32Array(_) | CType::UInt8Array(_) => None,
     }
 }

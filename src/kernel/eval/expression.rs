@@ -97,10 +97,9 @@ pub(in crate::kernel) fn coerce_c_null_pointer_constant(
         return Some(value);
     }
     match (target_type, value) {
-        (
-            CType::Int32Pointer | CType::UInt8Pointer,
-            CValue::Int32(Bitvector32Term::Constant(0)),
-        ) => Some(CValue::Pointer(Pointer::null())),
+        (target_type, CValue::Int32(Bitvector32Term::Constant(0))) if target_type.is_pointer() => {
+            Some(CValue::Pointer(Pointer::null()))
+        }
         _ => None,
     }
 }

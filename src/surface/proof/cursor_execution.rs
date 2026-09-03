@@ -2783,8 +2783,13 @@ fn describe_statement_head(statement: &CStatement) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        CStatement::HeapAllocate { target, bytes } => {
-            format!("{target} = malloc({})", describe_c_expression(bytes))
+        CStatement::HeapAllocate {
+            target,
+            bytes,
+            zeroed,
+        } => {
+            let function = if *zeroed { "calloc" } else { "malloc" };
+            format!("{target} = {function}({})", describe_c_expression(bytes))
         }
         CStatement::HeapFree { pointer } => format!("free({})", describe_c_expression(pointer)),
         CStatement::Assert { condition, .. } => {

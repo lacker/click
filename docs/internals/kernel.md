@@ -139,7 +139,12 @@ Opaque function rules have a narrower boundary:
 - every path verification condition is discharged before any body-safety,
   postcondition, resource, or effect claim is certified;
 - all recorded contract claims must have checked evidence for that same exact
-  function before `CVerifiedFunctionRule` can be constructed.
+  function before `CVerifiedFunctionRule` can be constructed;
+- contract instantiation uses simultaneous, capture-avoiding substitution,
+  and alpha-equivalence freshens both sides before comparing bound bodies;
+- composite-resource fold facts are rechecked against the kernel resource
+  state even when a resource body has a guard, so surface lowering cannot
+  turn a captured fact into resource authority.
 
 If exact certification cannot reproduce a complete claim set, Click installs
 no opaque rule for that function. It does not fall back to a weaker identity
@@ -412,6 +417,10 @@ havoc block names in an expanded proof. A dependent address is transported
 only when its pointer and index expressions are themselves stable. An
 overlapping or undecidable footprint stops the transport.
 
+Loop havoc carries the checked mutable ranges of a whole-loop effect summary
+when they are available. Its memory-DAG edge is crossed by the same
+range-disjointness rule; a loop with no evaluated footprint remains a barrier.
+
 Independent whole-path checking can regenerate fresh return variables and
 `call-havoc` marker identities for the same execution path. Certification
 couples those encodings only through matching memory-derivation structure:
@@ -534,10 +543,11 @@ and verification.
 Pure-function induction deliberately preserves the symbolic evaluation
 boundary. The language layer lowers the theorem predicate with recursive pure
 applications opaque, constructs a fresh universally quantified strong
-hypothesis, and checks every proof branch. Applying that hypothesis goes
-through the kernel's exact `forall int32` instantiation operation: the
-quantified fact, nonnegative argument, strict decrease, substituted theorem
-requirements, and resulting predicate must all match. The ordinary one-step
-pure-function elaborator then exposes the current defining equation; it never
-uses an unfolding-depth budget. This machinery is separate from recursive C
-contract and C-termination judgments.
+hypothesis, and checks every proof branch through the kernel `ProofObject`.
+Applying that hypothesis goes through the kernel's exact `forall int32`
+instantiation operation: the quantified fact, nonnegative argument, strict
+decrease, substituted theorem requirements, and resulting predicate must all
+match. The legacy surface checker is presentation-only and cannot publish
+theorem authority. The ordinary one-step pure-function elaborator then exposes
+the current defining equation; it never uses an unfolding-depth budget. This
+machinery is separate from recursive C contract and C-termination judgments.

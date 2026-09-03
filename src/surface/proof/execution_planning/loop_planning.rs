@@ -1185,6 +1185,7 @@ fn verify_structural_effect_proof(
 pub(in crate::surface::proof) struct LoopPreservationProofResult {
     pub(in crate::surface::proof) certificate: ProofCertificate,
     pub(in crate::surface::proof) effect_certificates: Vec<(usize, ProofCertificate)>,
+    pub(in crate::surface::proof) final_exit_candidates: Vec<CLoopFinalExitCandidate>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1380,6 +1381,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     }
     let mut certificate_paths = Vec::new();
     let mut effect_certificate_paths = vec![Vec::new(); effect_items.len()];
+    let mut final_exit_candidates = Vec::new();
     for leaf in leaves {
         let context_execution = leaf.execution_view()?.execution.clone();
         let context_frontier = leaf.execution_view()?.frontier.clone();
@@ -1449,6 +1451,8 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         let checked = if invariant_checks.is_empty() {
             leaf.check_loop_state_join(
                 preservation.loop_entry_state(),
+                condition,
+                &[],
                 environment.function.composite_resource_definitions(),
             )
             .map_err(|error| {
@@ -1461,6 +1465,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         } else {
             leaf.certify_loop_invariant_bundle(
                 preservation.loop_entry_state(),
+                condition,
                 invariant_checks,
                 environment.function.composite_resource_definitions(),
             )
@@ -1471,6 +1476,34 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 ))
             })?
         };
+        let mut join_facts = checked.facts().to_vec();
+        let checked_execution = checked.execution_view()?.execution.clone();
+        join_facts.extend(
+            checked_execution
+                .core
+                .effect_facts
+                .iter()
+                .map(|fact| fact.proposition().clone()),
+        );
+        join_facts.extend(crate::kernel::certified_store_equations(
+            &checked_execution.core.effect_facts,
+        ));
+        if crate::kernel::c_loop_state_components_match_at_back_edge(
+            preservation.loop_entry_state(),
+            &checked_execution.core.state,
+            &assumptions_from_propositions(&join_facts),
+            environment.function.composite_resource_definitions(),
+        )
+        .is_err()
+        {
+            let candidate = CLoopFinalExitCandidate::new(
+                (*checked_execution.core.state).clone(),
+                checked.facts().to_vec(),
+            );
+            if !final_exit_candidates.contains(&candidate) {
+                final_exit_candidates.push(candidate);
+            }
+        }
         let closer_tactics = if invariant_checks.is_empty() || invariants_already_closed {
             Vec::new()
         } else {
@@ -1561,5 +1594,6 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     Ok(LoopPreservationProofResult {
         certificate,
         effect_certificates,
+        final_exit_candidates,
     })
 }

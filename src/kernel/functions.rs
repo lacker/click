@@ -1417,7 +1417,10 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         CType::Void => CValue::Void,
         CType::Int32 => CValue::Int32(Bitvector32Term::Variable(variable)),
         CType::UInt8 => CValue::UInt8(Bitvector32Term::Variable(variable)),
-        CType::Int32Pointer | CType::UInt8Pointer => CValue::Pointer(Pointer::symbolic(variable)),
+        CType::Int32Pointer
+        | CType::UInt8Pointer
+        | CType::Int32PointerPointer
+        | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variable)),
         CType::Int32Array(_) | CType::UInt8Array(_) => {
             unreachable!("C functions cannot return array values")
         }

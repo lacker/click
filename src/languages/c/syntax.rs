@@ -14,6 +14,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.standard-spellings",
     "type.typedef",
     "type.pointer",
+    "type.pointer-to-pointer",
     "type.array-parameter",
     "type.local-array",
     "type.struct-pointer",
@@ -32,6 +33,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.for",
     "statement.store",
     "statement.malloc",
+    "statement.calloc",
     "statement.free",
     "statement.increment",
     "statement.decrement",
@@ -45,6 +47,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "expression.null-pointer",
     "expression.address-of",
     "expression.sizeof-struct",
+    "expression.sizeof-type",
     "expression.call",
     "expression.index",
     "expression.field",
@@ -116,6 +119,8 @@ pub enum C0Type {
     UInt8,
     Int32Pointer,
     UInt8Pointer,
+    Int32PointerPointer,
+    UInt8PointerPointer,
     Int32Array(u32),
     UInt8Array(u32),
 }
@@ -133,10 +138,22 @@ impl CAbi {
             (Self::Lp64, C0Type::Void) => (0, 1),
             (Self::Lp64, C0Type::Int32) => (4, 4),
             (Self::Lp64, C0Type::UInt8) => (1, 1),
-            (Self::Lp64, C0Type::Int32Pointer | C0Type::UInt8Pointer) => (8, 8),
+            (
+                Self::Lp64,
+                C0Type::Int32Pointer
+                | C0Type::UInt8Pointer
+                | C0Type::Int32PointerPointer
+                | C0Type::UInt8PointerPointer,
+            ) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
             (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
         }
+    }
+}
+
+impl C0Type {
+    pub(crate) fn abi_size_bytes(self) -> u32 {
+        CAbi::SUPPORTED.size_and_alignment(self).0
     }
 }
 
@@ -163,6 +180,7 @@ pub enum C0Statement {
     HeapAllocate {
         target: String,
         bytes: C0Expression,
+        zeroed: bool,
     },
     HeapFree {
         pointer: C0Expression,
@@ -198,6 +216,11 @@ pub enum C0Expression {
     UInt8Literal(u8),
     SizeOfStruct {
         name: String,
+        bytes: u32,
+    },
+    SizeOfType {
+        c_type: C0Type,
+        struct_name: Option<String>,
         bytes: u32,
     },
     LessThan(Box<C0Expression>, Box<C0Expression>),
@@ -341,6 +364,26 @@ impl C0Parameter {
 }
 
 impl C0Type {
+    pub fn is_pointer(self) -> bool {
+        matches!(
+            self,
+            Self::Int32Pointer
+                | Self::UInt8Pointer
+                | Self::Int32PointerPointer
+                | Self::UInt8PointerPointer
+        )
+    }
+
+    pub fn pointee_type(self) -> Option<Self> {
+        match self {
+            Self::Int32Pointer | Self::Int32Array(_) => Some(Self::Int32),
+            Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
+            Self::Int32PointerPointer => Some(Self::Int32Pointer),
+            Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
+            Self::Void | Self::Int32 | Self::UInt8 => None,
+        }
+    }
+
     pub fn to_kernel_type(self) -> crate::kernel::CType {
         match self {
             Self::Void => crate::kernel::CType::Void,
@@ -348,6 +391,8 @@ impl C0Type {
             Self::UInt8 => crate::kernel::CType::UInt8,
             Self::Int32Pointer => crate::kernel::CType::Int32Pointer,
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
+            Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
+            Self::UInt8PointerPointer => crate::kernel::CType::UInt8PointerPointer,
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
         }
@@ -386,9 +431,15 @@ impl C0Statement {
                     .map(C0Expression::to_kernel_expression)
                     .collect(),
             ),
-            Self::HeapAllocate { target, bytes } => {
-                crate::kernel::c_heap_allocate_sized(target.clone(), bytes.to_kernel_expression())
-            }
+            Self::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => crate::kernel::c_heap_allocate_sized_with_zeroed(
+                target.clone(),
+                bytes.to_kernel_expression(),
+                *zeroed,
+            ),
             Self::HeapFree { pointer } => {
                 crate::kernel::c_heap_free(pointer.to_kernel_expression())
             }
@@ -442,7 +493,9 @@ impl C0Expression {
             }
             Self::Int32Literal(value) => crate::kernel::c_int32_literal(*value),
             Self::UInt8Literal(value) => crate::kernel::c_uint8_literal(*value),
-            Self::SizeOfStruct { bytes, .. } => crate::kernel::c_int32_literal(*bytes),
+            Self::SizeOfStruct { bytes, .. } | Self::SizeOfType { bytes, .. } => {
+                crate::kernel::c_int32_literal(*bytes)
+            }
             Self::LessThan(left, right) => crate::kernel::c_less_than(
                 left.to_kernel_expression(),
                 right.to_kernel_expression(),
@@ -678,6 +731,7 @@ enum Token {
     PlusEqual,
     Minus,
     Arrow,
+    Dot,
     MinusMinus,
     MinusEqual,
     LessThan,
@@ -733,6 +787,7 @@ impl Token {
             Self::PlusEqual => "+=",
             Self::Minus => "-",
             Self::Arrow => "->",
+            Self::Dot => ".",
             Self::MinusMinus => "--",
             Self::MinusEqual => "-=",
             Self::LessThan => "<",
@@ -794,6 +849,7 @@ struct Parser {
     structs: BTreeMap<String, C0StructLayout>,
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
+    variable_array_shapes: BTreeMap<String, Vec<u32>>,
     /// The names declared in each open lexical scope, innermost last:
     /// the function's parameters, then one entry per `{ ... }` block and
     /// per `for` statement. Click's kernel keys a local by its name alone,
@@ -814,6 +870,7 @@ impl Parser {
             structs: BTreeMap::new(),
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
+            variable_array_shapes: BTreeMap::new(),
             scopes: Vec::new(),
             abi,
         })
@@ -828,6 +885,7 @@ impl Parser {
     fn pop_scope(&mut self) {
         for name in self.scopes.pop().unwrap_or_default() {
             self.variable_structs.remove(&name);
+            self.variable_array_shapes.remove(&name);
         }
     }
 
@@ -962,7 +1020,12 @@ impl Parser {
             }
             if !matches!(
                 field_type.c_type,
-                C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::UInt8Pointer
+                C0Type::Int32
+                    | C0Type::UInt8
+                    | C0Type::Int32Pointer
+                    | C0Type::UInt8Pointer
+                    | C0Type::Int32PointerPointer
+                    | C0Type::UInt8PointerPointer
             ) {
                 return Err(self.error_here(
                     "struct fields currently support int32, uint8, and pointer fields",
@@ -1095,21 +1158,30 @@ impl Parser {
             }
         };
 
-        if self.peek() != Some(&Token::Star) {
-            return Ok(parsed);
+        let mut c_type = parsed.c_type;
+        while self.peek() == Some(&Token::Star) {
+            self.position += 1;
+            c_type = match c_type {
+                C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::UInt8 => C0Type::UInt8Pointer,
+                C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
+                C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
+                    return Err(
+                        self.error_at_previous("pointer depth beyond `**` is not supported")
+                    );
+                }
+                C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
+                    return Err(self.error_at_previous("pointer-to-array types are not supported"));
+                }
+            };
+            if parsed.struct_name.is_some() && c_type != C0Type::Int32Pointer {
+                return Err(
+                    self.error_at_previous("pointer depth beyond `struct S*` is not supported")
+                );
+            }
         }
-        self.position += 1;
-        let c_type = match parsed.c_type {
-            C0Type::Int32 => C0Type::Int32Pointer,
-            C0Type::UInt8 => C0Type::UInt8Pointer,
-            C0Type::Void => return Err(self.error_at_previous("`void *` is not supported yet")),
-            C0Type::Int32Pointer | C0Type::UInt8Pointer => {
-                return Err(self.error_at_previous("pointer-to-pointer types are not supported"));
-            }
-            C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
-                return Err(self.error_at_previous("pointer-to-array types are not supported"));
-            }
-        };
         Ok(ParsedType {
             c_type,
             struct_name: parsed.struct_name,
@@ -1185,14 +1257,14 @@ impl Parser {
         let pointer_type = match c_type {
             C0Type::Int32 => C0Type::Int32Pointer,
             C0Type::UInt8 => C0Type::UInt8Pointer,
+            C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+            C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
             _ => {
-                return Err(self.error_here("only scalar array parameters are supported"));
+                return Err(
+                    self.error_here("only scalar and pointer array parameters are supported")
+                );
             }
         };
-
-        if !matches!(c_type, C0Type::Int32 | C0Type::UInt8) {
-            return Err(self.error_here("only scalar array parameters are supported"));
-        }
 
         self.position += 1;
         if matches!(self.peek(), Some(Token::Number(_))) {
@@ -1202,45 +1274,94 @@ impl Parser {
         Ok(pointer_type)
     }
 
-    fn parse_local_array_suffix(&mut self, c_type: C0Type) -> Result<C0Type, C0SyntaxError> {
+    fn parse_local_array_shape(
+        &mut self,
+        parsed_type: &ParsedType,
+    ) -> Result<(C0Type, Option<Vec<u32>>), C0SyntaxError> {
         if self.peek() != Some(&Token::LBracket) {
-            return Ok(c_type);
+            return Ok((parsed_type.c_type, None));
         }
-        let (array_type, element_width, element_name): (fn(u32) -> C0Type, u32, &str) = match c_type
-        {
-            C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32"),
-            C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8"),
-            _ => return Err(self.error_here("only scalar local arrays are supported")),
+        let (array_type, element_width, element_name, struct_array): (
+            fn(u32) -> C0Type,
+            u32,
+            String,
+            bool,
+        ) = if let Some(struct_name) = parsed_type.struct_name.as_deref() {
+            let element_width = self
+                .structs
+                .get(struct_name)
+                .ok_or_else(|| {
+                    self.error_here(format!("unknown struct declaration `{struct_name}`"))
+                })?
+                .size_bytes;
+            (
+                C0Type::UInt8Array,
+                element_width,
+                format!("struct {struct_name}"),
+                true,
+            )
+        } else {
+            match parsed_type.c_type {
+                C0Type::Int32 => (C0Type::Int32Array, 4u32, "int32".to_string(), false),
+                C0Type::UInt8 => (C0Type::UInt8Array, 1u32, "uint8".to_string(), false),
+                _ => return Err(self.error_here("only scalar local arrays are supported")),
+            }
         };
 
-        self.position += 1;
-        let length = match self.next() {
-            Some(Token::Number(number)) => {
-                let length = number.parse::<u32>().map_err(|_| {
-                    self.error_here(format!("array length `{number}` is out of range"))
-                })?;
-                if length == 0 {
-                    return Err(self.error_here("local arrays must have positive length"));
+        if element_width == 0 {
+            return Err(self.error_here(format!(
+                "{element_name} array elements must have positive size"
+            )));
+        }
+
+        let mut dimensions = Vec::new();
+        let mut element_count = 1u32;
+        while self.peek() == Some(&Token::LBracket) {
+            self.position += 1;
+            let length = match self.next() {
+                Some(Token::Number(number)) => {
+                    let length = number.parse::<u32>().map_err(|_| {
+                        self.error_here(format!("array length `{number}` is out of range"))
+                    })?;
+                    if length == 0 {
+                        return Err(self.error_here("local arrays must have positive length"));
+                    }
+                    length
                 }
-                if length.checked_mul(element_width).is_none() {
-                    return Err(self.error_here(format!(
-                        "array length `{number}` is too large for {element_name} elements"
+                Some(token) => {
+                    return Err(self.error_at_previous(format!(
+                        "expected local array length, got {}",
+                        token.describe()
                     )));
                 }
-                length
-            }
-            Some(token) => {
-                return Err(self.error_at_previous(format!(
-                    "expected local array length, got {}",
-                    token.describe()
-                )));
-            }
-            None => {
-                return Err(self.error_here("expected local array length, got end of input"));
-            }
+                None => {
+                    return Err(self.error_here("expected local array length, got end of input"));
+                }
+            };
+            element_count = element_count.checked_mul(length).ok_or_else(|| {
+                self.error_here(format!(
+                    "array dimensions are too large for {element_name} elements"
+                ))
+            })?;
+            dimensions.push(length);
+            self.expect(Token::RBracket)?;
+        }
+        if element_count.checked_mul(element_width).is_none() {
+            return Err(self.error_here(format!(
+                "array dimensions are too large for {element_name} elements"
+            )));
+        }
+        let array_length = if struct_array {
+            element_count.checked_mul(element_width).ok_or_else(|| {
+                self.error_here(format!(
+                    "array dimensions are too large for {element_name} elements"
+                ))
+            })?
+        } else {
+            element_count
         };
-        self.expect(Token::RBracket)?;
-        Ok(array_type(length))
+        let shape = (struct_array || dimensions.len() > 1).then_some(dimensions);
+        Ok((array_type(array_length), shape))
     }
 
     fn parse_block_statement(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -1278,14 +1399,14 @@ impl Parser {
                 })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::LBracket) => {
-                let pointer = self.parse_indexed_lvalue_pointer()?;
+                let (pointer, value_type) = self.parse_postfix_lvalue_pointer()?;
                 self.expect(Token::Equal)?;
                 let value = self.parse_expression()?;
                 self.expect(Token::Semicolon)?;
                 Ok(C0Statement::Store {
                     pointer,
                     value,
-                    value_type: None,
+                    value_type,
                 })
             }
             Some(Token::Ident(_)) if self.peek_next() == Some(&Token::Arrow) => {
@@ -1316,19 +1437,25 @@ impl Parser {
                 }
                 let name = self.expect_ident("local name")?;
                 self.declare_name(&name)?;
-                let c_type = self.parse_local_array_suffix(parsed_type.c_type)?;
+                let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+                if let Some(shape) = array_shape.clone() {
+                    self.variable_array_shapes.insert(name.clone(), shape);
+                }
                 if parsed_type.struct_name.is_some() {
                     if is_plain_struct_type(&parsed_type) && c_type == parsed_type.c_type {
                         return Err(self.error_here("only pointer-to-struct types are supported"));
                     }
-                    if c_type != parsed_type.c_type {
+                    if c_type != parsed_type.c_type && !matches!(c_type, C0Type::UInt8Array(_)) {
                         return Err(
                             self.error_here("local arrays of struct type are not supported")
                         );
                     }
                     self.variable_structs.insert(
                         name.clone(),
-                        parsed_type.struct_name.expect("struct_name checked above"),
+                        parsed_type
+                            .struct_name
+                            .clone()
+                            .expect("struct_name checked above"),
                     );
                 }
                 let declaration = C0Statement::Declare {
@@ -1337,7 +1464,22 @@ impl Parser {
                 };
                 if self.peek() == Some(&Token::Equal) {
                     if matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_)) {
-                        return Err(self.error_here("local array initializers are not supported"));
+                        if parsed_type.struct_name.is_some() {
+                            return Err(self.error_here(
+                                "local array initializers for struct arrays are not supported",
+                            ));
+                        }
+                        self.position += 1;
+                        let initializer = self.parse_local_array_initializer(
+                            &name,
+                            c_type,
+                            array_shape.as_deref(),
+                        )?;
+                        self.expect(Token::Semicolon)?;
+                        return Ok(C0Statement::Seq(
+                            Box::new(declaration),
+                            Box::new(initializer),
+                        ));
                     }
                     self.position += 1;
                     if matches!(self.peek(), Some(Token::Ident(_)))
@@ -1436,10 +1578,10 @@ impl Parser {
                         })
                     } else if self.peek_next() == Some(&Token::LParen) {
                         let function_name = self.expect_ident("function name")?;
-                        if function_name == "malloc" {
-                            return Err(self.error_here(
-                                "the fixed-size `malloc` result may not be discarded",
-                            ));
+                        if matches!(function_name.as_str(), "malloc" | "calloc") {
+                            return Err(
+                                self.error_here("the allocation result may not be discarded")
+                            );
                         }
                         let arguments = self.parse_call_arguments()?;
                         self.expect(Token::Semicolon)?;
@@ -1459,6 +1601,112 @@ impl Parser {
             }
             None => Err(self.error_here("expected statement, got end of input")),
         }
+    }
+
+    fn parse_local_array_initializer(
+        &mut self,
+        name: &str,
+        c_type: C0Type,
+        array_shape: Option<&[u32]>,
+    ) -> Result<C0Statement, C0SyntaxError> {
+        let (length, element_type) = match c_type {
+            C0Type::Int32Array(length) => (length, C0Type::Int32),
+            C0Type::UInt8Array(length) => (length, C0Type::UInt8),
+            _ => unreachable!("array initializer called for a scalar type"),
+        };
+        let mut values = Vec::new();
+        let dimensions = array_shape
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| vec![length]);
+        self.parse_array_initializer_level(name, &dimensions, 0, &mut values)?;
+
+        let mut stores = Vec::with_capacity(length as usize);
+        for index in 0..length {
+            let value = values
+                .get(index as usize)
+                .cloned()
+                .unwrap_or(C0Expression::Int32Literal(0));
+            stores.push(C0Statement::Store {
+                pointer: C0Expression::Add(
+                    Box::new(C0Expression::Variable(name.to_string())),
+                    Box::new(C0Expression::Int32Literal(index)),
+                ),
+                value,
+                value_type: Some(element_type),
+            });
+        }
+        Ok(balanced_statement_sequence(stores).unwrap_or(C0Statement::Skip))
+    }
+
+    fn parse_array_initializer_level(
+        &mut self,
+        name: &str,
+        dimensions: &[u32],
+        depth: usize,
+        values: &mut Vec<C0Expression>,
+    ) -> Result<(), C0SyntaxError> {
+        let child_width = dimensions[depth + 1..]
+            .iter()
+            .copied()
+            .fold(1u32, |width, dimension| {
+                width
+                    .checked_mul(dimension)
+                    .expect("validated array shape has a representable width")
+            });
+        let child_count = dimensions[depth];
+        let start = values.len();
+        self.expect(Token::LBrace)?;
+        let mut children = 0u32;
+        if self.peek() != Some(&Token::RBrace) {
+            loop {
+                if children == child_count {
+                    return Err(self
+                        .error_here(format!("too many initializers for `{name}[{child_count}]`")));
+                }
+                if depth + 1 == dimensions.len() {
+                    values.push(self.parse_expression()?);
+                } else {
+                    if self.peek() != Some(&Token::LBrace) {
+                        return Err(self.error_here(format!(
+                            "nested initializer for `{name}` expects `{}` groups",
+                            dimensions.len() - depth - 1
+                        )));
+                    }
+                    self.parse_array_initializer_level(name, dimensions, depth + 1, values)?;
+                }
+                children += 1;
+                match self.peek() {
+                    Some(Token::Comma) => {
+                        self.position += 1;
+                        if self.peek() == Some(&Token::RBrace) {
+                            break;
+                        }
+                    }
+                    Some(Token::RBrace) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `{name}` initializer, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `}}` in `{name}` initializer, got end of input"
+                        )));
+                    }
+                }
+            }
+        }
+        self.expect(Token::RBrace)?;
+
+        let present = (values.len() - start) as u32;
+        let expected = child_count
+            .checked_mul(child_width)
+            .expect("validated array shape has a representable length");
+        for _ in present..expected {
+            values.push(C0Expression::Int32Literal(0));
+        }
+        Ok(())
     }
 
     fn parse_for_initializer(&mut self) -> Result<C0Statement, C0SyntaxError> {
@@ -1574,34 +1822,83 @@ impl Parser {
         function_name: String,
         arguments: Vec<C0Expression>,
     ) -> Result<C0Statement, C0SyntaxError> {
-        if function_name != "malloc" {
+        if !matches!(function_name.as_str(), "malloc" | "calloc") {
             return Ok(C0Statement::CallAssign {
                 target,
                 function_name,
                 arguments,
             });
         }
-        let [bytes] = arguments.as_slice() else {
-            return Err(self.error_here(format!(
-                "`malloc` expects one byte-count argument, got {}",
-                arguments.len()
-            )));
-        };
-        if let Some(target_struct) = self.variable_structs.get(&target) {
-            let C0Expression::SizeOfStruct { name, .. } = bytes else {
+        let zeroed = function_name == "calloc";
+        let bytes = if zeroed {
+            let [count, element_size] = arguments.as_slice() else {
                 return Err(self.error_here(format!(
-                    "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                    "`calloc` expects two byte-count arguments, got {}",
+                    arguments.len()
                 )));
             };
-            if name != target_struct {
-                return Err(self.error_here(format!(
-                    "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
-                )));
+            if let Some(target_struct) = self.variable_structs.get(&target) {
+                let matches_target = match element_size {
+                    C0Expression::SizeOfStruct { name, .. } => name == target_struct,
+                    C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        struct_name: Some(name),
+                        ..
+                    } => name == target_struct,
+                    _ => false,
+                };
+                if !matches_target {
+                    return Err(self.error_here(format!(
+                        "`calloc` size must be `sizeof(struct {target_struct})` for target `struct {target_struct} *`"
+                    )));
+                }
+            } else if !matches!(
+                element_size,
+                C0Expression::Int32Literal(4)
+                    | C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        struct_name: None,
+                        ..
+                    }
+            ) {
+                return Err(self.error_here(
+                    "`calloc` currently supports only `sizeof(int32)` or a matching struct size",
+                ));
             }
-        }
+            C0Expression::Multiply(Box::new(count.clone()), Box::new(element_size.clone()))
+        } else {
+            let [bytes] = arguments.as_slice() else {
+                return Err(self.error_here(format!(
+                    "`malloc` expects one byte-count argument, got {}",
+                    arguments.len()
+                )));
+            };
+            if let Some(target_struct) = self.variable_structs.get(&target) {
+                let Some(name) = (match bytes {
+                    C0Expression::SizeOfStruct { name, .. } => Some(name.as_str()),
+                    C0Expression::SizeOfType {
+                        c_type: C0Type::Int32,
+                        struct_name: Some(name),
+                        ..
+                    } => Some(name.as_str()),
+                    _ => None,
+                }) else {
+                    return Err(self.error_here(format!(
+                        "allocation of `struct {target_struct}` currently requires `sizeof(struct {target_struct})`"
+                    )));
+                };
+                if name != target_struct {
+                    return Err(self.error_here(format!(
+                        "`malloc(sizeof(struct {name}))` does not match target type `struct {target_struct} *`"
+                    )));
+                }
+            }
+            bytes.clone()
+        };
         Ok(C0Statement::HeapAllocate {
             target,
-            bytes: bytes.clone(),
+            bytes,
+            zeroed,
         })
     }
 
@@ -1860,13 +2157,68 @@ impl Parser {
                     self.position += 1;
                     let index = self.parse_expression()?;
                     self.expect(Token::RBracket)?;
-                    expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                    let shape = match &expression {
+                        C0Expression::Variable(name) => {
+                            self.variable_array_shapes.get(name).cloned()
+                        }
+                        _ => None,
+                    };
+                    if let Some(shape) = shape {
+                        let name = match &expression {
+                            C0Expression::Variable(name) => name,
+                            _ => unreachable!("array shape belongs to a variable"),
+                        };
+                        let mut indexes = vec![index];
+                        while self.peek() == Some(&Token::LBracket) {
+                            self.position += 1;
+                            indexes.push(self.parse_expression()?);
+                            self.expect(Token::RBracket)?;
+                        }
+                        if indexes.len() != shape.len() {
+                            return Err(self.error_here(format!(
+                                "multidimensional array `{name}` requires {} indices, got {}",
+                                shape.len(),
+                                indexes.len()
+                            )));
+                        }
+                        let offset = flatten_array_indices(indexes, &shape);
+                        let struct_array = self.variable_structs.contains_key(name);
+                        let offset = if struct_array {
+                            let struct_name = self
+                                .variable_structs
+                                .get(name)
+                                .expect("struct array has a struct name");
+                            let element_width = self
+                                .structs
+                                .get(struct_name)
+                                .expect("struct array has a declaration")
+                                .size_bytes;
+                            C0Expression::Multiply(
+                                Box::new(offset),
+                                Box::new(C0Expression::Int32Literal(element_width)),
+                            )
+                        } else {
+                            offset
+                        };
+                        expression = C0Expression::Index(Box::new(expression), Box::new(offset));
+                        if struct_array && self.peek() != Some(&Token::Dot) {
+                            return Err(self.error_here(
+                                "array of struct values are only supported through field access",
+                            ));
+                        }
+                    } else {
+                        expression = C0Expression::Index(Box::new(expression), Box::new(index));
+                    }
                 }
-                Some(Token::Arrow) => {
+                Some(Token::Dot) | Some(Token::Arrow) => {
+                    let dot = self.peek() == Some(&Token::Dot);
                     self.position += 1;
                     let field_name = self.expect_ident("field name")?;
-                    let (pointer, field_type, field_struct_name) =
-                        self.resolve_field_access(&expression, &field_name)?;
+                    let (pointer, field_type, field_struct_name) = if dot {
+                        self.resolve_array_struct_field_access(&expression, &field_name)?
+                    } else {
+                        self.resolve_field_access(&expression, &field_name)?
+                    };
                     expression = C0Expression::Field {
                         pointer: Box::new(pointer),
                         field_type,
@@ -1875,19 +2227,6 @@ impl Parser {
                 }
                 _ => return Ok(expression),
             }
-        }
-    }
-
-    fn parse_indexed_lvalue_pointer(&mut self) -> Result<C0Expression, C0SyntaxError> {
-        let mut base = self.parse_primary()?;
-        loop {
-            self.expect(Token::LBracket)?;
-            let index = self.parse_expression()?;
-            self.expect(Token::RBracket)?;
-            if self.peek() != Some(&Token::LBracket) {
-                return Ok(C0Expression::Add(Box::new(base), Box::new(index)));
-            }
-            base = C0Expression::Index(Box::new(base), Box::new(index));
         }
     }
 
@@ -1939,18 +2278,80 @@ impl Parser {
         ))
     }
 
+    fn resolve_array_struct_field_access(
+        &self,
+        base: &C0Expression,
+        field_name: &str,
+    ) -> Result<(C0Expression, C0Type, Option<String>), C0SyntaxError> {
+        let C0Expression::Index(array, index) = base else {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        };
+        let C0Expression::Variable(name) = array.as_ref() else {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        };
+        if !self.variable_array_shapes.contains_key(name) {
+            return Err(
+                self.error_here("`.` currently supports only indexed local arrays of structs")
+            );
+        }
+        let struct_name = self.variable_structs.get(name).ok_or_else(|| {
+            self.error_here("`.` currently supports only indexed local arrays of structs")
+        })?;
+        let layout = self.structs.get(struct_name).ok_or_else(|| {
+            self.error_here(format!("unknown struct declaration `{struct_name}`"))
+        })?;
+        let field = layout.fields.get(field_name).ok_or_else(|| {
+            self.error_here(format!(
+                "struct `{struct_name}` has no field `{field_name}`"
+            ))
+        })?;
+        let element_pointer = C0Expression::Add(array.clone(), index.clone());
+        Ok((
+            offset_field_pointer(element_pointer, field.offset_bytes),
+            field.c_type,
+            field.struct_name.clone(),
+        ))
+    }
+
     fn parse_primary(&mut self) -> Result<C0Expression, C0SyntaxError> {
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            self.expect_ident_spelling("struct")?;
-            let name = self.expect_ident("struct name")?;
+            if self.peek_ident() == Some("struct") {
+                self.position += 1;
+                let name = self.expect_ident("struct name")?;
+                self.expect(Token::RParen)?;
+                let bytes = self
+                    .structs
+                    .get(&name)
+                    .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfStruct { name, bytes });
+            }
+            let parsed_type = self.parse_type()?;
             self.expect(Token::RParen)?;
-            let bytes = self
-                .structs
-                .get(&name)
-                .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
-                .size_bytes;
-            return Ok(C0Expression::SizeOfStruct { name, bytes });
+            if parsed_type.c_type == C0Type::Void {
+                return Err(self.error_at_previous("`sizeof(void)` is not supported"));
+            }
+            if let (C0Type::Int32, Some(name)) = (parsed_type.c_type, &parsed_type.struct_name) {
+                let bytes = self
+                    .structs
+                    .get(name)
+                    .ok_or_else(|| self.error_here(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes;
+                return Ok(C0Expression::SizeOfStruct {
+                    name: name.clone(),
+                    bytes,
+                });
+            }
+            return Ok(C0Expression::SizeOfType {
+                c_type: parsed_type.c_type,
+                struct_name: parsed_type.struct_name,
+                bytes: parsed_type.c_type.abi_size_bytes(),
+            });
         }
         let at = self.error_context();
         match self.next() {
@@ -2063,6 +2464,36 @@ impl Parser {
         }
         token
     }
+}
+
+fn flatten_array_indices(indexes: Vec<C0Expression>, dimensions: &[u32]) -> C0Expression {
+    let mut terms = Vec::with_capacity(indexes.len());
+    for (index, expression) in indexes.into_iter().enumerate() {
+        let stride = dimensions[index + 1..]
+            .iter()
+            .copied()
+            .fold(1u32, |stride, dimension| {
+                stride
+                    .checked_mul(dimension)
+                    .expect("validated array shape has a representable stride")
+            });
+        terms.push(if stride == 1 {
+            expression
+        } else {
+            C0Expression::Multiply(
+                Box::new(expression),
+                Box::new(C0Expression::Int32Literal(stride)),
+            )
+        });
+    }
+    let mut terms = terms.into_iter();
+    let mut offset = terms
+        .next()
+        .expect("a multidimensional access has at least one index");
+    for term in terms {
+        offset = C0Expression::Add(Box::new(offset), Box::new(term));
+    }
+    offset
 }
 
 fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxError> {
@@ -2179,6 +2610,7 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             '<' => Token::LessThan,
             '>' => Token::GreaterThan,
             '*' => Token::Star,
+            '.' => Token::Dot,
             '/' => Token::Slash,
             '%' => Token::Percent,
             '&' => Token::Amp,

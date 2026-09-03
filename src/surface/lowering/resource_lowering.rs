@@ -5,6 +5,7 @@ pub(in crate::surface) struct ConcreteMemoryRangeSeed {
     pub(in crate::surface) base: Pointer,
     pub(in crate::surface) bytes: u32,
     pub(in crate::surface) element_width: u32,
+    pub(in crate::surface) element_type: CType,
 }
 
 pub(in crate::surface) fn initial_call_state(
@@ -21,25 +22,23 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.name()
                 )));
             }
-            C0Type::Int32Pointer => {
+            C0Type::Int32Pointer
+            | C0Type::UInt8Pointer
+            | C0Type::Int32PointerPointer
+            | C0Type::UInt8PointerPointer => {
+                let c_type = parameter.c_type();
+                let element_width = c_type
+                    .pointee_type()
+                    .expect("pointer parameter has a pointee")
+                    .to_kernel_type()
+                    .byte_width();
                 arguments.push(c_pointer_value(Pointer {
                     block: PointerBlock::ExternalArgument,
                     offset: scale_int32_offset(
                         Bitvector32Term::Variable(Variable(
                             POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
                         )),
-                        4,
-                    ),
-                }));
-            }
-            C0Type::UInt8Pointer => {
-                arguments.push(c_pointer_value(Pointer {
-                    block: PointerBlock::ExternalArgument,
-                    offset: scale_int32_offset(
-                        Bitvector32Term::Variable(Variable(
-                            POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
-                        )),
-                        1,
+                        i64::from(element_width),
                     ),
                 }));
             }
@@ -94,36 +93,18 @@ pub(in crate::surface) fn memory_with_symbolic_loadable_cells(
     let base_memory = memory.clone();
     for range in loadable_ranges.values() {
         let mut offset: u32 = 0;
-        match range.element_width {
-            1 => {
-                while offset < range.bytes {
-                    let pointer = offset_pointer_by_elements(
-                        range.base.clone(),
-                        Bitvector32Term::Constant(offset),
-                        1,
-                    );
-                    let value = CValue::UInt8(crate::kernel::canonical_form_of_load(
-                        crate::kernel::intern_c_memory(base_memory.clone()),
-                        pointer.clone(),
-                    ));
-                    memory = memory.store(pointer, value);
-                    offset += 1;
-                }
-            }
-            _ => {
-                while offset.checked_add(4).is_some_and(|end| end <= range.bytes) {
-                    let pointer = offset_pointer_by_int32_elements(
-                        range.base.clone(),
-                        Bitvector32Term::Constant(offset / 4),
-                    );
-                    let value = CValue::Int32(crate::kernel::canonical_form_of_load(
-                        crate::kernel::intern_c_memory(base_memory.clone()),
-                        pointer.clone(),
-                    ));
-                    memory = memory.store(pointer, value);
-                    offset += 4;
-                }
-            }
+        while offset
+            .checked_add(range.element_width)
+            .is_some_and(|end| end <= range.bytes)
+        {
+            let pointer = offset_pointer_by_elements(
+                range.base.clone(),
+                Bitvector32Term::Constant(offset / range.element_width),
+                range.element_width,
+            );
+            let value = symbolic_value_for_element(&base_memory, &pointer, range.element_type);
+            memory = memory.store(pointer, value);
+            offset += range.element_width;
         }
     }
     memory
@@ -168,7 +149,8 @@ fn materialize_access_segment_cells(
         )));
     }
 
-    let element_width = contract_segment_element_width(parameters, &segment.source);
+    let element_type = contract_segment_element_type(parameters, &segment.source);
+    let element_width = element_type.byte_width();
     let base_memory = memory.clone();
     for index in *start..*end {
         let pointer = offset_pointer_by_elements(
@@ -183,10 +165,7 @@ fn materialize_access_segment_cells(
             crate::kernel::intern_c_memory(base_memory.clone()),
             pointer.clone(),
         );
-        let value = match element_width {
-            1 => CValue::UInt8(load),
-            _ => CValue::Int32(load),
-        };
+        let value = symbolic_value_from_load(&pointer, element_type, load);
         memory = memory.store(pointer, value);
     }
     Ok(memory)
@@ -808,6 +787,7 @@ pub(in crate::surface) fn concrete_loadable_block(
                     base: segment.base,
                     bytes,
                     element_width,
+                    element_type: contract_segment_element_type(parameters, &segment.source),
                 },
             )))
         }
@@ -851,6 +831,7 @@ pub(in crate::surface) fn concrete_access_resource_block(
             base: offset_pointer_by_elements(segment.base, segment.start, element_width),
             bytes,
             element_width,
+            element_type: contract_segment_element_type(parameters, &segment.source),
         },
     )))
 }
@@ -921,6 +902,31 @@ pub(in crate::surface) fn contract_segment_element_width(
     contract_expression_element_width(parameters, &segment.base).unwrap_or(4)
 }
 
+fn contract_segment_element_type(
+    parameters: &[syntax::C0Parameter],
+    segment: &ContractSegment,
+) -> CType {
+    contract_expression_element_type(parameters, &segment.base).unwrap_or(CType::Int32)
+}
+
+fn contract_expression_element_type(
+    parameters: &[syntax::C0Parameter],
+    expression: &CExpression,
+) -> Option<CType> {
+    match expression {
+        CExpression::Variable(name) => parameters
+            .iter()
+            .find(|parameter| parameter.name() == name)
+            .and_then(|parameter| parameter.c_type().pointee_type())
+            .map(C0Type::to_kernel_type),
+        CExpression::Add(left, right) => contract_expression_element_type(parameters, left)
+            .or_else(|| contract_expression_element_type(parameters, right)),
+        CExpression::Subtract(left, _) => contract_expression_element_type(parameters, left),
+        CExpression::TypedLoad { value_type, .. } => value_type.pointee_type(),
+        _ => None,
+    }
+}
+
 pub(in crate::surface) fn contract_expression_element_width(
     parameters: &[syntax::C0Parameter],
     expression: &CExpression,
@@ -930,16 +936,21 @@ pub(in crate::surface) fn contract_expression_element_width(
             .iter()
             .find(|parameter| parameter.name() == name)
             .and_then(|parameter| match parameter.c_type() {
-                C0Type::Int32Pointer => Some(4),
-                C0Type::UInt8Pointer => Some(1),
+                c_type if c_type.is_pointer() => c_type
+                    .pointee_type()
+                    .map(C0Type::to_kernel_type)
+                    .map(CType::byte_width),
+                C0Type::Int32Array(_) => Some(4),
+                C0Type::UInt8Array(_) => Some(1),
                 _ => None,
             }),
         CExpression::Add(left, right) => contract_expression_element_width(parameters, left)
             .or_else(|| contract_expression_element_width(parameters, right)),
         CExpression::Subtract(left, _) => contract_expression_element_width(parameters, left),
         CExpression::TypedLoad { value_type, .. } => match value_type {
-            CType::Int32Pointer => Some(4),
-            CType::UInt8Pointer => Some(1),
+            c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
+            CType::Int32Array(_) => Some(4),
+            CType::UInt8Array(_) => Some(1),
             _ => None,
         },
         _ => None,
@@ -969,11 +980,42 @@ pub(in crate::surface) fn contract_expression_element_width_from_array_refs(
             contract_expression_element_width_from_array_refs(array_refs, left)
         }
         CExpression::TypedLoad { value_type, .. } => match value_type {
-            CType::Int32Pointer => Some(4),
-            CType::UInt8Pointer => Some(1),
+            c_type if c_type.is_pointer() => c_type.pointee_type().map(CType::byte_width),
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn symbolic_value_for_element(memory: &CMemory, pointer: &Pointer, element_type: CType) -> CValue {
+    let load = crate::kernel::canonical_form_of_load(
+        crate::kernel::intern_c_memory(memory.clone()),
+        pointer.clone(),
+    );
+    symbolic_value_from_load(pointer, element_type, load)
+}
+
+fn symbolic_value_from_load(
+    pointer: &Pointer,
+    element_type: CType,
+    load: Bitvector32Term,
+) -> CValue {
+    match element_type {
+        CType::Int32 => CValue::Int32(load),
+        CType::UInt8 => CValue::UInt8(load),
+        c_type if c_type.is_pointer() => CValue::Pointer(Pointer {
+            block: pointer.block.clone(),
+            offset: PointerOffsetTerm::scale_int32(
+                load,
+                i64::from(
+                    c_type
+                        .pointee_type()
+                        .expect("pointer element type has a pointee")
+                        .byte_width(),
+                ),
+            ),
+        }),
+        _ => unreachable!("memory ranges cannot contain aggregate elements"),
     }
 }
 

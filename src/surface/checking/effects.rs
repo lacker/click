@@ -474,8 +474,12 @@ fn segment_contains_pointer_exact(
     pointer: &Pointer,
     available: &[Proposition],
 ) -> bool {
-    let Some(index) = pointer_element_index_from_base_exact(pointer, &segment.base, available)
-    else {
+    let Some(index) = pointer_element_index_from_base_exact(
+        pointer,
+        &segment.base,
+        segment.element_width,
+        available,
+    ) else {
         return false;
     };
     exact_proposition_is_available_or_true(
@@ -495,8 +499,12 @@ fn pointer_containment_goals(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
-    let (index, mut goals) =
-        pointer_element_index_from_base_with_alignment(pointer, &segment.base, assumptions)?;
+    let (index, mut goals) = pointer_element_index_from_base_with_alignment(
+        pointer,
+        &segment.base,
+        segment.element_width,
+        assumptions,
+    )?;
     goals.extend([
         Proposition::ConditionIs(
             signed_less_equal(segment.start.clone(), index.clone()),
@@ -512,7 +520,12 @@ fn pointer_containment_goals_with_exact_base(
     pointer: &Pointer,
     available: &[Proposition],
 ) -> Option<Vec<Proposition>> {
-    let index = pointer_element_index_from_base_exact(pointer, &segment.base, available)?;
+    let index = pointer_element_index_from_base_exact(
+        pointer,
+        &segment.base,
+        segment.element_width,
+        available,
+    )?;
     Some(vec![
         Proposition::ConditionIs(
             signed_less_equal(segment.start.clone(), index.clone()),
@@ -527,9 +540,15 @@ fn segment_contains_range_exact(
     range: &CMemoryRange,
     available: &[Proposition],
 ) -> bool {
-    let Some(base_index) =
-        pointer_element_index_from_base_exact(range.base(), &segment.base, available)
-    else {
+    if segment.element_width != range.element_width() {
+        return false;
+    }
+    let Some(base_index) = pointer_element_index_from_base_exact(
+        range.base(),
+        &segment.base,
+        segment.element_width,
+        available,
+    ) else {
         return false;
     };
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
@@ -548,8 +567,15 @@ fn range_containment_goals(
     range: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> Option<Vec<Proposition>> {
-    let (base_index, mut goals) =
-        pointer_element_index_from_base_with_alignment(range.base(), &segment.base, assumptions)?;
+    if segment.element_width != range.element_width() {
+        return None;
+    }
+    let (base_index, mut goals) = pointer_element_index_from_base_with_alignment(
+        range.base(),
+        &segment.base,
+        segment.element_width,
+        assumptions,
+    )?;
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
     let range_end = bitvector32_add(base_index, range.end().clone());
     goals.extend([
@@ -564,7 +590,15 @@ fn range_containment_goals_with_exact_base(
     range: &CMemoryRange,
     available: &[Proposition],
 ) -> Option<Vec<Proposition>> {
-    let base_index = pointer_element_index_from_base_exact(range.base(), &segment.base, available)?;
+    if segment.element_width != range.element_width() {
+        return None;
+    }
+    let base_index = pointer_element_index_from_base_exact(
+        range.base(),
+        &segment.base,
+        segment.element_width,
+        available,
+    )?;
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
     let range_end = bitvector32_add(base_index, range.end().clone());
     Some(vec![
@@ -642,6 +676,7 @@ fn pointer_offsets_align_exact(
 fn pointer_element_index_from_base_exact(
     pointer: &Pointer,
     base: &Pointer,
+    element_width: u32,
     available: &[Proposition],
 ) -> Option<Bitvector32Term> {
     if pointer.block != base.block {
@@ -653,24 +688,24 @@ fn pointer_element_index_from_base_exact(
         return Some(Bitvector32Term::Constant(0));
     }
     if base.offset == PointerOffsetTerm::Constant(0) {
-        return int32_element_index_from_pointer_offset(&pointer.offset);
+        return element_index_from_pointer_offset(&pointer.offset, element_width);
     }
     match &pointer.offset {
         PointerOffsetTerm::Add(left, right)
             if left.as_ref() == &base.offset
                 || pointer_offsets_align_exact(left, &base.offset, available) =>
         {
-            int32_element_index_from_pointer_offset(right)
+            element_index_from_pointer_offset(right, element_width)
         }
         PointerOffsetTerm::Add(left, right)
             if right.as_ref() == &base.offset
                 || pointer_offsets_align_exact(right, &base.offset, available) =>
         {
-            int32_element_index_from_pointer_offset(left)
+            element_index_from_pointer_offset(left, element_width)
         }
         _ => {
-            let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
-            let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
+            let pointer_index = element_index_from_pointer_offset(&pointer.offset, element_width)?;
+            let base_index = element_index_from_pointer_offset(&base.offset, element_width)?;
             Some(bitvector_index_relative_to_base(pointer_index, base_index))
         }
     }
@@ -697,6 +732,7 @@ fn bitvector_index_relative_to_base(
 fn pointer_element_index_from_base_with_alignment(
     pointer: &Pointer,
     base: &Pointer,
+    element_width: u32,
     assumptions: &PureFactContext,
 ) -> Option<(Bitvector32Term, Vec<Proposition>)> {
     if pointer.block != base.block {
@@ -713,36 +749,38 @@ fn pointer_element_index_from_base_with_alignment(
     }
     if base.offset == PointerOffsetTerm::Constant(0) {
         return Some((
-            int32_element_index_from_pointer_offset(&pointer.offset)?,
+            element_index_from_pointer_offset(&pointer.offset, element_width)?,
             Vec::new(),
         ));
     }
     match &pointer.offset {
-        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => {
-            Some((int32_element_index_from_pointer_offset(right)?, Vec::new()))
-        }
+        PointerOffsetTerm::Add(left, right) if left.as_ref() == &base.offset => Some((
+            element_index_from_pointer_offset(right, element_width)?,
+            Vec::new(),
+        )),
         PointerOffsetTerm::Add(left, right)
             if pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
         {
             Some((
-                int32_element_index_from_pointer_offset(right)?,
+                element_index_from_pointer_offset(right, element_width)?,
                 vec![pointer_offset_alignment_goal(left, &base.offset)],
             ))
         }
-        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => {
-            Some((int32_element_index_from_pointer_offset(left)?, Vec::new()))
-        }
+        PointerOffsetTerm::Add(left, right) if right.as_ref() == &base.offset => Some((
+            element_index_from_pointer_offset(left, element_width)?,
+            Vec::new(),
+        )),
         PointerOffsetTerm::Add(left, right)
             if pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
         {
             Some((
-                int32_element_index_from_pointer_offset(left)?,
+                element_index_from_pointer_offset(left, element_width)?,
                 vec![pointer_offset_alignment_goal(right, &base.offset)],
             ))
         }
         _ => {
-            let pointer_index = int32_element_index_from_pointer_offset(&pointer.offset)?;
-            let base_index = int32_element_index_from_pointer_offset(&base.offset)?;
+            let pointer_index = element_index_from_pointer_offset(&pointer.offset, element_width)?;
+            let base_index = element_index_from_pointer_offset(&base.offset, element_width)?;
             Some((
                 bitvector_index_relative_to_base(pointer_index, base_index),
                 Vec::new(),
@@ -912,7 +950,12 @@ pub(in crate::surface) fn segment_contains_pointer(
     pointer: &Pointer,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(index) = pointer_element_index_from_base(pointer, &segment.base, assumptions) else {
+    let Some(index) = pointer_element_index_from_base_with_width(
+        pointer,
+        &segment.base,
+        segment.element_width,
+        assumptions,
+    ) else {
         return false;
     };
     assumptions.proves(&Proposition::ConditionIs(
@@ -929,9 +972,15 @@ pub(in crate::surface) fn segment_contains_range(
     range: &CMemoryRange,
     assumptions: &PureFactContext,
 ) -> bool {
-    let Some(base_index) =
-        pointer_element_index_from_base(range.base(), &segment.base, assumptions)
-    else {
+    if segment.element_width != range.element_width() {
+        return false;
+    }
+    let Some(base_index) = pointer_element_index_from_base_with_width(
+        range.base(),
+        &segment.base,
+        segment.element_width,
+        assumptions,
+    ) else {
         return false;
     };
     let range_start = bitvector32_add(base_index.clone(), range.start().clone());
@@ -946,9 +995,19 @@ pub(in crate::surface) fn segment_contains_range(
     ))
 }
 
+#[allow(dead_code)]
 pub(in crate::surface) fn pointer_element_index_from_base(
     pointer: &Pointer,
     base: &Pointer,
+    assumptions: &PureFactContext,
+) -> Option<Bitvector32Term> {
+    pointer_element_index_from_base_with_width(pointer, base, 4, assumptions)
+}
+
+fn pointer_element_index_from_base_with_width(
+    pointer: &Pointer,
+    base: &Pointer,
+    element_width: u32,
     assumptions: &PureFactContext,
 ) -> Option<Bitvector32Term> {
     if pointer.block != base.block {
@@ -962,7 +1021,7 @@ pub(in crate::surface) fn pointer_element_index_from_base(
     }
 
     if base.offset == PointerOffsetTerm::Constant(0) {
-        return int32_element_index_from_pointer_offset(&pointer.offset);
+        return element_index_from_pointer_offset(&pointer.offset, element_width);
     }
 
     match &pointer.offset {
@@ -970,18 +1029,18 @@ pub(in crate::surface) fn pointer_element_index_from_base(
             if left.as_ref() == &base.offset
                 || pointer_offsets_equal_for_effect(left, &base.offset, assumptions) =>
         {
-            int32_element_index_from_pointer_offset(right)
+            element_index_from_pointer_offset(right, element_width)
         }
         PointerOffsetTerm::Add(left, right)
             if right.as_ref() == &base.offset
                 || pointer_offsets_equal_for_effect(right, &base.offset, assumptions) =>
         {
-            int32_element_index_from_pointer_offset(left)
+            element_index_from_pointer_offset(left, element_width)
         }
         _ => {
             if let (Some(pointer_index), Some(base_index)) = (
-                int32_element_index_from_pointer_offset(&pointer.offset),
-                int32_element_index_from_pointer_offset(&base.offset),
+                element_index_from_pointer_offset(&pointer.offset, element_width),
+                element_index_from_pointer_offset(&base.offset, element_width),
             ) {
                 Some(bitvector_index_relative_to_base(pointer_index, base_index))
             } else {
@@ -999,30 +1058,36 @@ fn pointer_offsets_equal_for_effect(
     c_pointer_offsets_proven_equal_for_effect(left, right, assumptions)
 }
 
-pub(in crate::surface) fn int32_element_index_from_pointer_offset(
+fn element_index_from_pointer_offset(
     offset: &PointerOffsetTerm,
+    element_width: u32,
 ) -> Option<Bitvector32Term> {
+    if element_width == 0 {
+        return None;
+    }
     match offset {
-        PointerOffsetTerm::Constant(offset) if offset % 4 == 0 => {
-            let index = offset / 4;
+        PointerOffsetTerm::Constant(offset) if offset % i64::from(element_width) == 0 => {
+            let index = offset / i64::from(element_width);
             (i32::MIN as i64..=i32::MAX as i64)
                 .contains(&index)
                 .then_some(Bitvector32Term::Constant((index as i32) as u32))
         }
-        PointerOffsetTerm::Int32Scaled { value, byte_width } if *byte_width == 4 => {
+        PointerOffsetTerm::Int32Scaled { value, byte_width }
+            if *byte_width == i64::from(element_width) =>
+        {
             Some(value.as_ref().clone())
         }
         PointerOffsetTerm::Add(left, right) if left.as_ref() == &PointerOffsetTerm::Constant(0) => {
-            int32_element_index_from_pointer_offset(right)
+            element_index_from_pointer_offset(right, element_width)
         }
         PointerOffsetTerm::Add(left, right)
             if right.as_ref() == &PointerOffsetTerm::Constant(0) =>
         {
-            int32_element_index_from_pointer_offset(left)
+            element_index_from_pointer_offset(left, element_width)
         }
         PointerOffsetTerm::Add(left, right) => Some(bitvector32_add(
-            int32_element_index_from_pointer_offset(left)?,
-            int32_element_index_from_pointer_offset(right)?,
+            element_index_from_pointer_offset(left, element_width)?,
+            element_index_from_pointer_offset(right, element_width)?,
         )),
         _ => None,
     }

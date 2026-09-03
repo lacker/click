@@ -43,8 +43,8 @@ documentation inventory keep the following accepted words synchronized.
 | `all`, `any`, `fold` | Range proposition and expression methods. |
 | `defined`, `loadable`, `separate` | Definedness, readable-memory, and resource-separation propositions. |
 | `old`, `at`, `c` | Snapshot selection and embedded C-fragment forms. |
-| `sizeof`, `byte_offset` | Struct-layout size and byte-granularity pointer-offset expressions. |
-| `load_int32`, `load_uint8`, `load_int32_pointer`, `load_uint8_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
+| `sizeof`, `byte_offset` | Supported scalar, pointer, and struct-layout sizes plus byte-granularity pointer-offset expressions. |
+| `load_int32`, `load_uint8`, `load_int32_pointer`, `load_uint8_pointer`, `load_int32_pointer_pointer`, `load_uint8_pointer_pointer` | Typed memory-load expressions used by checked expansion when no higher-level source spelling is available. |
 | `by`, `auto`, `using` | Proof introduction, default smart proof, and exact-premise syntax. |
 | `mark`, `step`, `execute`, `execute_until`, `frame` | Execution and framing tactics. |
 | `unfold`, `fold`, `observe`, `open` | Predicate and resource tactics. |

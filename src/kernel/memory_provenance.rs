@@ -531,10 +531,11 @@ fn c_memory_load_is_unchanged_unmemoized(
 /// the written pointer is *provably distinct* from the loaded one, using the
 /// same distinctness predicates as the fact-based paths. Each `CallHavoc`
 /// hop is crossed only when the call's mutable ranges are provably disjoint
-/// from the pointer, matching the `CMemoryEffectSummary` arm above. And a
-/// `LoopHavoc` hop is never crossed at all: loop havoc has no write set, so
-/// its freshness marker is honoured here at the edge, which is where
-/// conventions.md's havoc-identity trap is disarmed for this arc.
+/// from the pointer, matching the `CMemoryEffectSummary` arm above. A
+/// `LoopHavoc` hop follows the same rule when a checked whole-loop footprint
+/// is present; an unevaluated footprint is never crossed, so its freshness
+/// marker is honoured here at the edge, which is where conventions.md's
+/// havoc-identity trap is disarmed for this arc.
 ///
 /// The walk terminates because a derivation's base always holds a strictly
 /// smaller arena id (see `record_c_memory_derivation`); the hop cap and the
@@ -729,8 +730,24 @@ fn memory_derivations_reach(
                         pointer,
                     )
                 }
-                // Loop havoc may write anything the body can reach.
-                CMemoryDerivation::LoopHavoc { .. } => false,
+                CMemoryDerivation::LoopHavoc {
+                    mutable_ranges: Some(mutable_ranges),
+                    ..
+                } => {
+                    explicit_dag_check_active()
+                        && typed_ranges_disjoint_from_pointer_evidence(
+                            mutable_ranges,
+                            pointer,
+                            assumptions,
+                        )
+                        .is_some()
+                }
+                // An interface or otherwise unevaluated loop footprint is a
+                // hard provenance barrier.
+                CMemoryDerivation::LoopHavoc {
+                    mutable_ranges: None,
+                    ..
+                } => false,
             },
         );
         if !crossable {
@@ -802,6 +819,9 @@ pub(super) enum MemoryDagHopJustification {
     CallHavocRanges {
         ranges: Vec<RangeDisjointFromPointerEvidence>,
     },
+    LoopHavocRanges {
+        ranges: Vec<RangeDisjointFromPointerEvidence>,
+    },
     /// The havoc edge's frozen context proves the pointer outside the
     /// callee's mutable ranges by range reasoning or ownership.
     CallHavocFrozenContext,
@@ -821,6 +841,7 @@ pub(super) enum MemoryDagAssumptionKind {
     HeapFreeGeneralDistinctness,
     HeapFreeResourceSeparation,
     CallHavocRangeSeparation,
+    LoopHavocRangeSeparation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -899,6 +920,20 @@ impl MemoryDagHopJustification {
             ),
             Self::CallHavocRanges { ranges } => {
                 let CMemoryDerivation::CallHavoc { mutable_ranges, .. } = derivation else {
+                    return false;
+                };
+                ranges.len() == mutable_ranges.len()
+                    && ranges
+                        .iter()
+                        .zip(mutable_ranges)
+                        .all(|(evidence, range)| evidence.checks(range, pointer, assumptions))
+            }
+            Self::LoopHavocRanges { ranges } => {
+                let CMemoryDerivation::LoopHavoc {
+                    mutable_ranges: Some(mutable_ranges),
+                    ..
+                } = derivation
+                else {
                     return false;
                 };
                 ranges.len() == mutable_ranges.len()
@@ -1304,9 +1339,10 @@ thread_local! {
 /// not a failure: the walk stops and reports the node it stopped at, which is
 /// still a true statement about the load.
 ///
-/// `LoopHavoc` is never crossed (conventions.md's soundness trap; loop havoc
-/// has no write set to be disjoint from), and the hop cap plus the strictly
-/// decreasing arena ids along `base` bound the walk.
+/// A `LoopHavoc` with no checked footprint is never crossed (conventions.md's
+/// soundness trap). A verified footprint is crossed only when the current
+/// facts prove the queried pointer outside every recorded range. The hop cap
+/// plus the strictly decreasing arena ids along `base` bound the walk.
 /// Budget for one `Store`-hop distinctness check inside the cell-source
 /// walk, isolated from the enclosing query's fuel. Small on purpose: the
 /// certificates these hops need name their ranges close to the surface.
@@ -1391,9 +1427,9 @@ fn forward_range_offset_from_pointer(
         return None;
     };
     if pointer.offset == **left {
-        int32_element_index_from_offset(right)
+        element_index_from_offset(right, range.element_width())
     } else if pointer.offset == **right {
-        int32_element_index_from_offset(left)
+        element_index_from_offset(left, range.element_width())
     } else {
         None
     }
@@ -1475,7 +1511,7 @@ pub(crate) fn cell_epoch_for_load_variable(
                 // another block writes nothing; a name must not change across
                 // them, so the naming walk crosses those edges unconditionally.
                 with_extended_dag_bridging(|| {
-                    memory_dag_cell_source(memory, pointer, &PureFactContext::new())
+                    memory_dag_cell_source(memory, pointer, &PureFactContext::new(), false)
                         .node()
                         .clone()
                 })
@@ -1535,6 +1571,7 @@ fn memory_dag_cell_source(
     memory: &SharedCMemory,
     pointer: &Pointer,
     assumptions: &PureFactContext,
+    cross_loop_havoc: bool,
 ) -> MemoryDagCell {
     const MEMORY_DAG_CELL_HOP_LIMIT: usize = 64;
     let mut current = memory.clone();
@@ -1734,8 +1771,46 @@ fn memory_dag_cell_source(
                     };
                 }
             }
-            // Loop havoc may write anything the body can reach.
-            CMemoryDerivation::LoopHavoc { .. } => {
+            CMemoryDerivation::LoopHavoc {
+                mutable_ranges: Some(mutable_ranges),
+                ..
+            } => {
+                if !cross_loop_havoc
+                    || !extended_dag_bridging_active()
+                    || !explicit_dag_check_active()
+                {
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
+                }
+                if let Some(ranges) = typed_ranges_disjoint_from_pointer_evidence(
+                    mutable_ranges,
+                    pointer,
+                    assumptions,
+                ) {
+                    MemoryDagHopJustification::LoopHavocRanges { ranges }
+                } else if explicit_dag_check_active()
+                    && assumptions.ranges_proven_disjoint_from_pointer_for_frame(
+                        mutable_ranges,
+                        pointer,
+                        current.memory(),
+                    )
+                {
+                    MemoryDagHopJustification::AssumptionDependent(
+                        MemoryDagAssumptionKind::LoopHavocRangeSeparation,
+                    )
+                } else {
+                    return MemoryDagCell::Unwritten {
+                        node: current,
+                        path,
+                    };
+                }
+            }
+            CMemoryDerivation::LoopHavoc {
+                mutable_ranges: None,
+                ..
+            } => {
                 return MemoryDagCell::Unwritten {
                     node: current,
                     path,
@@ -1831,8 +1906,8 @@ pub(super) fn memory_load_equality_evidence_at(
     }
     let Some((left, right)) = with_cell_lookup_depth(|| {
         (
-            memory_dag_cell_source(left_memory, pointer, assumptions),
-            memory_dag_cell_source(right_memory, pointer, assumptions),
+            memory_dag_cell_source(left_memory, pointer, assumptions, true),
+            memory_dag_cell_source(right_memory, pointer, assumptions, true),
         )
     }) else {
         return None;
@@ -1954,9 +2029,10 @@ pub(super) fn atomic_memory_load_equality_evidence(
             .map(AtomicMemoryLoadEqualityEvidence::SameCell)
             .or_else(|| {
                 with_cell_lookup_depth(|| {
-                    let left_cell = memory_dag_cell_source(left_memory, left_pointer, assumptions);
+                    let left_cell =
+                        memory_dag_cell_source(left_memory, left_pointer, assumptions, true);
                     let right_cell =
-                        memory_dag_cell_source(right_memory, right_pointer, assumptions);
+                        memory_dag_cell_source(right_memory, right_pointer, assumptions, true);
                     if matches!(
                         left_cell.resolved_value(left_pointer),
                         Some(CValue::Int32(value)) if &value == right
@@ -2021,7 +2097,8 @@ pub(crate) fn explicit_atomic_equality_from_memory_derivations(
             };
             with_cell_lookup_depth(|| {
                 matches!(
-                    memory_dag_cell_source(memory, pointer, assumptions).resolved_value(pointer),
+                    memory_dag_cell_source(memory, pointer, assumptions, true)
+                        .resolved_value(pointer),
                     Some(CValue::Int32(resolved) | CValue::UInt8(resolved))
                         if resolved == *value
                 )

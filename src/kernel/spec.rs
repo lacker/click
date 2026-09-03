@@ -383,21 +383,30 @@ fn evaluate_spec_resource_at_state(
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<EvaluatedSpecResource>> {
     let (expressions, build): (Vec<SpecExpression>, SpecResourceBuilder) = match resource {
-        SpecResource::Memory { base, start, end } => (
-            vec![base.clone(), start.clone(), end.clone()],
-            Box::new(|values| match values.as_slice() {
-                [
-                    CValue::Pointer(base),
-                    CValue::Int32(start),
-                    CValue::Int32(end),
-                ] => Some(CResource::Memory(CMemoryRange::new(
-                    base.clone(),
-                    start.clone(),
-                    end.clone(),
-                ))),
-                _ => None,
-            }),
-        ),
+        SpecResource::Memory {
+            base,
+            start,
+            end,
+            element_width,
+        } => {
+            let element_width = *element_width;
+            (
+                vec![base.clone(), start.clone(), end.clone()],
+                Box::new(move |values| match values.as_slice() {
+                    [
+                        CValue::Pointer(base),
+                        CValue::Int32(start),
+                        CValue::Int32(end),
+                    ] => Some(CResource::Memory(CMemoryRange::new_with_element_width(
+                        base.clone(),
+                        start.clone(),
+                        end.clone(),
+                        element_width,
+                    ))),
+                    _ => None,
+                }),
+            )
+        }
         SpecResource::Composite { name, arguments } => {
             let name = name.clone();
             (

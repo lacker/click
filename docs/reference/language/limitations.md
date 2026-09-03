@@ -16,18 +16,23 @@ features include full structs, unsigned integers beyond the narrow `uint8` byte
 type, casts, globals, general allocator compatibility, `switch`, and many
 operators.
 
-C0 supports `malloc(sizeof(struct T))` into a matching `struct T*` and
-runtime-sized `int32` backing allocations such as `malloc(count * 4)`, with
-ordinary null checking and `free`. It does not yet support zero sizes,
-arbitrary byte layouts, `size_t`, general `void *` conversions, allocator
-declarations, custom allocators, `calloc`, or `realloc`.
+C0 supports `sizeof` for the modeled scalar and pointer types, plus
+`malloc(sizeof(struct T))` into a matching `struct T*` and runtime-sized
+`int32` backing allocations such as `malloc(count * sizeof(int32))`, with
+ordinary null checking and `free`. The zeroed variants are
+`calloc(count, sizeof(int32))` and matching
+`calloc(count, sizeof(struct T))` for a `struct T*` target. It does not yet
+support zero sizes, arbitrary byte layouts, `size_t`, general `void *`
+conversions, allocator declarations, custom allocators, or `realloc`.
 
 Struct support is partial. C0 accepts LP64-layout multi-field struct
 declarations with `int32`, `uint8`, and pointer-valued fields, plus chained
 `p->child->field` loads/stores through struct pointers. It retains pointee
 struct names through those chains and models field alignment and tail padding.
-It still has no struct values, embedded struct values, arrays of structs,
-unions, bitfields, packed layout, or general field-address expressions.
+Local arrays of those supported structs are also accepted for indexed
+`items[i].field` loads and stores, using the ABI-sized struct stride. It still
+has no struct values, embedded struct values, struct array parameters, unions,
+bitfields, packed layout, or general field-address expressions.
 Click contracts can use field places with `views` and the owned-resource verbs,
 and explicit ranges such as `owns owner[0..3]` remain useful for broader
 footprints. The supported ABI is LP64; other target ABIs are rejected rather
@@ -37,11 +42,11 @@ than approximated.
 
 The verifier supports `void` function returns, `int32`, and a byte-like
 `uint8` type, including their standard spellings (`int`/`int32_t` and
-`unsigned char`/`uint8_t`), `uint8*`, `uint8[]`, ASCII character literals,
-byte loads/stores, byte promotion through integer operators, and typed Click
-array refs. C typedefs may alias these modeled types and named struct-pointer
-types. It does not support `void` objects, parameters, or pointers. This is
-not a full C integer model: there are no casts beyond checked
+`unsigned char`/`uint8_t`), `int32*`, `uint8*`, `int32**`, `uint8**`, `uint8[]`,
+ASCII character literals, byte loads/stores, byte promotion through integer
+operators, and typed Click array refs. C typedefs may alias these modeled
+types and named struct-pointer types. It does not support `void` objects or
+parameters. This is not a full C integer model: there are no casts beyond checked
 `int32`-to-`uint8` narrowing, no broad usual-arithmetic-conversion lattice, and
 no general unsigned arithmetic yet.
 Signed `int32` addition, subtraction, multiplication, division, and remainder

@@ -6,12 +6,12 @@ Struct pointers are supported: declarations, `->` field access, and
 `malloc(sizeof(struct S))` lower fields to LP64 byte offsets carried as
 `CExpression::PointerOffsetBytes` (`src/kernel/primitives.rs:235`,
 `docs/internals/kernel.md` "C ABI and memory layout"). The model stops there.
-Struct fields may only be `int32` or pointers (`src/languages/c/syntax.rs:847-854`
-"struct fields currently support int32 and pointer fields"); struct values
+Struct fields currently support `int32`, `uint8`, and pointers; struct values
 cannot be parameters, locals, or returns (`syntax.rs:961` "only
-pointer-to-struct types are supported"); arrays of structs are rejected for
-parameters and locals (`syntax.rs:922-926`, `:1129-1133`); embedded structs,
-byte buffers in structs, unions, bitfields, enums, and typedefs do not exist.
+pointer-to-struct types are supported"). Local arrays of those supported
+structs now lower indexed `items[i].field` access with the complete LP64
+stride, but struct array parameters remain unsupported. Embedded structs, byte
+buffers in structs, unions, bitfields, enums, and typedefs do not exist.
 Kernel-side, `CType` has no struct or union variant (only the
 `Int32Array`/`UInt8Array` aggregates) and `CExpression` has no member
 operator; everything rides on pointer offsets. `docs/internals/roadmap.md:89-96`

@@ -23,20 +23,12 @@ when evidence exposes one.
 - [Remove search, fuel, and fallbacks from the kernel](simplify-kernel.md)
 - [Verify user-defined arena region ownership](arena-resource-ownership.md)
 
-## Soundness issues: 7
-
-Reachable from ordinary C plus a sidecar (false "verified" verdict today):
-
-- [Reconcile heap lifetime and resource state at the loop back edge](loop-heap-and-resource-frame.md)
-- [Make surface proposition substitution capture-avoiding](surface-substitution-capture.md)
-- [Route induction proofs through the kernel proof object](legacy-pure-theorem-checker.md)
+## Soundness issues: 2
 
 Reachable through the kernel API; the surface's exact checks currently mask
 them, and since the removal of double execution (2026-09-02) no whole-body
 re-execution stands behind those checks any more:
 
-- [Enforce binder freshness and simultaneous substitution in the kernel](kernel-binder-hygiene.md)
-- [Stop trusting caller-supplied contract structure in rule certification](contract-rule-trust-boundary.md)
 - [Salt call-havoc snapshots so interning cannot attach a narrower write set](call-havoc-fingerprint-collision.md)
 - [Close five latent kernel asymmetries](kernel-hardening-batch.md)
 
@@ -52,7 +44,6 @@ C language coverage:
 - [Parse the everyday C syntax the C0 frontend rejects](c-syntax-conveniences.md)
 - [Allow function calls in expression position](calls-in-expressions.md)
 - [Specify external and libc functions without a body](external-function-contracts.md)
-- [Support pointer-to-pointer types](pointer-to-pointer.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
 - [Model function pointers](function-pointers.md)
@@ -66,9 +57,7 @@ C language coverage:
 Semantics and reasoning:
 
 - [Rank count-up loops, nested loops, recursion in loops, and compound measures](termination-ranking-coverage.md)
-- [Reason about byte-width element indices](byte-element-index-reasoning.md)
 - [Extend arithmetic reasoning past affine terms](nonlinear-and-interval-reasoning.md)
-- [Give the memory DAG's loop-havoc edge a write set](loop-havoc-write-set.md)
 - [Let verified C construct the first unit of a declared resource](abstract-resource-construction.md)
 - [Extend the resource algebra: fractions, persistent tokens, mutual recursion, symbolic coefficients](resource-algebra-extensions.md)
 - [Offer unbounded integers on the specification side](mathematical-integers-in-specs.md)

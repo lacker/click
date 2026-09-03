@@ -34,7 +34,7 @@ kinds:
 | Edge | Meaning |
 | --- | --- |
 | `Store` | One pointer was assigned a value. The transition's fact context is frozen on the edge. |
-| `LoopHavoc` | A loop may have changed memory without a precise write set. |
+| `LoopHavoc` | A loop may have changed memory; verified whole-loop effects carry a checked write set. |
 | `CallHavoc` | A call may have changed declared mutable ranges. |
 | `BlockDeclared` | A new non-havoc block entered the memory model. |
 | `CellsForgotten` | Possibly aliasing cached cells were discarded on a write path. |
@@ -66,7 +66,8 @@ unchanged store. In particular:
   indexes (an indexed lookup, never a derivation, so the assumption-free
   naming walk can use it);
 - a `CallHavoc` edge is crossed only with sufficient range-disjointness evidence;
-- a `LoopHavoc` edge isn't crossed as proof that an arbitrary load is unchanged;
+- a `LoopHavoc` edge with no checked footprint isn't crossed; a verified
+  footprint is crossed only with range-disjointness evidence;
 - allocation and free preserve unrelated locations but don't preserve a load
   through the affected allocation;
 - havoc marker blocks remain attached during materialization-source
@@ -87,6 +88,14 @@ scoped to loadability reasoning through `with_extended_dag_bridging`. Enabling
 that reasoning globally can change which surface facts a planner selects and
 therefore change expansion spellings. Isolated memory-resolution fuel keeps
 a nested graph query from consuming the caller's bounded reasoning budget.
+
+Loop havoc uses the same edge-local rule as call havoc when a whole-loop effect
+summary has been checked: its mutable ranges are carried on `LoopHavoc`, and a
+load may cross only with evidence that it is outside every range. The copy-back
+in `prepare_loop_top_state` materializes entry cells already known to be stable;
+it is an abstract-state optimization, not the soundness source for post-loop
+load transport. If a footprint cannot be evaluated, the edge retains the
+unconditional barrier semantics.
 
 `CLICK_DISABLE_MEMORY_DAG=1` disables recording and DAG consumers for an A/B
 experiment. It is a contributor control, not a supported proof technique; a

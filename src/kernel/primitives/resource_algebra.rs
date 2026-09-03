@@ -2295,6 +2295,7 @@ fn memory_resource_fact_permits_read(
             range.base(),
             range.start(),
             range.end(),
+            range.element_width(),
         )
     })
 }
@@ -2312,6 +2313,7 @@ fn memory_resource_fact_permits_write(
             range.base(),
             range.start(),
             range.end(),
+            range.element_width(),
         ),
         CResourceFact::Own(CResource::Composite { .. } | CResource::Token { .. }, _)
         | CResourceFact::View(_) => false,
@@ -2557,7 +2559,9 @@ fn memory_range_structurally_covers(
     let base_delta = if required.base() == available.base() {
         Bitvector32Term::Constant(0)
     } else {
-        required.base().element_index_from_base(available.base())?
+        required
+            .base()
+            .element_index_from_base_with_width(available.base(), available.element_width())?
     };
     let available_start = available.start().as_const()? as i32;
     let available_end = available.end().as_const()? as i32;
@@ -2574,7 +2578,10 @@ fn memory_ranges_structurally_disjoint(left: &CMemoryRange, right: &CMemoryRange
     if left.element_width() != right.element_width() {
         return false;
     }
-    let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
+    let Some(base_delta) = right
+        .base()
+        .element_index_from_base_with_width(left.base(), left.element_width())
+    else {
         return false;
     };
     let (Some(left_start), Some(left_end), Some(right_start), Some(right_end)) = (
@@ -2607,7 +2614,7 @@ fn split_memory_range(
     // beginning of `available`.
     let available_start_pointer = available
         .base()
-        .offset_by_int32_elements(available.start().clone());
+        .offset_by_elements(available.start().clone(), available.element_width());
     let base_delta = if pointers_proven_equal_for_memory_resolution(
         required.base(),
         &available_start_pointer,
@@ -2617,7 +2624,7 @@ fn split_memory_range(
     } else {
         required
             .base()
-            .element_index_from_base(available.base())
+            .element_index_from_base_with_width(available.base(), available.element_width())
             .or_else(|| {
                 pointer_bases_equal_with_load_bridging(
                     required.base(),
@@ -2667,7 +2674,10 @@ fn memory_ranges_proven_overlapping(
     {
         return false;
     }
-    let Some(base_delta) = right.base().element_index_from_base(left.base()) else {
+    let Some(base_delta) = right
+        .base()
+        .element_index_from_base_with_width(left.base(), left.element_width())
+    else {
         return false;
     };
     let right_start = Bitvector32Term::add(base_delta.clone(), right.start().clone());

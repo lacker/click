@@ -74,6 +74,131 @@ fn memory_resource_coverage_requires_a_shared_element_width() {
 }
 
 #[test]
+fn typed_reads_can_use_a_differently_indexed_byte_footprint() {
+    let base = Pointer {
+        block: "struct-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let byte_field = base.offset_by_elements(Bitvector32Term::Constant(1), 1);
+    let assumptions = PureFactContext::new();
+
+    assert!(assumptions.pointer_access_in_range(
+        &byte_field,
+        1,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(2),
+        4,
+    ));
+    assert!(!assumptions.pointer_access_in_range(
+        &base.offset_by_elements(Bitvector32Term::Constant(8), 1),
+        1,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &Bitvector32Term::Constant(2),
+        4,
+    ));
+}
+
+#[test]
+fn element_index_and_count_support_nonlegacy_widths() {
+    for (element_width, index, byte_count) in
+        [(1_u32, 3_u32, 3_u32), (2, 7, 14), (4, 5, 20), (8, 2, 16)]
+    {
+        let index_term = Bitvector32Term::Variable(Variable(93_600 + u64::from(element_width)));
+        let offset = PointerOffsetTerm::Int32Scaled {
+            value: Box::new(index_term.clone()),
+            byte_width: i64::from(element_width),
+        };
+        assert_eq!(
+            element_index_from_offset(&offset, element_width),
+            Some(index_term)
+        );
+        assert_eq!(
+            element_count_from_bytes(&Bitvector32Term::Constant(byte_count), element_width),
+            Some(Bitvector32Term::Constant(index))
+        );
+    }
+}
+
+#[test]
+fn byte_pointer_distinctness_uses_byte_scaled_indices() {
+    let i = Bitvector32Term::Variable(Variable(93_500));
+    let j = Bitvector32Term::Variable(Variable(93_501));
+    let base = Pointer {
+        block: "byte-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let left = base.offset_by_elements(i.clone(), 1);
+    let right = base.offset_by_elements(j.clone(), 1);
+    let assumptions = PureFactContext::new().assume_condition(ConditionTerm::equal(i, j), false);
+
+    assert!(pointers_proven_distinct_for_memory_resolution(
+        &left,
+        &right,
+        &assumptions,
+    ));
+}
+
+#[test]
+fn byte_store_does_not_change_a_proven_distinct_byte_load() {
+    let i = Bitvector32Term::Variable(Variable(93_502));
+    let j = Bitvector32Term::Variable(Variable(93_503));
+    let base = Pointer {
+        block: "byte-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let written = base.offset_by_elements(i.clone(), 1);
+    let read = base.offset_by_elements(j.clone(), 1);
+    let before = CMemory::new();
+    let after = before.clone().store(written.clone(), uint8(7));
+    let assumptions = PureFactContext::new()
+        .assume_condition(ConditionTerm::equal(i, j), false)
+        .assume_proposition(Proposition::CMemoryMutatesOnly {
+            before: before.clone(),
+            after: after.clone(),
+            pointers: vec![written],
+        });
+
+    assert!(assumptions.proves(&Proposition::ConditionIs(
+        ConditionTerm::equal(
+            Bitvector32Term::MemoryLoad(
+                crate::kernel::intern_c_memory(after),
+                Box::new(read.clone()),
+            ),
+            Bitvector32Term::MemoryLoad(crate::kernel::intern_c_memory(before), Box::new(read),),
+        ),
+        true,
+    )));
+}
+
+#[test]
+fn byte_pointer_access_is_contained_by_a_byte_range() {
+    let index = Bitvector32Term::Variable(Variable(93_504));
+    let length = Bitvector32Term::Variable(Variable(93_505));
+    let base = Pointer {
+        block: "byte-buffer".into(),
+        offset: PointerOffsetTerm::Constant(0),
+    };
+    let pointer = base.offset_by_elements(index.clone(), 1);
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(index.clone(), Bitvector32Term::Constant(0)),
+            true,
+        )
+        .assume_condition(ConditionTerm::signed_less_than(index, length.clone()), true);
+
+    assert!(assumptions.pointer_access_in_range(
+        &pointer,
+        1,
+        &base,
+        &Bitvector32Term::Constant(0),
+        &length,
+        1,
+    ));
+}
+
+#[test]
 fn structural_range_offset_precedes_proof_aware_pointer_resolution() {
     let base = Pointer {
         block: PointerBlock::ExternalArgument,

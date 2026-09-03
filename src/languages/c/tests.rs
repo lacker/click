@@ -279,21 +279,18 @@ fn c0_syntax_accepts_declaration_initializer_in_for_loop() {
 }
 
 #[test]
-fn c0_syntax_names_unsupported_local_array_initializers() {
+fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"
         int32 unsupported() {
-            int32 values[2] = 0;
+            int32 values[2] = {1, 2, 3};
             return 0;
         }
         "#,
     )
-    .expect_err("array initialization is not in the C0 subset");
+    .expect_err("an array initializer cannot exceed the declared length");
 
-    assert_eq!(
-        error.message(),
-        "local array initializers are not supported"
-    );
+    assert_eq!(error.message(), "too many initializers for `values[2]`");
 }
 
 #[test]
@@ -491,8 +488,13 @@ fn c0_syntax_retains_struct_pointee_types_across_chained_fields() {
 fn c0_syntax_lowers_struct_malloc_sizeof_and_free() {
     fn contains_heap_operations(statement: &syntax::C0Statement) -> (bool, bool) {
         match statement {
-            syntax::C0Statement::HeapAllocate { target, bytes } => {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => {
                 assert_eq!(target, "item");
+                assert!(!zeroed);
                 assert_eq!(
                     *bytes,
                     syntax::C0Expression::SizeOfStruct {
@@ -565,6 +567,130 @@ fn c0_syntax_accepts_runtime_sized_int32_allocation() {
     .expect("runtime-sized scalar allocation should parse");
 
     assert!(matches!(function.body(), syntax::C0Statement::Seq(_, _)));
+}
+
+#[test]
+fn c0_syntax_lowers_calloc_to_zeroed_runtime_allocation() {
+    fn find_allocation(
+        statement: &syntax::C0Statement,
+    ) -> Option<(&str, &syntax::C0Expression, bool)> {
+        match statement {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => Some((target, bytes, *zeroed)),
+            syntax::C0Statement::Seq(first, second) => {
+                find_allocation(first).or_else(|| find_allocation(second))
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => find_allocation(then_branch).or_else(|| find_allocation(else_branch)),
+            syntax::C0Statement::While { body, .. } => find_allocation(body),
+            _ => None,
+        }
+    }
+
+    let function = syntax::parse_function(
+        r#"
+        int32* allocate_zeroed(int32 count) {
+            int32* data = calloc(count, sizeof(int32));
+            return data;
+        }
+        "#,
+    )
+    .expect("calloc should parse for int32 allocations");
+    let (target, bytes, zeroed) = find_allocation(function.body()).expect("calloc should lower");
+    assert_eq!(target, "data");
+    assert!(zeroed);
+    assert_eq!(
+        bytes,
+        &syntax::C0Expression::Multiply(
+            Box::new(syntax::C0Expression::Variable("count".to_string())),
+            Box::new(syntax::C0Expression::SizeOfType {
+                c_type: syntax::C0Type::Int32,
+                struct_name: None,
+                bytes: 4,
+            }),
+        )
+    );
+}
+
+#[test]
+fn c0_syntax_accepts_matching_struct_calloc() {
+    let function = syntax::parse_function(
+        r#"
+        struct item { int32 value; };
+        int32 allocate_zeroed(int32 count) {
+            struct item* item = calloc(count, sizeof(struct item));
+            return item->value;
+        }
+        "#,
+    )
+    .expect("calloc should accept a matching struct element size");
+
+    fn find_allocation(
+        statement: &syntax::C0Statement,
+    ) -> Option<(&str, &syntax::C0Expression, bool)> {
+        match statement {
+            syntax::C0Statement::HeapAllocate {
+                target,
+                bytes,
+                zeroed,
+            } => Some((target, bytes, *zeroed)),
+            syntax::C0Statement::Seq(first, second) => {
+                find_allocation(first).or_else(|| find_allocation(second))
+            }
+            _ => None,
+        }
+    }
+
+    let (target, bytes, zeroed) =
+        find_allocation(function.body()).expect("struct calloc should lower");
+    assert_eq!(target, "item");
+    assert!(zeroed);
+    assert_eq!(
+        bytes,
+        &syntax::C0Expression::Multiply(
+            Box::new(syntax::C0Expression::Variable("count".to_string())),
+            Box::new(syntax::C0Expression::SizeOfStruct {
+                name: "item".to_string(),
+                bytes: 4,
+            }),
+        )
+    );
+}
+
+#[test]
+fn c0_syntax_accepts_sizeof_for_scalar_and_pointer_types() {
+    let function = syntax::parse_function(
+        r#"
+        int32 sizes() {
+            return sizeof(int32) + sizeof(uint8) + sizeof(int32*) + sizeof(uint8**);
+        }
+        "#,
+    )
+    .expect("sizeof should accept every supported scalar and pointer type");
+
+    let syntax::C0Statement::Return(expression) = function.body() else {
+        panic!("sizeof expression should remain in the return statement");
+    };
+    let kernel_expression = expression.to_kernel_expression();
+    assert_eq!(
+        kernel_expression,
+        crate::kernel::c_add(
+            crate::kernel::c_add(
+                crate::kernel::c_add(
+                    crate::kernel::c_int32_literal(4),
+                    crate::kernel::c_int32_literal(1),
+                ),
+                crate::kernel::c_int32_literal(8),
+            ),
+            crate::kernel::c_int32_literal(8),
+        )
+    );
 }
 
 #[test]
@@ -1730,6 +1856,252 @@ fn c0_syntax_targets_kernel_local_array_storage() {
             arguments: Vec::new(),
             outcome: crate::kernel::CFunctionOutcome::Return {
                 value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_lowers_local_array_initializer_stores() {
+    let function = syntax::parse_function(
+        r#"
+        int32 local_array_initializer() {
+            int32 a[3] = {1, 2};
+            return a[2];
+        }
+        "#,
+    )
+    .expect("local array initializer should parse")
+    .to_kernel_function();
+
+    let a0 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let a1 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(4),
+    };
+    let a2 = crate::kernel::Pointer {
+        block: "local:a".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(8),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:a", 12)
+            .store(a0, crate::kernel::int32(1))
+            .store(a1, crate::kernel::int32(2))
+            .store(a2, crate::kernel::int32(0)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local array initializer should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(0),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_flattens_multidimensional_local_array_indices() {
+    let function = syntax::parse_function(
+        r#"
+        int32 matrix_roundtrip() {
+            int32 values[2][3];
+            values[0][0] = 1;
+            values[1][2] = 7;
+            return values[1][2];
+        }
+        "#,
+    )
+    .expect("multidimensional local array should parse")
+    .to_kernel_function();
+
+    let first = crate::kernel::Pointer {
+        block: "local:values".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let last = crate::kernel::Pointer {
+        block: "local:values".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(20),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:values", 24)
+            .store(first, crate::kernel::int32(1))
+            .store(last, crate::kernel::int32(7)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("multidimensional local array should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(7),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_lowers_nested_multidimensional_array_initializers() {
+    let function = syntax::parse_function(
+        r#"
+        int32 matrix_initializer() {
+            int32 values[2][3] = {{1, 2, 3}, {4, 5, 6}};
+            return values[1][2];
+        }
+        "#,
+    )
+    .expect("nested multidimensional array initializers should parse")
+    .to_kernel_function();
+
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:values", 24)
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                },
+                crate::kernel::int32(1),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(4),
+                },
+                crate::kernel::int32(2),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(8),
+                },
+                crate::kernel::int32(3),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(12),
+                },
+                crate::kernel::int32(4),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(16),
+                },
+                crate::kernel::int32(5),
+            )
+            .store(
+                crate::kernel::Pointer {
+                    block: "local:values".into(),
+                    offset: crate::kernel::PointerOffsetTerm::Constant(20),
+                },
+                crate::kernel::int32(6),
+            ),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("nested multidimensional array initializers should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(6),
+                state: final_state,
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_syntax_lowers_local_struct_array_fields_with_abi_stride() {
+    let function = syntax::parse_function(
+        r#"
+        struct item {
+            uint8 tag;
+            int32 value;
+        };
+
+        int32 struct_array_roundtrip() {
+            struct item items[2];
+            items[0].tag = 3;
+            items[1].value = 7;
+            return items[0].tag + items[1].value;
+        }
+        "#,
+    )
+    .expect("local arrays of structs should parse")
+    .to_kernel_function();
+
+    let tag = crate::kernel::Pointer {
+        block: "local:items".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(0),
+    };
+    let value = crate::kernel::Pointer {
+        block: "local:items".into(),
+        offset: crate::kernel::PointerOffsetTerm::Constant(12),
+    };
+    let state = crate::kernel::CState::new();
+    let final_state = crate::kernel::CState::new().with_memory(
+        crate::kernel::CMemory::new()
+            .with_block("local:items", 16)
+            .store(tag, crate::kernel::uint8(3))
+            .store(value, crate::kernel::int32(7)),
+    );
+    let theorem = crate::kernel::prove_symbolic_c_function_execution(
+        state.clone(),
+        function.clone(),
+        Vec::new(),
+        Default::default(),
+    )
+    .expect("local struct array fields should execute");
+
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state,
+            function,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(10),
                 state: final_state,
             },
         }

@@ -1032,23 +1032,22 @@ impl Parser {
                 )));
             }
         };
-        if self.peek() == Some(&Token::Star) {
+        let mut c_type = scalar_type;
+        while self.peek() == Some(&Token::Star) {
             self.position += 1;
-            Ok(ParsedType {
-                c_type: match scalar_type {
-                    C0Type::Void => return Err(self.error("`void *` is not supported yet")),
-                    C0Type::Int32 => C0Type::Int32Pointer,
-                    C0Type::UInt8 => C0Type::UInt8Pointer,
-                    _ => unreachable!("scalar type should not be aggregate"),
-                },
-                struct_name: None,
-            })
-        } else {
-            Ok(ParsedType {
-                c_type: scalar_type,
-                struct_name: None,
-            })
+            c_type = match c_type {
+                C0Type::Void => return Err(self.error("`void *` is not supported yet")),
+                C0Type::Int32 => C0Type::Int32Pointer,
+                C0Type::UInt8 => C0Type::UInt8Pointer,
+                C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                _ => return Err(self.error("pointer depth beyond `**` is not supported")),
+            };
         }
+        Ok(ParsedType {
+            c_type,
+            struct_name: None,
+        })
     }
 
     fn parse_parameter_array_suffix(
@@ -1074,19 +1073,17 @@ impl Parser {
         if parsed_type.struct_name.is_some() {
             return Err(self.error("array parameters of struct type are not supported"));
         }
-        let pointer_type = match parsed_type.c_type {
-            C0Type::Int32 => C0Type::Int32Pointer,
-            C0Type::UInt8 => C0Type::UInt8Pointer,
+        let (pointer_type, element_width) = match parsed_type.c_type {
+            C0Type::Int32 => (C0Type::Int32Pointer, 4),
+            C0Type::UInt8 => (C0Type::UInt8Pointer, 1),
+            C0Type::Int32Pointer => (C0Type::Int32PointerPointer, 8),
+            C0Type::UInt8Pointer => (C0Type::UInt8PointerPointer, 8),
             _ => return Err(self.error("only scalar array parameters are supported")),
         };
 
         self.position += 1;
         let mut declared_bytes = None;
         if let Some(Token::Number(length)) = self.peek() {
-            let element_width = match pointer_type {
-                C0Type::UInt8Pointer => 1,
-                _ => 4,
-            };
             declared_bytes = length.checked_mul(element_width);
             self.position += 1;
         }
@@ -2762,14 +2759,22 @@ impl Parser {
     fn parse_contract_primary(&mut self) -> Result<ContractExpression, ClickError> {
         if self.peek_ident() == Some("sizeof") && self.peek_next() == Some(&Token::LParen) {
             self.position += 2;
-            self.expect_ident_spelling("struct")?;
-            let name = self.expect_ident("struct name")?;
-            self.expect(Token::RParen)?;
-            let bytes = self
-                .struct_layouts
-                .get(&name)
-                .ok_or_else(|| self.error(format!("unknown struct declaration `{name}`")))?
-                .size_bytes();
+            let bytes = if self.peek_ident() == Some("struct") {
+                self.position += 1;
+                let name = self.expect_ident("struct name")?;
+                self.expect(Token::RParen)?;
+                self.struct_layouts
+                    .get(&name)
+                    .ok_or_else(|| self.error(format!("unknown struct declaration `{name}`")))?
+                    .size_bytes()
+            } else {
+                let parsed_type = self.parse_type()?;
+                self.expect(Token::RParen)?;
+                if parsed_type.c_type == C0Type::Void {
+                    return Err(self.error("`sizeof(void)` is not supported"));
+                }
+                parsed_type.c_type.abi_size_bytes()
+            };
             return Ok(ContractExpression::CFragment(CExpression::Value(int32(
                 bytes,
             ))));
@@ -2869,6 +2874,8 @@ impl Parser {
             Some("load_uint8") => Some(CType::UInt8),
             Some("load_int32_pointer") => Some(CType::Int32Pointer),
             Some("load_uint8_pointer") => Some(CType::UInt8Pointer),
+            Some("load_int32_pointer_pointer") => Some(CType::Int32PointerPointer),
+            Some("load_uint8_pointer_pointer") => Some(CType::UInt8PointerPointer),
             _ => None,
         };
         if self.peek_next() == Some(&Token::LParen)

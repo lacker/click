@@ -257,7 +257,7 @@ fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
         .store(arc_pointer(0), CValue::Int32(Bitvector32Term::Constant(5)));
     let after = base
         .clone()
-        .with_loop_memory_havoc(Variable(0), &BTreeSet::new());
+        .with_loop_memory_havoc(Variable(0), &BTreeSet::new(), None);
 
     assert!(
         after.has_block(&"havoc:0".into()),
@@ -270,9 +270,11 @@ fn loop_havoc_is_its_own_edge_kind_and_keeps_its_marker_block() {
         CMemoryDerivation::LoopHavoc {
             base: recorded_base,
             variable,
+            mutable_ranges,
         } => {
             assert_eq!(recorded_base.as_ref(), &base);
             assert_eq!(*variable, Variable(0));
+            assert_eq!(*mutable_ranges, None);
         }
         other => panic!("expected a loop-havoc edge, got {other:?}"),
     }
@@ -319,7 +321,7 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
 
     let havoced = base
         .clone()
-        .with_loop_memory_havoc(Variable(7), &BTreeSet::new());
+        .with_loop_memory_havoc(Variable(7), &BTreeSet::new(), None);
     assert!(
         !c_memory_load_is_unchanged(&base, &havoced, &read, &PureFactContext::new()),
         "loop havoc must never be crossed without explicit frame evidence"
@@ -332,6 +334,58 @@ fn derivations_carry_a_load_across_a_distinct_store_but_not_across_havoc() {
         !c_memory_load_is_unchanged(&base, &havoced_then_stored, &read, &PureFactContext::new()),
         "a crossable store must not smuggle a walk past an intervening havoc"
     );
+}
+
+#[test]
+fn loop_havoc_carries_a_verified_write_set_for_disjoint_loads() {
+    if skip_without_memory_dag() {
+        return;
+    }
+    let base = CMemory::new().with_block("arg-memory", 16);
+    let read = arc_pointer(0);
+    let ranges = [memory_range(arc_pointer(8), 0, 8)];
+    let havoced = base
+        .clone()
+        .with_loop_memory_havoc(Variable(8), &BTreeSet::new(), Some(&ranges));
+
+    let derivation = crate::kernel::intern_c_memory_ref(&havoced)
+        .derivation()
+        .expect("verified loop havoc records its write set");
+    let CMemoryDerivation::LoopHavoc {
+        mutable_ranges: Some(recorded),
+        ..
+    } = derivation.as_ref()
+    else {
+        panic!("expected a loop-havoc edge with ranges, got {derivation:?}");
+    };
+    assert_eq!(recorded, &ranges);
+
+    let load = |memory: &CMemory| {
+        Bitvector32Term::MemoryLoad(
+            crate::kernel::intern_c_memory_ref(memory),
+            Box::new(read.clone()),
+        )
+    };
+    assert!(
+        crate::kernel::explicit_atomic_equality_from_memory_derivations(
+            &load(&havoced),
+            &load(&base),
+            &PureFactContext::new(),
+        )
+    );
+
+    let overlapping_ranges = [memory_range(arc_pointer(0), 0, 8)];
+    let overlapping = base.clone().with_loop_memory_havoc(
+        Variable(9),
+        &BTreeSet::new(),
+        Some(&overlapping_ranges),
+    );
+    assert!(!c_memory_load_is_unchanged(
+        &base,
+        &overlapping,
+        &read,
+        &PureFactContext::new()
+    ));
 }
 
 /// Stage 4: the DAG-guided cell lookup answers load equality for snapshots
@@ -443,7 +497,7 @@ fn sibling_snapshots_resolve_one_cell_to_a_common_ancestor() {
     // no write set, so no walk may resolve through one.
     let havoced = left
         .clone()
-        .with_loop_memory_havoc(Variable(9), &BTreeSet::new());
+        .with_loop_memory_havoc(Variable(9), &BTreeSet::new(), None);
     assert!(
         !PureFactContext::new().memory_loads_proven_equal(&load_in(&left), &load_in(&havoced)),
         "loop havoc must stop the cell lookup"

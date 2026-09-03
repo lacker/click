@@ -715,6 +715,8 @@ pub(in crate::surface) fn c_value_matches_click_type(value: &CValue, c_type: C0T
             | (CValue::UInt8(_), C0Type::UInt8)
             | (CValue::Pointer(_), C0Type::Int32Pointer)
             | (CValue::Pointer(_), C0Type::UInt8Pointer)
+            | (CValue::Pointer(_), C0Type::Int32PointerPointer)
+            | (CValue::Pointer(_), C0Type::UInt8PointerPointer)
     )
 }
 

@@ -392,6 +392,33 @@ fn memories_equal_by_matching_derivations(
                 )
         }
         (
+            Some(CMemoryDerivation::LoopHavoc {
+                base: left_base,
+                mutable_ranges: left_ranges,
+                ..
+            }),
+            Some(CMemoryDerivation::LoopHavoc {
+                base: right_base,
+                mutable_ranges: right_ranges,
+                ..
+            }),
+        ) => {
+            let ranges_match = match (left_ranges, right_ranges) {
+                (Some(left_ranges), Some(right_ranges)) => {
+                    memory_range_lists_definitionally_equal(left_ranges, right_ranges, assumptions)
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            ranges_match
+                && memories_equal_by_matching_derivations(
+                    left_base,
+                    right_base,
+                    assumptions,
+                    depth + 1,
+                )
+        }
+        (
             Some(CMemoryDerivation::Store {
                 base: left_base,
                 pointer: left_pointer,
@@ -877,6 +904,7 @@ fn prepare_function_claim_path(
         let Some((predicate, predicate_obligations, body, body_obligations)) =
             instantiate_contract_predicate_unfolding_with_obligations(
                 &post_state,
+                Some(&entry_state),
                 unfolding,
                 &assumptions,
                 &mut budget,
@@ -983,6 +1011,90 @@ fn function_claim_holds_on_prepared_path(
             // This path deliberately applies only to the exact registered
             // body; arbitrary proposition ensures continue through ordinary
             // lowering and loadability checks below.
+            // One completion match rule for every form the ensure is compared
+            // in: its lowering, and its registered predicate identity.
+            let completion_certifies = |candidate: &Proposition| {
+                checked_propositions
+                    .get(&completion_key(candidate))
+                    .into_iter()
+                    .flatten()
+                    .any(|proof| {
+                        // Cheapest checks first: a completion from another
+                        // path or function is rejected before any proving.
+                        // A completion made at the state the artifact's
+                        // proof ran at certifies a path rebased from it.
+                        let completion_state = proof.specification.state();
+                        if proof.function != *function
+                            || (completion_state != caller_state
+                                && Some(completion_state) != completion_origin_state)
+                            || proof.specification.arguments() != arguments
+                            || !c_function_outcomes_definitionally_equal(
+                                function,
+                                proof.specification.outcome(),
+                                outcome,
+                                assumptions,
+                            )
+                        {
+                            return false;
+                        }
+                        let requirements_match =
+                            proof.specification.requires().iter().all(|requirement| {
+                                let ok = assumptions.proves(requirement)
+                                    || match requirement {
+                                        Proposition::CResourceComposition(required) => {
+                                            resource_context_definitionally_contains(
+                                                required_resources,
+                                                required,
+                                                function.composite_resource_definitions(),
+                                                entry_state.memory(),
+                                                assumptions,
+                                            )
+                                        }
+                                        Proposition::Predicate { .. } => function
+                                            .predicate_unfoldings()
+                                            .iter()
+                                            .any(|unfolding| {
+                                                let mut budget = ExecutionBudget::default();
+                                                let Some((
+                                        predicate,
+                                        predicate_obligations,
+                                        body,
+                                        body_obligations,
+                                    )) = instantiate_contract_predicate_unfolding_with_obligations(
+                                        entry_state,
+                                        None,
+                                        unfolding,
+                                        assumptions,
+                                        &mut budget,
+                                    )
+                                    else {
+                                        return false;
+                                    };
+                                                predicate == *requirement
+                                                    && predicate_obligations
+                                                        .iter()
+                                                        .chain(&body_obligations)
+                                                        .all(|obligation| {
+                                                            certification_proves_proposition(
+                                                                assumptions,
+                                                                obligation,
+                                                            )
+                                                        })
+                                                    && certification_proves_proposition(
+                                                        assumptions,
+                                                        &body,
+                                                    )
+                                            }),
+                                        _ => certification_proves_proposition(
+                                            assumptions,
+                                            requirement,
+                                        ),
+                                    };
+                                ok
+                            });
+                        requirements_match
+                    })
+            };
             let registered_predicate_ensure_holds = function
                 .predicate_unfoldings()
                 .iter()
@@ -991,6 +1103,7 @@ fn function_claim_holds_on_prepared_path(
                     let Some((predicate, predicate_obligations, _, _)) =
                         instantiate_contract_predicate_unfolding_with_obligations(
                             post_state,
+                            Some(entry_state),
                             unfolding,
                             assumptions,
                             &mut budget,
@@ -1008,7 +1121,8 @@ fn function_claim_holds_on_prepared_path(
                                 obligation,
                                 assumptions,
                             )
-                    }) && certification_proves_proposition(assumptions, &predicate)
+                    }) && (completion_certifies(&predicate)
+                        || certification_proves_proposition(assumptions, &predicate))
                 });
             if registered_predicate_ensure_holds {
                 return true;
@@ -1091,105 +1205,24 @@ fn function_claim_holds_on_prepared_path(
                         .extend(finite_forall_instantiations(&path_propositions.clone()));
                     let path_assumptions =
                         assumptions_with_propositions(assumptions, &path_propositions);
-                    let proposition_holds =
-                        crate::instrumentation::measure_operation(
-                            function.name(),
-                            "contract claim",
-                            "completion match",
-                            || {
-                                checked_propositions
-                                    .get(&completion_key(&path.proposition))
-                                    .into_iter()
-                                    .flatten()
-                                    .any(|proof| {
-                                        // Cheapest checks first: a completion from another
-                                        // path or function is rejected before any proving.
-                                        // A completion made at the state the artifact's
-                                        // proof ran at certifies a path rebased from it.
-                                        let completion_state = proof.specification.state();
-                                        if proof.function != *function
-                                            || (completion_state != caller_state
-                                                && Some(completion_state)
-                                                    != completion_origin_state)
-                                            || proof.specification.arguments() != arguments
-                                            || !c_function_outcomes_definitionally_equal(
-                                                function,
-                                                proof.specification.outcome(),
-                                                outcome,
-                                                assumptions,
-                                            )
-                                        {
-                                            return false;
-                                        }
-                                        let requirements_match =
-                                proof.specification.requires().iter().all(|requirement| {
-                                    let ok = assumptions.proves(requirement) || match requirement {
-                                        Proposition::CResourceComposition(required) => {
-                                            resource_context_definitionally_contains(
-                                                required_resources,
-                                                required,
-                                                function.composite_resource_definitions(),
-                                                entry_state.memory(),
-                                                assumptions,
-                                            )
-                                        }
-                                        Proposition::Predicate { .. } => function
-                                            .predicate_unfoldings()
-                                            .iter()
-                                            .any(|unfolding| {
-                                                let mut budget = ExecutionBudget::default();
-                                                let Some((
-                                        predicate,
-                                        predicate_obligations,
-                                        body,
-                                        body_obligations,
-                                    )) = instantiate_contract_predicate_unfolding_with_obligations(
-                                        entry_state,
-                                        unfolding,
-                                        assumptions,
-                                        &mut budget,
-                                    )
-                                    else {
-                                        return false;
-                                    };
-                                                predicate == *requirement
-                                                    && predicate_obligations
-                                                        .iter()
-                                                        .chain(&body_obligations)
-                                                        .all(|obligation| {
-                                                            certification_proves_proposition(
-                                                                assumptions,
-                                                                obligation,
-                                                            )
-                                                        })
-                                                    && certification_proves_proposition(
-                                                        assumptions,
-                                                        &body,
-                                                    )
-                                            }),
-                                        _ => certification_proves_proposition(
-                                            assumptions,
-                                            requirement,
-                                        ),
-                                    };
-                                    ok
-                                });
-                                        requirements_match
-                                    })
-                            },
-                        ) || crate::instrumentation::measure_operation(
-                            function.name(),
-                            "contract claim",
-                            "post proposition proof",
-                            || {
-                                certification_proves_post_proposition(
-                                    &path_assumptions,
-                                    &path.proposition,
-                                    return_state.memory(),
-                                    execution_facts,
-                                )
-                            },
-                        );
+                    let proposition_holds = crate::instrumentation::measure_operation(
+                        function.name(),
+                        "contract claim",
+                        "completion match",
+                        || completion_certifies(&path.proposition),
+                    ) || crate::instrumentation::measure_operation(
+                        function.name(),
+                        "contract claim",
+                        "post proposition proof",
+                        || {
+                            certification_proves_post_proposition(
+                                &path_assumptions,
+                                &path.proposition,
+                                return_state.memory(),
+                                execution_facts,
+                            )
+                        },
+                    );
                     obligations_hold && proposition_holds
                 })
         }
@@ -1314,10 +1347,11 @@ fn function_claim_holds_on_prepared_path(
                                 || mutable_ranges.iter().any(|range| {
                                     assumptions.pointer_access_in_range(
                                         pointer,
-                                        4,
+                                        range.element_width(),
                                         range.base(),
                                         range.start(),
                                         range.end(),
+                                        range.element_width(),
                                     )
                                 })
                         })
@@ -1486,6 +1520,12 @@ pub(in crate::kernel) fn c_effect_memory_advances_over_internal_heap_state(
     std::sync::Arc::make_mut(&mut stripped.heap)
         .uninitialized_allocations
         .retain(|pointer| !fresh_blocks.contains(&pointer.block));
+    std::sync::Arc::make_mut(&mut stripped.heap)
+        .zeroed_allocations
+        .retain(|pointer| !fresh_blocks.contains(&pointer.block));
+    std::sync::Arc::make_mut(&mut stripped.heap)
+        .zeroed_pending_allocations
+        .retain(|pointer| !fresh_blocks.contains(&pointer.block));
     c_effect_memories_definitionally_equal(before, &stripped, assumptions)
 }
 
@@ -1557,12 +1597,30 @@ pub(crate) fn completion_key(proposition: &Proposition) -> Proposition {
                 proposition.clone()
             }
         }
-        Proposition::Not(body) => match completion_key(body) {
-            Proposition::ConditionIs(condition, value) => {
-                Proposition::ConditionIs(condition, !value)
+        // A predicate identity carries a resource-state snapshot only when
+        // its definition observes resource counts; the proof's lowering
+        // leaves it empty otherwise. The outcome the completion was made
+        // at fixes that state, so the key compares predicates without it.
+        Proposition::Predicate { name, arguments } => {
+            let mut arguments = arguments.clone();
+            if let Some(Term::CState(state)) = arguments.first_mut() {
+                *state = CState::new();
             }
-            body => Proposition::Not(Box::new(body)),
-        },
+            Proposition::Predicate {
+                name: name.clone(),
+                arguments,
+            }
+        }
+        Proposition::Not(body) => {
+            let body = completion_key(body);
+            match (as_truth(&body), body) {
+                (Some(value), _) => truth(!value),
+                (None, Proposition::ConditionIs(condition, value)) => {
+                    Proposition::ConditionIs(condition, !value)
+                }
+                (None, body) => Proposition::Not(Box::new(body)),
+            }
+        }
         Proposition::And(left, right) => {
             let (left, right) = (completion_key(left), completion_key(right));
             match (as_truth(&left), as_truth(&right)) {

@@ -66,6 +66,40 @@ fn loop_back_edge_rejects_heap_and_resource_state_changes() {
 }
 
 #[test]
+fn final_iteration_condition_can_use_the_pre_body_bound() {
+    let original = Variable(91_001);
+    let original_bits = Bitvector32Term::Variable(original);
+    let state = CState::new().with_local(
+        "i",
+        int32(Bitvector32Term::add(
+            original_bits.clone(),
+            Bitvector32Term::Constant(1),
+        )),
+    );
+    let assumptions = PureFactContext::new()
+        .assume_condition(
+            ConditionTerm::signed_greater_equal(
+                original_bits.clone(),
+                Bitvector32Term::Constant(0),
+            ),
+            true,
+        )
+        .assume_condition(
+            ConditionTerm::signed_less_than(original_bits, Bitvector32Term::Constant(1)),
+            true,
+        );
+
+    assert!(
+        !c_loop_condition_may_continue(
+            &state,
+            &c_less_than(c_variable("i"), c_int32_literal(1)),
+            &assumptions,
+        )
+        .expect("condition classification should stay within its expression budget")
+    );
+}
+
+#[test]
 fn join_state_forgets_changed_scalars_and_memory() {
     let stable_x = int32(Bitvector32Term::Variable(Variable(7)));
     let pointer = Pointer {
@@ -1024,6 +1058,7 @@ fn loop_exit_rule_with_proven_preservation_does_not_reverify_the_body() {
         CExecutionEnvironment::new(),
         false,
         true,
+        Vec::new(),
     );
     assert!(loop_rule.is_some());
     assert!(after_proof.paths().iter().all(|path| {
@@ -1057,6 +1092,7 @@ fn loop_exit_with_unproven_preservation_does_not_produce_rule() {
         CExecutionEnvironment::new(),
         true,
         false,
+        Vec::new(),
     );
 
     assert!(loop_rule.is_none());

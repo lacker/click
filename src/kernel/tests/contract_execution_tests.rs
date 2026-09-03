@@ -3240,6 +3240,14 @@ fn completion_key_folds_trivial_conditions_the_proof_lowering_folds() {
         )),
         truth(true)
     );
+    // Negating a constant stays in the canonical truth form.
+    assert_eq!(
+        completion_key(&Proposition::Not(Box::new(Proposition::ConditionIs(
+            ConditionTerm::Constant(false),
+            true,
+        )))),
+        truth(true)
+    );
     // Negating a condition flips its value.
     assert_eq!(
         completion_key(&Proposition::Not(Box::new(nontrivial.clone()))),

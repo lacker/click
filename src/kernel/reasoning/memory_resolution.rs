@@ -471,9 +471,15 @@ fn pointer_offsets_with_common_base_proven_distinct_for_memory_resolution(
     let Some((left_index, right_index)) = index_pair else {
         return false;
     };
+    if let (Some(left), Some(right)) = (left_index.as_const(), right_index.as_const()) {
+        return left != right;
+    }
+    let Some(element_width) = common_pointer_offset_element_width(left_index, right_index) else {
+        return false;
+    };
     let (Some(left_index), Some(right_index)) = (
-        int32_element_index_from_offset(left_index),
-        int32_element_index_from_offset(right_index),
+        element_index_from_offset(left_index, element_width),
+        element_index_from_offset(right_index, element_width),
     ) else {
         return false;
     };
@@ -574,10 +580,12 @@ pub(in crate::kernel) fn pointer_offsets_equal_for_memory_resolution(
     )) {
         return Some(value);
     }
-    if let (Some(left), Some(right)) = (
-        int32_element_index_from_offset(left),
-        int32_element_index_from_offset(right),
-    ) {
+    if let Some(element_width) = common_pointer_offset_element_width(left, right)
+        && let (Some(left), Some(right)) = (
+            element_index_from_offset(left, element_width),
+            element_index_from_offset(right, element_width),
+        )
+    {
         if bitvector_terms_equal_for_memory_resolution(&left, &right, assumptions, depth + 1) {
             return Some(true);
         }
@@ -1036,9 +1044,15 @@ pub(in crate::kernel) fn pointer_offsets_with_common_base_distinctness_condition
     let Some((left_index, right_index)) = index_pair else {
         return None;
     };
+    if let (Some(left), Some(right)) = (left_index.as_const(), right_index.as_const()) {
+        return Some(ConditionTerm::Constant(left == right));
+    }
+    let Some(element_width) = common_pointer_offset_element_width(left_index, right_index) else {
+        return None;
+    };
     let (Some(left_index), Some(right_index)) = (
-        int32_element_index_from_offset(left_index),
-        int32_element_index_from_offset(right_index),
+        element_index_from_offset(left_index, element_width),
+        element_index_from_offset(right_index, element_width),
     ) else {
         return None;
     };

@@ -308,6 +308,23 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                         1,
                     ),
                 }),
+                C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => {
+                    let element_width = parameter
+                        .c_type()
+                        .pointee_type()
+                        .expect("pointer-to-pointer parameter has a pointee")
+                        .to_kernel_type()
+                        .byte_width();
+                    CValue::Pointer(Pointer {
+                        block: PointerBlock::ExternalArgument,
+                        offset: scale_int32_offset(
+                            Bitvector32Term::Variable(Variable(
+                                POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                            )),
+                            i64::from(element_width),
+                        ),
+                    })
+                }
             };
             (parameter.name().to_string(), value)
         })

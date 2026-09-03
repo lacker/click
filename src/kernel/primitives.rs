@@ -3,9 +3,9 @@ use super::memory_provenance::{AtomicMemoryLoadEqualityEvidence, PointerOffsetEq
 use super::reasoning::{
     bitvector_terms_proven_equal_for_memory_resolution,
     c_values_proven_equal_for_memory_resolution, collect_or_cases, instantiate_range_fold_step,
-    int32_element_index_from_offset, memory_snapshots_proven_equal_at_pointer,
-    pointers_proven_distinct_for_memory_resolution, pointers_proven_equal_for_memory_resolution,
-    resource_context_has_read, signed_bitvector_constant, signed_i64_bitvector_constant,
+    memory_snapshots_proven_equal_at_pointer, pointers_proven_distinct_for_memory_resolution,
+    pointers_proven_equal_for_memory_resolution, resource_context_has_read,
+    signed_bitvector_constant, signed_i64_bitvector_constant,
 };
 use crate::persistent::{PersistentMap, PersistentSet};
 use std::collections::{BTreeMap, BTreeSet};
@@ -211,6 +211,8 @@ pub enum CType {
     UInt8,
     Int32Pointer,
     UInt8Pointer,
+    Int32PointerPointer,
+    UInt8PointerPointer,
     Int32Array(u32),
     UInt8Array(u32),
 }
@@ -394,6 +396,7 @@ pub enum SpecResource {
         base: SpecExpression,
         start: SpecExpression,
         end: SpecExpression,
+        element_width: u32,
     },
     Composite {
         name: String,
@@ -430,6 +433,7 @@ pub enum CStatement {
     HeapAllocate {
         target: String,
         bytes: CExpression,
+        zeroed: bool,
     },
     /// End the heap allocation named by `pointer`. Null is a no-op.
     HeapFree {
@@ -915,6 +919,13 @@ pub(super) struct CHeapMemory {
     /// Successful malloc storage remains uninitialized until individual
     /// cells are written. Contract-imported allocations are not placed here.
     pub(super) uninitialized_allocations: BTreeSet<Pointer>,
+    /// Successful calloc storage reads as zero until individual cells are
+    /// written. The set is separate from `uninitialized_allocations` so the
+    /// same heap-lifetime machinery can represent both APIs.
+    pub(super) zeroed_allocations: BTreeSet<Pointer>,
+    /// Pending calloc results whose null/success outcome has not yet been
+    /// refined.
+    pub(super) zeroed_pending_allocations: BTreeSet<Pointer>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -1049,11 +1060,12 @@ impl From<&CMemory> for SharedCMemory {
 /// and why a snapshot interned on another thread (the arena is thread-local)
 /// is merely slower to reason about rather than wrong.
 ///
-/// `LoopHavoc` is deliberately its own edge kind rather than a bulk store:
-/// loop havoc has no write set for a pointer to be disjoint from, so no
-/// load-preservation walk may cross one. Enforcing that at the edge is how
-/// havoc identity survives this arc by construction, upstream of any
-/// snapshot comparison (see conventions.md's soundness trap).
+/// `LoopHavoc` is deliberately its own edge kind rather than a bulk store.
+/// Interface havoc has no checked write set, so no load-preservation walk may
+/// cross that form. Verified whole-loop effects may carry a checked write set;
+/// those edges are crossed only with range-disjointness evidence. Enforcing
+/// that at the edge is how havoc identity survives this arc by construction,
+/// upstream of any snapshot comparison (see conventions.md's soundness trap).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CMemoryDerivation {
     /// `base` with one cell written. `context` is the fact context the
@@ -1119,9 +1131,14 @@ pub enum CMemoryDerivation {
     /// havoc (conventions.md's soundness trap).
     CellsForgotten { base: SharedCMemory },
     /// `base` after a loop body that may write anything it can reach.
+    ///
+    /// `mutable_ranges` is present only when the loop's whole-effect summary
+    /// supplied a checked footprint. `None` remains an unconditional barrier;
+    /// `Some(empty)` is a checked no-write footprint.
     LoopHavoc {
         base: SharedCMemory,
         variable: Variable,
+        mutable_ranges: Option<Vec<CMemoryRange>>,
     },
     /// `base` after a call that may write only within `mutable_ranges`.
     ///
@@ -1273,7 +1290,9 @@ fn record_c_memory_structural_lookup_work(memory: &CMemory) {
             + memory.heap.live_allocations.len()
             + memory.heap.deallocated_allocations.len()
             + memory.heap.pending_allocations.len()
-            + memory.heap.uninitialized_allocations.len(),
+            + memory.heap.uninitialized_allocations.len()
+            + memory.heap.zeroed_allocations.len()
+            + memory.heap.zeroed_pending_allocations.len(),
     );
 }
 

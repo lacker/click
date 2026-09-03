@@ -1,5 +1,27 @@
 use super::*;
 
+fn memory_havoc_write_set_fingerprint(mutable_ranges: &[CMemoryRange]) -> u32 {
+    use std::hash::{Hash, Hasher};
+
+    // Keep this fingerprint form-invariant across proof execution and
+    // independent certification. It separates alpha-colliding havoc shapes
+    // without making marker identity depend on snapshot-local terms.
+    let mut shape = mutable_ranges
+        .iter()
+        .map(|range| {
+            (
+                format!("{:?}", range.base().block),
+                range.start().as_const(),
+                range.end().as_const(),
+            )
+        })
+        .collect::<Vec<_>>();
+    shape.sort();
+    let mut hasher = std::hash::DefaultHasher::new();
+    shape.hash(&mut hasher);
+    (hasher.finish() as u32) | 1
+}
+
 pub(crate) fn resource_context_has_symbolic_int32_range_read(
     resources: &ResourceContext,
     base: &Pointer,
@@ -344,6 +366,9 @@ impl CMemory {
         std::sync::Arc::make_mut(&mut self.heap)
             .uninitialized_allocations
             .remove(pointer);
+        std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_allocations
+            .remove(pointer);
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|cell, _| !heap_allocation_may_contain_pointer(pointer, cell));
         if let Some(base) = base {
@@ -380,6 +405,13 @@ impl CMemory {
     pub(in crate::kernel) fn is_uninitialized_heap_address(&self, pointer: &Pointer) -> bool {
         self.heap
             .uninitialized_allocations
+            .iter()
+            .any(|base| heap_allocation_may_contain_pointer(base, pointer))
+    }
+
+    pub(in crate::kernel) fn is_zeroed_heap_address(&self, pointer: &Pointer) -> bool {
+        self.heap
+            .zeroed_allocations
             .iter()
             .any(|base| heap_allocation_may_contain_pointer(base, pointer))
     }
@@ -456,11 +488,17 @@ impl CMemory {
         mut self,
         base: Pointer,
         bytes: Bitvector32Term,
+        zeroed: bool,
     ) -> Self {
         let prior = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .insert(base.clone(), bytes.clone());
+        if zeroed {
+            std::sync::Arc::make_mut(&mut self.heap)
+                .zeroed_pending_allocations
+                .insert(base.clone());
+        }
         if let Some(prior) = prior {
             record_c_memory_derivation(
                 &self,
@@ -504,6 +542,9 @@ impl CMemory {
         let bytes = std::sync::Arc::make_mut(&mut self.heap)
             .pending_allocations
             .remove(base)?;
+        let zeroed = std::sync::Arc::make_mut(&mut self.heap)
+            .zeroed_pending_allocations
+            .remove(base);
         let resolved_base = if succeeds {
             let PointerBlock::Symbolic(Variable(identity)) = base.block else {
                 return None;
@@ -523,9 +564,15 @@ impl CMemory {
             std::sync::Arc::make_mut(&mut self.heap)
                 .live_allocations
                 .insert(resolved_base.clone(), bytes.clone());
-            std::sync::Arc::make_mut(&mut self.heap)
-                .uninitialized_allocations
-                .insert(resolved_base.clone());
+            if zeroed {
+                std::sync::Arc::make_mut(&mut self.heap)
+                    .zeroed_allocations
+                    .insert(resolved_base.clone());
+            } else {
+                std::sync::Arc::make_mut(&mut self.heap)
+                    .uninitialized_allocations
+                    .insert(resolved_base.clone());
+            }
             if let Some(prior) = prior {
                 record_c_memory_derivation(
                     &self,
@@ -544,21 +591,30 @@ impl CMemory {
         mut self,
         variable: Variable,
         preserved_blocks: &BTreeSet<PointerBlock>,
+        mutable_ranges: Option<&[CMemoryRange]>,
     ) -> Self {
         // A loop body that may write memory can clobber, through some
         // pointer, any cell it can reach. Drop concrete cells outside the
         // preserved (scalar stack local) blocks so loop-head and post-loop
-        // reads do not observe stale pre-loop values; anything that must
-        // survive the loop has to be restated as a loop invariant. The
-        // marker block additionally defeats symbolic cross-loop load
-        // equality for the remaining symbolic memory.
+        // reads do not observe stale pre-loop values. A checked footprint is
+        // retained on the derivation edge for disjoint-load transport; the
+        // marker block still distinguishes this havoc from ordinary memory.
         let base = (!memory_dag_disabled()).then(|| intern_c_memory_ref(&self));
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
-        std::sync::Arc::make_mut(&mut self.blocks)
-            .insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
+        std::sync::Arc::make_mut(&mut self.blocks).insert(
+            format!("havoc:{}", variable.0).into(),
+            CBlock::new(mutable_ranges.map_or(0, memory_havoc_write_set_fingerprint)),
+        );
         if let Some(base) = base {
-            record_c_memory_derivation(&self, CMemoryDerivation::LoopHavoc { base, variable });
+            record_c_memory_derivation(
+                &self,
+                CMemoryDerivation::LoopHavoc {
+                    base,
+                    variable,
+                    mutable_ranges: mutable_ranges.map(|ranges| ranges.to_vec()),
+                },
+            );
         }
         self
     }
@@ -632,6 +688,18 @@ impl CMemory {
             uninitialized_allocations.extend(memory.heap.uninitialized_allocations.iter().cloned());
         }
 
+        let mut zeroed_allocations = first.heap.zeroed_allocations.clone();
+        for memory in sibling_memories {
+            zeroed_allocations.extend(memory.heap.zeroed_allocations.iter().cloned());
+        }
+        let zeroed_pending_allocations = first.heap.zeroed_pending_allocations.clone();
+        if sibling_memories
+            .iter()
+            .any(|memory| memory.heap.zeroed_pending_allocations != zeroed_pending_allocations)
+        {
+            return Err("interface arms disagree on zeroed pending heap allocations".to_string());
+        }
+
         std::sync::Arc::make_mut(&mut self.cells)
             .retain(|pointer, _| preserved_blocks.contains(&pointer.block));
         blocks.insert(format!("havoc:{}", variable.0).into(), CBlock::new(0));
@@ -641,6 +709,8 @@ impl CMemory {
             deallocated_allocations,
             pending_allocations,
             uninitialized_allocations,
+            zeroed_allocations,
+            zeroed_pending_allocations,
         });
         Ok(self)
     }
@@ -656,41 +726,10 @@ impl CMemory {
             pointer.block.starts_with("local:")
                 || assumptions.ranges_proven_disjoint_from_pointer(mutable_ranges, pointer)
         });
-        // The marker size fingerprints the write set. Marker names restart
-        // per claim verification, so two claims' snapshots can be
-        // alpha-identical while their same-named havocs wrote different
-        // ranges; content-addressed interning would then merge them and
-        // first-wins derivation recording would let one world's edges answer
-        // the other's load queries. Folding the ranges into the marker's
-        // otherwise-unused size keeps such snapshots content-distinct, while
-        // havocs with equal parents and equal write sets — genuinely
-        // indistinguishable — still share a node. Deterministic: the hasher
-        // is fixed-key and the ranges are check-stable.
-        let write_set_fingerprint = {
-            use std::hash::{Hash, Hasher};
-            // The fingerprint must identify the write set across the check
-            // and the independent certification, which write one call's
-            // ranges over different snapshot variants — so it hashes only
-            // form-invariant structure: the range count, each base
-            // block, and constant endpoints. That is enough to separate
-            // alpha-colliding call sequences whose havocs wrote different
-            // shapes; the full claim-scoped salt design is recorded in the
-            // issue for the residual same-shape collisions.
-            let mut shape = mutable_ranges
-                .iter()
-                .map(|range| {
-                    (
-                        format!("{:?}", range.base().block),
-                        range.start().as_const(),
-                        range.end().as_const(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            shape.sort();
-            let mut hasher = std::hash::DefaultHasher::new();
-            shape.hash(&mut hasher);
-            (hasher.finish() as u32) | 1
-        };
+        // Marker identity includes the form-invariant shape of the write set
+        // so equal-parent havocs with different footprints cannot share one
+        // first-wins derivation.
+        let write_set_fingerprint = memory_havoc_write_set_fingerprint(mutable_ranges);
         std::sync::Arc::make_mut(&mut self.blocks).insert(
             format!("call-havoc:{}", variable.0).into(),
             CBlock::new(write_set_fingerprint),

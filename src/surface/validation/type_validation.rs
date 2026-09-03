@@ -322,6 +322,8 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt8 => "uint8".to_string(),
         C0Type::Int32Pointer | C0Type::Int32Array(_) => "int32*".to_string(),
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
+        C0Type::Int32PointerPointer => "int32**".to_string(),
+        C0Type::UInt8PointerPointer => "uint8**".to_string(),
     }
 }
 
@@ -537,14 +539,16 @@ fn infer_c_expression_type(
         CExpression::Load(pointer) => {
             infer_c_expression_type(pointer, variables).and_then(pointer_element_type)
         }
-        CExpression::TypedLoad { value_type, .. } => match value_type {
-            CType::Void => None,
-            CType::Int32 => Some(C0Type::Int32),
-            CType::UInt8 => Some(C0Type::UInt8),
-            CType::Int32Pointer => Some(C0Type::Int32Pointer),
-            CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
-            CType::Int32Array(_) | CType::UInt8Array(_) => None,
-        },
+        CExpression::TypedLoad { value_type, .. } => Some(match value_type {
+            CType::Void => return None,
+            CType::Int32 => C0Type::Int32,
+            CType::UInt8 => C0Type::UInt8,
+            CType::Int32Pointer => C0Type::Int32Pointer,
+            CType::UInt8Pointer => C0Type::UInt8Pointer,
+            CType::Int32PointerPointer => C0Type::Int32PointerPointer,
+            CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
+            CType::Int32Array(_) | CType::UInt8Array(_) => return None,
+        }),
         CExpression::Index(base, _) => {
             infer_c_expression_type(base, variables).and_then(pointer_element_type)
         }
@@ -623,18 +627,11 @@ fn type_is_scalar(c_type: C0Type) -> bool {
 }
 
 fn type_is_pointer(c_type: C0Type) -> bool {
-    matches!(
-        c_type,
-        C0Type::Int32Pointer | C0Type::UInt8Pointer | C0Type::Int32Array(_) | C0Type::UInt8Array(_)
-    )
+    c_type.is_pointer() || matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_))
 }
 
 fn pointer_element_type(c_type: C0Type) -> Option<C0Type> {
-    match c_type {
-        C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(C0Type::Int32),
-        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(C0Type::UInt8),
-        C0Type::Void | C0Type::Int32 | C0Type::UInt8 => None,
-    }
+    c_type.pointee_type()
 }
 
 fn validate_contract_segment_expression_types(

@@ -119,6 +119,30 @@ pub struct CLoopPreservationContext {
     whole_loop_effect_facts: Vec<Proposition>,
 }
 
+/// A body state produced by a checked preservation proof that may be the
+/// final loop iteration. The proof layer supplies the facts retained at that
+/// body frontier; the kernel independently checks the post-body condition
+/// before exporting the state as a loop exit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CLoopFinalExitCandidate {
+    state: CState,
+    pure_facts: Vec<Proposition>,
+}
+
+impl CLoopFinalExitCandidate {
+    pub(crate) fn new(state: CState, pure_facts: Vec<Proposition>) -> Self {
+        Self { state, pure_facts }
+    }
+
+    pub(crate) fn state(&self) -> &CState {
+        &self.state
+    }
+
+    pub(crate) fn pure_facts(&self) -> &[Proposition] {
+        &self.pure_facts
+    }
+}
+
 impl CLoopPreservationContext {
     pub fn state(&self) -> &CState {
         &self.state
@@ -469,7 +493,10 @@ fn abstract_c_state_for_join_across_with_policy(
                 CType::Void => continue,
                 CType::Int32 => int32(Bitvector32Term::Variable(variables.next())),
                 CType::UInt8 => uint8(Bitvector32Term::Variable(variables.next())),
-                CType::Int32Pointer | CType::UInt8Pointer => {
+                CType::Int32Pointer
+                | CType::UInt8Pointer
+                | CType::Int32PointerPointer
+                | CType::UInt8PointerPointer => {
                     CValue::Pointer(Pointer::symbolic(variables.next()))
                 }
                 CType::Int32Array(_) | CType::UInt8Array(_) => {
@@ -510,9 +537,11 @@ fn abstract_c_state_for_join_across_with_policy(
                 &sibling_memories,
             )?;
         } else {
-            abstract_state.memory = abstract_state
-                .memory
-                .with_loop_memory_havoc(variables.next(), &preserved_blocks);
+            abstract_state.memory = abstract_state.memory.with_loop_memory_havoc(
+                variables.next(),
+                &preserved_blocks,
+                None,
+            );
         }
     }
     for (name, value, c_type) in abstract_objects {
@@ -680,9 +709,18 @@ pub fn c_heap_allocate(target: impl Into<String>, bytes: u32) -> CStatement {
 }
 
 pub fn c_heap_allocate_sized(target: impl Into<String>, bytes: CExpression) -> CStatement {
+    c_heap_allocate_sized_with_zeroed(target, bytes, false)
+}
+
+pub fn c_heap_allocate_sized_with_zeroed(
+    target: impl Into<String>,
+    bytes: CExpression,
+    zeroed: bool,
+) -> CStatement {
     CStatement::HeapAllocate {
         target: target.into(),
         bytes,
+        zeroed,
     }
 }
 
@@ -1470,6 +1508,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: Vec<CLoopFinalExitCandidate>,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let mut budget = ExecutionBudget::for_c_statement_verification(&statement);
     prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
@@ -1479,6 +1518,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases(
         environment,
         initialization_proven,
         preservation_proven,
+        final_exit_candidates,
         &mut budget,
     )
 }
@@ -1490,6 +1530,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
     environment: CExecutionEnvironment,
     initialization_proven: bool,
     preservation_proven: bool,
+    final_exit_candidates: Vec<CLoopFinalExitCandidate>,
     budget: &mut ExecutionBudget,
 ) -> (SymbolicCExecution, Option<CVerifiedLoopRule>) {
     let CStatement::While {
@@ -1527,6 +1568,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         CExecutionSemantics::APPLY_VERIFIED_RULES,
         initialization_proven,
         preservation_proven,
+        &final_exit_candidates,
         budget,
         &mut variables,
     );

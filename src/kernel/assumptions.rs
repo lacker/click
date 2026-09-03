@@ -2429,7 +2429,10 @@ pub(in crate::kernel) fn memory_range_shallowly_contained(
     if range.element_width() != parent.element_width() {
         return false;
     }
-    let Some(base_index) = range.base().element_index_from_base(parent.base()) else {
+    let Some(base_index) = range
+        .base()
+        .element_index_from_base_with_width(parent.base(), parent.element_width())
+    else {
         return false;
     };
     let range_start = Bitvector32Term::add(base_index.clone(), range.start().clone());
@@ -2569,7 +2572,13 @@ pub(in crate::kernel) fn pointer_in_memory_range_shallow(
     pointer: &Pointer,
     range: &CMemoryRange,
 ) -> bool {
-    pointer_in_range_shallow(pointer, range.base(), range.start(), range.end())
+    pointer_in_range_shallow(
+        pointer,
+        range.base(),
+        range.start(),
+        range.end(),
+        range.element_width(),
+    )
 }
 
 fn pointer_offsets_match_by_shallow_fact_graph(
@@ -2610,6 +2619,7 @@ fn pointer_in_memory_range_for_memory_resolution_with_depth(
         range.base(),
         range.start(),
         range.end(),
+        range.element_width(),
         assumptions,
         depth,
     )
@@ -2620,10 +2630,19 @@ fn pointer_in_range_for_memory_resolution(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
+    element_width: u32,
     assumptions: &PureFactContext,
 ) -> bool {
     super::reasoning::with_memory_resolution_fuel(|| {
-        pointer_in_range_for_memory_resolution_with_depth(pointer, base, start, end, assumptions, 0)
+        pointer_in_range_for_memory_resolution_with_depth(
+            pointer,
+            base,
+            start,
+            end,
+            element_width,
+            assumptions,
+            0,
+        )
     })
 }
 
@@ -2632,6 +2651,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
+    element_width: u32,
     assumptions: &PureFactContext,
     depth: usize,
 ) -> bool {
@@ -2642,7 +2662,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
         return false;
     }
     let mut indexes = pointer
-        .element_index_from_base(base)
+        .element_index_from_base_with_width(base, element_width)
         .into_iter()
         .collect::<Vec<_>>();
     if let PointerOffsetTerm::Add(left, right) = &pointer.offset {
@@ -2657,7 +2677,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
                     assumptions,
                     depth + 1,
                 ) == Some(true)
-                    && let Some(index) = int32_element_index_from_offset(right)
+                    && let Some(index) = element_index_from_offset(right, element_width)
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);
@@ -2668,7 +2688,7 @@ fn pointer_in_range_for_memory_resolution_with_depth(
                     assumptions,
                     depth + 1,
                 ) == Some(true)
-                    && let Some(index) = int32_element_index_from_offset(left)
+                    && let Some(index) = element_index_from_offset(left, element_width)
                     && !indexes.contains(&index)
                 {
                     indexes.push(index);
@@ -2866,8 +2886,9 @@ fn pointer_in_range_shallow(
     base: &Pointer,
     start: &Bitvector32Term,
     end: &Bitvector32Term,
+    element_width: u32,
 ) -> bool {
-    let Some(index) = pointer.element_index_from_base(base) else {
+    let Some(index) = pointer.element_index_from_base_with_width(base, element_width) else {
         return false;
     };
     if let (Some(index), Some(start), Some(end)) = (

@@ -1349,9 +1349,14 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                 .map(|argument| substitute_bitvector_variable_in_c_expression(argument, from, to))
                 .collect(),
         },
-        CStatement::HeapAllocate { target, bytes } => CStatement::HeapAllocate {
+        CStatement::HeapAllocate {
+            target,
+            bytes,
+            zeroed,
+        } => CStatement::HeapAllocate {
             target: target.clone(),
             bytes: substitute_bitvector_variable_in_c_expression(bytes, from, to),
+            zeroed: *zeroed,
         },
         CStatement::HeapFree { pointer } => CStatement::HeapFree {
             pointer: substitute_bitvector_variable_in_c_expression(pointer, from, to),
@@ -1767,10 +1772,16 @@ fn substitute_bitvector_variable_in_spec_resource(
     to: &Bitvector32Term,
 ) -> SpecResource {
     match resource {
-        SpecResource::Memory { base, start, end } => SpecResource::Memory {
+        SpecResource::Memory {
+            base,
+            start,
+            end,
+            element_width,
+        } => SpecResource::Memory {
             base: substitute_bitvector_variable_in_spec_expression(base, from, to),
             start: substitute_bitvector_variable_in_spec_expression(start, from, to),
             end: substitute_bitvector_variable_in_spec_expression(end, from, to),
+            element_width: *element_width,
         },
         SpecResource::Composite { name, arguments } => SpecResource::Composite {
             name: name.clone(),
@@ -2545,6 +2556,18 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_memory(
             uninitialized_allocations: memory
                 .heap
                 .uninitialized_allocations
+                .iter()
+                .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
+                .collect(),
+            zeroed_allocations: memory
+                .heap
+                .zeroed_allocations
+                .iter()
+                .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
+                .collect(),
+            zeroed_pending_allocations: memory
+                .heap
+                .zeroed_pending_allocations
                 .iter()
                 .map(|base| substitute_bitvector_variable_in_pointer(base, from, to))
                 .collect(),

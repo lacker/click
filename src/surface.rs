@@ -14,18 +14,19 @@ use crate::kernel::{
     CConditionOutcome, CExecutionEnvironment, CExecutionSemantics, CExpression, CExpressionOutcome,
     CFunction, CFunctionContractClaim, CFunctionContractClaimKey, CFunctionContractClaimTarget,
     CFunctionContractExecutionMode, CFunctionExecutionCandidates, CFunctionOutcome,
-    CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan, CLoopInvariantCheck,
-    CMemory, CMemoryRange, CMemorySegment, CResource, CResourceAccessMode, CResourceFact,
-    CResourceSpec, CState, CStatement, CStatementOutcome, CType, CValue, CVerifiedLoopRule,
-    CVerifiedPureTheorem, ConditionTerm, ExecutionBudget, ExecutionPureFact, Pointer, PointerBlock,
-    PointerOffsetTerm, ProofObligation, Proposition, PropositionDerivation, PureFactContext,
-    ResourceContext, ResourceContextValidityError, Sort, SpecExpression, SpecMemory,
-    SpecPredicateArgument, SpecProposition, SpecResource, SymbolicCExecution, Term, Theorem,
-    Variable, abstract_c_state_for_join, c_checked_function_proposition,
-    c_condition_fact_has_memory, c_condition_fact_memories, c_expression_definedness_proposition,
-    c_function, c_function_contract_entry_state, c_function_entry_state,
-    c_function_execution_candidates_from_outcomes, c_function_outcome_from_statement_outcome,
-    c_function_specification, c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
+    CFunctionSpecification, CLoopEffect, CLoopEffectCheck, CLoopEffectSpan,
+    CLoopFinalExitCandidate, CLoopInvariantCheck, CMemory, CMemoryRange, CMemorySegment, CResource,
+    CResourceAccessMode, CResourceFact, CResourceSpec, CState, CStatement, CStatementOutcome,
+    CType, CValue, CVerifiedLoopRule, CVerifiedPureTheorem, ConditionTerm, ExecutionBudget,
+    ExecutionPureFact, Pointer, PointerBlock, PointerOffsetTerm, ProofObligation, Proposition,
+    PropositionDerivation, PureFactContext, ResourceContext, ResourceContextValidityError, Sort,
+    SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
+    SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
+    c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
+    c_expression_definedness_proposition, c_function, c_function_contract_entry_state,
+    c_function_entry_state, c_function_execution_candidates_from_outcomes,
+    c_function_outcome_from_statement_outcome, c_function_specification,
+    c_function_termination_plan, c_if, c_loop_effects_hold_at_back_edge,
     c_loop_invariant_obligations_at_entry, c_loop_invariants_hold_at_back_edge_using,
     c_loop_invariants_hold_at_entry, c_loop_preservation_contexts,
     c_pointer_offsets_proven_equal_for_effect, c_pointer_value, c_resources_directly_match, c_seq,
@@ -3371,18 +3372,11 @@ fn requirement_contains_resource(requirement: &Requirement) -> bool {
 }
 
 fn parameter_is_click_array_ref(parameter: &FunctionParameter) -> bool {
-    matches!(
-        parameter.c_type(),
-        C0Type::Int32Pointer | C0Type::UInt8Pointer
-    )
+    parameter.c_type().is_pointer()
 }
 
 fn click_array_element_type(c_type: C0Type) -> Option<CType> {
-    match c_type {
-        C0Type::Int32Pointer | C0Type::Int32Array(_) => Some(CType::Int32),
-        C0Type::UInt8Pointer | C0Type::UInt8Array(_) => Some(CType::UInt8),
-        C0Type::Void | C0Type::Int32 | C0Type::UInt8 => None,
-    }
+    c_type.pointee_type().map(C0Type::to_kernel_type)
 }
 
 impl EnsureClause {

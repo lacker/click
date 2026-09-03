@@ -225,8 +225,12 @@ conditions the contract lowering keeps: a term compared with itself, a
 constant premise, conjunct, or quantifier body, a negated condition. A
 completion recorded at
 the artifact's own caller state also certifies a path rebased from that
-state, the rebase having checked the two entries definitionally equal. Only
-a claim with no matching completion is proved from the path's facts.
+state, the rebase having checked the two entries definitionally equal. An
+ensure stated as a registered predicate is also compared as that predicate's
+identity at the post-state, the form a proof completes it in. A claim with
+no `by` block is closed by the direct logical closure from the outcome
+Proof, which records its completion like any other closer. Only a claim with
+no matching completion is proved from the path's facts.
 
 `RecordedSnapshots` is a persistent map from `SnapshotSelector` to `CState`.
 A selector is either a static C `ProgramPointRef` or a proof-local mark. A

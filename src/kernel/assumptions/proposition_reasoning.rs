@@ -4479,11 +4479,12 @@ impl PureFactContext {
         let refuted = guards.iter().any(|(left, right)| {
             self.resource_compositions.iter().any(|resources| {
                 resources.refutes_offset_alias(left, right, |pointer, range| {
-                    self.pointer_in_range_by_shallow_fact_graph(
+                    self.pointer_in_range_by_shallow_fact_graph_with_width(
                         pointer,
                         range.base(),
                         range.start(),
                         range.end(),
+                        range.element_width(),
                     )
                 })
             }) || separated.iter().any(|(first, second)| {
@@ -4497,11 +4498,12 @@ impl PureFactContext {
                     // re-enters context-wide contradiction search once for
                     // every separation fact. Deeper range consequences may
                     // be proved directly, but are not a routing precondition.
-                    self.pointer_in_range_by_shallow_fact_graph(
+                    self.pointer_in_range_by_shallow_fact_graph_with_width(
                         &pointer,
                         range.base(),
                         range.start(),
                         range.end(),
+                        range.element_width(),
                     )
                 };
                 holds(first, left) && holds(second, right)
