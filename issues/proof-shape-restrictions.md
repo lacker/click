@@ -15,8 +15,6 @@ Found by the 2026-09-01 kernel audit at cb034b21. Each bullet is a place
 where a proof author must restructure a correct proof to satisfy the driver,
 with no semantic reason.
 
-- Quantified scope bodies fall to a compatibility path or
-  `unsupported_proof_shape` (`claim_proofs.rs:76-102`, `:429`, `:607`).
 - Contract certification refuses requirements that lower to several paths
   unless one is selected or consistent
   (`src/kernel/api/contract_certification.rs:905-960`), and errors for any
@@ -31,10 +29,11 @@ construct and the accepted alternative.
 
 ## Intended regression
 
-One mdtest per remaining bullet showing the natural shape verifies: a
-contract with a conditional requirement. The nested branch-arm scope shape
-is covered by `proof_branch_nested_resource_scope.md`, and the heap-backed
-predicate path by `proof_heap_backed_predicate_contract.md`.
+The nested branch-arm scope shape is covered by
+`proof_branch_nested_resource_scope.md`, the heap-backed predicate path by
+`proof_heap_backed_predicate_contract.md`, and the quantified heap scope by
+`proof_quantified_heap_scope.md`. The remaining contract-certification bullet
+needs a natural conditional-requirement regression.
 
 ## Acceptance criteria
 

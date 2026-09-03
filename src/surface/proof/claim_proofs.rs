@@ -77,9 +77,8 @@ fn collect_post_execution_if_have_indices<'a>(
 /// Selects the complete-proof route for supported top-level composite scopes
 /// and execution branches. Tactics before, between, and after structures
 /// remain linear; a scope body may also contain the checked C-branch forms
-/// owned by the typed scope driver. Quantified scope bodies and unsupported
-/// logical structures retain their
-/// separately audited compatibility paths. Sequential nested scopes,
+/// owned by the typed scope driver. Unsupported logical structures retain
+/// their separately audited compatibility paths. Sequential nested scopes,
 /// quantified contract resources, and counted populations use the same
 /// checked resource entry and close operations as ordinary composite scopes.
 /// The terminal diagnostic for a proof no checked driver accepts. The

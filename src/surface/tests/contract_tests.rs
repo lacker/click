@@ -1636,6 +1636,46 @@ fn heap_backed_predicate_contract_stays_on_checked_proof() {
 }
 
 #[test]
+fn quantified_heap_scope_stays_on_checked_proof() {
+    let c_source = r#"
+            int32 read_first(int32 p[2]) {
+                return p[0];
+            }
+        "#;
+    let click_source = r#"
+            verifying "read_first.c";
+
+            int32 read_first(int32 p[2]) {
+                requires loadable(p[0..2]);
+                views p[0..2];
+                ensures result == p[0];
+                ensures stable: forall (k: int32) {
+                    0 <= k and k < 2 implies p[k] == p[k]
+                };
+            } by {
+                step();
+                have forall (k: int32) {
+                    0 <= k and k < 2 implies p[k] == p[k]
+                } by {
+                    intro();
+                    intro();
+                    simp();
+                }
+                simp();
+            }
+        "#;
+
+    let (verified, explicit_fallbacks) = proof::count_explicit_linear_fallbacks(|| {
+        verify_c0_sources(click_source, &[("read_first.c", c_source)])
+    });
+    verified.expect("quantified heap scope should verify");
+    assert_eq!(
+        explicit_fallbacks, 0,
+        "quantified heap scope should use the checked proof driver"
+    );
+}
+
+#[test]
 fn grouped_leading_resource_relations_stay_on_one_proof() {
     let c_source = r#"
             int32 inspect_pair(int32 left[], int32 right[]) {
