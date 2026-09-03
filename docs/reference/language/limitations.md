@@ -75,8 +75,9 @@ forward prototypes. Project-local quoted includes such as
 `#include "include/types.h"` are resolved relative to the including source when
 the named header is supplied in the source bundle. Headers are declaration-only
 and may contain supported structs, typedefs, enums, and prototypes. System
-header includes, macros, conditional compilation, and other preprocessor
-directives remain unsupported.
+header includes, arbitrary macros, conditional compilation, and other
+preprocessor directives remain unsupported except for canonical whole-header
+guards (`#ifndef NAME`/`#define NAME`/`#endif`) and `#pragma once`.
 
 ## Type support is still narrow
 

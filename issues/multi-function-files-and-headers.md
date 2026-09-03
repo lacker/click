@@ -16,6 +16,9 @@ compatible forward prototypes in one source. The next slice now resolves
 quoted project-local includes from the named source bundle, recursively expands
 their declaration text, and rejects function bodies in headers. System headers,
 macros, conditional compilation, and other preprocessor handling remain open.
+The follow-up slice now recognizes canonical whole-header guards and
+`#pragma once`, suppressing repeated expansion of shared headers while keeping
+arbitrary conditional compilation unsupported.
 
 ## Violated invariant
 
@@ -42,9 +45,11 @@ construct rather than "unexpected character".
   declarations; headers are supplied as named source-bundle dependencies and
   may not contain function definitions. Missing headers and include cycles
   receive source-named diagnostics.
-- System headers, macros, conditional compilation, and other preprocessor
-  directives remain explicitly unsupported until a documented allowlist or
-  preprocessor subset is implemented.
+- Canonical whole-header guards and `#pragma once` prevent repeated expansion
+  when a shared header is reached through multiple include paths.
+- System headers, arbitrary macros, conditional compilation, and other
+  preprocessor directives remain explicitly unsupported until a documented
+  allowlist or preprocessor subset is implemented.
 - Shared struct declarations are reused across functions and files, replacing
   the per-file re-declaration in examples.
 - `scripts/check.sh` passes.
