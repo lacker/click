@@ -371,6 +371,7 @@ pub(in crate::kernel) fn collect_c_statement_bitvector_variables(
             invariant_checks,
             effect_checks,
             body,
+            ..
         } => {
             collect_c_expression_bitvector_variables(condition, variables);
             for proposition in invariant {

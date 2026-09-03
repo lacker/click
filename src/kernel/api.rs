@@ -177,6 +177,49 @@ pub fn c_loop_preservation_contexts(
     body: &CStatement,
     assumptions: &PureFactContext,
 ) -> Result<Vec<CLoopPreservationContext>, String> {
+    c_loop_preservation_contexts_with_mode(
+        loop_entry_state,
+        condition,
+        invariant_checks,
+        effect_checks,
+        body,
+        assumptions,
+        false,
+    )
+}
+
+/// Computes loop-body preservation contexts for a C `do ... while` loop.
+/// Unlike a pre-tested `while`, the first body entry cannot assume that the
+/// post-test condition is true; the condition only guards later iterations.
+pub fn c_do_while_preservation_contexts(
+    loop_entry_state: &CState,
+    condition: &CExpression,
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &PureFactContext,
+) -> Result<Vec<CLoopPreservationContext>, String> {
+    c_loop_preservation_contexts_with_mode(
+        loop_entry_state,
+        condition,
+        invariant_checks,
+        effect_checks,
+        body,
+        assumptions,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn c_loop_preservation_contexts_with_mode(
+    loop_entry_state: &CState,
+    condition: &CExpression,
+    invariant_checks: &[CLoopInvariantCheck],
+    effect_checks: &[CLoopEffectCheck],
+    body: &CStatement,
+    assumptions: &PureFactContext,
+    do_while: bool,
+) -> Result<Vec<CLoopPreservationContext>, String> {
     let mut budget = ExecutionBudget::default();
     let mut existing_variables = BTreeSet::new();
     collect_c_state_bitvector_variables(loop_entry_state, &mut existing_variables);
@@ -217,17 +260,21 @@ pub fn c_loop_preservation_contexts(
     )
     .map_err(|error| format!("could not assume loop invariants: {error:?}"))?
     {
-        for (facts, obligations) in assume_condition_truthiness(
-            &top_state,
-            condition,
-            assumptions,
-            &invariant_facts,
-            &invariant_obligations,
-            true,
-            &mut budget,
-        )
-        .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
-        {
+        let condition_contexts = if do_while {
+            vec![(invariant_facts.clone(), invariant_obligations.clone())]
+        } else {
+            assume_condition_truthiness(
+                &top_state,
+                condition,
+                assumptions,
+                &invariant_facts,
+                &invariant_obligations,
+                true,
+                &mut budget,
+            )
+            .map_err(|error| format!("could not assume the loop condition: {error:?}"))?
+        };
+        for (facts, obligations) in condition_contexts {
             let context_assumptions = assumptions_with_path_context(assumptions, &facts, &[]);
             if let Some(obligation) = obligations
                 .iter()
@@ -881,6 +928,27 @@ pub fn c_while_with_invariant_and_effect_checks(
         invariant,
         invariant_checks,
         effect_checks,
+        do_while: false,
+        body: Box::new(body),
+    }
+}
+
+pub fn c_do_while(condition: CExpression, body: CStatement) -> CStatement {
+    c_do_while_with_invariant_and_effect_checks(condition, Vec::new(), Vec::new(), body)
+}
+
+pub fn c_do_while_with_invariant_and_effect_checks(
+    condition: CExpression,
+    invariant_checks: Vec<CLoopInvariantCheck>,
+    effect_checks: Vec<CLoopEffectCheck>,
+    body: CStatement,
+) -> CStatement {
+    CStatement::While {
+        condition,
+        invariant: Vec::new(),
+        invariant_checks,
+        effect_checks,
+        do_while: true,
         body: Box::new(body),
     }
 }
@@ -1706,6 +1774,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         invariant_checks,
         effect_checks,
         body,
+        do_while,
     } = &statement
     else {
         return (
@@ -1738,6 +1807,7 @@ pub(crate) fn prove_symbolic_c_loop_exit_with_proven_phases_using_budget(
         &final_exit_candidates,
         budget,
         &mut variables,
+        *do_while,
     );
     budget.next_kernel_variable = budget.next_kernel_variable.max(variables.next);
     let paths = match execution {

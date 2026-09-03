@@ -201,6 +201,7 @@ impl<'a> Proof<'a> {
         condition: &CExpression,
         invariant_checks: &[CLoopInvariantCheck],
         composite_resource_definitions: &[CCompositeResourceDefinition],
+        do_while: bool,
     ) -> Result<Self, ClickError> {
         self.check_loop_state_join(
             loop_entry_state,
@@ -230,6 +231,19 @@ impl<'a> Proof<'a> {
         closer_facts.extend(crate::kernel::certified_store_equations(
             &execution.core.effect_facts,
         ));
+        if do_while {
+            let condition_may_continue = crate::kernel::c_loop_condition_may_continue(
+                &execution.core.state,
+                condition,
+                &assumptions_from_propositions(&closer_facts),
+            )
+            .map_err(|message| {
+                self.step_error(format!("loop condition classification: {message}"))
+            })?;
+            if !condition_may_continue {
+                return Ok(self.clone());
+            }
+        }
         c_loop_invariants_hold_at_back_edge_using(
             &execution.core.state,
             loop_entry_state,

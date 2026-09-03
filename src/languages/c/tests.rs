@@ -184,7 +184,9 @@ fn c0_parses_standalone_calls() {
                 else_branch,
                 ..
             } => contains_call(then_branch) || contains_call(else_branch),
-            syntax::C0Statement::While { body, .. } => contains_call(body),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                contains_call(body)
+            }
             _ => false,
         }
     }
@@ -346,7 +348,7 @@ fn c0_syntax_accepts_multiple_declarations_in_a_for_initializer() {
 
 #[test]
 fn c0_syntax_accepts_a_do_while_loop_with_an_unbraced_body() {
-    syntax::parse_function(
+    let function = syntax::parse_function(
         r#"
         int32 count() {
             int32 i = 0;
@@ -358,6 +360,27 @@ fn c0_syntax_accepts_a_do_while_loop_with_an_unbraced_body() {
         "#,
     )
     .expect("a do-while loop may control one statement without braces");
+
+    fn contains_do_while(statement: &syntax::C0Statement) -> bool {
+        match statement {
+            syntax::C0Statement::DoWhile { .. } => true,
+            syntax::C0Statement::Seq(first, second) => {
+                contains_do_while(first) || contains_do_while(second)
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => contains_do_while(then_branch) || contains_do_while(else_branch),
+            syntax::C0Statement::While { body, .. } => contains_do_while(body),
+            syntax::C0Statement::Switch { cases, .. } => {
+                cases.iter().any(|case| contains_do_while(case.body()))
+            }
+            _ => false,
+        }
+    }
+
+    assert!(contains_do_while(function.body()));
 }
 
 #[test]
@@ -399,7 +422,9 @@ fn c0_syntax_accepts_break_and_continue_in_while_bodies() {
                 let (more_breaks, more_continues) = count_controls(else_branch);
                 (breaks + more_breaks, continues + more_continues)
             }
-            syntax::C0Statement::While { body, .. } => count_controls(body),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                count_controls(body)
+            }
             syntax::C0Statement::Switch { cases, .. } => {
                 cases.iter().map(|case| count_controls(case.body())).fold(
                     (0, 0),
@@ -408,6 +433,51 @@ fn c0_syntax_accepts_break_and_continue_in_while_bodies() {
                     },
                 )
             }
+            _ => (0, 0),
+        }
+    }
+
+    assert_eq!(count_controls(function.body()), (1, 1));
+}
+
+#[test]
+fn c0_syntax_accepts_break_and_continue_in_do_while_bodies() {
+    let function = syntax::parse_function(
+        r#"
+        int32 control() {
+            int32 i = 0;
+            do {
+                i++;
+                if (i == 1) {
+                    continue;
+                }
+                break;
+            } while (i < 4);
+            return i;
+        }
+        "#,
+    )
+    .expect("break and continue should parse in a do-while body");
+
+    fn count_controls(statement: &syntax::C0Statement) -> (usize, usize) {
+        match statement {
+            syntax::C0Statement::Break => (1, 0),
+            syntax::C0Statement::Continue => (0, 1),
+            syntax::C0Statement::Seq(first, second) => {
+                let (breaks, continues) = count_controls(first);
+                let (more_breaks, more_continues) = count_controls(second);
+                (breaks + more_breaks, continues + more_continues)
+            }
+            syntax::C0Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                let (breaks, continues) = count_controls(then_branch);
+                let (more_breaks, more_continues) = count_controls(else_branch);
+                (breaks + more_breaks, continues + more_continues)
+            }
+            syntax::C0Statement::DoWhile { body, .. } => count_controls(body),
             _ => (0, 0),
         }
     }
@@ -451,7 +521,9 @@ fn c0_syntax_accepts_switch_cases_and_nested_loop_control() {
                 else_branch,
                 ..
             } => find_switch(then_branch).or_else(|| find_switch(else_branch)),
-            syntax::C0Statement::While { body, .. } => find_switch(body),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                find_switch(body)
+            }
             _ => None,
         }
     }
@@ -515,10 +587,6 @@ fn c0_syntax_rejects_loop_control_outside_its_supported_loop() {
         (
             "int32 bad() { for (; 0;) { continue; } return 0; }",
             "`continue` in a `for` loop is not supported",
-        ),
-        (
-            "int32 bad() { do { break; } while (0); return 0; }",
-            "`break` in a `do`-`while` loop is not supported yet",
         ),
     ] {
         let error = syntax::parse_function(source)
@@ -633,7 +701,9 @@ fn c0_syntax_accepts_memory_lvalue_updates() {
                 update_targets(then_branch, targets);
                 update_targets(else_branch, targets);
             }
-            syntax::C0Statement::While { body, .. } => update_targets(body, targets),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                update_targets(body, targets)
+            }
             _ => {}
         }
     }
@@ -748,7 +818,9 @@ fn c0_syntax_models_missing_else_and_empty_statements_as_skip() {
                 else_branch,
                 ..
             } => contains_skip(then_branch) || contains_skip(else_branch),
-            syntax::C0Statement::While { body, .. } => contains_skip(body),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                contains_skip(body)
+            }
             syntax::C0Statement::Switch { cases, .. } => {
                 cases.iter().any(|case| contains_skip(case.body()))
             }
@@ -1256,7 +1328,9 @@ fn c0_syntax_lowers_calloc_to_zeroed_runtime_allocation() {
                 else_branch,
                 ..
             } => find_allocation(then_branch).or_else(|| find_allocation(else_branch)),
-            syntax::C0Statement::While { body, .. } => find_allocation(body),
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+                find_allocation(body)
+            }
             _ => None,
         }
     }

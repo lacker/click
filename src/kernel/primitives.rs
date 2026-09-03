@@ -628,6 +628,9 @@ pub enum CStatement {
         invariant: Vec<Proposition>,
         invariant_checks: Vec<CLoopInvariantCheck>,
         effect_checks: Vec<CLoopEffectCheck>,
+        /// Whether the body runs before the first condition check, as in C's
+        /// `do ... while` statement.
+        do_while: bool,
         body: Box<CStatement>,
     },
     Switch {

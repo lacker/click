@@ -23,6 +23,7 @@ use crate::kernel::{
     SpecExpression, SpecMemory, SpecPredicateArgument, SpecProposition, SpecResource,
     SymbolicCExecution, Term, Theorem, Variable, abstract_c_state_for_join,
     c_checked_function_proposition, c_condition_fact_has_memory, c_condition_fact_memories,
+    c_do_while_preservation_contexts, c_do_while_with_invariant_and_effect_checks,
     c_expression_definedness_proposition, c_function, c_function_contract_entry_state,
     c_function_entry_state, c_function_execution_candidates_from_outcomes,
     c_function_outcome_from_statement_outcome, c_function_specification,

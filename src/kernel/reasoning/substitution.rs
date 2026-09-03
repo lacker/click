@@ -805,6 +805,7 @@ fn collect_c_statement_bound_variables(statement: &CStatement, variables: &mut B
             invariant_checks,
             effect_checks,
             body,
+            ..
         } => {
             collect_c_expression_bound_variables(condition, variables);
             for proposition in invariant {
@@ -1491,6 +1492,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
             invariant_checks,
             effect_checks,
             body,
+            do_while,
         } => CStatement::While {
             condition: substitute_bitvector_variable_in_c_expression(condition, from, to),
             invariant: invariant
@@ -1519,6 +1521,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_statement(
                     context: check.context.clone(),
                 })
                 .collect(),
+            do_while: *do_while,
             body: Box::new(substitute_bitvector_variable_in_c_statement(body, from, to)),
         },
         CStatement::Switch { expression, cases } => CStatement::Switch {
@@ -3386,6 +3389,7 @@ fn substitute_pointer_variable_in_c_statement(
             invariant_checks,
             effect_checks,
             body,
+            do_while,
         } => CStatement::While {
             condition: substitute_pointer_variable_in_c_expression(condition, from, to),
             invariant: invariant
@@ -3414,6 +3418,7 @@ fn substitute_pointer_variable_in_c_statement(
                     context: check.context.clone(),
                 })
                 .collect(),
+            do_while: *do_while,
             body: Box::new(substitute_pointer_variable_in_c_statement(body, from, to)),
         },
         CStatement::Switch { expression, cases } => CStatement::Switch {

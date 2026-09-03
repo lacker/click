@@ -1201,6 +1201,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
     effect_checks: &[CLoopEffectCheck],
     condition: &CExpression,
     body: &CStatement,
+    do_while: bool,
     environment: &ExecutionProofEnvironment<'_>,
 ) -> Result<LoopPreservationProofResult, ClickError> {
     let legacy_site = ProofSite::LoopPhase {
@@ -1275,10 +1276,9 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
         },
         preservation.loop_entry_state().clone(),
     );
-    // The invariants and the loop condition are available at the body entry
-    // as kernel facts. Record their Surface spellings so a later frame can
-    // cite them at this point even when their memory reads have no readable
-    // spelling in the body.
+    // The invariants are available at the body entry as kernel facts. A
+    // pre-tested loop also has its condition there; a do-while does not, so
+    // it must not be recorded as an available premise for the first body.
     let loop_condition = surface_c_condition(condition);
     let invariant_surfaces = environment
         .function_block
@@ -1294,7 +1294,16 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 .filter_map(StructuralItem::proposition)
         });
     {
-        for surface in invariant_surfaces.chain(std::iter::once(&loop_condition)) {
+        let surfaces = if do_while {
+            invariant_surfaces
+                .chain(std::iter::empty())
+                .collect::<Vec<_>>()
+        } else {
+            invariant_surfaces
+                .chain(std::iter::once(&loop_condition))
+                .collect::<Vec<_>>()
+        };
+        for surface in surfaces {
             if let Ok(lowered) = lower_fixed_state_proposition(
                 surface,
                 pure_facts,
@@ -1469,6 +1478,7 @@ pub(in crate::surface::proof) fn verify_one_loop_preservation_proof(
                 condition,
                 invariant_checks,
                 environment.function.composite_resource_definitions(),
+                do_while,
             )
             .map_err(|error| {
                 ClickError::new(format!(

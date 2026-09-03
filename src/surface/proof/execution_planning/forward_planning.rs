@@ -83,6 +83,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
             invariant_checks,
             effect_checks,
             body,
+            do_while,
             ..
         } => {
             let statement_index = *next_statement_index;
@@ -146,14 +147,25 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             ))
                         })?;
                 }
-                let preservation_contexts = c_loop_preservation_contexts(
-                    &context.state,
-                    condition,
-                    invariant_checks,
-                    effect_checks,
-                    body,
-                    &assumptions,
-                )
+                let preservation_contexts = if *do_while {
+                    c_do_while_preservation_contexts(
+                        &context.state,
+                        condition,
+                        invariant_checks,
+                        effect_checks,
+                        body,
+                        &assumptions,
+                    )
+                } else {
+                    c_loop_preservation_contexts(
+                        &context.state,
+                        condition,
+                        invariant_checks,
+                        effect_checks,
+                        body,
+                        &assumptions,
+                    )
+                }
                 .map_err(|message| {
                     ClickError::new(format!(
                         "`{}.loop({loop_index}).preserve`: {message}",
@@ -203,6 +215,7 @@ pub(in crate::surface::proof) fn verify_execution_proofs_forward(
                             effect_checks,
                             condition,
                             body,
+                            *do_while,
                             environment,
                         )?;
                         final_exit_candidates.extend(result.final_exit_candidates);

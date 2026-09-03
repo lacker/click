@@ -2126,6 +2126,7 @@ fn checked_condition_event(
             invariant_checks,
             effect_checks,
             body,
+            ..
         } if &condition == proved_condition => {
             if value {
                 let loop_head = CStatement::While {
@@ -2133,6 +2134,7 @@ fn checked_condition_event(
                     invariant,
                     invariant_checks,
                     effect_checks,
+                    do_while: false,
                     body: body.clone(),
                 };
                 prepend_checked_evidence_statement(*body, Some(loop_head))
@@ -2796,7 +2798,46 @@ impl ExecutionProofCore {
                     "statement evidence was recorded with no source statement remaining".into(),
                 );
             };
-            if !statements_have_same_source(&next, proved_statement) {
+            let do_while_initial_body = match &*next {
+                CStatement::While {
+                    condition,
+                    invariant,
+                    invariant_checks,
+                    effect_checks,
+                    do_while: true,
+                    body,
+                } if !matches!(proved_statement, CStatement::While { .. }) => {
+                    let (body_head, body_tail) = split_shared_source(body);
+                    if !statements_have_same_source(&body_head, proved_statement) {
+                        return Err(EvidenceRefusal {
+                            reason: "statement evidence does not prove the frontier's next source statement",
+                            expected: Some(next.into_owned()),
+                            proved: Some(proved_statement.clone()),
+                            premise: None,
+                        });
+                    }
+                    let loop_head = CStatement::While {
+                        condition: condition.clone(),
+                        invariant: invariant.clone(),
+                        invariant_checks: invariant_checks.clone(),
+                        effect_checks: effect_checks.clone(),
+                        do_while: false,
+                        body: body.clone(),
+                    };
+                    let loop_continuation =
+                        prepend_shared_source(Arc::new(loop_head), tail.clone());
+                    Some(match body_tail {
+                        Some(body_tail) => {
+                            prepend_shared_source(body_tail, Some(loop_continuation))
+                        }
+                        None => loop_continuation,
+                    })
+                }
+                _ => None,
+            };
+            if !statements_have_same_source(&next, proved_statement)
+                && do_while_initial_body.is_none()
+            {
                 return Err(EvidenceRefusal {
                     reason: "statement evidence does not prove the frontier's next source statement",
                     expected: Some(next.into_owned()),
@@ -2804,7 +2845,7 @@ impl ExecutionProofCore {
                     premise: None,
                 });
             }
-            tail
+            do_while_initial_body.or(tail)
         };
         self.check_evidence_state_and_premises(
             function,
@@ -2887,6 +2928,7 @@ impl ExecutionProofCore {
                 invariant_checks,
                 effect_checks,
                 body,
+                ..
             } => {
                 if value {
                     let loop_head = CStatement::While {
@@ -2894,6 +2936,7 @@ impl ExecutionProofCore {
                         invariant: invariant.clone(),
                         invariant_checks: invariant_checks.clone(),
                         effect_checks: effect_checks.clone(),
+                        do_while: false,
                         body: body.clone(),
                     };
                     let body_then_head = Arc::new(CStatement::Seq(

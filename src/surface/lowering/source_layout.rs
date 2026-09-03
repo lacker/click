@@ -8,7 +8,9 @@ pub(in crate::surface) fn count_loops(statement: &syntax::C0Statement) -> usize 
             else_branch,
             ..
         } => count_loops(then_branch) + count_loops(else_branch),
-        syntax::C0Statement::While { body, .. } => 1 + count_loops(body),
+        syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+            1 + count_loops(body)
+        }
         syntax::C0Statement::Switch { cases, .. } => {
             cases.iter().map(|case| count_loops(case.body())).sum()
         }
@@ -26,7 +28,9 @@ pub(in crate::surface) fn count_statements(statement: &syntax::C0Statement) -> u
             else_branch,
             ..
         } => 1 + count_statements(then_branch) + count_statements(else_branch),
-        syntax::C0Statement::While { body, .. } => 1 + count_statements(body),
+        syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
+            1 + count_statements(body)
+        }
         // A native switch is checked as one source operation; its case bodies
         // are part of that operation rather than independently addressable
         // statement regions.
@@ -126,7 +130,8 @@ impl SourceExecutionLayout {
                     );
                     statement_index
                 }
-                syntax::C0Statement::While { body, .. } => {
+                syntax::C0Statement::While { body, .. }
+                | syntax::C0Statement::DoWhile { body, .. } => {
                     let statement_index = *next_statement_index;
                     let loop_index = *next_loop_index;
                     *next_statement_index += 1;
@@ -307,7 +312,7 @@ pub(in crate::surface) fn collect_c0_loop_modified_locals(
             collect_c0_loop_modified_locals(then_branch, names);
             collect_c0_loop_modified_locals(else_branch, names);
         }
-        syntax::C0Statement::While { body, .. } => {
+        syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
             collect_c0_loop_modified_locals(body, names);
         }
         syntax::C0Statement::Switch { cases, .. } => {

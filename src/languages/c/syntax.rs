@@ -265,6 +265,10 @@ pub enum C0Statement {
         condition: C0Expression,
         body: Box<C0Statement>,
     },
+    DoWhile {
+        condition: C0Expression,
+        body: Box<C0Statement>,
+    },
     Switch {
         expression: C0Expression,
         cases: Vec<C0SwitchCase>,
@@ -608,6 +612,10 @@ impl C0Statement {
                 Vec::new(),
                 body.to_kernel_statement(),
             ),
+            Self::DoWhile { condition, body } => crate::kernel::c_do_while(
+                condition.to_kernel_expression(),
+                body.to_kernel_statement(),
+            ),
             Self::Switch { expression, cases } => crate::kernel::c_switch(
                 expression.to_kernel_expression(),
                 cases
@@ -811,7 +819,9 @@ fn validate_function_returns(
             validate_function_returns(then_branch, return_type)?;
             validate_function_returns(else_branch, return_type)
         }
-        C0Statement::While { body, .. } => validate_function_returns(body, return_type),
+        C0Statement::While { body, .. } | C0Statement::DoWhile { body, .. } => {
+            validate_function_returns(body, return_type)
+        }
         C0Statement::Switch { cases, .. } => cases
             .iter()
             .try_for_each(|case| validate_function_returns(&case.body, return_type)),
@@ -1981,22 +1991,14 @@ impl Parser {
                         "`continue` in a `for` loop is not supported until its step is modeled explicitly",
                     ));
                 }
-                Some(CLoopContext::DoWhile) => {
-                    return Err(
-                        self.error_here("`continue` in a `do`-`while` loop is not supported yet")
-                    );
-                }
+                Some(CLoopContext::DoWhile) => {}
                 None => return Err(self.error_here("`continue` must be inside a loop")),
                 Some(CLoopContext::Switch) => unreachable!(),
             }
         } else {
             match self.loop_contexts.last().copied() {
                 Some(CLoopContext::While | CLoopContext::For | CLoopContext::Switch) => {}
-                Some(CLoopContext::DoWhile) => {
-                    return Err(
-                        self.error_here("`break` in a `do`-`while` loop is not supported yet")
-                    );
-                }
+                Some(CLoopContext::DoWhile) => {}
                 None => return Err(self.error_here("`break` must be inside a loop or switch")),
             }
         }
@@ -2110,13 +2112,10 @@ impl Parser {
                     let condition = self.parse_expression()?;
                     self.expect(Token::RParen)?;
                     self.expect(Token::Semicolon)?;
-                    Ok(C0Statement::Seq(
-                        Box::new(body.clone()),
-                        Box::new(C0Statement::While {
-                            condition,
-                            body: Box::new(body),
-                        }),
-                    ))
+                    Ok(C0Statement::DoWhile {
+                        condition,
+                        body: Box::new(body),
+                    })
                 }
                 Some("for") => {
                     self.position += 1;

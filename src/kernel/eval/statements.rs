@@ -1629,11 +1629,13 @@ pub(in crate::kernel) fn execute_c_statement_paths(
             invariant,
             invariant_checks: _,
             effect_checks: _,
+            do_while,
             body,
         } => execute_c_while_paths(
             state,
             condition,
             invariant,
+            *do_while,
             body,
             assumptions,
             environment,
@@ -1936,6 +1938,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
     state: &CState,
     condition: &CExpression,
     invariant: &[Proposition],
+    do_while: bool,
     body: &CStatement,
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
@@ -1946,12 +1949,14 @@ pub(in crate::kernel) fn execute_c_while_paths(
         state: CState,
         facts: Vec<ExecutionPureFact>,
         obligations: Vec<ProofObligation>,
+        check_condition: bool,
     }
 
     let mut pending = vec![PendingLoopPath {
         state: state.clone(),
         facts: Vec::new(),
         obligations: Vec::new(),
+        check_condition: !do_while,
     }];
     let mut paths = Vec::new();
 
@@ -1959,6 +1964,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
         state: current_state,
         facts: accumulated_facts,
         obligations: accumulated_obligations,
+        check_condition,
     }) = pending.pop()
     {
         budget.consume_loop_unroll()?;
@@ -1986,9 +1992,16 @@ pub(in crate::kernel) fn execute_c_while_paths(
         }
         let loop_assumptions = assumptions_with_propositions(&current_assumptions, invariant);
 
-        for condition_path in
+        let condition_paths = if check_condition {
             evaluate_c_expression_paths(&current_state, condition, &loop_assumptions, budget)?
-        {
+        } else {
+            vec![CExpressionPath {
+                outcome: CExpressionOutcome::Value(CValue::Int32(Bitvector32Term::Constant(1))),
+                facts: Vec::new(),
+                obligations: Vec::new(),
+            }]
+        };
+        for condition_path in condition_paths {
             let Some((condition_facts, condition_obligations)) =
                 merge_execution_pure_facts_and_obligations(
                     &[],
@@ -2072,6 +2085,7 @@ pub(in crate::kernel) fn execute_c_while_paths(
                                         state: next_state,
                                         facts,
                                         obligations,
+                                        check_condition: true,
                                     });
                                 }
                                 CStatementOutcome::Break(next_state) => {

@@ -538,6 +538,7 @@ pub(super) fn execute_c_statement_verification_paths(
             invariant_checks,
             effect_checks,
             body,
+            do_while,
         } if !invariant_checks.is_empty() || !effect_checks.is_empty() => {
             execute_c_while_verification_paths(
                 state,
@@ -551,6 +552,7 @@ pub(super) fn execute_c_statement_verification_paths(
                 execution_semantics,
                 budget,
                 variables,
+                *do_while,
             )?
         }
         _ => {
@@ -656,6 +658,7 @@ pub(super) fn execute_c_while_verification_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
+    do_while: bool,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -669,6 +672,7 @@ pub(super) fn execute_c_while_verification_paths(
         &[],
         execution_semantics,
         false,
+        do_while,
         budget,
         variables,
     )
@@ -832,6 +836,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
     final_exit_candidates: &[CLoopFinalExitCandidate],
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
+    do_while: bool,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
     execute_c_while_exit_paths(
         state,
@@ -845,6 +850,7 @@ pub(super) fn execute_c_while_exit_paths_with_proven_phases(
         final_exit_candidates,
         execution_semantics,
         initialization_proven,
+        do_while,
         budget,
         variables,
     )
@@ -863,6 +869,7 @@ fn execute_c_while_exit_paths(
     final_exit_candidates: &[CLoopFinalExitCandidate],
     execution_semantics: CExecutionSemantics,
     initialization_proven: bool,
+    do_while: bool,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
@@ -900,6 +907,7 @@ fn execute_c_while_exit_paths(
                 assumptions,
                 environment,
                 execution_semantics,
+                do_while,
                 budget,
                 variables,
             )?;
@@ -927,7 +935,9 @@ fn execute_c_while_exit_paths(
         .map(ExecutionPureFact::new)
         .collect::<Vec<_>>();
 
-    let (initial_may_continue, initial_may_exit) = if final_exit_candidates.is_empty() {
+    let (initial_may_continue, initial_may_exit) = if do_while {
+        (!final_exit_candidates.is_empty(), false)
+    } else if final_exit_candidates.is_empty() {
         (true, true)
     } else {
         c_loop_condition_feasibility(state, condition, assumptions)?
@@ -981,16 +991,17 @@ fn execute_c_while_exit_paths(
     )?;
     let mut has_live_iteration = false;
     for (invariant_facts, invariant_obligations) in &invariant_contexts {
-        if !assume_condition_truthiness(
-            &top_state,
-            condition,
-            assumptions,
-            invariant_facts,
-            invariant_obligations,
-            true,
-            budget,
-        )?
-        .is_empty()
+        if do_while
+            || !assume_condition_truthiness(
+                &top_state,
+                condition,
+                assumptions,
+                invariant_facts,
+                invariant_obligations,
+                true,
+                budget,
+            )?
+            .is_empty()
         {
             has_live_iteration = true;
             break;
@@ -1368,6 +1379,7 @@ pub(super) fn collect_loop_preservation_summary(
     assumptions: &PureFactContext,
     environment: &CExecutionEnvironment,
     execution_semantics: CExecutionSemantics,
+    do_while: bool,
     budget: &mut ExecutionBudget,
     variables: &mut KernelVariableGenerator,
 ) -> ExecutionResult<LoopPreservationSummary> {
@@ -1397,15 +1409,20 @@ pub(super) fn collect_loop_preservation_summary(
         &[],
         budget,
     )? {
-        for (condition_facts, condition_obligations) in assume_condition_truthiness(
-            top_state,
-            condition,
-            assumptions,
-            &invariant_facts,
-            &invariant_obligations,
-            true,
-            budget,
-        )? {
+        let condition_contexts = if do_while {
+            vec![(invariant_facts.clone(), invariant_obligations.clone())]
+        } else {
+            assume_condition_truthiness(
+                top_state,
+                condition,
+                assumptions,
+                &invariant_facts,
+                &invariant_obligations,
+                true,
+                budget,
+            )?
+        };
+        for (condition_facts, condition_obligations) in condition_contexts {
             for body_path in execute_c_statement_verification_paths_with_prefix(
                 top_state,
                 body,
@@ -1461,14 +1478,18 @@ pub(super) fn collect_loop_preservation_summary(
                                     assumptions,
                                     budget,
                                 )?;
-                                let path_obligations = collect_invariant_check_obligations(
-                                    &next_state,
-                                    loop_entry_state,
-                                    invariant_checks,
-                                    InvariantPhase::Preservation,
-                                    &path_assumptions,
-                                    budget,
-                                )?;
+                                let path_obligations = if do_while && !may_continue {
+                                    Vec::new()
+                                } else {
+                                    collect_invariant_check_obligations(
+                                        &next_state,
+                                        loop_entry_state,
+                                        invariant_checks,
+                                        InvariantPhase::Preservation,
+                                        &path_assumptions,
+                                        budget,
+                                    )?
+                                };
                                 let mut state_obligations = condition_obligations.clone();
                                 if may_continue
                                     && let Err(message) =

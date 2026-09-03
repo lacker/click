@@ -731,7 +731,12 @@ fn execute_concrete_loop_head_step(
 
     execution.core.concrete_loop_execution = true;
     let CStatement::While {
-        condition, body, ..
+        condition,
+        invariant,
+        invariant_checks,
+        effect_checks,
+        do_while,
+        body,
     } = loop_statement.clone()
     else {
         unreachable!("concrete loop stepping requires a while statement");
@@ -763,6 +768,74 @@ fn execute_concrete_loop_head_step(
         current_state.clone(),
     );
     let construction_snapshot_overrides = construction_snapshot_overrides.unwrap_or_default();
+
+    let loop_head = CStatement::While {
+        condition: condition.clone(),
+        invariant: invariant.clone(),
+        invariant_checks: invariant_checks.clone(),
+        effect_checks: effect_checks.clone(),
+        do_while: false,
+        body: body.clone(),
+    };
+
+    let state: &mut CState = &mut execution.core.state;
+    execution.core.frontier.execution_start_state = Some(execution_start_state);
+    *state = current_state.clone();
+
+    // C's `do ... while` enters its body before evaluating the condition. The
+    // continuation is an ordinary while head: after the first body, every
+    // iteration checks the condition before re-entering the body.
+    if do_while {
+        if matches!(prerequisite_policy, StatementPrerequisitePolicy::Planning)
+            && let Some(construction) = construction.as_mut()
+        {
+            let environments = construction.environments;
+            construct_proof_step_for_planned_operation(
+                execution,
+                proof_context,
+                construction.sink,
+                &current_state,
+                function_block,
+                parameters,
+                arguments,
+                environments,
+                &ConstructionEvidence::CertifiedStatementStep {
+                    planned_transition: None,
+                },
+            );
+        }
+        let loop_head = match remaining {
+            Some(remaining) => c_seq(loop_head, remaining),
+            None => loop_head,
+        };
+        execution
+            .core
+            .frontier
+            .continuations
+            .push(ProofExecutionContinuation {
+                remaining: Some(loop_head.into()),
+                next_statement_index: statement_index,
+                loop_exit_statement_index: continuation_node,
+            });
+        execution.core.frontier.next_statement_index = proof_context.constants.source_layout
+            .loop_body_entry(loop_index)
+            .ok_or_else(|| {
+                ClickError::new(format!(
+                    "`{claim_label}` tactic {tactic_index}: `{tactic_name}` could not resolve the source body of loop({loop_index})"
+                ))
+            })?;
+        execution.core.frontier.position = FrontierPosition::StatementEntry {
+            remaining: body.into(),
+        };
+        record_statement_program_snapshot_state(
+            &mut execution.presentation.recorded_snapshots,
+            function_block,
+            execution.core.frontier.next_statement_index,
+            ProgramPointKind::Entry,
+            current_state,
+        );
+        return Ok(());
+    }
 
     let current_resources = current_state.resources().facts().to_vec();
     let transition_label = format!("`{claim_label}` tactic {tactic_index}: `{tactic_name}`");
@@ -827,15 +900,12 @@ fn execute_concrete_loop_head_step(
                 describe_evidence_refusal(&refusal, parameters, arguments)
             ))
         })?;
-    let state: &mut CState = &mut execution.core.state;
     *available_pure_facts = condition_transition.pure_facts;
-    execution.core.frontier.execution_start_state = Some(execution_start_state);
-    *state = current_state.clone();
 
     if condition_transition.is_true {
         let loop_head = match remaining {
-            Some(remaining) => c_seq(loop_statement, remaining),
-            None => loop_statement,
+            Some(remaining) => c_seq(loop_head, remaining),
+            None => loop_head,
         };
         execution
             .core

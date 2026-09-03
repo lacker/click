@@ -905,19 +905,29 @@ impl AnnotationLowerer<'_> {
             syntax::C0Statement::Seq(first, second) => {
                 c_seq(self.lower_statement(first)?, self.lower_statement(second)?)
             }
-            syntax::C0Statement::While { condition, body } => {
+            syntax::C0Statement::While { condition, body }
+            | syntax::C0Statement::DoWhile { condition, body } => {
                 self.next_statement_index();
                 let loop_index = self.next_loop_index();
                 let lowered_body = self.lower_statement(body)?;
                 let invariant_checks = self.loop_invariant_checks(loop_index)?;
                 let effect_checks = self.loop_effect_checks(loop_index, body)?;
-                c_while_with_invariant_and_effect_checks(
-                    condition.to_kernel_expression(),
-                    Vec::new(),
-                    invariant_checks,
-                    effect_checks,
-                    lowered_body,
-                )
+                if matches!(statement, syntax::C0Statement::DoWhile { .. }) {
+                    c_do_while_with_invariant_and_effect_checks(
+                        condition.to_kernel_expression(),
+                        invariant_checks,
+                        effect_checks,
+                        lowered_body,
+                    )
+                } else {
+                    c_while_with_invariant_and_effect_checks(
+                        condition.to_kernel_expression(),
+                        Vec::new(),
+                        invariant_checks,
+                        effect_checks,
+                        lowered_body,
+                    )
+                }
             }
             syntax::C0Statement::If {
                 condition,

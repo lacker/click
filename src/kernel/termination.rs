@@ -1288,6 +1288,7 @@ mod address_escape_tests {
             invariant: Vec::new(),
             invariant_checks: Vec::new(),
             effect_checks: Vec::new(),
+            do_while: false,
             body: Box::new(branch),
         };
         assert!(statement_takes_address_of(&body, "n"));

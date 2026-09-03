@@ -1432,7 +1432,7 @@ pub(in crate::surface) fn c0_statement_calls(
                 collect_function_pointer_names(then_branch, names);
                 collect_function_pointer_names(else_branch, names);
             }
-            syntax::C0Statement::While { body, .. } => {
+            syntax::C0Statement::While { body, .. } | syntax::C0Statement::DoWhile { body, .. } => {
                 collect_function_pointer_names(body, names);
             }
             syntax::C0Statement::Switch { cases, .. } => {
@@ -1550,7 +1550,8 @@ pub(in crate::surface) fn c0_statement_calls(
                 visit(then_branch, calls, function_pointer_names);
                 visit(else_branch, calls, function_pointer_names);
             }
-            syntax::C0Statement::While { condition, body } => {
+            syntax::C0Statement::While { condition, body }
+            | syntax::C0Statement::DoWhile { condition, body } => {
                 let mut dependencies = BTreeSet::new();
                 collect_function_addresses(condition, &mut dependencies);
                 calls.push(dependencies);
