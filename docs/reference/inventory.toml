@@ -154,6 +154,30 @@ id = "c0.statement.xor-assign"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 
 [[item]]
+id = "c0.statement.divide-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.remainder-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.shift-left-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.shift-right-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.bitwise-and-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
+id = "c0.statement.bitwise-or-assign"
+path = "reference/language/c0.md#supported-expressions-and-statements"
+
+[[item]]
 id = "c0.expression.variable"
 path = "reference/language/c0.md#supported-expressions-and-statements"
 

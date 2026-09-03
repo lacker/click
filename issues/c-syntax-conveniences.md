@@ -17,10 +17,11 @@ existing terms; none needs new kernel state.
   (`:1898-1906`): `0xFF` lexes as `0` then `xFF`; suffixes `U`/`L` are
   rejected; a leading-zero literal silently parses as decimal, a divergence
   from C's octal.
-- **Increment and compound assignment.** `x++` exists only as a statement;
-  compound assignment supports only `++ -- += -= *= ^=` (`:729-740`,
-  `:1918-1935`) and only onto plain scalars: `a[i] += 1` and `p->f++` fail
-  because indexed and field targets require bare `=` (`:1098-1119`).
+- **Increment and compound assignment.** Scalar compound assignment now
+  supports the arithmetic, shift, and bitwise forms `++ -- += -= *= /= %= <<=
+  >>= &= |= ^=`. It remains statement-only and only applies to plain scalars:
+  `a[i] += 1` and `p->f++` fail because indexed and field targets require bare
+  `=` (`:1098-1119`).
 - **For-loop forms.** Declarations require initializers, the condition is
   mandatory (`for (;;)` fails), and the step must be one scalar update
   (`:1206-1224`, `:1266-1291`; mdtest `c_for_loop_rejects_declaration`).

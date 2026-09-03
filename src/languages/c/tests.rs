@@ -312,6 +312,25 @@ fn c0_syntax_accepts_omitted_for_initializer_and_step() {
 }
 
 #[test]
+fn c0_syntax_accepts_the_remaining_scalar_compound_assignments() {
+    syntax::parse_function(
+        r#"
+        int32 updates() {
+            int32 value = 255;
+            value /= 3;
+            value %= 10;
+            value <<= 1;
+            value >>= 1;
+            value &= 3;
+            value |= 4;
+            return value;
+        }
+        "#,
+    )
+    .expect("scalar compound arithmetic, shift, and bitwise updates should parse");
+}
+
+#[test]
 fn c0_syntax_rejects_overlong_local_array_initializers() {
     let error = syntax::parse_function(
         r#"

@@ -46,6 +46,12 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "statement.subtract-assign",
     "statement.multiply-assign",
     "statement.xor-assign",
+    "statement.divide-assign",
+    "statement.remainder-assign",
+    "statement.shift-left-assign",
+    "statement.shift-right-assign",
+    "statement.bitwise-and-assign",
+    "statement.bitwise-or-assign",
     "expression.variable",
     "expression.int-literal",
     "expression.hex-literal",
@@ -745,9 +751,11 @@ enum Token {
     LessThan,
     LessEqual,
     ShiftLeft,
+    ShiftLeftEqual,
     GreaterThan,
     GreaterEqual,
     ShiftRight,
+    ShiftRightEqual,
     EqualEqual,
     BangEqual,
     Bang,
@@ -757,9 +765,13 @@ enum Token {
     StarEqual,
     CaretEqual,
     Slash,
+    SlashEqual,
     Percent,
+    PercentEqual,
     Amp,
+    AmpEqual,
     Pipe,
+    PipeEqual,
     Caret,
     Tilde,
     Equal,
@@ -801,9 +813,11 @@ impl Token {
             Self::LessThan => "<",
             Self::LessEqual => "<=",
             Self::ShiftLeft => "<<",
+            Self::ShiftLeftEqual => "<<=",
             Self::GreaterThan => ">",
             Self::GreaterEqual => ">=",
             Self::ShiftRight => ">>",
+            Self::ShiftRightEqual => ">>=",
             Self::EqualEqual => "==",
             Self::BangEqual => "!=",
             Self::Bang => "!",
@@ -813,9 +827,13 @@ impl Token {
             Self::StarEqual => "*=",
             Self::CaretEqual => "^=",
             Self::Slash => "/",
+            Self::SlashEqual => "/=",
             Self::Percent => "%",
+            Self::PercentEqual => "%=",
             Self::Amp => "&",
+            Self::AmpEqual => "&=",
             Self::Pipe => "|",
+            Self::PipeEqual => "|=",
             Self::Caret => "^",
             Self::Tilde => "~",
             Self::Equal => "=",
@@ -832,6 +850,12 @@ impl Token {
                 | Self::MinusEqual
                 | Self::StarEqual
                 | Self::CaretEqual
+                | Self::SlashEqual
+                | Self::PercentEqual
+                | Self::ShiftLeftEqual
+                | Self::ShiftRightEqual
+                | Self::AmpEqual
+                | Self::PipeEqual
         )
     }
 }
@@ -1834,6 +1858,30 @@ impl Parser {
                 Box::new(C0Expression::Variable(name.clone())),
                 Box::new(self.parse_expression()?),
             ),
+            Token::SlashEqual => C0Expression::Divide(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::PercentEqual => C0Expression::Remainder(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::ShiftLeftEqual => C0Expression::ShiftLeft(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::ShiftRightEqual => C0Expression::ShiftRight(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::AmpEqual => C0Expression::BitwiseAnd(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
+            Token::PipeEqual => C0Expression::BitwiseOr(
+                Box::new(C0Expression::Variable(name.clone())),
+                Box::new(self.parse_expression()?),
+            ),
             Token::CaretEqual => C0Expression::BitwiseXor(
                 Box::new(C0Expression::Variable(name.clone())),
                 Box::new(self.parse_expression()?),
@@ -2672,6 +2720,20 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
             continue;
         }
 
+        if index + 2 < chars.len() {
+            let token = match (ch, chars[index + 1], chars[index + 2]) {
+                ('<', '<', '=') => Some(Token::ShiftLeftEqual),
+                ('>', '>', '=') => Some(Token::ShiftRightEqual),
+                _ => None,
+            };
+            if let Some(token) = token {
+                tokens.push(token);
+                positions.push(position);
+                index += 3;
+                continue;
+            }
+        }
+
         if index + 1 < chars.len() {
             let token = match (ch, chars[index + 1]) {
                 ('=', '=') => Some(Token::EqualEqual),
@@ -2689,6 +2751,10 @@ fn tokenize(source: &str) -> Result<(Vec<Token>, Vec<SourcePosition>), C0SyntaxE
                 ('-', '=') => Some(Token::MinusEqual),
                 ('*', '=') => Some(Token::StarEqual),
                 ('^', '=') => Some(Token::CaretEqual),
+                ('/', '=') => Some(Token::SlashEqual),
+                ('%', '=') => Some(Token::PercentEqual),
+                ('&', '=') => Some(Token::AmpEqual),
+                ('|', '=') => Some(Token::PipeEqual),
                 _ => None,
             };
             if let Some(token) = token {
