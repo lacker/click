@@ -3034,28 +3034,39 @@ pub(super) fn expose_composite_resource_fact(
     memory: &CMemory,
     assumptions: &PureFactContext,
 ) -> Option<ResourceContext> {
-    let target_is_available =
-        |context: &ResourceContext| context.satisfies_fact(target, assumptions);
-    if target_is_available(context) {
-        return Some(context.clone());
-    }
-
+    // Exposure unfolds composites until the target is held. A memory target
+    // is looked up by structure at every context first: the indexed answer
+    // for a cell an unfolded body names outright. Only when no unfolding
+    // holds it by structure does each context, in the same order, answer
+    // with the reasoning the resource algebra applies.
+    let structural = target.memory_range().is_some();
+    let mut visited = Vec::new();
     let mut seen = BTreeSet::new();
     let mut pending = VecDeque::from([context.clone()]);
     while let Some(context) = pending.pop_front() {
         if !seen.insert(context.clone()) {
             continue;
         }
-        let composites = context
+        if structural && context.satisfies_memory_fact_structurally(target) {
+            return Some(context);
+        }
+        // The composite whose pointer argument is the target's base by
+        // structure is unfolded first: when any composite holds the cell,
+        // it is that one.
+        let mut composites = context
             .facts()
             .iter()
             .filter(|fact| matches!(fact.resource(), CResource::Composite { .. }))
             .cloned()
             .collect::<Vec<_>>();
-        for composite in composites {
+        if let Some(required) = target.memory_range() {
+            composites
+                .sort_by_key(|composite| !composite_names_pointer_base(composite, required.base()));
+        }
+        for composite in &composites {
             let expanded = expand_composite_resource_fact(
                 &context,
-                &composite,
+                composite,
                 definitions,
                 memory,
                 assumptions,
@@ -3063,13 +3074,34 @@ pub(super) fn expose_composite_resource_fact(
             if expanded == context {
                 continue;
             }
-            if target_is_available(&expanded) {
+            if structural && expanded.satisfies_memory_fact_structurally(target) {
                 return Some(expanded);
             }
             pending.push_back(expanded);
         }
+        visited.push(context);
     }
-    None
+    visited
+        .into_iter()
+        .find(|context| context.satisfies_fact(target, assumptions))
+}
+
+/// Whether a composite fact names the base of `pointer` among its pointer
+/// arguments by structure: the same pointer, or one that `pointer` is a
+/// constant offset from.
+fn composite_names_pointer_base(composite: &CResourceFact, pointer: &Pointer) -> bool {
+    let CResource::Composite { arguments, .. } = composite.resource() else {
+        return false;
+    };
+    arguments.iter().any(|argument| {
+        let CValue::Pointer(argument) = argument else {
+            return false;
+        };
+        argument == pointer
+            || pointer
+                .element_index_from_base_with_width(argument, 1)
+                .is_some()
+    })
 }
 
 fn expand_composite_resource_context(
