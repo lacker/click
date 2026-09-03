@@ -9,11 +9,9 @@ The kernel type universe is closed: `CType` is `Void`, `Int32`, `UInt8`,
 `Bitvector32Term` (`primitives.rs:82-116`); every scalar comparison and
 overflow condition in `ConditionTerm` is the signed variant
 (`primitives.rs:133-143`); `uint8` is carried as an int32 term plus range
-facts (`src/kernel/eval/expression.rs:45-48`). Conversion support is limited
-to uint8 rvalue promotion and checked int32-to-uint8 narrowing; storing a
-uint8-typed value into an int32 lvalue falls to the `_ => None` arm of
-`coerce_c_value_to_type` (`expression.rs:53-90`) and becomes a
-`TypeMismatch`. The Click parser accepts only the `int32` and `uint8` type
+facts (`src/kernel/eval/expression.rs:45-48`). Conversion support now includes
+uint8 rvalue promotion, uint8-to-int32 widening, and checked int32-to-uint8
+narrowing. The Click parser accepts only the `int32` and `uint8` type
 keywords (`src/surface/parser.rs:960-961`). `docs/internals/roadmap.md:83-86`
 lists `int`, `size_t`, signed sizes, `uint32`, `uint64`, and well-specified
 casts and promotions as remaining work.
@@ -28,6 +26,14 @@ stores numbers as `int64_t` and `double`.
 Click should model the integer types real C programs declare, with C's
 promotion and conversion rules, so that a function using `size_t` or
 `uint32_t` can be verified without rewriting its declarations.
+
+## Progress
+
+The first conversion slice now supports the existing C0 `uint8` value widening
+to `int32` at assignment and function-return boundaries. The conversion keeps
+the underlying checked 32-bit term while changing its C type tag; the existing
+checked `int32`-to-`uint8` narrowing rule remains unchanged. The regression is
+`mdtests/uint8_widening.md`.
 
 ## Intended regression
 

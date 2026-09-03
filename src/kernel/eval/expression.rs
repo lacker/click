@@ -61,6 +61,7 @@ pub(in crate::kernel) fn coerce_c_value_to_type(
     }
 
     match (target_type, value) {
+        (CType::Int32, CValue::UInt8(value)) => Some(CValue::Int32(value)),
         (CType::UInt8, CValue::Int32(value)) => {
             add_proof_obligation_with_context(
                 obligations,

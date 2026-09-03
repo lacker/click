@@ -143,6 +143,8 @@ retain, nonfinal release, final release, and free across opaque calls.
   range requirements.
 - `mdtests/uint8_narrowing_requires_range.md`: missing byte-range proof for
   narrowing fails.
+- `mdtests/uint8_widening.md`: `uint8` values widen through `int32` assignments
+  and returns.
 - `mdtests/uint8_loop_invariant_pure_function.md`: `uint8[]` pure function
   calls inside loop invariants and `old(...)`.
 

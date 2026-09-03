@@ -338,9 +338,10 @@ Good next tasks from the current state:
    package structural memory loadability instead of requiring separate
    `loadable` facts.
 5. Extend the integer-promotion/conversion slice beyond the current `uint8`
-   rvalue promotion and checked `int32`-to-`uint8` narrowing rules. The open
-   design question is how much of C's usual arithmetic conversions Click should
-   model next versus reject in C0 until the integer story is broader.
+   rvalue promotion, `uint8`-to-`int32` widening, and checked
+   `int32`-to-`uint8` narrowing rules. The open design question is how much of
+   C's usual arithmetic conversions Click should model next versus reject in
+   C0 until the integer story is broader.
 6. Use the allocated examples to guide broader allocator support beyond the
    current runtime-sized `int32` slice: retain definitional lifetime matching,
    separated survivors across `free`, and proof-local branching as explicit

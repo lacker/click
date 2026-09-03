@@ -307,6 +307,15 @@ pub(in crate::kernel) fn write_c_lvalue_paths(
         .fold(effective_assumptions, |assumptions, fact| {
             assumptions.assume_proposition(fact)
         });
+    let mut facts = facts;
+    if lvalue.value_type == CType::Int32
+        && let CValue::UInt8(value) = &value
+    {
+        if add_uint8_range_execution_pure_facts(&mut facts, &effective_assumptions, value).is_none()
+        {
+            return Vec::new();
+        }
+    }
     let Some(value) = coerce_c_value_to_type(
         value,
         lvalue.value_type,

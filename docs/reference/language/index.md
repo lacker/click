@@ -45,7 +45,7 @@ Character literals such as `'x'`, `'\n'`, and `'\0'` are `uint8` values.
 
 Inside C fragments and pure Click expressions over C values, `uint8` rvalues
 promote to `int32` for arithmetic, ordered comparisons, shifts, and bitwise
-operators. Assigning or returning an `int32` into `uint8` is checked narrowing:
+operators, assignments, and returns. Assigning or returning an `int32` into `uint8` is checked narrowing:
 the current pure facts must prove `0 <= value <= 255`.
 
 Each `ensures` clause is a separate guarantee. A guarantee may be labeled with

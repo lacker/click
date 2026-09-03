@@ -100,8 +100,8 @@ with sign extension, matching GCC, Clang, and MSVC. Shift counts outside
 results are undefined behavior.
 
 `uint8` rvalues promote to `int32` for arithmetic, ordered comparisons, shifts,
-and bitwise operators. Assigning or returning an `int32` into `uint8` is a
-checked narrowing conversion: the current pure facts must prove
+and bitwise operators, assignments, and returns. Assigning or returning an
+`int32` into `uint8` is a checked narrowing conversion: the current pure facts must prove
 `0 <= value <= 255`.
 
 The prelude has initial byte-slice and C-string predicates over `uint8[]`, but
