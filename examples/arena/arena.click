@@ -25,6 +25,7 @@ resource arena_region(region: struct region*) {
 }
 
 resource arena_available(region: struct region*) {
+    owns region->arena->data[region->start..region->end];
     owns region->arena->occupied[region->start..region->end];
 }
 

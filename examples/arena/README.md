@@ -19,10 +19,10 @@ combined space. It cleans up correctly along every allocation-failure path.
 The C is the fixed implementation boundary for the resource-modeling work.
 The intended Click proof gives each live region exclusive access to its
 backing interval. `arena_free` now consumes that authority, clears the
-occupancy map through a checked loop, and returns the interval as an
-`arena_available` resource together with the shared arena metadata. The
-remaining allocator entry points are still unverified; `arena_destroy` must
-also require that no live regions remain.
+occupancy map through a checked loop, and returns both the backing and
+occupancy intervals as an `arena_available` resource together with the shared
+arena metadata. The remaining allocator entry points are still unverified;
+`arena_destroy` must also require that no live regions remain.
 
 `arena.click` keeps every source in the C0 parser gate and declares checked
 contracts for `arena_region_length`, `arena_read`, `arena_write`, and

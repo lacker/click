@@ -40,9 +40,10 @@ proof object's typed execution evidence is retained instead; see
 `docs/internals/proof-objects.md`). The footprint evaluation had to learn to
 name a load through a folded contained unit symbolically. `arena_free` now
 consumes the live region, clears its occupancy interval with checked loop
-bounds, restores the descriptor and shared metadata, and returns the cleared
-interval as an `arena_available` resource. The next bounded blockers are
-`arena_alloc`, `arena_init`, and `arena_destroy`.
+bounds, restores the descriptor and shared metadata, and returns both the
+cleared occupancy interval and its backing data interval as an
+`arena_available` resource. The next bounded blockers are `arena_alloc`,
+`arena_init`, and `arena_destroy`.
 
 ## Violated invariant
 
