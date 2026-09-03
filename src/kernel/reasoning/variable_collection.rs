@@ -257,7 +257,7 @@ pub(in crate::kernel) fn collect_c_expression_bitvector_variables(
 ) {
     match expression {
         CExpression::Value(value) => collect_c_value_bitvector_variables(value, variables),
-        CExpression::Variable(_) => {}
+        CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
             collect_c_expression_bitvector_variables(expression, variables)
         }

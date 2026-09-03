@@ -707,7 +707,7 @@ fn collect_c_expression_bound_variables(
 ) {
     match expression {
         CExpression::Value(value) => collect_c_value_bound_variables(value, variables),
-        CExpression::Variable(_) => {}
+        CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
             collect_c_expression_bound_variables(expression, variables);
         }
@@ -1151,6 +1151,7 @@ pub(in crate::kernel) fn substitute_bitvector_variable_in_c_expression(
             CExpression::Value(substitute_bitvector_variable_in_c_value(value, from, to))
         }
         CExpression::Variable(name) => CExpression::Variable(name.clone()),
+        CExpression::FunctionAddress(name) => CExpression::FunctionAddress(name.clone()),
         CExpression::Cast {
             expression,
             target_type,

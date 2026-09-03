@@ -18,6 +18,7 @@ pub const C0_PUBLIC_FORMS: &[&str] = &[
     "type.array-parameter",
     "type.local-array",
     "type.struct-array-parameter",
+    "type.function-pointer",
     "type.struct-pointer",
     "declaration.function",
     "declaration.struct",
@@ -152,6 +153,10 @@ pub enum C0Type {
     UInt8Pointer,
     Int32PointerPointer,
     UInt8PointerPointer,
+    /// A callback signature identified by a stable, structural signature key.
+    /// The key is shared with the kernel type and is deliberately opaque to
+    /// ordinary C expressions: function pointers are callable, not objects.
+    FunctionPointer(u64),
     Int32Array(u32),
     UInt8Array(u32),
 }
@@ -176,6 +181,7 @@ impl CAbi {
                 | C0Type::Int32PointerPointer
                 | C0Type::UInt8PointerPointer,
             ) => (8, 8),
+            (Self::Lp64, C0Type::FunctionPointer(_)) => (8, 8),
             (Self::Lp64, C0Type::Int32Array(length)) => (length.saturating_mul(4), 4),
             (Self::Lp64, C0Type::UInt8Array(length)) => (length, 1),
         }
@@ -257,6 +263,7 @@ pub enum C0UpdateOperator {
 pub enum C0Expression {
     Void,
     Variable(String),
+    FunctionAddress(String),
     Cast {
         expression: Box<C0Expression>,
         c_type: C0Type,
@@ -439,6 +446,7 @@ impl C0Type {
                 | Self::UInt8Pointer
                 | Self::Int32PointerPointer
                 | Self::UInt8PointerPointer
+                | Self::FunctionPointer(_)
         )
     }
 
@@ -448,7 +456,7 @@ impl C0Type {
             Self::UInt8Pointer | Self::UInt8Array(_) => Some(Self::UInt8),
             Self::Int32PointerPointer => Some(Self::Int32Pointer),
             Self::UInt8PointerPointer => Some(Self::UInt8Pointer),
-            Self::Void | Self::Int32 | Self::UInt8 => None,
+            Self::Void | Self::Int32 | Self::UInt8 | Self::FunctionPointer(_) => None,
         }
     }
 
@@ -461,6 +469,7 @@ impl C0Type {
             Self::UInt8Pointer => crate::kernel::CType::UInt8Pointer,
             Self::Int32PointerPointer => crate::kernel::CType::Int32PointerPointer,
             Self::UInt8PointerPointer => crate::kernel::CType::UInt8PointerPointer,
+            Self::FunctionPointer(signature) => crate::kernel::CType::FunctionPointer(signature),
             Self::Int32Array(length) => crate::kernel::CType::Int32Array(length),
             Self::UInt8Array(length) => crate::kernel::CType::UInt8Array(length),
         }
@@ -573,6 +582,7 @@ impl C0Expression {
         match self {
             Self::Void => crate::kernel::c_void_value(),
             Self::Variable(name) => crate::kernel::c_variable(name.clone()),
+            Self::FunctionAddress(name) => crate::kernel::c_function_address(name.clone()),
             Self::Cast { expression, c_type } => {
                 crate::kernel::c_cast(expression.to_kernel_expression(), c_type.to_kernel_type())
             }
@@ -973,6 +983,7 @@ struct Parser {
     typedefs: BTreeMap<String, ParsedType>,
     variable_structs: BTreeMap<String, String>,
     variable_array_shapes: BTreeMap<String, Vec<u32>>,
+    variable_types: BTreeMap<String, C0Type>,
     /// The names declared in each open lexical scope, innermost last:
     /// the function's parameters, then one entry per `{ ... }` block and
     /// per `for` statement. Click's kernel keys a local by its name alone,
@@ -994,6 +1005,7 @@ impl Parser {
             typedefs: BTreeMap::new(),
             variable_structs: BTreeMap::new(),
             variable_array_shapes: BTreeMap::new(),
+            variable_types: BTreeMap::new(),
             scopes: Vec::new(),
             abi,
         })
@@ -1009,6 +1021,7 @@ impl Parser {
         for name in self.scopes.pop().unwrap_or_default() {
             self.variable_structs.remove(&name);
             self.variable_array_shapes.remove(&name);
+            self.variable_types.remove(&name);
         }
     }
 
@@ -1220,10 +1233,23 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
-            if self.peek() == Some(&Token::LParen) {
-                return Err(
-                    self.error_here("function-pointer declarations are not supported in C0")
-                );
+            if let Some((name, c_type)) =
+                self.parse_function_pointer_declarator(parsed_type.c_type)?
+            {
+                self.declare_name(&name)?;
+                self.variable_types.insert(name.clone(), c_type);
+                parameters.push(C0Parameter {
+                    c_type,
+                    name,
+                    struct_layout: None,
+                    struct_name: None,
+                    array_element_width: None,
+                });
+                if self.peek() != Some(&Token::Comma) {
+                    return Ok(parameters);
+                }
+                self.position += 1;
+                continue;
             }
             if parsed_type.c_type == C0Type::Void {
                 return Err(self.error_here("function parameters cannot have type `void`"));
@@ -1236,6 +1262,7 @@ impl Parser {
                 return Err(self.error_here("only pointer-to-struct types are supported"));
             }
             let c_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
+            self.variable_types.insert(name.clone(), c_type);
             let struct_name = parsed_type.struct_name;
             if struct_name.is_some() {
                 if c_type != parsed_type.c_type && !struct_array {
@@ -1330,6 +1357,11 @@ impl Parser {
                 C0Type::Int32Array(_) | C0Type::UInt8Array(_) => {
                     return Err(self.error_at_previous("pointer-to-array types are not supported"));
                 }
+                C0Type::FunctionPointer(_) => {
+                    return Err(
+                        self.error_at_previous("pointers to function pointers are not supported")
+                    );
+                }
             };
             if parsed.struct_name.is_some() && c_type != C0Type::Int32Pointer {
                 return Err(
@@ -1341,6 +1373,73 @@ impl Parser {
             c_type,
             struct_name: parsed.struct_name,
         })
+    }
+
+    /// Parses the parenthesized declarator in `int32 (*callback)(int32)`.
+    /// The pointed-to signature is structural, so names in the nested
+    /// parameter list are intentionally ignored.
+    fn parse_function_pointer_declarator(
+        &mut self,
+        return_type: C0Type,
+    ) -> Result<Option<(String, C0Type)>, C0SyntaxError> {
+        if self.peek() != Some(&Token::LParen) {
+            return Ok(None);
+        }
+        self.position += 1;
+        self.expect(Token::Star)?;
+        let name = self.expect_ident("function-pointer name")?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LParen)?;
+        let mut parameter_types = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                let parsed_type = self.parse_type()?;
+                if parsed_type.struct_name.is_some() || parsed_type.c_type == C0Type::Void {
+                    return Err(self.error_here(
+                        "function-pointer parameters must use modeled non-struct types",
+                    ));
+                }
+                let parameter_type = self.parse_parameter_array_suffix(parsed_type.c_type)?;
+                parameter_types.push(parameter_type);
+                if matches!(self.peek(), Some(Token::Ident(_))) {
+                    self.position += 1;
+                }
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::RParen) => break,
+                    Some(token) => {
+                        return Err(self.error_here(format!(
+                            "expected `,` or `)` in function-pointer parameter list, got {}",
+                            token.describe()
+                        )));
+                    }
+                    None => return Err(self.error_here(
+                        "expected `,` or `)` in function-pointer parameter list, got end of input",
+                    )),
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        if parameter_types.len() > 13 {
+            return Err(
+                self.error_here("function-pointer signatures support at most 13 parameters")
+            );
+        }
+        let parameter_types = parameter_types
+            .iter()
+            .copied()
+            .map(C0Type::to_kernel_type)
+            .collect::<Vec<_>>();
+        let signature = crate::kernel::CType::function_pointer_signature(
+            return_type.to_kernel_type(),
+            &parameter_types,
+        );
+        if signature == 0 {
+            return Err(
+                self.error_here("function-pointer signature uses an unsupported modeled type")
+            );
+        }
+        Ok(Some((name, C0Type::FunctionPointer(signature))))
     }
 
     fn parse_named_type(&mut self, name: String) -> Result<ParsedType, C0SyntaxError> {
@@ -1825,7 +1924,29 @@ impl Parser {
             return Err(self.error_here("void local declarations are not supported"));
         }
         if self.peek() == Some(&Token::LParen) {
-            return Err(self.error_here("function-pointer declarations are not supported in C0"));
+            let Some((name, c_type)) =
+                self.parse_function_pointer_declarator(parsed_type.c_type)?
+            else {
+                unreachable!("function-pointer declarator starts with a parenthesis");
+            };
+            self.declare_name(&name)?;
+            self.variable_types.insert(name.clone(), c_type);
+            let declaration = C0Statement::Declare {
+                c_type,
+                name: name.clone(),
+            };
+            let statement = if self.peek() == Some(&Token::Equal) {
+                self.position += 1;
+                let expression = self.parse_expression()?;
+                C0Statement::Seq(
+                    Box::new(declaration),
+                    Box::new(C0Statement::Assign { name, expression }),
+                )
+            } else {
+                declaration
+            };
+            self.expect(Token::Semicolon)?;
+            return Ok(statement);
         }
 
         let mut declarations = Vec::new();
@@ -1833,6 +1954,7 @@ impl Parser {
             let name = self.expect_ident("local name")?;
             self.declare_name(&name)?;
             let (c_type, array_shape) = self.parse_local_array_shape(&parsed_type)?;
+            self.variable_types.insert(name.clone(), c_type);
             if let Some(shape) = array_shape.clone() {
                 self.variable_array_shapes.insert(name.clone(), shape);
             }
@@ -2535,6 +2657,12 @@ impl Parser {
 
         if self.peek() == Some(&Token::Amp) {
             self.position += 1;
+            if let Some(Token::Ident(name)) = self.peek().cloned()
+                && !self.variable_types.contains_key(&name)
+            {
+                self.position += 1;
+                return Ok(C0Expression::FunctionAddress(name));
+            }
             return Ok(C0Expression::AddressOf(Box::new(self.parse_unary()?)));
         }
 

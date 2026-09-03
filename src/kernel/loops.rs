@@ -14,6 +14,20 @@ pub(super) fn execute_c_call_assign_paths(
         return execute_c_realloc_assign_paths(state, target, arguments, assumptions, budget);
     }
 
+    if let Some(CType::FunctionPointer(signature)) = state.locals.object_type(function_name) {
+        return execute_c_indirect_call_assign_paths(
+            state,
+            target,
+            function_name,
+            CType::FunctionPointer(signature),
+            arguments,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        );
+    }
+
     let Some(function) = environment.get_function(function_name) else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
@@ -86,6 +100,35 @@ pub(super) fn execute_c_call_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    if let Some(CType::FunctionPointer(signature)) = state.locals.object_type(function_name) {
+        let paths = execute_c_indirect_call_paths(
+            state,
+            function_name,
+            CType::FunctionPointer(signature),
+            arguments,
+            assumptions,
+            environment,
+            execution_semantics,
+            budget,
+        )?
+        .into_iter()
+        .map(|path| CStatementExecutionPath {
+            outcome: match path.outcome {
+                CFunctionOutcome::Return { state, .. } => CStatementOutcome::Normal(state),
+                CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
+                CFunctionOutcome::UndefinedBehavior(error) => {
+                    CStatementOutcome::UndefinedBehavior(error)
+                }
+                CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+            },
+            facts: path.facts,
+            obligations: path.obligations,
+        })
+        .collect::<Vec<_>>();
+        budget.check_path_width(paths.len())?;
+        return Ok(paths);
+    }
+
     let Some(function) = environment.get_function(function_name) else {
         return Ok(vec![CStatementExecutionPath {
             outcome: CStatementOutcome::RuntimeError(CRuntimeError::UnknownFunction(
@@ -119,6 +162,187 @@ pub(super) fn execute_c_call_paths(
         obligations: path.obligations,
     })
     .collect::<Vec<_>>();
+    budget.check_path_width(paths.len())?;
+    Ok(paths)
+}
+
+fn execute_c_indirect_call_assign_paths(
+    state: &CState,
+    target: &str,
+    function_name: &str,
+    function_type: CType,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CStatementExecutionPath>> {
+    let paths = execute_c_indirect_call_paths(
+        state,
+        function_name,
+        function_type,
+        arguments,
+        assumptions,
+        environment,
+        execution_semantics,
+        budget,
+    )?;
+    Ok(paths
+        .into_iter()
+        .map(|path| {
+            let outcome = match path.outcome {
+                CFunctionOutcome::Return { value, mut state } => {
+                    if value == CValue::Void || state.locals.is_array_object(target) {
+                        CStatementOutcome::RuntimeError(CRuntimeError::TypeMismatch)
+                    } else {
+                        sync_stack_local(&mut state, target, &value);
+                        let c_type = state
+                            .locals
+                            .object_type(target)
+                            .unwrap_or_else(|| value.c_type());
+                        state.locals.set_typed(target.to_string(), value, c_type);
+                        CStatementOutcome::Normal(state)
+                    }
+                }
+                CFunctionOutcome::VerificationDiverges => CStatementOutcome::VerificationDiverges,
+                CFunctionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    CStatementOutcome::UndefinedBehavior(undefined_behavior)
+                }
+                CFunctionOutcome::RuntimeError(error) => CStatementOutcome::RuntimeError(error),
+            };
+            CStatementExecutionPath {
+                outcome,
+                facts: path.facts,
+                obligations: path.obligations,
+            }
+        })
+        .collect())
+}
+
+fn execute_c_indirect_call_paths(
+    state: &CState,
+    function_name: &str,
+    function_type: CType,
+    arguments: &[CExpression],
+    assumptions: &PureFactContext,
+    environment: &CExecutionEnvironment,
+    execution_semantics: CExecutionSemantics,
+    budget: &mut ExecutionBudget,
+) -> ExecutionResult<Vec<CFunctionPath>> {
+    let mut paths = Vec::new();
+    for target_path in evaluate_c_expression_paths(
+        state,
+        &c_variable(function_name.to_string()),
+        assumptions,
+        budget,
+    )? {
+        let CExpressionPath {
+            outcome,
+            facts,
+            obligations,
+        } = target_path;
+        let target_names = match outcome {
+            CExpressionOutcome::Value(CValue::Pointer(pointer))
+                if pointer.offset == PointerOffsetTerm::Constant(0) =>
+            {
+                match pointer.block {
+                    PointerBlock::Function(name) => {
+                        vec![Ok(name)]
+                    }
+                    PointerBlock::FunctionSymbolic(_) => environment
+                        .function_names_with_pointer_type(function_type)
+                        .into_iter()
+                        .map(Ok)
+                        .collect(),
+                    _ => vec![Err(CRuntimeError::TypeMismatch)],
+                }
+            }
+            CExpressionOutcome::Value(_) => vec![Err(CRuntimeError::TypeMismatch)],
+            CExpressionOutcome::UndefinedBehavior(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::UndefinedBehavior(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+            CExpressionOutcome::RuntimeError(error) => {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(error),
+                    facts,
+                    obligations,
+                });
+                continue;
+            }
+        };
+
+        if target_names.is_empty() {
+            paths.push(CFunctionPath {
+                outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(format!(
+                    "no compatible target for function pointer `{function_name}`"
+                ))),
+                facts,
+                obligations,
+            });
+            continue;
+        }
+        for target_name in target_names {
+            let Ok(target_name) = target_name else {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(target_name.unwrap_err()),
+                    facts: facts.clone(),
+                    obligations: obligations.clone(),
+                });
+                continue;
+            };
+            let Some(function) = environment.get_function(&target_name) else {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::UnknownFunction(
+                        target_name,
+                    )),
+                    facts: facts.clone(),
+                    obligations: obligations.clone(),
+                });
+                continue;
+            };
+            if function.function_pointer_type() != function_type {
+                paths.push(CFunctionPath {
+                    outcome: CFunctionOutcome::RuntimeError(CRuntimeError::FunctionContract(
+                        format!(
+                            "function pointer target `{}` has an incompatible signature",
+                            function.name()
+                        ),
+                    )),
+                    facts: facts.clone(),
+                    obligations: obligations.clone(),
+                });
+                continue;
+            }
+            let target_assumptions =
+                assumptions_with_path_context(assumptions, &facts, &obligations);
+            for mut call_path in execute_c_function_call_paths(
+                state,
+                function,
+                arguments,
+                &target_assumptions,
+                environment,
+                execution_semantics,
+                budget,
+            )? {
+                let mut merged_facts = facts.clone();
+                merged_facts.extend(call_path.facts);
+                let mut merged_obligations = obligations.clone();
+                merged_obligations.extend(call_path.obligations);
+                call_path.facts = merged_facts;
+                call_path.obligations = merged_obligations;
+                paths.push(CFunctionPath {
+                    outcome: call_path.outcome,
+                    facts: call_path.facts,
+                    obligations: call_path.obligations,
+                });
+            }
+        }
+    }
     budget.check_path_width(paths.len())?;
     Ok(paths)
 }
@@ -1986,6 +2210,9 @@ pub(super) fn havoc_loop_modified_locals(
             | CType::UInt8Pointer
             | CType::Int32PointerPointer
             | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variables.next())),
+            CType::FunctionPointer(_) => {
+                CValue::Pointer(Pointer::symbolic_function(variables.next()))
+            }
             // Array objects are never assigned by name (C forbids it), and
             // they bind as array objects rather than scalar objects above.
             CType::Int32Array(_) | CType::UInt8Array(_) => continue,
@@ -2178,7 +2405,7 @@ pub(super) fn collect_address_taken_in_expression(
         // `&target`: any local reachable in the target may have its address
         // escape, so conservatively record every variable it mentions.
         CExpression::AddressOf(target) => collect_variable_names(target, names),
-        CExpression::Value(_) | CExpression::Variable(_) => {}
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
             collect_address_taken_in_expression(expression, names)
         }
@@ -2233,7 +2460,7 @@ pub(super) fn collect_variable_names(expression: &CExpression, names: &mut BTree
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }
-        CExpression::Value(_) => {}
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => collect_variable_names(expression, names),
         CExpression::Conditional {
             condition,

@@ -472,7 +472,7 @@ fn collect_expression_variable_names(expression: &CExpression, names: &mut BTree
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }
-        CExpression::Value(_) => {}
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Cast { expression, .. } => {
             collect_expression_variable_names(expression, names)
         }

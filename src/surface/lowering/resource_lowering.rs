@@ -26,6 +26,11 @@ pub(in crate::surface) fn initial_call_state(
                     parameter.name()
                 )));
             }
+            C0Type::FunctionPointer(_) => {
+                arguments.push(c_pointer_value(Pointer::symbolic_function(Variable(
+                    POINTER_ARGUMENT_VARIABLE_BASE + index as u64,
+                ))));
+            }
             C0Type::Int32Pointer
             | C0Type::UInt8Pointer
             | C0Type::Int32PointerPointer

@@ -532,6 +532,37 @@ fn untyped_pointer_operations_report_indeterminate_pointee_type() {
 }
 
 #[test]
+fn function_pointer_operations_report_indeterminate_pointee_type() {
+    let pointer = Pointer::function("callback");
+    let function_type = CType::FunctionPointer(CType::function_pointer_signature(
+        CType::Int32,
+        &[CType::Int32],
+    ));
+    let mut state = CState::new();
+    state
+        .locals
+        .set_typed("callback", CValue::Pointer(pointer), function_type);
+    let expressions = [
+        c_load(c_variable("callback")),
+        c_add(c_variable("callback"), c_int32_literal(1)),
+        c_pointer_offset_bytes(c_variable("callback"), 4),
+    ];
+
+    for expression in expressions {
+        let theorem = prove_c_expression_evaluation(state.clone(), expression.clone())
+            .expect("a function-pointer object operation should produce a model error");
+        assert_eq!(
+            theorem.proposition(),
+            &Proposition::CExpressionEvaluates {
+                state: state.clone(),
+                expression,
+                outcome: CExpressionOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType),
+            }
+        );
+    }
+}
+
+#[test]
 fn symbolic_pointer_equality_reports_branch_facts() {
     let offset = Variable(80);
     let left = Pointer {

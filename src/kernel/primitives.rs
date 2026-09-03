@@ -153,6 +153,8 @@ pub struct Pointer {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum PointerBlock {
     Concrete(String),
+    Function(String),
+    FunctionSymbolic(Variable),
     ExternalArgument,
     Symbolic(Variable),
     /// A trusted allocation identity. Unlike a symbolic/opaque block, this is
@@ -161,6 +163,10 @@ pub enum PointerBlock {
 }
 
 impl PointerBlock {
+    pub(crate) fn is_function(&self) -> bool {
+        matches!(self, Self::Function(_) | Self::FunctionSymbolic(_))
+    }
+
     pub(crate) fn starts_with(&self, prefix: &str) -> bool {
         matches!(self, Self::Concrete(name) if name.starts_with(prefix))
     }
@@ -168,7 +174,11 @@ impl PointerBlock {
     pub(crate) fn strip_prefix<'a>(&'a self, prefix: &str) -> Option<&'a str> {
         match self {
             Self::Concrete(name) => name.strip_prefix(prefix),
-            Self::ExternalArgument | Self::Symbolic(_) | Self::Heap(_) => None,
+            Self::Function(_)
+            | Self::FunctionSymbolic(_)
+            | Self::ExternalArgument
+            | Self::Symbolic(_)
+            | Self::Heap(_) => None,
         }
     }
 }
@@ -189,6 +199,10 @@ impl std::fmt::Display for PointerBlock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Concrete(name) => formatter.write_str(name),
+            Self::Function(name) => write!(formatter, "function:{name}"),
+            Self::FunctionSymbolic(variable) => {
+                write!(formatter, "symbolic-function-pointer:{}", variable.0)
+            }
             Self::ExternalArgument => formatter.write_str("arg-memory"),
             Self::Symbolic(variable) => write!(formatter, "symbolic-pointer:{}", variable.0),
             Self::Heap(identity) => write!(formatter, "heap-allocation:{identity}"),
@@ -213,6 +227,7 @@ pub enum CType {
     UInt8Pointer,
     Int32PointerPointer,
     UInt8PointerPointer,
+    FunctionPointer(u64),
     Int32Array(u32),
     UInt8Array(u32),
 }
@@ -233,6 +248,7 @@ pub(super) enum CLValueStorage {
 pub enum CExpression {
     Value(CValue),
     Variable(String),
+    FunctionAddress(String),
     Cast {
         expression: Box<CExpression>,
         target_type: CType,

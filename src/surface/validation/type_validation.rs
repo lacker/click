@@ -326,6 +326,7 @@ pub(in crate::surface) fn describe_c0_type(c_type: C0Type) -> String {
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => "uint8*".to_string(),
         C0Type::Int32PointerPointer => "int32**".to_string(),
         C0Type::UInt8PointerPointer => "uint8**".to_string(),
+        C0Type::FunctionPointer(signature) => format!("function-pointer({signature})"),
     }
 }
 
@@ -513,6 +514,7 @@ fn infer_c_expression_type(
             CType::UInt8Pointer => Some(C0Type::UInt8Pointer),
             CType::Int32PointerPointer => Some(C0Type::Int32PointerPointer),
             CType::UInt8PointerPointer => Some(C0Type::UInt8PointerPointer),
+            CType::FunctionPointer(signature) => Some(C0Type::FunctionPointer(*signature)),
             CType::Void | CType::Int32Array(_) | CType::UInt8Array(_) => None,
         },
         CExpression::Conditional {
@@ -531,7 +533,7 @@ fn infer_c_expression_type(
                 _ => None,
             }
         }
-        CExpression::AddressOf(_) => None,
+        CExpression::AddressOf(_) | CExpression::FunctionAddress(_) => None,
         CExpression::PointerOffsetBytes { pointer, .. } => {
             infer_c_expression_type(pointer, variables)
         }
@@ -577,6 +579,7 @@ fn infer_c_expression_type(
             CType::UInt8Pointer => C0Type::UInt8Pointer,
             CType::Int32PointerPointer => C0Type::Int32PointerPointer,
             CType::UInt8PointerPointer => C0Type::UInt8PointerPointer,
+            CType::FunctionPointer(signature) => C0Type::FunctionPointer(*signature),
             CType::Int32Array(_) | CType::UInt8Array(_) => return None,
         }),
         CExpression::Index(base, _) => {
@@ -607,7 +610,9 @@ fn infer_subtract_expression_type(
     let left = infer_contract_expression_type(left, variables, click_functions, context)?;
     let right = infer_contract_expression_type(right, variables, click_functions, context)?;
     Ok(match (left, right) {
-        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
+        (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
+            Some(left)
+        }
         _ => scalar_arithmetic_type(left, right),
     })
 }
@@ -630,15 +635,21 @@ fn infer_c_subtract_type(
     let left = infer_c_expression_type(left, variables);
     let right = infer_c_expression_type(right, variables);
     match (left, right) {
-        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
+        (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
+            Some(left)
+        }
         _ => scalar_arithmetic_type(left, right),
     }
 }
 
 fn pointer_arithmetic_type(left: Option<C0Type>, right: Option<C0Type>) -> Option<C0Type> {
     match (left, right) {
-        (Some(left), Some(right)) if type_is_pointer(left) && type_is_scalar(right) => Some(left),
-        (Some(left), Some(right)) if type_is_scalar(left) && type_is_pointer(right) => Some(right),
+        (Some(left), Some(right)) if type_is_data_pointer(left) && type_is_scalar(right) => {
+            Some(left)
+        }
+        (Some(left), Some(right)) if type_is_scalar(left) && type_is_data_pointer(right) => {
+            Some(right)
+        }
         _ => None,
     }
 }
@@ -656,8 +667,16 @@ fn type_is_scalar(c_type: C0Type) -> bool {
     matches!(c_type, C0Type::Int32 | C0Type::UInt8)
 }
 
-fn type_is_pointer(c_type: C0Type) -> bool {
-    c_type.is_pointer() || matches!(c_type, C0Type::Int32Array(_) | C0Type::UInt8Array(_))
+fn type_is_data_pointer(c_type: C0Type) -> bool {
+    matches!(
+        c_type,
+        C0Type::Int32Pointer
+            | C0Type::UInt8Pointer
+            | C0Type::Int32PointerPointer
+            | C0Type::UInt8PointerPointer
+            | C0Type::Int32Array(_)
+            | C0Type::UInt8Array(_)
+    )
 }
 
 fn pointer_element_type(c_type: C0Type) -> Option<C0Type> {

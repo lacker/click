@@ -601,21 +601,61 @@ impl ConditionTerm {
 }
 
 impl CType {
+    pub(crate) fn function_pointer_signature(return_type: Self, parameter_types: &[Self]) -> u64 {
+        // Pack the finite modeled type alphabet into nibbles. This is exact,
+        // unlike a hash, so an incompatible callback can never be admitted by
+        // a signature collision. The high-level C parser caps callback arity
+        // at thirteen, which fits the key in one u64.
+        fn code(c_type: CType) -> Option<u64> {
+            Some(match c_type {
+                CType::Void => 0,
+                CType::Int32 => 1,
+                CType::UInt8 => 2,
+                CType::Int32Pointer => 3,
+                CType::UInt8Pointer => 4,
+                CType::Int32PointerPointer => 5,
+                CType::UInt8PointerPointer => 6,
+                CType::FunctionPointer(_) | CType::Int32Array(_) | CType::UInt8Array(_) => {
+                    return None;
+                }
+            })
+        }
+
+        if parameter_types.len() > 13 {
+            return 0;
+        }
+        let Some(return_code) = code(return_type) else {
+            return 0;
+        };
+        let mut signature = 1 | ((parameter_types.len() as u64) << 1) | (return_code << 5);
+        for (index, &parameter_type) in parameter_types.iter().enumerate() {
+            let Some(parameter_code) = code(parameter_type) else {
+                return 0;
+            };
+            signature |= parameter_code << (9 + index * 4);
+        }
+        signature
+    }
+
     pub fn is_pointer(self) -> bool {
-        self.pointee_type().is_some()
+        self.pointee_type().is_some() || matches!(self, Self::FunctionPointer(_))
     }
 
     pub(in crate::kernel) fn accepts(self, value: &CValue) -> bool {
-        matches!(
-            (self, value),
+        match (self, value) {
             (Self::Void, CValue::Void)
-                | (Self::Int32, CValue::Int32(_))
-                | (Self::UInt8, CValue::UInt8(_))
-                | (Self::Int32Pointer, CValue::Pointer(_))
-                | (Self::UInt8Pointer, CValue::Pointer(_))
-                | (Self::Int32PointerPointer, CValue::Pointer(_))
-                | (Self::UInt8PointerPointer, CValue::Pointer(_))
-        )
+            | (Self::Int32, CValue::Int32(_))
+            | (Self::UInt8, CValue::UInt8(_)) => true,
+            (Self::Int32Pointer, CValue::Pointer(pointer))
+            | (Self::UInt8Pointer, CValue::Pointer(pointer))
+            | (Self::Int32PointerPointer, CValue::Pointer(pointer))
+            | (Self::UInt8PointerPointer, CValue::Pointer(pointer)) => !pointer.block.is_function(),
+            (Self::FunctionPointer(_), CValue::Pointer(pointer)) => {
+                pointer.block.is_function()
+                    || matches!(&pointer.block, PointerBlock::Concrete(name) if name == "null")
+            }
+            _ => false,
+        }
     }
 
     pub fn byte_width(self) -> u32 {
@@ -627,6 +667,7 @@ impl CType {
             Self::UInt8Pointer => C_POINTER_BYTE_WIDTH,
             Self::Int32PointerPointer => C_POINTER_BYTE_WIDTH,
             Self::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
+            Self::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
             Self::Int32Array(length) => length.saturating_mul(4),
             Self::UInt8Array(length) => length,
         }
@@ -704,6 +745,20 @@ impl Pointer {
     pub(crate) fn symbolic(variable: Variable) -> Self {
         Self {
             block: PointerBlock::Symbolic(variable),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    pub(crate) fn symbolic_function(variable: Variable) -> Self {
+        Self {
+            block: PointerBlock::FunctionSymbolic(variable),
+            offset: PointerOffsetTerm::Constant(0),
+        }
+    }
+
+    pub(crate) fn function(name: impl Into<String>) -> Self {
+        Self {
+            block: PointerBlock::Function(name.into()),
             offset: PointerOffsetTerm::Constant(0),
         }
     }

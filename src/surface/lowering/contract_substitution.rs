@@ -1946,7 +1946,7 @@ pub(in crate::surface) fn substitute_c_fragment(
     substitutions: &BTreeMap<String, ContractExpression>,
 ) -> Result<CExpression, String> {
     match expression {
-        CExpression::Value(_) => Ok(expression.clone()),
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => Ok(expression.clone()),
         CExpression::Variable(name) => {
             let Some(substitution) = substitutions.get(name) else {
                 return Ok(expression.clone());

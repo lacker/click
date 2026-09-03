@@ -896,7 +896,7 @@ fn c_expression_steps_for_mode(expression: &CExpression, lvalue: bool) -> usize 
             continue;
         }
         match expression {
-            CExpression::Value(_) => {}
+            CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
             CExpression::Cast { expression, .. } => pending.push((expression, false)),
             CExpression::Conditional {
                 condition,

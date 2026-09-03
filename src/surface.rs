@@ -667,7 +667,7 @@ impl KernelLowerings {
 
 fn collect_c_expression_variables(expression: &CExpression, names: &mut BTreeSet<String>) {
     match expression {
-        CExpression::Value(_) => {}
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }

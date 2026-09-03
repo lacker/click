@@ -623,6 +623,13 @@ pub(in crate::kernel) fn pointer_offset_by_bytes_paths(
     obligations: Vec<ProofObligation>,
     assumptions: &PureFactContext,
 ) -> Vec<CExpressionPath> {
+    if pointer.block.is_function() && bytes != 0 {
+        return vec![CExpressionPath {
+            outcome: CExpressionOutcome::RuntimeError(CRuntimeError::IndeterminatePointeeType),
+            facts,
+            obligations,
+        }];
+    }
     let result = pointer.offset_by_bytes(bytes);
     let guards = pointer_block_bounds(state, &result, 1);
     apply_pointer_formation_guards(result, guards, facts, obligations, assumptions)

@@ -1494,6 +1494,7 @@ fn symbolic_call_result(c_type: CType, variable: Variable) -> CValue {
         | CType::UInt8Pointer
         | CType::Int32PointerPointer
         | CType::UInt8PointerPointer => CValue::Pointer(Pointer::symbolic(variable)),
+        CType::FunctionPointer(_) => CValue::Pointer(Pointer::symbolic_function(variable)),
         CType::Int32Array(_) | CType::UInt8Array(_) => {
             unreachable!("C functions cannot return array values")
         }
@@ -2172,7 +2173,7 @@ fn population_body_requires_positive_witness(definition: &CCompositeResourceDefi
 
 fn c_expression_is_snapshot_independent(expression: &CExpression) -> bool {
     match expression {
-        CExpression::Value(_) | CExpression::Variable(_) => true,
+        CExpression::Value(_) | CExpression::Variable(_) | CExpression::FunctionAddress(_) => true,
         CExpression::Cast { expression, .. } => c_expression_is_snapshot_independent(expression),
         CExpression::Conditional {
             condition,

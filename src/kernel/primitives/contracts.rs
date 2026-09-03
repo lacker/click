@@ -116,6 +116,17 @@ impl CFunction {
         &self.parameters
     }
 
+    pub(crate) fn function_pointer_type(&self) -> CType {
+        CType::FunctionPointer(CType::function_pointer_signature(
+            self.return_type,
+            &self
+                .parameters
+                .iter()
+                .map(CParameter::c_type)
+                .collect::<Vec<_>>(),
+        ))
+    }
+
     pub fn body(&self) -> &CStatement {
         &self.body
     }
@@ -497,6 +508,14 @@ impl CExecutionEnvironment {
 
     pub fn get_function(&self, name: &str) -> Option<&CFunction> {
         self.functions.get(name)
+    }
+
+    pub(crate) fn function_names_with_pointer_type(&self, c_type: CType) -> Vec<String> {
+        self.functions
+            .values()
+            .filter(|function| function.function_pointer_type() == c_type)
+            .map(|function| function.name().to_string())
+            .collect()
     }
 
     pub fn with_verified_function_rule(mut self, rule: CVerifiedFunctionRule) -> Self {

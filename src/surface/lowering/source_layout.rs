@@ -335,7 +335,7 @@ pub(in crate::surface) fn collect_c_expression_referenced_names(
     names: &mut BTreeSet<String>,
 ) {
     match expression {
-        CExpression::Value(_) => {}
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => {}
         CExpression::Variable(name) => {
             names.insert(name.clone());
         }

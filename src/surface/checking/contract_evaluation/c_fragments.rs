@@ -620,6 +620,7 @@ pub(in crate::surface) fn symbolic_contract_memory_load(
         | CType::UInt8PointerPointer => {
             symbolic_pointer_contract_memory_load(pointer, load, value_type)
         }
+        CType::FunctionPointer(_) => Err(format!("cannot symbolically load {value_type:?}")),
         CType::Int32Array(_) | CType::UInt8Array(_) => {
             Err(format!("cannot symbolically load {value_type:?}"))
         }

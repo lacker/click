@@ -325,6 +325,9 @@ pub(in crate::surface) fn pure_theorem_parameter_values(
                         ),
                     })
                 }
+                C0Type::FunctionPointer(_) => {
+                    CValue::Pointer(Pointer::symbolic_function(Variable(index as u64)))
+                }
             };
             (parameter.name().to_string(), value)
         })

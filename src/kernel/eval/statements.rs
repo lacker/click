@@ -1702,148 +1702,188 @@ pub(in crate::kernel) fn execute_c_while_paths(
     execution_semantics: CExecutionSemantics,
     budget: &mut ExecutionBudget,
 ) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    budget.consume_loop_unroll()?;
-
-    let mut base_obligations = Vec::new();
-    for proposition in invariant {
-        if add_proof_obligation(&mut base_obligations, assumptions, proposition.clone()).is_none() {
-            return Ok(Vec::new());
-        }
+    struct PendingLoopPath {
+        state: CState,
+        facts: Vec<ExecutionPureFact>,
+        obligations: Vec<ProofObligation>,
     }
-    let loop_assumptions = assumptions_with_propositions(assumptions, invariant);
+
+    let mut pending = vec![PendingLoopPath {
+        state: state.clone(),
+        facts: Vec::new(),
+        obligations: Vec::new(),
+    }];
     let mut paths = Vec::new();
 
-    for condition_path in evaluate_c_expression_paths(state, condition, &loop_assumptions, budget)?
+    while let Some(PendingLoopPath {
+        state: current_state,
+        facts: accumulated_facts,
+        obligations: accumulated_obligations,
+    }) = pending.pop()
     {
-        let Some((condition_facts, condition_obligations)) =
-            merge_execution_pure_facts_and_obligations(
-                &[],
-                &base_obligations,
-                &condition_path.facts,
-                &condition_path.obligations,
-                assumptions,
+        budget.consume_loop_unroll()?;
+        let current_assumptions = assumptions_with_path_context(
+            assumptions,
+            &accumulated_facts,
+            &accumulated_obligations,
+        );
+        let mut base_obligations = Vec::new();
+        let mut invariant_is_inconsistent = false;
+        for proposition in invariant {
+            if add_proof_obligation(
+                &mut base_obligations,
+                &current_assumptions,
+                proposition.clone(),
             )
-        else {
+            .is_none()
+            {
+                invariant_is_inconsistent = true;
+                break;
+            }
+        }
+        if invariant_is_inconsistent {
             continue;
-        };
+        }
+        let loop_assumptions = assumptions_with_propositions(&current_assumptions, invariant);
 
-        match condition_path.outcome {
-            CExpressionOutcome::Value(value) => {
-                let truthiness_paths =
-                    c_truthiness_paths(value, condition_facts, condition_obligations, assumptions);
-                for truthiness_path in truthiness_paths {
-                    if truthiness_path.is_true {
-                        paths.extend(execute_c_while_body_paths(
-                            state,
-                            condition,
-                            invariant,
+        for condition_path in
+            evaluate_c_expression_paths(&current_state, condition, &loop_assumptions, budget)?
+        {
+            let Some((condition_facts, condition_obligations)) =
+                merge_execution_pure_facts_and_obligations(
+                    &[],
+                    &base_obligations,
+                    &condition_path.facts,
+                    &condition_path.obligations,
+                    &current_assumptions,
+                )
+            else {
+                continue;
+            };
+
+            match condition_path.outcome {
+                CExpressionOutcome::Value(value) => {
+                    let truthiness_paths = c_truthiness_paths(
+                        value,
+                        condition_facts,
+                        condition_obligations,
+                        &current_assumptions,
+                    );
+                    for truthiness_path in truthiness_paths {
+                        if !truthiness_path.is_true {
+                            let Some((facts, obligations)) =
+                                merge_execution_pure_facts_and_obligations(
+                                    &accumulated_facts,
+                                    &accumulated_obligations,
+                                    &truthiness_path.facts,
+                                    &truthiness_path.obligations,
+                                    assumptions,
+                                )
+                            else {
+                                continue;
+                            };
+                            paths.push(CStatementExecutionPath {
+                                outcome: CStatementOutcome::Normal(current_state.clone()),
+                                facts,
+                                obligations,
+                            });
+                            continue;
+                        }
+
+                        let body_assumptions = assumptions_with_path_context(
+                            &current_assumptions,
+                            &truthiness_path.facts,
+                            &truthiness_path.obligations,
+                        );
+                        for body_path in execute_c_statement_paths(
+                            &current_state,
                             body,
-                            assumptions,
+                            &body_assumptions,
                             environment,
                             execution_semantics,
-                            truthiness_path.facts,
-                            truthiness_path.obligations,
                             budget,
-                        )?);
-                    } else {
-                        paths.push(CStatementExecutionPath {
-                            outcome: CStatementOutcome::Normal(state.clone()),
-                            facts: truthiness_path.facts,
-                            obligations: truthiness_path.obligations,
-                        });
+                        )? {
+                            let Some((step_facts, step_obligations)) =
+                                merge_execution_pure_facts_and_obligations(
+                                    &truthiness_path.facts,
+                                    &truthiness_path.obligations,
+                                    &body_path.facts,
+                                    &body_path.obligations,
+                                    &current_assumptions,
+                                )
+                            else {
+                                continue;
+                            };
+                            let Some((facts, obligations)) =
+                                merge_execution_pure_facts_and_obligations(
+                                    &accumulated_facts,
+                                    &accumulated_obligations,
+                                    &step_facts,
+                                    &step_obligations,
+                                    assumptions,
+                                )
+                            else {
+                                continue;
+                            };
+                            match body_path.outcome {
+                                CStatementOutcome::Normal(next_state) => {
+                                    pending.push(PendingLoopPath {
+                                        state: next_state,
+                                        facts,
+                                        obligations,
+                                    });
+                                }
+                                outcome @ (CStatementOutcome::Return { .. }
+                                | CStatementOutcome::VerificationDiverges
+                                | CStatementOutcome::UndefinedBehavior(_)
+                                | CStatementOutcome::RuntimeError(_)) => {
+                                    paths.push(CStatementExecutionPath {
+                                        outcome,
+                                        facts,
+                                        obligations,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
-            }
-            CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
-                paths.push(CStatementExecutionPath {
-                    outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
-                    facts: condition_facts,
-                    obligations: condition_obligations,
-                })
-            }
-            CExpressionOutcome::RuntimeError(error) => paths.push(CStatementExecutionPath {
-                outcome: CStatementOutcome::RuntimeError(error),
-                facts: condition_facts,
-                obligations: condition_obligations,
-            }),
-        }
-    }
-
-    budget.check_path_width(paths.len())?;
-    Ok(paths)
-}
-
-pub(in crate::kernel) fn execute_c_while_body_paths(
-    state: &CState,
-    condition: &CExpression,
-    invariant: &[Proposition],
-    body: &CStatement,
-    assumptions: &PureFactContext,
-    environment: &CExecutionEnvironment,
-    execution_semantics: CExecutionSemantics,
-    facts: Vec<ExecutionPureFact>,
-    obligations: Vec<ProofObligation>,
-    budget: &mut ExecutionBudget,
-) -> ExecutionResult<Vec<CStatementExecutionPath>> {
-    let body_assumptions = assumptions_with_path_context(assumptions, &facts, &obligations);
-    let mut paths = Vec::new();
-    for body_path in execute_c_statement_paths(
-        state,
-        body,
-        &body_assumptions,
-        environment,
-        execution_semantics,
-        budget,
-    )? {
-        let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
-            &facts,
-            &obligations,
-            &body_path.facts,
-            &body_path.obligations,
-            assumptions,
-        ) else {
-            continue;
-        };
-
-        match body_path.outcome {
-            CStatementOutcome::Normal(next_state) => {
-                let next_assumptions =
-                    assumptions_with_path_context(assumptions, &facts, &obligations);
-                for path in execute_c_while_paths(
-                    &next_state,
-                    condition,
-                    invariant,
-                    body,
-                    &next_assumptions,
-                    environment,
-                    execution_semantics,
-                    budget,
-                )? {
-                    let (facts, obligations) = merge_execution_pure_facts_and_obligations(
-                        &facts,
-                        &obligations,
-                        &path.facts,
-                        &path.obligations,
+                CExpressionOutcome::UndefinedBehavior(undefined_behavior) => {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &accumulated_facts,
+                        &accumulated_obligations,
+                        &condition_facts,
+                        &condition_obligations,
                         assumptions,
-                    )
-                    .expect("merged loop execution pure facts should remain consistent");
+                    ) else {
+                        continue;
+                    };
                     paths.push(CStatementExecutionPath {
-                        outcome: path.outcome,
+                        outcome: CStatementOutcome::UndefinedBehavior(undefined_behavior),
+                        facts,
+                        obligations,
+                    });
+                }
+                CExpressionOutcome::RuntimeError(error) => {
+                    let Some((facts, obligations)) = merge_execution_pure_facts_and_obligations(
+                        &accumulated_facts,
+                        &accumulated_obligations,
+                        &condition_facts,
+                        &condition_obligations,
+                        assumptions,
+                    ) else {
+                        continue;
+                    };
+                    paths.push(CStatementExecutionPath {
+                        outcome: CStatementOutcome::RuntimeError(error),
                         facts,
                         obligations,
                     });
                 }
             }
-            outcome @ (CStatementOutcome::Return { .. }
-            | CStatementOutcome::VerificationDiverges
-            | CStatementOutcome::UndefinedBehavior(_)
-            | CStatementOutcome::RuntimeError(_)) => paths.push(CStatementExecutionPath {
-                outcome,
-                facts,
-                obligations,
-            }),
         }
+        budget.check_path_width(paths.len().saturating_add(pending.len()))?;
     }
+
     budget.check_path_width(paths.len())?;
     Ok(paths)
 }
@@ -1857,7 +1897,8 @@ pub(in crate::kernel) fn declare_local(state: &CState, name: &str, c_type: CType
         CType::Int32Pointer
         | CType::UInt8Pointer
         | CType::Int32PointerPointer
-        | CType::UInt8PointerPointer => C_POINTER_BYTE_WIDTH,
+        | CType::UInt8PointerPointer
+        | CType::FunctionPointer(_) => C_POINTER_BYTE_WIDTH,
         CType::Int32Array(length) => {
             let pointer = CMemory::local_pointer(name);
             state.memory = state

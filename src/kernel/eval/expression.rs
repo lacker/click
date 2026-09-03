@@ -141,6 +141,11 @@ pub(in crate::kernel) fn evaluate_c_expression_paths(
         CExpression::Variable(_) => {
             read_c_lvalue_expression_paths(state, expression, assumptions, budget)?
         }
+        CExpression::FunctionAddress(name) => vec![CExpressionPath {
+            outcome: CExpressionOutcome::Value(CValue::Pointer(Pointer::function(name.clone()))),
+            facts: Vec::new(),
+            obligations: Vec::new(),
+        }],
         CExpression::Cast {
             expression,
             target_type,

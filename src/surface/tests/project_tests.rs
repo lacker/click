@@ -87,6 +87,60 @@ int32 caller(int32 x) {
 }
 
 #[test]
+fn location_verification_checks_function_pointer_targets() {
+    let compare_c = r#"
+int32 compare(int32 left, int32 right) {
+    return left - right;
+}
+"#;
+    let apply_c = r#"
+int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
+    int32 result;
+    result = callback(left, right);
+    return result;
+}
+"#;
+    let caller_c = r#"
+int32 caller() {
+    int32 result;
+    result = apply(&compare, 40, 2);
+    return result;
+}
+"#;
+    let click_source = r#"
+verifying "compare.c";
+verifying "apply.c";
+verifying "caller.c";
+
+int32 compare(int32 left, int32 right) {
+    ensures result == left - right + 1;
+} by {
+    execute();
+    simp();
+}
+
+int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {
+    ensures result == left - right;
+} by auto;
+
+int32 caller() {
+    ensures result == 38;
+} by auto;
+"#;
+    let sources = [
+        ("compare.c", compare_c),
+        ("apply.c", apply_c),
+        ("caller.c", caller_c),
+    ];
+    let caller_proof = click_source.rfind("ensures result == 38;").unwrap();
+    let position = expansion::position_at_offset(click_source, caller_proof);
+
+    let error = verify_c0_sources_at(click_source, &sources, position.line, position.column)
+        .expect_err("targeted callback verification must check its concrete target");
+    assert!(error.message().contains("compare"), "{}", error.message());
+}
+
+#[test]
 fn tactic_expansion_loads_callees_after_the_selected_source_tactic() {
     let sources = [
         ("first.c", "int32 first(int32 x) { return x; }"),

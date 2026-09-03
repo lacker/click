@@ -1482,6 +1482,7 @@ pub(in crate::kernel) fn symbolic_load_value(
         | CType::UInt8PointerPointer => {
             Some(memory.symbolic_pointer_load(pointer, value_type.pointee_type()?.byte_width()))
         }
+        CType::FunctionPointer(_) => None,
         CType::Int32Array(_) | CType::UInt8Array(_) => None,
     }
 }

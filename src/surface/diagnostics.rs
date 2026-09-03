@@ -686,6 +686,7 @@ pub(super) fn diagnostic_parameter_element_width(parameter: &syntax::C0Parameter
         C0Type::UInt8Pointer | C0Type::UInt8Array(_) => 1,
         C0Type::Int32 | C0Type::UInt8 | C0Type::Int32Pointer | C0Type::Int32Array(_) => 4,
         C0Type::Int32PointerPointer | C0Type::UInt8PointerPointer => 8,
+        C0Type::FunctionPointer(_) => 8,
     }
 }
 
@@ -829,6 +830,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
     match expression {
         CExpression::Value(value) => describe_c_value(value, &[], &[]),
         CExpression::Variable(name) => name.clone(),
+        CExpression::FunctionAddress(name) => format!("&{name}"),
         CExpression::Cast {
             expression,
             target_type,
@@ -880,6 +882,7 @@ pub(super) fn describe_c_expression(expression: &CExpression) -> String {
                 CType::UInt8Pointer => "load_uint8_pointer",
                 CType::Int32PointerPointer => "load_int32_pointer_pointer",
                 CType::UInt8PointerPointer => "load_uint8_pointer_pointer",
+                CType::FunctionPointer(_) => "load_function_pointer",
                 CType::Int32Array(_) | CType::UInt8Array(_) => {
                     return format!("*{}", describe_c_expression(pointer));
                 }

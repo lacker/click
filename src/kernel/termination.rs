@@ -37,7 +37,7 @@ fn substitute_c_expression_variables(
         )
     };
     match expression {
-        Value(_) => expression.clone(),
+        Value(_) | FunctionAddress(_) => expression.clone(),
         Cast {
             expression: body,
             target_type,
@@ -600,7 +600,7 @@ fn expression_takes_address_of(expression: &CExpression, name: &str) -> bool {
     use CExpression::*;
     let inner = |body: &CExpression| expression_takes_address_of(body, name);
     match expression {
-        Value(_) | Variable(_) => false,
+        Value(_) | Variable(_) | FunctionAddress(_) => false,
         Cast { expression, .. } => inner(expression),
         Conditional {
             condition,

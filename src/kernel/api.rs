@@ -502,6 +502,9 @@ fn abstract_c_state_for_join_across_with_policy(
                 | CType::UInt8PointerPointer => {
                     CValue::Pointer(Pointer::symbolic(variables.next()))
                 }
+                CType::FunctionPointer(_) => {
+                    CValue::Pointer(Pointer::symbolic_function(variables.next()))
+                }
                 CType::Int32Array(_) | CType::UInt8Array(_) => {
                     unreachable!("array objects use CLocalBinding::ArrayObject")
                 }
@@ -557,6 +560,10 @@ fn abstract_c_state_for_join_across_with_policy(
 
 pub fn c_variable(name: impl Into<String>) -> CExpression {
     CExpression::Variable(name.into())
+}
+
+pub fn c_function_address(name: impl Into<String>) -> CExpression {
+    CExpression::FunctionAddress(name.into())
 }
 
 pub fn c_cast(expression: CExpression, target_type: CType) -> CExpression {

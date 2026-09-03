@@ -1001,8 +1001,22 @@ impl Parser {
 
         loop {
             let parsed_type = self.parse_type()?;
-            let name = self.expect_ident("parameter name")?;
-            let parsed_parameter = self.parse_parameter_array_suffix(name, parsed_type)?;
+            let parsed_parameter = if self.peek() == Some(&Token::LParen) {
+                let (name, c_type) = self.parse_function_pointer_declarator(parsed_type.c_type)?;
+                ParsedParameter {
+                    parameter: FunctionParameter {
+                        c_type,
+                        name,
+                        struct_name: None,
+                    },
+                    struct_name: None,
+                    declared_bytes: None,
+                    struct_array: false,
+                }
+            } else {
+                let name = self.expect_ident("parameter name")?;
+                self.parse_parameter_array_suffix(name, parsed_type)?
+            };
             if let Some(struct_name) = parsed_parameter.struct_name {
                 struct_params.insert(parsed_parameter.parameter.name.clone(), struct_name);
             }
@@ -1120,6 +1134,75 @@ impl Parser {
             struct_name: None,
             struct_pointer: false,
         })
+    }
+
+    fn parse_function_pointer_declarator(
+        &mut self,
+        return_type: C0Type,
+    ) -> Result<(String, C0Type), ClickError> {
+        self.expect(Token::LParen)?;
+        self.expect(Token::Star)?;
+        let name = self.expect_ident("function-pointer parameter name")?;
+        self.expect(Token::RParen)?;
+        self.expect(Token::LParen)?;
+        let mut parameter_types = Vec::new();
+        if self.peek() != Some(&Token::RParen) {
+            loop {
+                let parsed_type = self.parse_type()?;
+                if parsed_type.struct_name.is_some() || parsed_type.c_type == C0Type::Void {
+                    return Err(
+                        self.error("function-pointer parameters must use modeled non-struct types")
+                    );
+                }
+                let mut parameter_type = parsed_type.c_type;
+                if self.peek() == Some(&Token::LBracket) {
+                    self.position += 1;
+                    if matches!(self.peek(), Some(Token::Number(_))) {
+                        self.position += 1;
+                    }
+                    self.expect(Token::RBracket)?;
+                    parameter_type = match parameter_type {
+                        C0Type::Int32 => C0Type::Int32Pointer,
+                        C0Type::UInt8 => C0Type::UInt8Pointer,
+                        C0Type::Int32Pointer => C0Type::Int32PointerPointer,
+                        C0Type::UInt8Pointer => C0Type::UInt8PointerPointer,
+                        _ => return Err(self.error("only modeled array parameters are supported")),
+                    };
+                }
+                parameter_types.push(parameter_type);
+                if matches!(self.peek(), Some(Token::Ident(_))) {
+                    self.position += 1;
+                }
+                match self.peek() {
+                    Some(Token::Comma) => self.position += 1,
+                    Some(Token::RParen) => break,
+                    Some(token) => {
+                        return Err(self.error(format!(
+                            "expected `,` or `)` in function-pointer parameter list, got {token:?}"
+                        )));
+                    }
+                    None => return Err(self.error(
+                        "expected `,` or `)` in function-pointer parameter list, got end of input",
+                    )),
+                }
+            }
+        }
+        self.expect(Token::RParen)?;
+        if parameter_types.len() > 13 {
+            return Err(self.error("function-pointer signatures support at most 13 parameters"));
+        }
+        let parameter_types = parameter_types
+            .into_iter()
+            .map(C0Type::to_kernel_type)
+            .collect::<Vec<_>>();
+        let signature = crate::kernel::CType::function_pointer_signature(
+            return_type.to_kernel_type(),
+            &parameter_types,
+        );
+        if signature == 0 {
+            return Err(self.error("function-pointer signature uses an unsupported modeled type"));
+        }
+        Ok((name, C0Type::FunctionPointer(signature)))
     }
 
     fn parse_parameter_array_suffix(

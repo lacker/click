@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn c_expression_uses_variable(expression: &CExpression, variable: &str) -> bool {
     match expression {
-        CExpression::Value(_) => false,
+        CExpression::Value(_) | CExpression::FunctionAddress(_) => false,
         CExpression::Variable(name) => name == variable,
         CExpression::Cast { expression, .. } => c_expression_uses_variable(expression, variable),
         CExpression::Conditional {

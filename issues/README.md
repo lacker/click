@@ -36,7 +36,6 @@ C language coverage:
 - [Specify external and libc functions without a body](external-function-contracts.md)
 - [Broaden allocation forms and array declarations](allocation-shapes-and-arrays.md)
 - [Model floating-point values](floating-point.md)
-- [Model function pointers](function-pointers.md)
 - [Model variadic functions](variadic-functions.md)
 - [Model volatile objects](volatile-objects.md)
 - [Model concurrency and atomics](concurrency-and-atomics.md)

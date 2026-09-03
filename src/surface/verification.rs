@@ -352,7 +352,7 @@ pub fn c0_incremental_selection(
     let mut reverse = BTreeMap::<String, BTreeSet<String>>::new();
     for parsed in [&current_parsed, &baseline_parsed] {
         for (caller, (_, function)) in parsed {
-            for dependency in c0_statement_calls(function.body()).into_iter().flatten() {
+            for dependency in c0_statement_calls(function).into_iter().flatten() {
                 reverse
                     .entry(dependency)
                     .or_default()
@@ -1298,7 +1298,7 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
         .get(&function_name)
         .ok_or_else(|| ClickError::new(format!("no C source defines `{function_name}`")))?
         .1;
-    let statement_calls = c0_statement_calls(parsed_function.body());
+    let statement_calls = c0_statement_calls(parsed_function);
     let mut required = BTreeSet::from([function_name]);
     // Expansion is defined only for an already-correct complete proof unit.
     // Capturing some post-execution tactics also legitimately continues past
@@ -1316,7 +1316,7 @@ pub(in crate::surface) fn tactic_expansion_required_functions(
             continue;
         }
         if let Some((_, parsed)) = parsed_sources.get(&dependency) {
-            pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
+            pending.extend(c0_statement_calls(parsed).into_iter().flatten());
         }
     }
     Ok(required)
@@ -1355,7 +1355,7 @@ pub(in crate::surface) fn tactic_expansion_dependency_context(
             .get(&name)
             .cloned()
             .expect("queued dependency has a recorded path");
-        for dependency in c0_statement_calls(function.body())
+        for dependency in c0_statement_calls(function)
             .into_iter()
             .flatten()
             .filter(|dependency| required.contains(dependency))
@@ -1402,52 +1402,206 @@ pub(in crate::surface) fn verification_required_functions(
             .get(&name)
             .ok_or_else(|| ClickError::new(format!("no C source defines `{name}`")))?
             .1;
-        pending.extend(c0_statement_calls(parsed.body()).into_iter().flatten());
+        pending.extend(c0_statement_calls(parsed).into_iter().flatten());
     }
     Ok(required)
 }
 
 pub(in crate::surface) fn c0_statement_calls(
-    statement: &syntax::C0Statement,
+    function: &syntax::C0Function,
 ) -> Vec<BTreeSet<String>> {
-    fn visit(statement: &syntax::C0Statement, calls: &mut Vec<BTreeSet<String>>) {
+    fn collect_function_pointer_names(
+        statement: &syntax::C0Statement,
+        names: &mut BTreeSet<String>,
+    ) {
         match statement {
-            syntax::C0Statement::Skip => {}
+            syntax::C0Statement::Declare { c_type, name }
+                if matches!(c_type, syntax::C0Type::FunctionPointer(_)) =>
+            {
+                names.insert(name.clone());
+            }
             syntax::C0Statement::Seq(first, second) => {
-                visit(first, calls);
-                visit(second, calls);
+                collect_function_pointer_names(first, names);
+                collect_function_pointer_names(second, names);
             }
             syntax::C0Statement::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                calls.push(BTreeSet::new());
-                visit(then_branch, calls);
-                visit(else_branch, calls);
+                collect_function_pointer_names(then_branch, names);
+                collect_function_pointer_names(else_branch, names);
             }
             syntax::C0Statement::While { body, .. } => {
-                calls.push(BTreeSet::new());
-                visit(body, calls);
+                collect_function_pointer_names(body, names);
             }
-            syntax::C0Statement::CallAssign { function_name, .. } => {
-                calls.push(BTreeSet::from([function_name.clone()]));
-            }
-            syntax::C0Statement::Call { function_name, .. } => {
-                calls.push(BTreeSet::from([function_name.clone()]));
-            }
-            syntax::C0Statement::Declare { .. }
+            syntax::C0Statement::Skip
+            | syntax::C0Statement::Declare { .. }
             | syntax::C0Statement::Assign { .. }
+            | syntax::C0Statement::CallAssign { .. }
+            | syntax::C0Statement::Call { .. }
             | syntax::C0Statement::HeapAllocate { .. }
             | syntax::C0Statement::HeapFree { .. }
             | syntax::C0Statement::Return(_)
             | syntax::C0Statement::Store { .. }
-            | syntax::C0Statement::Update { .. } => calls.push(BTreeSet::new()),
+            | syntax::C0Statement::Update { .. } => {}
+        }
+    }
+
+    fn collect_function_addresses(expression: &syntax::C0Expression, names: &mut BTreeSet<String>) {
+        match expression {
+            syntax::C0Expression::FunctionAddress(name) => {
+                names.insert(name.clone());
+            }
+            syntax::C0Expression::Cast { expression, .. }
+            | syntax::C0Expression::AddressOf(expression)
+            | syntax::C0Expression::PointerOffsetBytes {
+                pointer: expression,
+                ..
+            }
+            | syntax::C0Expression::Not(expression)
+            | syntax::C0Expression::BitwiseNot(expression)
+            | syntax::C0Expression::Load(expression) => {
+                collect_function_addresses(expression, names);
+            }
+            syntax::C0Expression::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                collect_function_addresses(condition, names);
+                collect_function_addresses(then_branch, names);
+                collect_function_addresses(else_branch, names);
+            }
+            syntax::C0Expression::LessThan(left, right)
+            | syntax::C0Expression::LessEqual(left, right)
+            | syntax::C0Expression::GreaterThan(left, right)
+            | syntax::C0Expression::GreaterEqual(left, right)
+            | syntax::C0Expression::Equal(left, right)
+            | syntax::C0Expression::NotEqual(left, right)
+            | syntax::C0Expression::And(left, right)
+            | syntax::C0Expression::Or(left, right)
+            | syntax::C0Expression::Add(left, right)
+            | syntax::C0Expression::Subtract(left, right)
+            | syntax::C0Expression::Multiply(left, right)
+            | syntax::C0Expression::Divide(left, right)
+            | syntax::C0Expression::Remainder(left, right)
+            | syntax::C0Expression::ShiftLeft(left, right)
+            | syntax::C0Expression::ShiftRight(left, right)
+            | syntax::C0Expression::BitwiseAnd(left, right)
+            | syntax::C0Expression::BitwiseOr(left, right)
+            | syntax::C0Expression::BitwiseXor(left, right)
+            | syntax::C0Expression::Index(left, right) => {
+                collect_function_addresses(left, names);
+                collect_function_addresses(right, names);
+            }
+            syntax::C0Expression::Field { pointer, .. } => {
+                collect_function_addresses(pointer, names);
+            }
+            syntax::C0Expression::Void
+            | syntax::C0Expression::Variable(_)
+            | syntax::C0Expression::Int32Literal(_)
+            | syntax::C0Expression::UInt8Literal(_)
+            | syntax::C0Expression::SizeOfStruct { .. }
+            | syntax::C0Expression::SizeOfType { .. } => {}
+        }
+    }
+
+    let mut function_pointer_names = function
+        .parameters()
+        .iter()
+        .filter(|parameter| matches!(parameter.c_type(), syntax::C0Type::FunctionPointer(_)))
+        .map(|parameter| parameter.name().to_string())
+        .collect::<BTreeSet<_>>();
+    collect_function_pointer_names(function.body(), &mut function_pointer_names);
+
+    fn visit(
+        statement: &syntax::C0Statement,
+        calls: &mut Vec<BTreeSet<String>>,
+        function_pointer_names: &BTreeSet<String>,
+    ) {
+        match statement {
+            syntax::C0Statement::Skip => {}
+            syntax::C0Statement::Seq(first, second) => {
+                visit(first, calls, function_pointer_names);
+                visit(second, calls, function_pointer_names);
+            }
+            syntax::C0Statement::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(condition, &mut dependencies);
+                calls.push(dependencies);
+                visit(then_branch, calls, function_pointer_names);
+                visit(else_branch, calls, function_pointer_names);
+            }
+            syntax::C0Statement::While { condition, body } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(condition, &mut dependencies);
+                calls.push(dependencies);
+                visit(body, calls, function_pointer_names);
+            }
+            syntax::C0Statement::CallAssign {
+                function_name,
+                arguments,
+                ..
+            } => {
+                let mut dependencies = BTreeSet::new();
+                if !function_pointer_names.contains(function_name) {
+                    dependencies.insert(function_name.clone());
+                }
+                for argument in arguments {
+                    collect_function_addresses(argument, &mut dependencies);
+                }
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::Call {
+                function_name,
+                arguments,
+            } => {
+                let mut dependencies = BTreeSet::new();
+                if !function_pointer_names.contains(function_name) {
+                    dependencies.insert(function_name.clone());
+                }
+                for argument in arguments {
+                    collect_function_addresses(argument, &mut dependencies);
+                }
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::Declare { .. } => calls.push(BTreeSet::new()),
+            syntax::C0Statement::Assign { expression, .. }
+            | syntax::C0Statement::HeapAllocate {
+                bytes: expression, ..
+            }
+            | syntax::C0Statement::HeapFree {
+                pointer: expression,
+            }
+            | syntax::C0Statement::Return(expression) => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(expression, &mut dependencies);
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::Store { pointer, value, .. } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(pointer, &mut dependencies);
+                collect_function_addresses(value, &mut dependencies);
+                calls.push(dependencies);
+            }
+            syntax::C0Statement::Update {
+                target, operand, ..
+            } => {
+                let mut dependencies = BTreeSet::new();
+                collect_function_addresses(target, &mut dependencies);
+                collect_function_addresses(operand, &mut dependencies);
+                calls.push(dependencies);
+            }
         }
     }
 
     let mut calls = Vec::new();
-    visit(statement, &mut calls);
+    visit(function.body(), &mut calls, &function_pointer_names);
     calls
 }
 

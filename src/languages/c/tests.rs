@@ -3113,6 +3113,108 @@ fn c0_syntax_targets_kernel_known_function_call_assignment() {
 }
 
 #[test]
+fn c0_function_pointers_preserve_signature_and_dispatch_callback() {
+    let callback =
+        syntax::parse_function("int32 compare(int32 left, int32 right) { return left - right; }")
+            .expect("callback should parse")
+            .to_kernel_function();
+    let apply = syntax::parse_function(
+        "int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {\
+             int32 result; result = callback(left, right); return result;\
+         }",
+    )
+    .expect("callback parameter and indirect call should parse")
+    .to_kernel_function();
+    let caller = syntax::parse_function(
+        "int32 caller() { int32 result; result = apply(&compare, 40, 2); return result; }",
+    )
+    .expect("function address should parse")
+    .to_kernel_function();
+
+    assert!(matches!(
+        apply.parameters()[0].c_type(),
+        crate::kernel::CType::FunctionPointer(_)
+    ));
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller.clone(),
+        Vec::new(),
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new()
+            .with_function(callback)
+            .with_function(apply),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("compatible callback should execute");
+    assert_eq!(
+        theorem.proposition(),
+        &crate::kernel::Proposition::CFunctionExecutes {
+            state: crate::kernel::CState::new(),
+            function: caller,
+            arguments: Vec::new(),
+            outcome: crate::kernel::CFunctionOutcome::Return {
+                value: crate::kernel::int32(38),
+                state: crate::kernel::CState::new().with_memory(
+                    crate::kernel::CMemory::new()
+                        .with_block("local:result", 4)
+                        .store(
+                            crate::kernel::Pointer {
+                                block: "local:result".into(),
+                                offset: crate::kernel::PointerOffsetTerm::Constant(0),
+                            },
+                            crate::kernel::int32(38),
+                        )
+                ),
+            },
+        }
+    );
+}
+
+#[test]
+fn c0_function_pointers_reject_incompatible_callback_targets() {
+    let wrong =
+        syntax::parse_function("uint8 wrong(uint8 left, uint8 right) { return left - right; }")
+            .expect("incompatible callback should parse")
+            .to_kernel_function();
+    let apply = syntax::parse_function(
+        "int32 apply(int32 (*callback)(int32, int32), int32 left, int32 right) {\
+             int32 result; result = callback(left, right); return result;\
+         }",
+    )
+    .expect("callback parameter and indirect call should parse")
+    .to_kernel_function();
+    let caller = syntax::parse_function(
+        "int32 caller() { int32 result; result = apply(&wrong, 40, 2); return result; }",
+    )
+    .expect("function address should parse")
+    .to_kernel_function();
+
+    let theorem = crate::kernel::prove_symbolic_c_function_execution_with_environment(
+        crate::kernel::CState::new(),
+        caller,
+        Vec::new(),
+        Default::default(),
+        crate::kernel::CExecutionEnvironment::new()
+            .with_function(wrong)
+            .with_function(apply),
+        crate::kernel::CExecutionSemantics::EXECUTE_BODIES,
+    )
+    .expect("incompatible callback should produce a runtime-error theorem");
+    let crate::kernel::Proposition::CFunctionExecutes {
+        outcome:
+            crate::kernel::CFunctionOutcome::RuntimeError(
+                crate::kernel::CRuntimeError::FunctionContract(message),
+            ),
+        ..
+    } = theorem.proposition()
+    else {
+        panic!("expected incompatible callback error, got {:#?}", theorem);
+    };
+    assert!(message.contains("incompatible signature"));
+}
+
+#[test]
 fn c0_syntax_targets_kernel_while_countdown() {
     let function = syntax::parse_function(
         r#"
