@@ -92,11 +92,12 @@ Likely additions:
   aggregate places. One-dimensional function parameters declared as arrays of
   the supported structs now retain their ABI stride. Scalar-only by-value
   structs with `int32`/`uint8` fields now have explicit fresh-copy semantics
-  for parameters, locals, assignments, and returns. Remaining work includes
-  broader struct values, arrays of embedded structs, multidimensional struct
-  arrays, unions/bitfields, and broader address-taking. Named enum fields and constants
-  are supported, but enum parameters, returns, locals, arrays, and anonymous
-  declarations remain outside the slice.
+  for parameters, locals, assignments, and returns. Named enum fields inside
+  that by-value shape use the same scalar representation. Remaining work
+  includes broader struct values, arrays of embedded structs, multidimensional
+  struct arrays, unions/bitfields, and broader address-taking. Named enum fields
+  and constants are supported, but enum parameters, returns, locals, arrays,
+  and anonymous declarations remain outside the slice.
 - Globals:
   especially immutable global tables and string constants.
 

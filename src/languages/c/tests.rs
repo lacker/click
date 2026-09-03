@@ -3224,8 +3224,57 @@ fn c0_rejects_non_scalar_struct_values_with_a_shape_diagnostic() {
     )
     .expect_err("pointer-bearing struct values should remain outside this slice");
 
-    assert!(error.message().contains("only int32 and uint8 fields"));
+    assert!(
+        error
+            .message()
+            .contains("only int32, uint8, and named enum fields")
+    );
     assert!(error.message().contains("contains a pointer"));
+}
+
+#[test]
+fn c0_scalar_struct_values_allow_named_enum_fields() {
+    let function = syntax::parse_function(
+        r#"
+        enum packet_state {
+            PACKET_READY = 7,
+            PACKET_DONE = 9,
+        };
+
+        struct packet {
+            int32 count;
+            enum packet_state state;
+            uint8 tag;
+        };
+
+        struct packet finish(struct packet value) {
+            value.count = 5;
+            value.state = PACKET_DONE;
+            return value;
+        }
+        "#,
+    )
+    .expect("enum fields should be allowed in struct values");
+
+    let field = function
+        .structs()
+        .get("packet")
+        .and_then(|layout| layout.field("state"))
+        .expect("enum field metadata");
+    assert_eq!(field.c_type(), syntax::C0Type::Int32);
+    assert_eq!(field.enum_name(), Some("packet_state"));
+
+    let kernel = function.to_kernel_function();
+    let layout = kernel.parameters()[0]
+        .aggregate_layout()
+        .expect("enum struct parameter layout");
+    let state = layout
+        .fields()
+        .iter()
+        .find(|field| field.name() == "state")
+        .expect("enum field in kernel layout");
+    assert_eq!(state.offset_bytes(), 4);
+    assert_eq!(state.c_type(), crate::kernel::CType::Int32);
 }
 
 #[test]

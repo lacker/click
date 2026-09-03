@@ -267,7 +267,8 @@ struct size includes the tail padding required by its maximum field alignment.
 Named enum fields use the supported four-byte `int32` representation. The C0
 metadata retains the enum declaration and enumerator values, but lowering
 turns an enumerator into its int32 bit pattern and emits the same scalar field
-load or store as an `int32` field.
+load or store as an `int32` field. The same representation is retained when a
+supported struct value is copied by value.
 For example, `{ uint8 buf[16]; int32 a; int32* p; }` places `buf` at byte
 offset 0, `a` at byte offset 16, and `p` at byte offset 24, and has size 32.
 Inline scalar arrays are retained as aggregate type metadata, but an array

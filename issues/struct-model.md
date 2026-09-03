@@ -9,7 +9,7 @@ Struct pointers are supported: declarations, `->` field access, and
 slice now extends this with scalar-only copies.
 Struct fields currently support `int32`, `uint8`, fixed one-dimensional scalar
 arrays, embedded structs, named enum fields, and pointers. Structs whose fields
-are only `int32` or `uint8` can be parameters, locals, assignments, and returns
+are only `int32`, `uint8`, or named enum fields can be parameters, locals, assignments, and returns
 by value; each operation uses fresh address-backed storage. Local arrays of
 those supported structs now lower indexed `items[i].field` access with the
 complete LP64 stride. One-dimensional function parameters declared as arrays
@@ -53,8 +53,9 @@ Staged mdtests, each with an unchanged C file:
    `mdtests/struct_enum_field.md` and the C0 enum metadata and lowering tests.
 4. ~~A scalar-only struct passed and returned by value (copy semantics, no
    aliasing).~~ Covered by `mdtests/struct_by_value_scalar_copy.md` and the
-   C0/kernel aggregate-layout metadata test. Broader by-value field shapes
-   remain open.
+   C0/kernel aggregate-layout metadata test. Named enum fields in that shape
+   are covered by `mdtests/struct_by_value_enum_copy.md`; pointer, array, and
+   embedded-field value shapes remain open.
 5. A union of `int32` and `int32*` with a tag field, read only through the
    active member.
 

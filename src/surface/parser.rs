@@ -1148,11 +1148,10 @@ impl Parser {
             .ok_or_else(|| self.error(format!("unknown struct declaration `{struct_name}`")))?;
         if layout.fields().values().any(|field| {
             field.struct_name().is_some()
-                || field.enum_name().is_some()
                 || !matches!(field.c_type(), C0Type::Int32 | C0Type::UInt8)
         }) {
             return Err(self.error(format!(
-                "struct-by-value currently supports only int32 and uint8 fields; `struct {struct_name}` contains a pointer, array, embedded struct, or enum field"
+                "struct-by-value currently supports only int32, uint8, and named enum fields; `struct {struct_name}` contains a pointer, array, or embedded struct field"
             )));
         }
         Ok(C0Type::UInt8Array(layout.size_bytes()))
